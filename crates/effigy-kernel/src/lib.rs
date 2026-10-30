@@ -28,7 +28,6 @@ pub mod root;
 pub mod run;
 pub mod signal;
 mod socket_at;
-pub mod startup;
 pub mod store;
 #[cfg(feature = "fault-injection")]
 pub mod strict_fake;

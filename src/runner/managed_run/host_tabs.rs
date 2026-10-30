@@ -226,7 +226,6 @@ impl HostFollower {
             }
         }
         poll.generation_changed = self.tail.generation_changed;
-        poll.projection_unavailable = self.tail.projection_unavailable;
         poll
     }
 }
@@ -237,7 +236,6 @@ pub(in crate::runner) struct HostPoll {
     pub(in crate::runner) lines: Vec<Vec<u8>>,
     pub(in crate::runner) statuses: Vec<HostStatus>,
     pub(in crate::runner) generation_changed: bool,
-    pub(in crate::runner) projection_unavailable: bool,
 }
 
 /// A bounded incremental reader for one host process's log file. Lines are
@@ -248,7 +246,6 @@ struct LogTail {
     offset: u64,
     partial: Vec<u8>,
     generation_changed: bool,
-    projection_unavailable: bool,
     identity: Option<(u64, u64)>,
 }
 
@@ -262,7 +259,6 @@ impl LogTail {
         use std::os::unix::fs::MetadataExt;
 
         self.generation_changed = false;
-        self.projection_unavailable = false;
         let Ok(mut file) = std::fs::File::open(path) else {
             return Vec::new();
         };
@@ -286,23 +282,7 @@ impl LogTail {
             return Vec::new();
         }
         let mut chunk = Vec::new();
-        if (&mut file)
-            .take(READ_MAX as u64)
-            .read_to_end(&mut chunk)
-            .is_err()
-        {
-            return Vec::new();
-        }
-        let stable = file
-            .metadata()
-            .ok()
-            .zip(std::fs::symlink_metadata(path).ok())
-            .is_some_and(|(after, path_after)| {
-                crate::runner::host_process::same_log_snapshot(&metadata, &after)
-                    && crate::runner::host_process::same_log_snapshot(&metadata, &path_after)
-            });
-        if !stable {
-            self.projection_unavailable = true;
+        if file.take(READ_MAX as u64).read_to_end(&mut chunk).is_err() {
             return Vec::new();
         }
         self.offset += chunk.len() as u64;
@@ -433,47 +413,6 @@ mod tests {
         let mut projection = effigy_core::terminal_projection::PlainStream::default();
         let plain = projection.project(&lines[0]);
         assert_eq!(plain, b"Compiling api\nerror");
-    }
-
-    #[test]
-    fn underlay_shape_through_host_follower_keeps_colour_and_projects_incrementally() {
-        use std::io::Write as _;
-        let dir = tempfile::tempdir().expect("fixture dir");
-        let path = dir
-            .path()
-            .join(".effigy/runtime/host-processes/dev/api.log");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, b"\x1b[32mCompiling\x1b[0m api\n").unwrap();
-        let mut tab = tab(HostProcessRestart::Never, None);
-        tab.log = path.clone();
-        let mut follower = HostFollower::new(tab);
-        let mut projection = effigy_core::terminal_projection::PlainStream::default();
-        let mut raw = Vec::new();
-        let mut plain = Vec::new();
-        for line in follower.poll().lines {
-            raw.extend_from_slice(&line);
-            raw.push(b'\n');
-            plain.extend(projection.project(&line));
-            plain.extend(projection.project(b"\n"));
-        }
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap();
-        file.write_all(b"\x1b]title\nsecret payload\x1b\\\x1b[31merror\x1b[0m\n")
-            .unwrap();
-        for line in follower.poll().lines {
-            raw.extend_from_slice(&line);
-            raw.push(b'\n');
-            plain.extend(projection.project(&line));
-            plain.extend(projection.project(b"\n"));
-        }
-        assert!(raw.windows(5).any(|part| part == b"\x1b[32m"));
-        assert_eq!(plain, b"Compiling api\nerror\n");
-        assert_eq!(
-            plain,
-            effigy_core::terminal_projection::PlainStream::default().project(&raw)
-        );
     }
 
     #[test]

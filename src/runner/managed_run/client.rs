@@ -215,11 +215,6 @@ impl TextFollower {
             if poll.generation_changed {
                 *projection = Default::default();
             }
-            if poll.projection_unavailable {
-                host_lines.push_str(&format!(
-                    "[{name}] [projection unavailable (log too large / changed)]\n"
-                ));
-            }
             for status in poll.statuses {
                 host_lines.push_str(&format!("[{name}] [host] {}\n", status.line()));
             }

@@ -408,11 +408,9 @@ effigy dev stop admin
 
 Interactive host workloads and environment host processes can emit colour in
 ANSI panes when the operator has not set a colour preference. Plain log
-readers remove terminal controls. A cold read reconstructs parser state from
-byte zero, up to 64 MiB; oversized, changed or expired prefixes produce an
-explicit projection-unavailable marker instead of uncertain output. Canonical
-host-process log files can contain ANSI; consumers that read them directly must
-request a plain projection.
+readers remove terminal controls and report an elided prefix if a retained
+stream cannot be safely resumed. Canonical host-process log files can contain
+ANSI; consumers that read them directly must request a plain projection.
 
 `status` reports the run, its environment and each started process with PID,
 state and exit code. `--json` prints `effigy.managed.status.v1`. `logs <name>`

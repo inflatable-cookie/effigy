@@ -380,9 +380,6 @@ pub(in crate::runner) fn runtime_error_from_runner(error: RunnerError) -> Effigy
 }
 
 #[cfg(test)]
-pub(in crate::runner) use lifecycle::interactive_front as test_interactive_front;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::runner::container_command::support::repo_root_has_effigy_manifest;

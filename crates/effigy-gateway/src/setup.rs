@@ -350,11 +350,13 @@ fn command_outcome(
         other => return Err(error(format!("setup command outcome unknown: {other:?}"))),
     };
     child.complete(run, exit).map_err(error)?;
-    let output = effigy_core::terminal_projection::project_captured_streams(
-        child.take_stream_output(),
-        cx.operation().limits().queue_bytes,
-    );
-    Ok((exit.code, output))
+    let output = child.tail();
+    let mut projection = if output.len() >= cx.operation().limits().capture_tail {
+        effigy_core::terminal_projection::PlainStream::unknown()
+    } else {
+        effigy_core::terminal_projection::PlainStream::default()
+    };
+    Ok((exit.code, projection.project(&output)))
 }
 
 #[derive(Debug)]

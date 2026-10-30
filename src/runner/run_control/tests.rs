@@ -32,10 +32,7 @@ fn projected_json_gap_keeps_raw_resume_offset() {
         .unwrap();
     assert_eq!(
         String::from_utf8(data).unwrap(),
-        format!(
-            "[projection unavailable (unknown escape state): {} bytes elided]\n",
-            bytes.len()
-        )
+        format!("[plain output gap: {} bytes elided]\n", bytes.len())
     );
 }
 
@@ -43,7 +40,6 @@ fn projected_json_gap_keeps_raw_resume_offset() {
 fn resumed_reader_replays_raw_prefix_across_csi_and_osc() {
     for (raw, offset, expected) in [
         (b"\x1b[31mred\x1b[0m".as_slice(), 3, b"red".as_slice()),
-        (b"progress\r\nnext".as_slice(), 9, b"next".as_slice()),
         (
             b"\x1b]title\x1b\\visible".as_slice(),
             5,
@@ -64,45 +60,8 @@ fn resumed_reader_replays_raw_prefix_across_csi_and_osc() {
     let mut projection = resume_with(12, |_, _| None);
     assert_eq!(
         projection.project(b"partial\n"),
-        b"[projection unavailable (unknown escape state): 8 bytes elided]\n"
+        b"[plain output gap: 8 bytes elided]\n"
     );
-}
-
-#[test]
-fn cold_resume_replays_from_zero_or_reports_unavailable() {
-    let mut raw = vec![b'x'; 5000];
-    raw.extend_from_slice(b"\x1b]title\nsecret\x1b\\visible");
-    let offset = 5010usize;
-    let read = |start: u64, length: usize| {
-        Some(effigy_kernel::run::LogRead {
-            retained_from: 0,
-            from: start,
-            bytes: raw[start as usize..start as usize + length].to_vec(),
-            end: raw.len() as u64,
-            truncated: false,
-        })
-    };
-    let mut cold = resume_with(offset as u64, read);
-    assert_eq!(cold.project(&raw[offset..]), b"visible");
-    let mut expired = resume_with(offset as u64, |_, _| {
-        Some(effigy_kernel::run::LogRead {
-            retained_from: 4096,
-            from: 4096,
-            bytes: vec![],
-            end: raw.len() as u64,
-            truncated: false,
-        })
-    });
-    let output = String::from_utf8(expired.project(&raw[offset..])).unwrap();
-    assert!(output.contains("projection unavailable"));
-    assert!(!output.contains("secret"));
-    let mut oversized = resume_with(
-        effigy_core::terminal_projection::PREFIX_SCAN_LIMIT + 1,
-        |_, _| panic!("scan exceeds limit"),
-    );
-    assert!(String::from_utf8(oversized.project(b"test"))
-        .unwrap()
-        .contains("projection unavailable"));
 }
 
 #[cfg(feature = "fault-injection")]

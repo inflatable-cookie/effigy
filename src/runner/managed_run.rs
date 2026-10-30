@@ -71,10 +71,3 @@ pub(in crate::runner) fn reconcile_effect(
 ) -> Observed<Reconciled> {
     settlement::reconcile(effect, cx)
 }
-
-#[cfg(test)]
-pub(in crate::runner) use environment::mark_front as test_mark_front;
-#[cfg(test)]
-pub(in crate::runner) use wire::{
-    decode as test_decode, encode as test_encode, Front as TestFront, Payload as TestPayload,
-};

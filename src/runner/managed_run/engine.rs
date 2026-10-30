@@ -718,11 +718,13 @@ impl Owner {
             return None;
         };
         let _ = run.complete(process, exit);
-        let tail = effigy_core::terminal_projection::project_captured_streams(
-            process.take_stream_output(),
-            64 * 1024,
-        );
-        workload.tail = String::from_utf8_lossy(&tail).into_owned();
+        let tail = process.tail();
+        let mut projection = if tail.len() >= 64 * 1024 {
+            effigy_core::terminal_projection::PlainStream::unknown()
+        } else {
+            effigy_core::terminal_projection::PlainStream::default()
+        };
+        workload.tail = String::from_utf8_lossy(&projection.project(&tail)).into_owned();
         let name = workload.spec.name.clone();
         let shutdown = workload.spec.shutdown_on_exit;
         workload.process = None;

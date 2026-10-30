@@ -1,10 +1,8 @@
 //! Stateful plain projection of a terminal byte stream.
 //!
-//! Unknown prefixes cannot be interpreted safely; suppress them and report a gap.
-//! Offsets remain the caller's raw byte offsets.
-
-/// Maximum raw prefix replayed for a cold plain reader (64 MiB).
-pub const PREFIX_SCAN_LIMIT: u64 = 64 * 1024 * 1024;
+//! An unknown prefix cannot be interpreted from a bounded suffix. Until a
+//! terminal string terminator establishes a safe boundary, suppress bytes and
+//! count them for a visible gap. Offsets remain the caller's raw byte offsets.
 
 #[derive(Clone, Copy, Debug, Default)]
 enum State {
@@ -16,6 +14,7 @@ enum State {
     String,
     StringEscape,
     Unknown,
+    UnknownEscape,
 }
 
 #[derive(Debug, Default)]
@@ -23,6 +22,8 @@ pub struct PlainStream {
     state: State,
     elided: u64,
     after_cr: bool,
+    search_count: u64,
+    saw_newline: bool,
     utf8: Vec<u8>,
     string_utf8_lead: u8,
     string_utf8_remaining: u8,
@@ -46,9 +47,7 @@ impl PlainStream {
         if gap == 0 {
             plain
         } else {
-            let mut result =
-                format!("[projection unavailable (unknown escape state): {gap} bytes elided]\n")
-                    .into_bytes();
+            let mut result = format!("[plain output gap: {gap} bytes elided]\n").into_bytes();
             result.extend(plain);
             result
         }
@@ -58,9 +57,19 @@ impl PlainStream {
         let mut output = Vec::with_capacity(input.len());
         for &byte in input {
             self.state = match self.state {
-                State::Unknown => {
+                State::Unknown | State::UnknownEscape => {
                     self.elided = self.elided.saturating_add(1);
-                    State::Unknown
+                    self.search_count = self.search_count.saturating_add(1);
+                    self.saw_newline |= byte == b'\n';
+                    match (self.state, byte) {
+                        (State::UnknownEscape, b'\\')
+                            if self.saw_newline || self.search_count >= 4096 =>
+                        {
+                            State::Text
+                        }
+                        (_, 0x1b) => State::UnknownEscape,
+                        _ => State::Unknown,
+                    }
                 }
                 State::Text => self.text_byte(byte, &mut output),
                 State::Escape => match byte {
@@ -189,21 +198,6 @@ impl PlainStream {
     }
 }
 
-/// Project independent captured streams. A full bounded queue might have lost
-/// its prefix, so it is never interpreted as if it began at byte zero.
-pub fn project_captured_streams(streams: (Vec<u8>, Vec<u8>), queue_limit: usize) -> Vec<u8> {
-    let mut result = Vec::new();
-    for stream in [streams.0, streams.1] {
-        let mut projection = if stream.len() >= queue_limit {
-            PlainStream::unknown()
-        } else {
-            PlainStream::default()
-        };
-        result.extend(projection.project(&stream));
-    }
-    result
-}
-
 fn c1_state(byte: u8) -> State {
     match byte {
         0x9b => State::Csi,
@@ -235,36 +229,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_state_never_infers_ground_from_newline_or_terminator() {
+    fn unknown_state_fails_closed_and_counts_raw_gap() {
         let mut stream = PlainStream::unknown();
-        let input = b"osc payload\nsecret\x1b\\still unknown";
-        assert!(stream.push(input).is_empty());
-        assert_eq!(stream.take_gap(), input.len() as u64);
-    }
-
-    #[test]
-    fn incremental_projection_matches_replayed_cold_state() {
-        let bytes = b"start\x1b[31mred\x1b[0m\r\n\x1b]hidden\nprivate\x1b\\end\n";
-        let mut full = PlainStream::default();
-        let expected = full.project(bytes);
-        for split in 0..bytes.len() {
-            let mut stream = PlainStream::default();
-            let mut output = stream.project(&bytes[..split]);
-            output.extend(stream.project(&bytes[split..]));
-            assert_eq!(output, expected, "split {split}");
-        }
-    }
-
-    #[test]
-    fn captured_streams_do_not_share_escape_state() {
-        let stdout = b"\x1b]title\nsecret\x1b\\visible".to_vec();
-        let stderr = b"\x1b\\other".to_vec();
-        let output = super::project_captured_streams((stdout, stderr), 100);
-        assert_eq!(output, b"visibleother");
-        let unknown = super::project_captured_streams((b"private".to_vec(), Vec::new()), 7);
-        assert!(String::from_utf8(unknown)
-            .unwrap()
-            .contains("projection unavailable"));
+        assert!(stream.push(b"possibly osc\n").is_empty());
+        assert!(stream.push(&vec![b'x'; 4097]).is_empty());
+        assert_eq!(stream.push(b"\x1b\\safe"), b"safe");
+        assert_eq!(stream.take_gap(), 4112);
     }
 
     #[test]
@@ -286,12 +256,29 @@ mod tests {
     }
 
     #[test]
+    fn split_sequences_resynchronize_only_at_proven_boundary() {
+        for prefix in [
+            b"31mred\n".as_slice(),
+            b"title\n".as_slice(),
+            b"progress\r\n".as_slice(),
+        ] {
+            let mut stream = PlainStream::unknown();
+            let first = stream.project(prefix);
+            let first_text = String::from_utf8(first).unwrap();
+            assert!(first_text.contains(&format!("{} bytes elided", prefix.len())));
+            assert!(stream.push(b"\x1b").is_empty());
+            assert_eq!(stream.push(b"\\visible"), b"visible");
+            assert_eq!(stream.take_gap(), 2);
+        }
+    }
+
+    #[test]
     fn unknown_no_newline_flood_never_guesses_text() {
         let mut stream = PlainStream::unknown();
         let output = stream.project(&vec![b'x'; 8192]);
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "[projection unavailable (unknown escape state): 8192 bytes elided]\n"
+            "[plain output gap: 8192 bytes elided]\n"
         );
         assert!(stream.push(b"still unknown").is_empty());
     }

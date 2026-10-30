@@ -429,37 +429,26 @@ fn closed_reason(
     else {
         return completion_reason(workload, "");
     };
-    let start = log.end.saturating_sub(4096);
-    let mut projection = effigy_core::terminal_projection::PlainStream::unknown();
-    if start <= effigy_core::terminal_projection::PREFIX_SCAN_LIMIT {
-        if let Observed::Verified(prefix, _) = run::read_log(
-            cx,
-            root,
-            id,
-            process.sequence,
-            Stream::Stderr,
-            0,
-            start as usize,
-        ) {
-            if prefix.from == 0 && prefix.retained_from == 0 && prefix.bytes.len() as u64 == start {
-                projection = effigy_core::terminal_projection::PlainStream::default();
-                projection.push(&prefix.bytes);
-            }
-        }
-    }
-    let tail = if let Observed::Verified(tail, _) =
-        run::read_log(cx, root, id, process.sequence, Stream::Stderr, start, 4096)
-    {
-        if tail.from != start || (start > 0 && tail.retained_from != 0) {
-            projection = effigy_core::terminal_projection::PlainStream::unknown();
-        }
+    let tail = if let Observed::Verified(tail, _) = run::read_log(
+        cx,
+        root,
+        id,
+        process.sequence,
+        Stream::Stderr,
+        log.end.saturating_sub(4096),
+        4096,
+    ) {
+        let mut projection = if tail.from == 0 {
+            effigy_core::terminal_projection::PlainStream::default()
+        } else {
+            effigy_core::terminal_projection::PlainStream::unknown()
+        };
         String::from_utf8_lossy(&projection.project(&tail.bytes)).into_owned()
     } else {
         String::new()
     };
-    completion_reason_plain(workload, &tail)
+    completion_reason(workload, &tail)
 }
-
 fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     let mut projection = if tail.len() >= 4096 {
         effigy_core::terminal_projection::PlainStream::unknown()
@@ -468,10 +457,6 @@ fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     };
     let projected = projection.project(tail.as_bytes());
     let tail = String::from_utf8_lossy(&projected);
-    completion_reason_plain(workload, &tail)
-}
-
-fn completion_reason_plain(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     let mut reason = match workload {
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,

@@ -146,11 +146,11 @@ pub(super) fn run_container_up(
     holders: &[RunId],
 ) -> Result<String, RunnerError> {
     use std::io::IsTerminal;
-    let marker = crate::runner::startup_ansi_front();
+    let marker = std::env::var("EFFIGY_INTERNAL_ANSI_FRONT").ok();
     let ansi_front = interactive_front(
         output_json,
         std::env::var_os("CI").is_some(),
-        marker,
+        marker.as_deref(),
         std::io::stdout().is_terminal(),
     );
     let mut operation = DetachedOperationState {
@@ -174,7 +174,7 @@ pub(super) fn run_container_up(
     })
 }
 
-pub(in crate::runner) fn interactive_front(
+pub(super) fn interactive_front(
     json: bool,
     ci: bool,
     managed_front: Option<&str>,
