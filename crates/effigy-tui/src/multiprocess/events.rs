@@ -51,28 +51,19 @@ pub(super) fn drain_process_events(
         drained_events += 1;
         let render_startup_state = match event_item.kind {
             ProcessEventKind::Starting => {
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Starting);
+                state.record_startup_state(&event_item.process, ProcessStartupState::Starting);
                 true
             }
             ProcessEventKind::Started => {
                 // It has started, so it no longer waits: the tab follows the
                 // process's own state from here (effigy#458).
                 state.entry_waits.remove(&event_item.process);
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Running);
-                state
-                    .process_started_at
-                    .insert(event_item.process.clone(), Instant::now());
+                state.record_startup_state(&event_item.process, ProcessStartupState::Running);
                 state.pending_startup = state.pending_startup.saturating_sub(1);
                 true
             }
             ProcessEventKind::StartupFailed => {
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Failed);
+                state.record_startup_state(&event_item.process, ProcessStartupState::Failed);
                 state.exit_states.insert(
                     event_item.process.clone(),
                     crate::core::ProcessExitState::Failure,

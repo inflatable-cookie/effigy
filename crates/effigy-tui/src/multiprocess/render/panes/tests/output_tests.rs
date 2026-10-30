@@ -113,3 +113,36 @@ fn a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph() {
     assert!(later.contains("starting process..."), "{later}");
     assert!(later.contains("startup: starting (45s elapsed)"), "{later}");
 }
+
+#[test]
+fn an_entry_with_its_own_state_does_not_borrow_the_session_clock() {
+    use crate::waits::{EntryPhase, EntryState};
+
+    let entry = EntryState {
+        entry: "web".to_owned(),
+        phase: EntryPhase::Starting,
+        waiting_on: None,
+        not_started_because: None,
+        detail: None,
+        elapsed_ms: 7_000,
+    };
+    let lines = waiting_for_output_lines(
+        0,
+        Duration::from_secs(60),
+        0,
+        ProcessStartupState::Starting,
+        Some(&entry),
+    );
+    let text = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("startup: starting (7s elapsed)"), "{text}");
+    assert!(!text.contains("60s"), "{text}");
+}

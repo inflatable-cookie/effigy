@@ -42,10 +42,21 @@ pub(super) fn waiting_for_output_lines(
             )),
         ];
     }
+    // An entry that publishes its own state still owns its clock even when it
+    // names no further wait, so the pane shows the entry's phase elapsed
+    // rather than the session's (Q-017).
+    let startup_elapsed = entry_wait
+        .map(|entry| Duration::from_millis(entry.elapsed_ms))
+        .unwrap_or(active_elapsed);
     let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
     vec![
-        startup_meta_line(startup_state, active_elapsed, active_restart_count),
+        startup_meta_line(
+            startup_state,
+            startup_elapsed,
+            active_elapsed,
+            active_restart_count,
+        ),
         Line::from(vec![
             Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
             Span::styled(
@@ -80,12 +91,13 @@ fn entry_meta_line(entry: &EntryState) -> Line<'static> {
 
 fn startup_meta_line(
     startup_state: ProcessStartupState,
+    startup_elapsed: Duration,
     active_elapsed: Duration,
     active_restart_count: usize,
 ) -> Line<'static> {
     match startup_state {
-        ProcessStartupState::Waiting => status_meta_line("pending", Some(active_elapsed)),
-        ProcessStartupState::Starting => status_meta_line("starting", Some(active_elapsed)),
+        ProcessStartupState::Waiting => status_meta_line("pending", Some(startup_elapsed)),
+        ProcessStartupState::Starting => status_meta_line("starting", Some(startup_elapsed)),
         ProcessStartupState::Running => runtime_meta_line(active_elapsed, active_restart_count),
         ProcessStartupState::Failed => status_meta_line("failed", None),
     }

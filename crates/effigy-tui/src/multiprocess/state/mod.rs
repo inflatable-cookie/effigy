@@ -9,6 +9,7 @@ use crate::waits::EntryState;
 
 mod accessors;
 mod init;
+mod startup;
 #[cfg(test)]
 mod tests;
 
