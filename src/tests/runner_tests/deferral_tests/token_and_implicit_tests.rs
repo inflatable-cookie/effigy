@@ -13,6 +13,42 @@ fn fake_app_full_id(root: &std::path::Path) -> String {
     effigy_gateway::ports::sha256_hex(format!("{}-app-1", policy.project_name).as_bytes())
 }
 
+/// Seeds the release cache that the guest artifact resolves to under the fake
+/// HOME. The receipt digest is computed from these bytes, so the normal
+/// authentication in `verify_guest_artifact` still runs; nothing is skipped.
+fn seed_guest_effigy_artifact(home: &std::path::Path) {
+    use sha2::{Digest, Sha256};
+    let triple = "x86_64-unknown-linux-gnu";
+    let cache = home
+        .join(".effigy/workspace-bin/linux")
+        .join(triple)
+        .join(format!("v{}", env!("CARGO_PKG_VERSION")));
+    fs::create_dir_all(&cache).expect("mkdir fake guest artifact cache");
+    let bytes = b"fake-guest-effigy\n";
+    let artifact = cache.join(format!("effigy-{triple}"));
+    fs::write(&artifact, bytes).expect("write fake guest artifact");
+    let hex: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    fs::write(
+        cache.join(format!("effigy-{triple}.receipt")),
+        format!("release_triple={triple}\nsha256={hex}\nbuild_kind=release-download\n"),
+    )
+    .expect("write fake guest artifact receipt");
+    let version = effigy_core::build_info::active_version();
+    fs::write(
+        cache.join(format!("effigy-{triple}.active-version")),
+        format!("{version}\n"),
+    )
+    .expect("write fake guest artifact version");
+    fs::write(
+        cache.join(format!("effigy-{triple}.install-identity")),
+        format!("release:v{version}\n"),
+    )
+    .expect("write fake guest artifact identity");
+}
+
 fn setup_fake_docker_deferral_runtime(
     root: &std::path::Path,
     service_running: bool,
@@ -58,6 +94,13 @@ for arg in "$@"; do
     -g) if [ -n "$saw_id" ]; then id_mode=gid; fi ;;
   esac
 done
+case "$*" in
+  *boot_id*)
+    if [ -f "$HOME/fake-guest-identity-absent" ]; then exit 0; fi
+    printf 'boot=fake-boot\nplatform=x86_64\nlibc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n'
+    exit 0
+    ;;
+esac
 case "$*" in
   *'id -u'*'id -g'*) printf '501\n20\n'; exit 0 ;;
 esac
@@ -190,6 +233,7 @@ exit 0
     let gateway_home = temp_home.join(".effigy/gateway");
     fs::create_dir_all(&lease_home).expect("mkdir lease home");
     fs::create_dir_all(&gateway_home).expect("mkdir fake gateway home");
+    seed_guest_effigy_artifact(&temp_home);
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
         ("HOME", Some(temp_home.display().to_string())),
@@ -788,5 +832,33 @@ shared_root = "{}"
     assert!(
         mkdir_at < deferred_at && chown_at < deferred_at && probe_at < deferred_at,
         "permission prep must finish before deferred exec, got {log}"
+    );
+}
+
+#[test]
+fn run_manifest_task_php_app_bundle_refuses_container_that_reports_no_identity() {
+    let _guard = lock_test();
+    let root = temp_workspace("php_app-container-identity-absent");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    setup_php_library_path_bundle(&root);
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = { type = "path", dir = "bundles/php-library" }
+"#,
+    );
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    // The guest reports no boot, platform or libc, so no identity is verified
+    // and the deferral must refuse before any guest state is written.
+    fs::write(root.join("fake-home/fake-guest-identity-absent"), "")
+        .expect("mark guest identity absent");
+
+    let err =
+        crate::runner::tests::prelude::run_task_in_workspace(&root, "missing-task", &["--watch"])
+            .expect_err("an unverified container identity must refuse the deferral");
+    let message = format!("{err:?}");
+    assert!(
+        message.contains("did not report its identity"),
+        "expected an identity refusal, got {message}"
     );
 }
