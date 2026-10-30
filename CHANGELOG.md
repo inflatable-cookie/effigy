@@ -288,6 +288,47 @@ During v0.x, MINOR bumps may include breaking changes.
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No transport, guest client or command surface is wired to it yet.
+- The workspace channel binds one attachment's streams to its terminal
+  (contract 052 §8.11). Output sequence numbers are one series per stream id
+  shared by every kind on it, so a stream's stdout and stderr no longer restart
+  each other, and a retained chunk is published with its absolute log position
+  so a client's resume cursor, the frame sequence and the retained log are one
+  coordinate system across reconnects and chunk boundaries. `RetainedStreams`
+  is the kernel's own endpoint over `run::read_log`: retained streams have
+  independent logs and lengths, so an attach reports the position it consumed on
+  each stream id (`cursors`), with `cursor` as the primary default, and one
+  position for the whole connection is refused rather than skipping bytes on a
+  shorter stream or replaying them on a longer one. Negotiation covers every
+  stream and is pure, so a reconnect resumes each retained stream at its own
+  position and a replacement the host refuses leaves the working attachment's
+  reader where it was; a future cursor, a cursor for a stream the endpoint does
+  not carry, a position on a stream with no retained log, or an unreadable log
+  refuses the attach, and a position the log rotated past becomes one `gap`
+  frame naming the first missing offset, ahead of the data that resumes there —
+  even when the surviving segment is empty — so every frame on a stream keeps a
+  strictly increasing sequence. A connection that ends on a refused or malformed
+  frame releases its own secondary row, so a rejected frame cannot exhaust the
+  run's secondary slots or orphan one; an owning client is released only by its
+  own end of stream. The endpoint
+  re-checks the connection's attachment on every read. `Terminal::input`
+  receives one validated terminal input frame exactly once and
+  `Terminal::resize` the newest size with no queue behind it, fenced on the
+  attachment's own lifetime twice: the channel re-reads the row before the call
+  and the owner receives the live attachment so its last check can be
+  `Attachment::attached_observed`; a host with no terminal owner refuses both
+  instead of reporting a delivery it did not make. An inbound frame is accepted
+  only for the connection's own attach request, its own terminal stream and the
+  stream's next sequence, and an acknowledgement must be shape-only and name a
+  data frame this connection published and has not freed, so an unknown stream,
+  a foreign request, a repeated or out-of-order frame, a duplicate or stale
+  acknowledgement or a malformed payload refuses and closes with no host
+  effect. A replacement attachment drops the previous window, held chunk,
+  numbering and inbound sequence before its own cursor positions the stream,
+  so it resumes at its own cursor and cannot free the previous attachment's
+  frames; an acknowledgement releases its own stream's frames between other
+  streams' frames. The retained reader, the terminal owner and its host front
+  end, and the transport remain separate tasks.
+
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated
   environment→session record so a borrowing child or host hold is never mistaken
