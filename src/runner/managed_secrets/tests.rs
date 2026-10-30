@@ -603,6 +603,24 @@ fn reader_removed(byte: u8) -> bool {
     )
 }
 
+/// What a sink must be for a renderer to print every byte of it: well-formed
+/// text with no C1 control, so nothing is dropped and no halves are joined.
+fn assert_printable_bytes(what: &str, bytes: &[u8]) {
+    let text = std::str::from_utf8(bytes);
+    assert!(
+        text.is_ok(),
+        "the {what} still carries a byte no renderer prints"
+    );
+    assert!(
+        !text
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .any(|character| ('\u{80}'..='\u{9f}').contains(&character)),
+        "the {what} still carries a C1 control"
+    );
+}
+
 fn shell_spec(root: &Path, script: String, secret: Option<&str>) -> ProcessSpec {
     let mut env = BTreeMap::from([(
         "PATH".into(),
@@ -682,6 +700,7 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
                 !bytes.iter().any(|byte| reader_removed(*byte)),
                 "the {what} still carries a control a reader drops"
             );
+            assert_printable_bytes(what, bytes);
         }
         assert!(
             String::from_utf8_lossy(&tail).contains("[REDACTED]"),
@@ -738,6 +757,7 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
             !bytes.iter().any(|byte| reader_removed(*byte)),
             "the {what} still carries a control a reader drops"
         );
+        assert_printable_bytes(what, bytes);
     }
     assert!(
         tail_text.contains("[REDACTED]"),
@@ -749,6 +769,57 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
         !display.contains(SECRET),
         "the pty display carries a known secret ({} bytes)",
         SECRET.len()
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+    // The same value split by a UTF-8 C1 control (U+009B, CSI), on a real
+    // pseudo-terminal: the terminal emulator drops that character instead of
+    // printing it, which would join the halves.
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-c1-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\302\\233secret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value c1".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    for (what, bytes) in [
+        ("c1 pty stdout", &stdout),
+        ("c1 pty stderr", &stderr),
+        ("c1 pty merged tail", &tail),
+    ] {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert_printable_bytes(what, bytes);
+    }
+    assert!(
+        String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+        "the c1 pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(
+        display.contains("[REDACTED]"),
+        "c1 pty display: {display:?}"
+    );
+    assert!(
+        !display.contains(SECRET),
+        "the c1 pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    // Reversible break probe: the emulator drops the C1 character, so the
+    // pre-fix arrival shape would have reached the screen as one value.
+    let pre_fix = managed_tui_vt_display("split-known-\u{9b}secret-value".as_bytes());
+    assert!(
+        pre_fix.contains(SECRET),
+        "the terminal emulator must drop a C1 control and join its neighbours"
     );
     assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
 }

@@ -14,7 +14,9 @@ During v0.x, MINOR bumps may include breaking changes.
   sequence can no longer reappear unredacted in a log, tail, JSON envelope or
   TUI transcript; a sideways carriage return inside a value is dropped, so it
   cannot erase or join what a display shows after redaction, while a `CR LF`
-  line ending keeps its CR. Each stream's log and queue is redacted again over
+  line ending keeps its CR. Secret-bearing output is well-formed text: a C1
+  control (a UTF-8 `U+009B` CSI, for example) and an invalid byte are dropped,
+  because a renderer drops them and joins what is either side. Each stream's log and queue is redacted again over
   its own bytes, because keeping the streams apart can join halves that arrival
   order separated. A redaction replacement is a byte readers keep and no secret
   contains, so no reader can join across it; if no such byte exists for a

@@ -1406,6 +1406,21 @@ fn assert_absent(what: &str, bytes: &[u8], secret: &[u8]) {
         !bytes.iter().any(|byte| is_reader_removed(*byte)),
         "{what} still carries a control a reader drops"
     );
+    // Well-formed text only: a renderer drops an invalid byte or a C1 control
+    // (U+0080..=U+009F), which joins the runs either side of it.
+    let text = std::str::from_utf8(bytes);
+    assert!(
+        text.is_ok(),
+        "{what} still carries a byte no renderer prints"
+    );
+    assert!(
+        !text
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .any(|character| ('\u{80}'..='\u{9f}').contains(&character)),
+        "{what} still carries a C1 control"
+    );
     assert!(
         !reader_view(bytes)
             .windows(secret.len())
@@ -1898,5 +1913,103 @@ fn redaction_stops_capture_when_no_reader_safe_replacement_exists() {
             continue;
         }
         assert!(bytes.is_empty(), "{what} must hold nothing when blocked");
+    }
+}
+
+#[test]
+fn redaction_drops_utf8_c1_controls_and_invalid_bytes_before_redaction() {
+    // A renderer does not print a C1 control (U+0080..=U+009F) or an invalid
+    // byte: it drops it and joins the runs either side, so a value split by one
+    // is a split a redactor over the retained bytes never sees. They are
+    // dropped before redaction, which joins the halves in the frame a display
+    // could show, and what reaches a sink is well-formed text only.
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let cx = cx();
+    let shapes: Vec<(&str, Vec<(Stream, &[u8])>)> = vec![
+        // U+009B CSI between the halves: the renderer drops it.
+        (
+            "c1-csi",
+            vec![(STD, &b"custody-split-\xc2\x9bsecret-value\n"[..])],
+        ),
+        // U+009D OSC and U+009C ST, both dropped, so the halves meet.
+        (
+            "c1-osc",
+            vec![(STD, &b"custody-split-\xc2\x9d\xc2\x9csecret-value\n"[..])],
+        ),
+        // U+0085 NEL and U+0080 padding.
+        (
+            "c1-nel",
+            vec![(STD, &b"custody-split-\xc2\x85\xc2\x80secret-value\n"[..])],
+        ),
+        // Across reads, and across streams.
+        (
+            "c1-across-reads",
+            vec![
+                (STD, &b"custody-split-\xc2"[..]),
+                (STD, &b"\x9bsecret-value\n"[..]),
+            ],
+        ),
+        (
+            "c1-across-streams",
+            vec![
+                (STD, &b"custody-split-\xc2\x9b"[..]),
+                (ERR, &b"secret-value\n"[..]),
+            ],
+        ),
+        // An invalid byte is dropped by the renderer too.
+        (
+            "invalid-byte",
+            vec![(STD, &b"custody-split-\xffsecret-value\n"[..])],
+        ),
+        // A bare continuation byte, and an overlong lead.
+        (
+            "stray-continuation",
+            vec![(STD, &b"custody-split-\x9bsecret-value\n"[..])],
+        ),
+        (
+            "overlong-lead",
+            vec![(STD, &b"custody-split-\xc0\x9bsecret-value\n"[..])],
+        ),
+        // A surrogate and a scalar beyond U+10FFFF.
+        (
+            "surrogate",
+            vec![(STD, &b"custody-split-\xed\xa0\x80secret-value\n"[..])],
+        ),
+        (
+            "beyond-unicode",
+            vec![(STD, &b"custody-split-\xf4\x90\x80\x80secret-value\n"[..])],
+        ),
+    ];
+    for (name, steps) in shapes {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in steps {
+            capture.feed(stream, bytes);
+        }
+        capture.close();
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&format!("{name}: {what}"), &bytes, SECRET);
+        }
+        let tail = String::from_utf8_lossy(&capture.tail()).into_owned();
+        assert!(
+            tail.contains("[REDACTED]"),
+            "{name}: tail keeps the marker: {tail:?}"
+        );
+    }
+    // A well-formed, control-free character survives untouched.
+    let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+    capture.feed(Stream::Stdout, "s\u{e9}par\u{e9} \u{1f642}\n".as_bytes());
+    capture.close();
+    assert_eq!(capture.tail(), "s\u{e9}par\u{e9} \u{1f642}\n".as_bytes());
+    for (what, bytes) in capture.sinks(&cx) {
+        assert_absent(&what, &bytes, SECRET);
+    }
+    // A secret that itself carries a C1 control is matched in the form a
+    // display shows, which is the C1-free one.
+    let capture = FakeCapture::new(home(), &cx, vec![b"c1-\xc2\x9binside".to_vec()]);
+    capture.feed(Stream::Stdout, b"c1-\xc2\x9binside\n");
+    capture.close();
+    assert_eq!(&capture.tail()[..], b"[REDACTED]\n");
+    for (what, bytes) in capture.sinks(&cx) {
+        assert_absent(&what, &bytes, b"c1-inside");
     }
 }
