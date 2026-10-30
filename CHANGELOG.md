@@ -653,6 +653,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and `mc ready local` health check, so moving a service is a catalog-name
   change. Existing volumes and data are untouched; there is no migration. See
   [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#service-catalog-packs-retired-sources-added).
+- Release gates and stages, and state apply and capture, show live progress
+  that names the current gate, layer or capture, its known count, and the exact
+  command or source they wait on, in place of one fixed label. JSON, piped and
+  quiet output are unchanged.
 
 ### Removed
 

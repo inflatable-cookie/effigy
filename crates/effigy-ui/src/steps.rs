@@ -125,6 +125,15 @@ impl ProgressSource {
         }
     }
 
+    /// Name the exact object or probe now awaited, when the work moves on to
+    /// something other than the one first named.
+    pub fn waiting_on(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
     /// Update the current object or sub-step, known count and latest event.
     pub fn update(
         &self,

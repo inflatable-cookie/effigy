@@ -79,49 +79,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    235,
+    244,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    858,
+    867,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1032,
+    1041,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1035,
+    1044,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1037,
+    1046,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1039,
+    1048,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1056,
+    1065,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1058,
+    1067,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -358,42 +358,6 @@
     2002,
     "let result = setup_step(\"starting the gateway\", |step| {",
     22
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    117,
-    "let step = effigy_ui::steps::step(&release_run_label(&action, to));",
-    34
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    178,
-    "self.gate = Some(self.root.step(&label));",
-    36
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    329,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    338,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
-    "src/runner/state_command.rs",
-    201,
-    "let step = effigy_ui::steps::step(&action.label(&layer.key));",
-    42
-  ],
-  [
-    "src/runner/state_command.rs",
-    841,
-    "effigy_ui::steps::step(&label)",
-    27
   ],
   [
     "src/runner/task_engine/admission.rs",
