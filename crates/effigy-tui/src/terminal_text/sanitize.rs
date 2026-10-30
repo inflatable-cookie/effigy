@@ -10,7 +10,6 @@ pub fn sanitize_log_text(raw: &str) -> String {
                     | '\u{000E}'..='\u{001A}'
                     | '\u{001C}'..='\u{001F}'
                     | '\u{007F}'
-                    | '\u{0080}'..='\u{009F}'
             )
         })
         .collect()

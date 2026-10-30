@@ -438,25 +438,13 @@ fn closed_reason(
         log.end.saturating_sub(4096),
         4096,
     ) {
-        let mut projection = if tail.from == 0 {
-            effigy_core::terminal_projection::PlainStream::default()
-        } else {
-            effigy_core::terminal_projection::PlainStream::unknown()
-        };
-        String::from_utf8_lossy(&projection.project(&tail.bytes)).into_owned()
+        String::from_utf8_lossy(&tail.bytes).into_owned()
     } else {
         String::new()
     };
     completion_reason(workload, &tail)
 }
 fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
-    let mut projection = if tail.len() >= 4096 {
-        effigy_core::terminal_projection::PlainStream::unknown()
-    } else {
-        effigy_core::terminal_projection::PlainStream::default()
-    };
-    let projected = projection.project(tail.as_bytes());
-    let tail = String::from_utf8_lossy(&projected);
     let mut reason = match workload {
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,

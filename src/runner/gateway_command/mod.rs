@@ -275,12 +275,8 @@ fn run_managed_gateway_start(command: &str) -> Result<(), RunnerError> {
     if output.status.success() {
         Ok(())
     } else {
-        let stderr =
-            effigy_core::terminal_projection::PlainStream::default().project(&output.stderr);
-        let stdout =
-            effigy_core::terminal_projection::PlainStream::default().project(&output.stdout);
-        let stderr = String::from_utf8_lossy(&stderr).trim().to_owned();
-        let stdout = String::from_utf8_lossy(&stdout).trim().to_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         let detail = if !stderr.is_empty() {
             normalize_gateway_daemon_output(&stderr)
         } else if !stdout.is_empty() {

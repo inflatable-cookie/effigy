@@ -336,33 +336,16 @@ pub(super) fn invocation(
 /// `deadline` is the enclosing activation's observation budget. A listener
 /// still starting when it is spent withholds its own route; a caller with no
 /// enclosing budget passes `None` (a restart waits on its own readiness).
-#[cfg(test)]
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<HostProcessListenerReport, RunnerError> {
-    start_host_processes_for_container_with_front(repo_root, policy, deadline, false)
-}
-
-pub(in crate::runner) fn start_host_processes_for_container_with_front(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    deadline: Option<Instant>,
-    ansi_front: bool,
-) -> Result<HostProcessListenerReport, RunnerError> {
     let HostProcessStart {
         started,
         listeners,
         failures,
-    } = start_host_processes_inner(
-        repo_root,
-        policy,
-        None,
-        ReplaceGate::Unheld,
-        deadline,
-        ansi_front,
-    )?;
+    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, deadline)?;
     detach_started(repo_root, policy, started, None)?;
     Ok(HostProcessListenerReport {
         ready: listeners,
@@ -386,20 +369,10 @@ pub(in crate::runner) fn start_host_processes_for_container_with_front(
 ///
 /// An unknown name fails before any effect, naming the processes this
 /// environment declares.
-#[cfg(test)]
 pub(in crate::runner) fn restart_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     requested: &[String],
-) -> Result<HostProcessRestartReport, RunnerError> {
-    restart_host_processes_for_container_with_front(repo_root, policy, requested, false)
-}
-
-pub(in crate::runner) fn restart_host_processes_for_container_with_front(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    requested: &[String],
-    ansi_front: bool,
 ) -> Result<HostProcessRestartReport, RunnerError> {
     let selection = restart_selection(policy, requested)?;
     let selected = selection.ordered.iter().cloned().collect::<BTreeSet<_>>();
@@ -413,7 +386,6 @@ pub(in crate::runner) fn restart_host_processes_for_container_with_front(
         Some(&selected),
         ReplaceGate::HeldForReplace,
         None,
-        ansi_front,
     )?;
     // A restart names the processes it replaces, so a listener that did not
     // publish is this restart's failure, not a partial environment: the
@@ -574,7 +546,7 @@ pub(super) fn start_host_processes_owning(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
     let HostProcessStart { started, .. } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, None, false)?;
+        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, None)?;
     Ok(started)
 }
 
@@ -605,7 +577,6 @@ fn start_host_processes_inner(
     selection: Option<&BTreeSet<String>>,
     gate: ReplaceGate,
     deadline: Option<Instant>,
-    ansi_front: bool,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
@@ -829,7 +800,6 @@ fn start_host_processes_inner(
                 continue;
             }
             let spec = HostProcessRuntimeSpec {
-                ansi_front,
                 schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
                 project_path: project_path.clone(),
                 runtime_generation: super::random_token()?,

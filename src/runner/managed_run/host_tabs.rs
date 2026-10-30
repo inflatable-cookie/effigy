@@ -218,14 +218,13 @@ impl HostFollower {
         }
         for line in self.tail.read(&self.tab.log) {
             poll.lines.push(line.clone());
-            if let Some(status) = status_from_log_line(&self.tab, &String::from_utf8_lossy(&line)) {
+            if let Some(status) = status_from_log_line(&self.tab, &line) {
                 if status != self.status {
                     self.status = status.clone();
                     poll.statuses.push(status);
                 }
             }
         }
-        poll.generation_changed = self.tail.generation_changed;
         poll
     }
 }
@@ -233,9 +232,8 @@ impl HostFollower {
 /// One poll of a host process: log lines and status transitions, in order.
 #[derive(Debug, Default)]
 pub(in crate::runner) struct HostPoll {
-    pub(in crate::runner) lines: Vec<Vec<u8>>,
+    pub(in crate::runner) lines: Vec<String>,
     pub(in crate::runner) statuses: Vec<HostStatus>,
-    pub(in crate::runner) generation_changed: bool,
 }
 
 /// A bounded incremental reader for one host process's log file. Lines are
@@ -245,8 +243,6 @@ pub(in crate::runner) struct HostPoll {
 struct LogTail {
     offset: u64,
     partial: Vec<u8>,
-    generation_changed: bool,
-    identity: Option<(u64, u64)>,
 }
 
 impl LogTail {
@@ -254,27 +250,20 @@ impl LogTail {
         Self::default()
     }
 
-    fn read(&mut self, path: &Path) -> Vec<Vec<u8>> {
+    fn read(&mut self, path: &Path) -> Vec<String> {
         use std::io::{Read as _, Seek as _, SeekFrom};
-        use std::os::unix::fs::MetadataExt;
 
-        self.generation_changed = false;
         let Ok(mut file) = std::fs::File::open(path) else {
             return Vec::new();
         };
         let Ok(metadata) = file.metadata() else {
             return Vec::new();
         };
-        let identity = (metadata.dev(), metadata.ino());
-        if self.identity.is_some_and(|previous| previous != identity)
-            || metadata.len() < self.offset
-        {
+        if metadata.len() < self.offset {
             // A new generation opened the log again from the start.
             self.offset = 0;
             self.partial.clear();
-            self.generation_changed = true;
         }
-        self.identity = Some(identity);
         if metadata.len() == self.offset {
             return Vec::new();
         }
@@ -289,12 +278,12 @@ impl LogTail {
         self.partial.extend_from_slice(&chunk);
         let mut lines = Vec::new();
         while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
-            let mut line = self.partial.drain(..=end).collect::<Vec<u8>>();
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            lines.push(line);
+            let line = self.partial.drain(..=end).collect::<Vec<u8>>();
+            lines.push(
+                String::from_utf8_lossy(&line)
+                    .trim_end_matches(['\n', '\r'])
+                    .to_owned(),
+            );
         }
         lines
     }
@@ -382,61 +371,18 @@ mod tests {
         let mut tail = LogTail::new();
         assert_eq!(
             tail.read(&log),
-            vec![b"one".to_vec(), b"two".to_vec()],
+            vec!["one".to_owned(), "two".to_owned()],
             "a partial trailing line waits"
         );
 
         std::fs::write(&log, "one\ntwo\npartial line\nthree\n").expect("append");
         assert_eq!(
             tail.read(&log),
-            vec![b"partial line".to_vec(), b"three".to_vec()],
+            vec!["partial line".to_owned(), "three".to_owned()],
             "the partial line completes before it is shown"
         );
 
         std::fs::write(&log, "fresh\n").expect("truncate for a new generation");
-        assert_eq!(tail.read(&log), vec![b"fresh".to_vec()]);
-    }
-
-    #[test]
-    fn underlay_follow_log_keeps_tui_colour_and_plain_reader_strips_it() {
-        let dir = tempfile::tempdir().expect("log dir");
-        let log = dir.path().join("api.log");
-        std::fs::write(
-            &log,
-            b"\x1b[32mCompiling\x1b[0m api\r\x1b[31merror\x1b[0m\n",
-        )
-        .expect("log");
-        let mut follower = LogTail::new();
-        let lines = follower.read(&log);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].windows(5).any(|bytes| bytes == b"\x1b[32m"));
-        let mut projection = effigy_core::terminal_projection::PlainStream::default();
-        let plain = projection.project(&lines[0]);
-        assert_eq!(plain, b"Compiling api\nerror");
-    }
-
-    #[test]
-    fn replacing_log_with_larger_file_resets_generation() {
-        let dir = tempfile::tempdir().expect("log dir");
-        let log = dir.path().join("api.log");
-        let next = dir.path().join("next.log");
-        std::fs::write(&log, "old\n").unwrap();
-        let mut follower = LogTail::new();
-        assert_eq!(follower.read(&log), vec![b"old".to_vec()]);
-        std::fs::write(&next, "new longer generation\n").unwrap();
-        std::fs::rename(&next, &log).unwrap();
-        assert_eq!(follower.read(&log), vec![b"new longer generation".to_vec()]);
-        assert!(follower.generation_changed);
-    }
-
-    #[test]
-    fn plain_host_reader_retains_raw_c1_until_projection() {
-        let dir = tempfile::tempdir().expect("log dir");
-        let log = dir.path().join("api.log");
-        std::fs::write(&log, b"visible \x9dhidden\x07done\n").unwrap();
-        let mut follower = LogTail::new();
-        let lines = follower.read(&log);
-        let mut projection = effigy_core::terminal_projection::PlainStream::default();
-        assert_eq!(projection.project(&lines[0]), b"visible done");
+        assert_eq!(tail.read(&log), vec!["fresh".to_owned()]);
     }
 }

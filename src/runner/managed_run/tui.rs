@@ -202,7 +202,7 @@ impl Shared {
                 self.queue.push_back(ProcessEvent {
                     process: name.clone(),
                     kind: ProcessEventKind::Stdout,
-                    payload: String::from_utf8_lossy(&line).into_owned(),
+                    payload: line,
                     chunk: None,
                 });
             }

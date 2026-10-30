@@ -17,9 +17,7 @@ use effigy_kernel::observe::Observed;
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::environment;
-use crate::runner::host_process::{
-    restart_host_processes_for_container_with_front, HostProcessRestartReport,
-};
+use crate::runner::host_process::{restart_host_processes_for_container, HostProcessRestartReport};
 
 /// The payload schema of `effigy container <NAME> restart --json`.
 const RESTART_SCHEMA: &str = "effigy.container.restart.v1";
@@ -48,17 +46,7 @@ pub(super) fn run_container_restart(
     // after the gate is released, so a listener that never answers still
     // yields to `down` instead of holding the environment for the whole gate
     // budget (effigy#390).
-    use std::io::IsTerminal;
-    let marker = std::env::var("EFFIGY_INTERNAL_ANSI_FRONT").ok();
-    let ansi_front = super::lifecycle::interactive_front(
-        output_json,
-        std::env::var_os("CI").is_some(),
-        marker.as_deref(),
-        std::io::stdout().is_terminal(),
-    );
-    let report = restart_host_processes_for_container_with_front(
-        &repo_root, &policy, processes, ansi_front,
-    )?;
+    let report = restart_host_processes_for_container(&repo_root, &policy, processes)?;
     Ok(restart_report(&repo_root, &report, output_json))
 }
 

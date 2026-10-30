@@ -35,7 +35,7 @@ use crate::runner::environment;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
 };
-use crate::runner::host_process::start_host_processes_for_container_with_front;
+use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::environment::{BackendError, Operation, Retention};
 use effigy_containers::ContainerAction;
 use effigy_containers::{
@@ -145,14 +145,6 @@ pub(super) fn run_container_up(
     retention: Retention,
     holders: &[RunId],
 ) -> Result<String, RunnerError> {
-    use std::io::IsTerminal;
-    let marker = std::env::var("EFFIGY_INTERNAL_ANSI_FRONT").ok();
-    let ansi_front = interactive_front(
-        output_json,
-        std::env::var_os("CI").is_some(),
-        marker.as_deref(),
-        std::io::stdout().is_terminal(),
-    );
     let mut operation = DetachedOperationState {
         active: detach,
         ..Default::default()
@@ -163,7 +155,6 @@ pub(super) fn run_container_up(
         (attach, detach),
         output_json,
         (retention, holders),
-        ansi_front,
         &mut operation,
     );
     result.map_err(|error| {
@@ -172,21 +163,6 @@ pub(super) fn run_container_up(
         }
         detached_activation_failure(&operation, output_json, error)
     })
-}
-
-pub(super) fn interactive_front(
-    json: bool,
-    ci: bool,
-    managed_front: Option<&str>,
-    tty: bool,
-) -> bool {
-    !json
-        && !ci
-        && match managed_front {
-            Some("1") => true,
-            Some(_) => false,
-            None => tty,
-        }
 }
 
 /// Render one failed detached activation.
@@ -317,7 +293,6 @@ fn run_container_up_inner(
     (attach, detach): (bool, bool),
     output_json: bool,
     (retention, holders): (Retention, &[RunId]),
-    ansi_front: bool,
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
@@ -429,7 +404,6 @@ fn run_container_up_inner(
                 observation
                     .get()
                     .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
-                ansi_front,
             )
         },
     )?;
@@ -661,7 +635,6 @@ fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
     deadline: std::time::Instant,
-    ansi_front: bool,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
     // Readiness is Running plus the service's own health check, decided by the
@@ -766,12 +739,7 @@ fn complete_container_up_runtime_integrations(
     // listener that has not opened its port when it is spent withholds its own
     // route instead of holding the activation open (effigy#455, effigy#411).
     let (managed_host_listeners, managed_host_listener_failures) =
-        match start_host_processes_for_container_with_front(
-            repo_root,
-            policy,
-            Some(deadline),
-            ansi_front,
-        ) {
+        match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
             Ok(report) => (report.ready, report.failures),
             Err(error)
                 if policy
@@ -1579,16 +1547,6 @@ mod tests {
         gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
         run_container_down_command, sanitized_failure_cause, DetachedOperationState, RunnerError,
     };
-
-    #[test]
-    fn interactive_capability_captures_front_before_detach() {
-        assert!(super::interactive_front(false, false, None, true));
-        assert!(super::interactive_front(false, false, Some("1"), false));
-        assert!(!super::interactive_front(false, false, Some("0"), true));
-        assert!(!super::interactive_front(false, false, None, false));
-        assert!(!super::interactive_front(true, false, Some("1"), true));
-        assert!(!super::interactive_front(false, true, Some("1"), true));
-    }
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,

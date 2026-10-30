@@ -9,7 +9,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use effigy_core::task_selection::TaskSurface;
 use effigy_kernel::custody::Stream;
 
@@ -17,52 +16,6 @@ use super::*;
 use crate::runner::task_engine::{
     run_plain, PlainCommand, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
-
-#[test]
-fn projected_json_gap_keeps_raw_resume_offset() {
-    let bytes = b"31msecret\n";
-    let mut projection = PlainStream::unknown();
-    let mut stream = StreamJson::new(10);
-    stream.bytes.extend(projection.project(bytes));
-    let json = stream.json(10 + bytes.len() as u64);
-    assert_eq!(json["from"], 10);
-    assert_eq!(json["next_offset"], 10 + bytes.len() as u64);
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(json["data_base64"].as_str().unwrap())
-        .unwrap();
-    assert_eq!(
-        String::from_utf8(data).unwrap(),
-        format!("[plain output gap: {} bytes elided]\n", bytes.len())
-    );
-}
-
-#[test]
-fn resumed_reader_replays_raw_prefix_across_csi_and_osc() {
-    for (raw, offset, expected) in [
-        (b"\x1b[31mred\x1b[0m".as_slice(), 3, b"red".as_slice()),
-        (
-            b"\x1b]title\x1b\\visible".as_slice(),
-            5,
-            b"visible".as_slice(),
-        ),
-    ] {
-        let mut projection = resume_with(offset as u64, |start, length| {
-            Some(effigy_kernel::run::LogRead {
-                retained_from: 0,
-                from: start,
-                bytes: raw[start as usize..start as usize + length].to_vec(),
-                end: raw.len() as u64,
-                truncated: false,
-            })
-        });
-        assert_eq!(projection.project(&raw[offset..]), expected);
-    }
-    let mut projection = resume_with(12, |_, _| None);
-    assert_eq!(
-        projection.project(b"partial\n"),
-        b"[plain output gap: 8 bytes elided]\n"
-    );
-}
 
 #[cfg(feature = "fault-injection")]
 const LINES: usize = 40;
@@ -250,7 +203,6 @@ impl Collected {
                     stream,
                     offset,
                     bytes,
-                    ..
                 } => {
                     let (sink, base) = match stream {
                         Stream::Stdout => (&mut self.stdout, 0),

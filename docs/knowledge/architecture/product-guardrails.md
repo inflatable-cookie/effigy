@@ -51,9 +51,8 @@ when the real cause was two named services failing their health checks.
   each step ends with a one-line success or failure. Spinners write to stderr
   and never appear in `--json`, piped or non-terminal output. A managed TUI
   owns its screen: nested Effigy processes in its panes use plain start and
-  finish lines without banners or spinner redraws. ANSI panes retain application
-  colour; non-terminal log readers strip terminal controls and report unsafe
-  omitted prefixes.
+  finish lines without banners or spinner redraws. Application output remains
+  unfiltered.
 - **A spinner must carry live state.** Tom confirmed on 2026-10-29 that a
   canned label fixed for the whole wait is noise. Show the current sub-step or
   object (service, image, dependency, layer or gate), known counts or ratios,

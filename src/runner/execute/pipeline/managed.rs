@@ -273,12 +273,7 @@ fn run_managed_control(
         }
         ManagedInvocation::Logs {
             process, follow, ..
-        } => managed_run::logs(
-            &addressed,
-            process.as_deref(),
-            *follow,
-            preflight.output_json,
-        ),
+        } => managed_run::logs(&addressed, process.as_deref(), *follow),
         ManagedInvocation::Stop { .. } => managed_run::stop(&addressed),
         ManagedInvocation::Run { .. } => unreachable!("handled above"),
     }?;
@@ -422,18 +417,6 @@ fn start_managed_run(
         Front::Text => environment_host_processes(context, &plan)?,
         _ => Vec::new(),
     };
-    let ansi_available = !context.preflight.output_json && std::env::var_os("CI").is_none();
-    let ansi_workloads = tui
-        .as_ref()
-        .filter(|_| ansi_available)
-        .map(|tui| {
-            tui.tabs
-                .iter()
-                .filter(|tab| tab.source == TabSource::Workload)
-                .map(|tab| tab.name.clone())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     let started = managed_run::start(&ClientStart {
         addressed: Addressed {
             target: &target,
@@ -444,8 +427,6 @@ fn start_managed_run(
         cwd: context.preflight.invocation_cwd.clone(),
         front,
         terminal,
-        ansi_environment: ansi_available && tui.is_some(),
-        ansi_workloads,
         resolved_env: &resolved_inherited_env,
     })?;
     match front {
@@ -517,7 +498,7 @@ fn displayed_plan(
     context: &ManagedContext<'_, '_, '_>,
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<effigy_managed::ManagedTaskPlan, RunnerError> {
-    let environment = environment_plan(context, &plan, "<run token>", &BTreeMap::new(), false)?;
+    let environment = environment_plan(context, &plan, "<run token>", &BTreeMap::new())?;
     let container_repo_root = context
         .binding_resolution
         .exec_working_dir(context.repo())?;
@@ -528,7 +509,6 @@ fn displayed_plan(
         "<run token>",
         container_repo_root.as_deref(),
         false,
-        &[],
     )?;
     for process in &mut plan.processes {
         match process.role {
@@ -777,8 +757,6 @@ fn own_managed_run(
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<Option<String>, RunnerError> {
     let pane_feedback = owner.payload.front == Front::Tui;
-    let ansi_workloads = owner.payload.ansi_workloads.clone();
-    let ansi_environment = owner.payload.ansi_environment;
     let preflight = context.preflight;
     let selection = context.selection;
     let token = generate_managed_run_token();
@@ -827,8 +805,7 @@ fn own_managed_run(
         // handoff its spawn attaches (effigy#338) — never in the rendered
         // command, never in its environment, and never in the plan `--plan`
         // displays.
-        let environment =
-            environment_plan(context, &plan, &token, &role_schema_env, ansi_environment)?;
+        let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
         let target = context.target(&plan.profile);
         let owned = OwnedRun {
             target,
@@ -910,7 +887,6 @@ fn own_managed_run(
             &token,
             container_repo_root.as_deref(),
             pane_feedback,
-            &ansi_workloads,
         )
     };
     managed_run::own(owner, owned, prepare, workloads)
@@ -1140,7 +1116,6 @@ fn environment_plan(
     plan: &effigy_managed::ManagedTaskPlan,
     token: &str,
     schema_env: &BTreeMap<String, String>,
-    ansi_front: bool,
 ) -> Result<Option<EnvironmentPlan>, RunnerError> {
     if !environment_owned(context, plan)? {
         return Ok(None);
@@ -1209,7 +1184,6 @@ fn environment_plan(
         binding,
         up,
         up_env,
-        ansi_front,
         borrowed: inline.is_none() && environment_borrowed(&repo, policy),
         exec_probe: exec_workloads.then(|| policy.primary_service.clone()),
         route_urls: if plan.readiness.health_wait {
@@ -1275,7 +1249,6 @@ fn managed_workloads(
     token: &str,
     container_repo_root: Option<&std::path::Path>,
     pane_feedback: bool,
-    ansi_workloads: &[String],
 ) -> Result<Vec<WorkloadSpec>, RunnerError> {
     let repo = context.repo();
     let binding = context.binding_resolution.binding();
@@ -1434,7 +1407,6 @@ fn managed_workloads(
             setup,
             cwd: process.cwd.clone(),
             env: managed_run::workload_env(&plain, &secret),
-            ansi_pane: runs_on_host && ansi_workloads.contains(&process.name),
             pty: true,
             start_after_ms: process.start_after_ms,
             shutdown_on_exit: process.shutdown_on_exit,
@@ -1777,12 +1749,10 @@ working_dir = "/workspace"
                 "run-proof",
                 Some(Path::new("/workspace")),
                 false,
-                &["api".to_owned()],
             )
             .unwrap();
             assert_eq!(workloads.len(), 1);
             let workload = &workloads[0];
-            assert_eq!(workload.ansi_pane, placement == "host");
             assert!(!workload.command.contains(secret));
             assert!(!workload
                 .setup

@@ -38,7 +38,6 @@ pub(in crate::runner) struct EnvironmentPlan {
     /// The shell command that brings the environment up and returns.
     pub(in crate::runner) up: String,
     pub(in crate::runner) up_env: Vec<(String, String)>,
-    pub(in crate::runner) ansi_front: bool,
     /// Already running for its own owner before this run: retained at settle.
     pub(in crate::runner) borrowed: bool,
     /// The service exec workloads attach to.
@@ -226,7 +225,6 @@ fn run_up(
     for (key, value) in &plan.up_env {
         env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
     }
-    mark_front(&mut env, plan.ansi_front);
     // The bring-up's activation attaches this run as the environment's
     // holder (contract 053 §4); a named environment's ensure is then held.
     if matches!(plan.binding, Binding::Named { .. }) {
@@ -300,13 +298,6 @@ fn run_up(
         }
         std::thread::sleep(POLL);
     }
-}
-
-fn mark_front(env: &mut BTreeMap<OsString, EnvValue>, ansi: bool) {
-    env.insert(
-        OsString::from("EFFIGY_INTERNAL_ANSI_FRONT"),
-        EnvValue::Plain(OsString::from(if ansi { "1" } else { "0" })),
-    );
 }
 
 /// The owned binding of the service exec workloads attach to, observed with
@@ -447,18 +438,6 @@ fn find_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn environment_up_child_receives_only_the_initiating_front_marker() {
-        for ansi in [false, true] {
-            let mut env = BTreeMap::new();
-            mark_front(&mut env, ansi);
-            assert!(
-                matches!(env.get(std::ffi::OsStr::new("EFFIGY_INTERNAL_ANSI_FRONT")), Some(EnvValue::Plain(value)) if value == if ansi { "1" } else { "0" })
-            );
-            assert_eq!(env.len(), 1);
-        }
-    }
 
     #[test]
     fn first_line_keeps_only_the_headline() {
