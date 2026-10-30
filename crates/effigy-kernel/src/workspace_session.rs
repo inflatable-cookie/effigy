@@ -37,15 +37,27 @@
 //! its listener. Cancellation/recovery takes only the exact successor's slot.
 
 mod down;
+mod selection;
+mod serving;
 
 #[cfg(test)]
 mod tests;
 
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
+pub use selection::{
+    selection_abandoned, selection_recovered, unfinished_selection, GuestObject, GuestSelection,
+    SelectionLiveness, SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
+    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader, BINARY_SELECTOR,
+    CONTEXT_SELECTOR, ENTRY_SELECTOR,
+};
+pub use serving::{
+    ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
+    ServingProbe, ServingRefusal, SessionLaunch, SessionOwner, TargetProbe,
+};
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
 use crate::gate::{Gate, Wait};
-use crate::id::{Generation, ResolvedInvocation, ResourceId, ResourceKind, RunId};
+use crate::id::{Digest, Generation, ResolvedInvocation, ResourceId, ResourceKind, RunId};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::StateRoot;
 use crate::run::{
@@ -364,52 +376,11 @@ impl SessionRef {
     /// answer names the same session the first attempt admitted.
     pub fn of_run(reader: &StoreReader, run: RunId) -> Observed<Option<SessionRef>> {
         let result = (|| -> Result<Option<SessionRef>, RunError> {
-            let owner = reader
-                .conn()
-                .query_row(
-                    "SELECT r.generation, res.canonical FROM runs r \
-                     JOIN resources res ON res.name=r.owner WHERE r.run_id=?1",
-                    [run.to_string()],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-                )
-                .optional()?;
-            let Some((generation, canonical)) = owner else {
+            let open: bool = reader.conn().query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND phase NOT IN ('closed','stopping'))", [run.to_string()], |row| row.get(0))?;
+            if !open {
                 return Ok(None);
-            };
-            let owner = decode_owner(&canonical)?;
-            let environment = reader
-                .conn()
-                .query_row(
-                    "SELECT a.environment, a.env_generation FROM attachments a \
-                     WHERE a.run_id=?1 AND a.state<>'released' \
-                     ORDER BY a.environment LIMIT 1",
-                    [run.to_string()],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-                )
-                .optional()?;
-            let Some((environment, environment_generation)) = environment else {
-                return Ok(None);
-            };
-            let environment = reader
-                .conn()
-                .query_row(
-                    "SELECT canonical FROM resources WHERE name=?1",
-                    [&environment],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional()?;
-            let Some(environment) = environment else {
-                return Ok(None);
-            };
-            Ok(Some(SessionRef::new(
-                run,
-                Fence {
-                    resource: owner,
-                    generation: Generation::new(generation as u64),
-                },
-                decode_owner(&environment)?,
-                Generation::new(environment_generation as u64),
-            )))
+            }
+            session_of_run(reader.conn(), run)
         })();
         match result {
             Ok(Some(session)) => Observed::Verified(Some(session), session_evidence()),
@@ -521,6 +492,42 @@ impl SessionRef {
             ));
         }
         Ok((run, session))
+    }
+}
+
+/// The independently retained supervisor side of a detached session handoff.
+/// Adopting consumes the owning Run: an invoking client retains only SessionRef.
+/// The supervisor must retain this value until settlement; dropping it releases
+/// the private slot and all registered listener/key custody.
+#[derive(Debug)]
+pub struct SessionSupervisor<'a> {
+    run: Run<'a>,
+}
+
+impl<'a> SessionSupervisor<'a> {
+    pub fn adopt(mut run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
+        run.register_session_custody(supervisor)?;
+        Ok(Self { run })
+    }
+
+    pub fn settle(
+        self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<crate::outcome::Outcome<crate::run::Settled>, RunError> {
+        self.run.settle(cleanup, adapter)
+    }
+}
+
+impl<'a> std::ops::Deref for SessionSupervisor<'a> {
+    type Target = Run<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.run
+    }
+}
+impl std::ops::DerefMut for SessionSupervisor<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.run
     }
 }
 
@@ -783,7 +790,7 @@ pub struct SessionBinding {
 /// The guest publication acknowledgement for one frozen workspace activation.
 /// The producer must return the session identity it actually published, not a
 /// plan the host fills in after receiving a receipt for unrelated bytes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspacePublicationReceipt {
     pub publication: run::GuestPublicationReceipt,
     pub activation_run: RunId,
@@ -802,6 +809,112 @@ pub struct ActivationReservationRecord {
     pub environment_run: Option<RunId>,
     /// The Task-owned session staged against E, before any commit.
     pub session: Option<SessionBinding>,
+    /// The publish inputs `decide` froze when it reserved E. Absent on a
+    /// reservation made without a decision (`reserve`), which is why such a
+    /// generation is never `Attach`ed by a later decision.
+    pub inputs: Option<PublishInputs>,
+}
+
+/// The container and VM boot one activation targets, as observed before the
+/// decision and re-observed by the caller that owns the guest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainerIdentity {
+    pub container_id: String,
+    pub vm_boot_id: String,
+    pub backend: String,
+}
+
+/// What a decision knows about the target. A fresh project has no container
+/// yet, so absence is its own evidence, recorded with the project and backend
+/// it names (052 §8.11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum TargetEvidence {
+    /// Re-observed under the decision's gate.
+    Observed(ContainerIdentity),
+    /// A project with no container yet: the activation creates and binds it.
+    Absent { project: String, backend: String },
+}
+impl TargetEvidence {
+    fn container(&self) -> Option<&ContainerIdentity> {
+        match self {
+            Self::Observed(identity) => Some(identity),
+            Self::Absent { .. } => None,
+        }
+    }
+}
+
+/// The artifact one decision publishes. A fresh project cannot name a digest
+/// before the image platform selects one, so absence is its own evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ArtifactEvidence {
+    /// Reactivation: the digest this Prepare already resolved.
+    Selected { digest: Digest, object: String },
+    /// Fresh project: nothing is selected until the image platform is read.
+    Unselected {
+        image_reference: String,
+        backend: String,
+    },
+}
+impl ArtifactEvidence {
+    fn selected(&self) -> Option<&Digest> {
+        match self {
+            Self::Selected { digest, .. } => Some(digest),
+            Self::Unselected { .. } => None,
+        }
+    }
+}
+
+/// The whole published evidence one activation decision compares (052 §8.11).
+/// It is frozen into the reservation before anything is applied, so a retry
+/// compares the inputs the first attempt recorded and a competing caller
+/// cannot attach to a session that was published for other inputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishInputs {
+    /// The artifact this Prepare publishes, or the honest statement that it is
+    /// not selected yet.
+    pub artifact: ArtifactEvidence,
+    /// The resolved selection digest the generation names.
+    pub selection: Digest,
+    /// The frozen policy, profile and backend the render was made from.
+    pub inputs_digest: Digest,
+    /// What the decision knows about the target.
+    pub target: TargetEvidence,
+}
+impl PublishInputs {
+    fn validate(&self) -> Result<(), RunError> {
+        if let ArtifactEvidence::Selected { object, .. } = &self.artifact {
+            if object.trim().is_empty() {
+                return Err(ActivationRefusal::ReceiptIncomplete.into());
+            }
+        }
+        match &self.target {
+            TargetEvidence::Observed(identity) => {
+                if identity.container_id.trim().is_empty()
+                    || identity.vm_boot_id.trim().is_empty()
+                    || identity.backend.trim().is_empty()
+                {
+                    return Err(ActivationRefusal::ReceiptIncomplete.into());
+                }
+            }
+            TargetEvidence::Absent { project, backend } => {
+                if project.trim().is_empty() || backend.trim().is_empty() {
+                    return Err(ActivationRefusal::ReceiptIncomplete.into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What one atomic activation decision chose.
+#[derive(Debug, Clone)]
+pub enum ActivationDecision {
+    /// The current generation already serves these exact inputs: change nothing.
+    Attach(SessionRef),
+    /// Nothing serves these inputs: E is reserved (or recovered) for them.
+    Activate(Box<WorkspaceActivationReservation>),
 }
 
 type ReservationRow = (
@@ -812,7 +925,21 @@ type ReservationRow = (
     Option<String>,
     Option<String>,
     Option<i64>,
+    Option<String>,
 );
+
+fn reservation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReservationRow> {
+    Ok((
+        row.get::<_, i64>(0)?,
+        row.get::<_, String>(1)?,
+        row.get::<_, String>(2)?,
+        row.get::<_, Option<String>>(3)?,
+        row.get::<_, Option<String>>(4)?,
+        row.get::<_, Option<String>>(5)?,
+        row.get::<_, Option<i64>>(6)?,
+        row.get::<_, Option<String>>(7)?,
+    ))
+}
 
 fn decode_reservation(
     conn: &rusqlite::Connection,
@@ -827,6 +954,7 @@ fn decode_reservation(
         session_owner,
         session_run,
         session_generation,
+        inputs,
     )) = row
     else {
         return Ok(None);
@@ -867,6 +995,15 @@ fn decode_reservation(
                 ))
             }
         },
+        // A record this kernel cannot read is Broken, never a decision made on
+        // guessed inputs: a later `Attach` would otherwise compare nothing.
+        inputs: inputs
+            .map(|json| {
+                serde_json::from_str(&json).map_err(|error| {
+                    RunError::broken(format!("a stored activation publish input ({error})"))
+                })
+            })
+            .transpose()?,
     };
     if record.state == ActivationReservationState::Committed
         && (record.environment_run.is_none() || record.session.is_none())
@@ -886,21 +1023,11 @@ fn read_reservation(
     let row = conn
         .query_row(
             "SELECT environment_generation, reservation_id, state, environment_run, \
-             session_owner, session_run, session_generation \
+             session_owner, session_run, session_generation, inputs \
              FROM workspace_activation_reservations \
              WHERE environment=?1 AND environment_generation=?2",
             params![environment.name().to_string(), generation.get() as i64],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
-                ))
-            },
+            reservation_row,
         )
         .optional()?;
     decode_reservation(conn, environment, row)
@@ -915,21 +1042,11 @@ fn latest_reservation(
     let row = conn
         .query_row(
             "SELECT environment_generation, reservation_id, state, environment_run, \
-             session_owner, session_run, session_generation \
+             session_owner, session_run, session_generation, inputs \
              FROM workspace_activation_reservations \
              WHERE environment=?1 ORDER BY environment_generation DESC LIMIT 1",
             [environment.name().to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
-                ))
-            },
+            reservation_row,
         )
         .optional()?;
     decode_reservation(conn, environment, row)
@@ -954,6 +1071,120 @@ fn recoverable_reservation(
         Some(generation) => read_reservation(conn, environment, Generation::new(generation as u64)),
         None => latest_reservation(conn, environment),
     }
+}
+
+/// Whether the live mapping already serves exactly these inputs, and if so the
+/// session a caller attaches to. Every fact is re-read here, under the same
+/// `Gate(Env)` hold that would reserve a successor, so a decision cannot be
+/// based on a session another activation replaced in between: the mapping, the
+/// committed reservation that names it, the selection that generation
+/// committed, the publication it recorded and the inputs it was decided on.
+///
+/// A `None` answer is `Activate`, never an attach to a near match. A target
+/// that disagrees with the published container or boot is a refusal, because
+/// superseding a live generation would hide a replaced container behind a new
+/// one; an unfinished selection is a refusal for the same reason.
+fn attachable(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+    live: &SessionRow,
+    publishing: &PublishInputs,
+) -> Result<Option<SessionRef>, RunError> {
+    let Some(record) = read_reservation(conn, environment, live.environment_generation)? else {
+        return Ok(None);
+    };
+    if record.state != ActivationReservationState::Committed {
+        return Ok(None);
+    }
+    let Some(binding) = record.session.clone() else {
+        return Ok(None);
+    };
+    if binding.run != live.run || binding.generation != live.session_generation {
+        return Ok(None);
+    }
+    let Some(obligation) =
+        selection::read_obligation(conn, environment, live.environment_generation)?
+    else {
+        return Ok(None);
+    };
+    match obligation.state() {
+        SelectionState::Pending => return Err(ActivationRefusal::SelectionPending.into()),
+        SelectionState::Abandoned => return Ok(None),
+        SelectionState::Switched => {}
+    }
+    // The environment still serves this generation: the resource row is the
+    // one the commit published and nothing has moved it since.
+    let active = conn
+        .query_row(
+            "SELECT state='active' AND last_applied=?2 FROM resources WHERE name=?1",
+            params![
+                environment.name().to_string(),
+                live.environment_generation.get().to_string()
+            ],
+            |row| row.get::<_, Option<bool>>(0),
+        )?
+        .unwrap_or(false);
+    if !active {
+        return Ok(None);
+    }
+    // Only a decision that froze inputs can be attached to: a reservation made
+    // by `reserve` recorded no evidence to compare, so its generation is
+    // superseded rather than guessed at.
+    let Some(frozen) = record.inputs.clone() else {
+        return Ok(None);
+    };
+    let publication = obligation.receipt().publication();
+    // The target is fenced *first*, before the artifact or selection digest can
+    // decide anything: a replaced container or changed boot is refused by name
+    // rather than hidden behind a superseding generation.
+    if let TargetEvidence::Observed(frozen_target) = &frozen.target {
+        if publication.publication.container_id != frozen_target.container_id
+            || publication.publication.vm_boot_id != frozen_target.vm_boot_id
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+    }
+    if let Some(observed) = publishing.target.container() {
+        if publication.publication.container_id != observed.container_id
+            || publication.publication.vm_boot_id != observed.vm_boot_id
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+    }
+    if frozen.selection != publishing.selection || frozen.inputs_digest != publishing.inputs_digest
+    {
+        return Ok(None);
+    }
+    let Some(digest) = publishing.artifact.selected() else {
+        return Ok(None);
+    };
+    let named = publication
+        .publication
+        .artifact_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(&publication.publication.artifact_digest);
+    if named != digest.hex() {
+        return Ok(None);
+    }
+    if obligation
+        .receipt()
+        .selection()
+        .objects
+        .context_generation
+        .get()
+        != publication.publication.context_generation
+    {
+        return Ok(None);
+    }
+    Ok(Some(SessionRef::new(
+        live.run,
+        Fence {
+            resource: binding.owner,
+            generation: binding.generation,
+        },
+        environment.clone(),
+        live.environment_generation,
+    )))
 }
 
 fn activation_observe(cx: &EffectContext) -> Result<ObserveContext, RunError> {
@@ -986,6 +1217,72 @@ fn owner_identity(conn: &rusqlite::Connection, name: &str) -> Result<ResourceId,
     let canonical = canonical
         .ok_or_else(|| RunError::broken("a stored session owner is not in this journal"))?;
     decode_owner(&canonical)
+}
+
+/// The recorded workspace session a run belongs to, if any: the mapping names
+/// it, or a staging froze it. This is a read of the journal's own records.
+pub(crate) fn session_of_run(
+    conn: &rusqlite::Connection,
+    run: RunId,
+) -> Result<Option<SessionRef>, RunError> {
+    let mapped: Option<(i64, i64, String)> = conn
+        .query_row(
+            "SELECT session_generation, environment_generation, environment FROM workspace_sessions \
+             WHERE run_id=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((session, environment_generation, environment)) = mapped {
+        let owner: String = conn.query_row(
+            "SELECT owner FROM runs WHERE run_id=?1",
+            [run.to_string()],
+            |row| row.get(0),
+        )?;
+        let owner = owner_identity(conn, &owner)?;
+        let environment = owner_identity(conn, &environment)?;
+        return Ok(Some(SessionRef::new(
+            run,
+            Fence {
+                resource: owner,
+                generation: Generation::new(session as u64),
+            },
+            environment,
+            Generation::new(environment_generation as u64),
+        )));
+    }
+    let staged: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation, owner FROM workspace_session_runs WHERE run_id=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((generation, owner)) = staged else {
+        return Ok(None);
+    };
+    let owner = owner_identity(conn, &owner)?;
+    let reservation: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT environment, environment_generation FROM workspace_activation_reservations \
+             WHERE session_run=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((environment, environment_generation)) = reservation else {
+        return Ok(None);
+    };
+    let environment = owner_identity(conn, &environment)?;
+    Ok(Some(SessionRef::new(
+        run,
+        Fence {
+            resource: owner,
+            generation: Generation::new(generation as u64),
+        },
+        environment,
+        Generation::new(environment_generation as u64),
+    )))
 }
 
 /// The generation `owner`'s counter would advance to next, read *without* its
@@ -1202,6 +1499,30 @@ pub enum ActivationRefusal {
     /// A required effect of the activation run is not applied, so nothing may
     /// be published from it.
     ActivationIncomplete,
+    /// The target the decision observed disagrees with the live publication.
+    TargetEvidenceMismatch,
+    /// The committed generation's selection is unfinished, so nothing may
+    /// attach to it or reserve around it.
+    SelectionPending,
+    /// The committed generation's selection was abandoned and revoked.
+    SelectionAbandoned,
+    /// A selection receipt does not name the obligation's exact targets.
+    SelectionMismatch,
+    /// A selection is already finished and cannot be completed twice.
+    SelectionSettled,
+    /// A workspace activation must commit through `commit_selection`: the
+    /// generic commit cannot publish a generation with no durable selection.
+    SelectionRequired,
+    /// The generation was reserved without a decision, so no publish inputs
+    /// were frozen and nothing may be published under it.
+    Unfrozen,
+    /// The exact successor is still running or unsettled, so its generation is
+    /// not abandoned around it.
+    SuccessorRunning,
+    /// Recovery has no live listener for a selection it would have to complete.
+    ServingLost,
+    /// A selection could still be completed, so it cannot be abandoned.
+    SelectionStillCompletable,
 }
 impl ActivationRefusal {
     pub fn as_str(self) -> &'static str {
@@ -1225,6 +1546,16 @@ impl ActivationRefusal {
             Self::Frozen => "frozen",
             Self::ActivationNotReady => "activation_not_ready",
             Self::ActivationIncomplete => "activation_incomplete",
+            Self::TargetEvidenceMismatch => "target_evidence_mismatch",
+            Self::SelectionPending => "selection_pending",
+            Self::SelectionAbandoned => "selection_abandoned",
+            Self::SelectionMismatch => "selection_mismatch",
+            Self::SelectionSettled => "selection_settled",
+            Self::SelectionRequired => "selection_required",
+            Self::Unfrozen => "unfrozen",
+            Self::SuccessorRunning => "successor_running",
+            Self::ServingLost => "serving_lost",
+            Self::SelectionStillCompletable => "selection_still_completable",
         }
     }
 }
@@ -1288,6 +1619,36 @@ impl std::fmt::Display for ActivationRefusal {
             Self::ActivationIncomplete => {
                 "the environment activation run still has a required effect that is not applied, so it publishes nothing"
             }
+            Self::TargetEvidenceMismatch => {
+                "the target this activation observed is not the container and boot the live publication names; re-prepare instead of re-targeting it"
+            }
+            Self::SelectionPending => {
+                "this generation committed a workspace selection that is still unfinished; complete or abandon it before attaching or reserving around it"
+            }
+            Self::SelectionAbandoned => {
+                "this generation's workspace selection was abandoned and its publication revoked; reserve the next generation"
+            }
+            Self::SelectionMismatch => {
+                "the selection receipt does not name the exact bytes, generation and listener this obligation committed"
+            }
+            Self::SelectionSettled => {
+                "this workspace selection is already finished; a selection completes or abandons exactly once"
+            }
+            Self::SelectionRequired => {
+                "a workspace activation commit records the guest selection it published; use commit_selection with the validated receipt"
+            }
+            Self::Unfrozen => {
+                "this environment generation was reserved without an activation decision, so no publish inputs were frozen; decide it before publishing"
+            }
+            Self::SuccessorRunning => {
+                "the committed successor is still running or unsettled; stop and settle it before abandoning its generation"
+            }
+            Self::ServingLost => {
+                "the committed session has no live verified listener, so its selection cannot be completed; abandon it instead"
+            }
+            Self::SelectionStillCompletable => {
+                "the committed session, its target and its listener are all live, so this selection can still be completed and is not abandoned"
+            }
         };
         f.write_str(text)
     }
@@ -1327,84 +1688,248 @@ impl WorkspaceActivationReservation {
             return Err(ActivationRefusal::NotAnEnvironment.into());
         }
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
-        crate::fault_point!(ReservationBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let record = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
-            // The environment's row exists from its first reservation, exactly
-            // as it exists from a run's admission: a first activation reserves
-            // generation 1, and a reserve that is never claimed leaves only an
-            // environment record at generation 0.
-            txn.resource(environment, "environment")?;
-            let current: Option<i64> = txn
-                .conn()
-                .query_row(
-                    "SELECT generation FROM resources WHERE name=?1",
-                    [environment.name().to_string()],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let Some(current) = current else {
-                return Err(RunError::broken(
-                    "the environment row is absent inside the transaction that wrote it",
-                ));
-            };
-            let generation = Generation::new(current as u64)
-                .next()
-                .ok_or_else(|| RunError::refused("the environment generation cannot advance"))?;
-            let existing = recoverable_reservation(txn.conn(), environment)?;
-            match existing {
-                Some(existing) if existing.state == ActivationReservationState::Reserved
-                    && existing.generation <= generation => Ok(existing),
-                Some(existing) if existing.generation > generation => Err(RunError::broken(
-                    "a stored activation reservation is ahead of the environment generation",
-                )),
-                // Recovery, not a second reservation: the same id and E, with
-                // whatever already bound them.
-                Some(existing)
-                    if existing.generation == generation
-                        && existing.state != ActivationReservationState::Cancelled =>
-                {
-                    Ok(existing)
-                }
-                Some(existing) if existing.generation == generation => {
-                    // A cancelled reservation whose generation no run ever took
-                    // is revived: its id is derived from the same pair.
-                    txn.conn().execute(
-                        "UPDATE workspace_activation_reservations SET state='reserved',session_owner=NULL,session_run=NULL,session_generation=NULL,updated_at=?3 \
-                         WHERE environment=?1 AND environment_generation=?2",
-                        params![
-                            environment.name().to_string(),
-                            generation.get() as i64,
-                            txn.now()
-                        ],
-                    )?;
-                    Ok(ActivationReservationRecord {
-                        state: ActivationReservationState::Reserved,
-                        session: None,
-                        ..existing
-                    })
-                }
-                _ => Self::insert(txn, environment, generation),
+            if selection::pending_obligation(txn.conn(), environment)?.is_some() {
+                return Err(ActivationRefusal::SelectionPending.into());
             }
+            Self::reserve_under(txn, environment, None)
         })?;
-        crate::fault_point!(ReservationAfter)?;
         Ok(Self { record })
+    }
+
+    /// Test the live publication and reserve its successor under one
+    /// `Gate(Env)` hold (052 §8.11, post-#484 correction).
+    ///
+    /// `reserve` alone cannot decide this: two callers that both observed
+    /// `Absent` would reserve two generations, and a caller that attached
+    /// without re-reading the live session could attach to a mapping another
+    /// activation had just replaced. Here the live mapping, its committed
+    /// reservation, the selection it committed, the publication it recorded
+    /// and the frozen inputs it was decided on are all read in the same
+    /// transaction that decides, so:
+    ///
+    /// - identical inputs attach without advancing any generation;
+    /// - different inputs, a different artifact or an abandoned selection
+    ///   reserve (or recover) exactly the next generation E;
+    /// - a target that disagrees with the published container or boot refuses
+    ///   [`ActivationRefusal::TargetEvidenceMismatch`] instead of silently
+    ///   superseding or re-targeting the live session;
+    /// - an unfinished selection obligation refuses
+    ///   [`ActivationRefusal::SelectionPending`]: no later attach or
+    ///   reservation may bypass it.
+    pub fn decide(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        publishing: &PublishInputs,
+        wait: Wait,
+    ) -> Result<ActivationDecision, RunError> {
+        if environment.kind() != ResourceKind::Env {
+            return Err(ActivationRefusal::NotAnEnvironment.into());
+        }
+        publishing.validate()?;
+        let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
+        crate::fault_point!(ActivationDecisionBefore)?;
+        // The live session's *owner* liveness is observed under the same gate,
+        // before the deciding transaction: a mapped run whose owner gate is free
+        // is an interrupted session, not a live one, and Unknown liveness grants
+        // nothing. The transaction re-reads the mapping and only attaches to the
+        // same run this observation named.
+        let owner = {
+            let observe = cx.operation().observe().map_err(|_| {
+                RunError::broken("an activation decision needs an observing context")
+            })?;
+            // A store that has never been written has no live session to
+            // observe: `Absent` here is an absence of evidence, not a broken
+            // journal, and the deciding transaction creates what it needs.
+            let reader = match crate::store::Store::read(&observe, root) {
+                Observed::Verified(reader, _) => Some(reader),
+                Observed::Absent(_) => None,
+                Observed::Unknown(reason) => {
+                    return Err(RunError::unavailable(format!(
+                        "the kernel store is not readable: {reason}"
+                    )))
+                }
+            };
+            match reader {
+                Some(reader) => live_session_row(reader.conn(), environment)?.map(|live| {
+                    let liveness = reader.run_owner_state(&observe, root, &live.run);
+                    (live.run, liveness)
+                }),
+                None => None,
+            }
+        };
+        let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+        let decision = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            txn.resource(environment, "environment")?;
+            // A committed selection that is still unfinished fences every
+            // decision, whatever its owner's liveness: the recovery order is
+            // settle/revoke/abandon, and no attach or successor may bypass it.
+            if selection::pending_obligation(txn.conn(), environment)?.is_some() {
+                return Err(ActivationRefusal::SelectionPending.into());
+            }
+            if let Some(live) = live_session_row(txn.conn(), environment)? {
+                match &owner {
+                    Some((
+                        run,
+                        crate::observe::Observed::Verified(crate::gate::OwnerState::Held, _),
+                    )) if *run == live.run => {
+                        if let Some(session) =
+                            attachable(txn.conn(), environment, &live, publishing)?
+                        {
+                            return Ok::<_, RunError>(ActivationDecision::Attach(session));
+                        }
+                    }
+                    Some((_, crate::observe::Observed::Unknown(reason))) => {
+                        return Err(RunError::unavailable(format!(
+                            "the live workspace session's owner liveness is unknown: {reason}"
+                        )))
+                    }
+                    // Interrupted, closed or absent: no live session to reuse.
+                    _ => {}
+                }
+            }
+            let record = Self::reserve_under(txn, environment, Some(publishing))?;
+            Ok::<_, RunError>(ActivationDecision::Activate(Box::new(Self { record })))
+        })?;
+        crate::fault_point!(ActivationDecisionAfter)?;
+        Ok(decision)
+    }
+
+    /// The reservation step both `reserve` and `decide` share, so the two entry
+    /// points cannot disagree about which generation E is or which row recovers.
+    fn reserve_under(
+        txn: &mut Txn<'_>,
+        environment: &ResourceId,
+        inputs: Option<&PublishInputs>,
+    ) -> Result<ActivationReservationRecord, RunError> {
+        // The environment's row exists from its first reservation, exactly as
+        // it exists from a run's admission: a first activation reserves
+        // generation 1, and a reserve that is never claimed leaves only an
+        // environment record at generation 0.
+        txn.resource(environment, "environment")?;
+        let current: Option<i64> = txn
+            .conn()
+            .query_row(
+                "SELECT generation FROM resources WHERE name=?1",
+                [environment.name().to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else {
+            return Err(RunError::broken(
+                "the environment row is absent inside the transaction that wrote it",
+            ));
+        };
+        crate::fault_point!(ReservationBefore)?;
+        let generation = Generation::new(current as u64)
+            .next()
+            .ok_or_else(|| RunError::refused("the environment generation cannot advance"))?;
+        let existing = recoverable_reservation(txn.conn(), environment)?;
+        let record = match existing {
+            Some(existing)
+                if existing.state == ActivationReservationState::Reserved
+                    && existing.generation <= generation =>
+            {
+                // Recovery, not a second decision: keep the inputs the first
+                // attempt froze. A caller that decided on other inputs is a
+                // competing activation, and it meets the reserved fence. A row
+                // reserved before any decision has nothing frozen yet, so the
+                // first decision to reach it freezes them here — before
+                // anything is applied — and every later one must match.
+                match (&existing.inputs, inputs) {
+                    (Some(frozen), Some(inputs)) if frozen != inputs => {
+                        // A replaced container or a changed boot is refused by
+                        // name, not hidden behind a superseding generation.
+                        if let (
+                            TargetEvidence::Observed(frozen_target),
+                            TargetEvidence::Observed(observed),
+                        ) = (&frozen.target, &inputs.target)
+                        {
+                            if frozen_target.container_id != observed.container_id
+                                || frozen_target.vm_boot_id != observed.vm_boot_id
+                            {
+                                return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+                            }
+                        }
+                        return Err(RunError::refused(
+                            "this environment generation is reserved by a workspace activation with other publish inputs; wait for that activation or cancel its reservation",
+                        ));
+                    }
+                    (None, Some(inputs)) => {
+                        txn.conn().execute(
+                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
+                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved' \
+                             AND inputs IS NULL",
+                            params![
+                                environment.name().to_string(),
+                                generation.get() as i64,
+                                serde_json::to_string(inputs)?,
+                                txn.now()
+                            ],
+                        )?;
+                        return Ok(ActivationReservationRecord {
+                            inputs: Some(inputs.clone()),
+                            ..existing
+                        });
+                    }
+                    _ => {}
+                }
+                Ok(existing)
+            }
+            Some(existing) if existing.generation > generation => Err(RunError::broken(
+                "a stored activation reservation is ahead of the environment generation",
+            )),
+            Some(existing)
+                if existing.generation == generation
+                    && existing.state != ActivationReservationState::Cancelled =>
+            {
+                Ok(existing)
+            }
+            Some(existing) if existing.generation == generation => {
+                // A cancelled reservation whose generation no run ever took is
+                // revived: its id is derived from the same pair, and its inputs
+                // are the ones this decision froze.
+                txn.conn().execute(
+                    "UPDATE workspace_activation_reservations SET state='reserved',session_owner=NULL,session_run=NULL,session_generation=NULL,inputs=?3,updated_at=?4 \
+                     WHERE environment=?1 AND environment_generation=?2",
+                    params![
+                        environment.name().to_string(),
+                        generation.get() as i64,
+                        inputs.map(serde_json::to_string).transpose()?,
+                        txn.now()
+                    ],
+                )?;
+                Ok(ActivationReservationRecord {
+                    state: ActivationReservationState::Reserved,
+                    session: None,
+                    inputs: inputs.cloned(),
+                    ..existing
+                })
+            }
+            _ => Self::insert(txn, environment, generation, inputs),
+        }?;
+        crate::fault_point!(ReservationAfter)?;
+        Ok(record)
     }
 
     fn insert(
         txn: &mut Txn<'_>,
         environment: &ResourceId,
         generation: Generation,
+        inputs: Option<&PublishInputs>,
     ) -> Result<ActivationReservationRecord, RunError> {
         let id = ActivationReservationId::derived(environment, generation);
         txn.conn().execute(
             "INSERT INTO workspace_activation_reservations \
-             (environment, environment_generation, reservation_id, state, created_at, updated_at) \
-             VALUES (?1,?2,?3,'reserved',?4,?4)",
+             (environment, environment_generation, reservation_id, state, inputs, created_at, updated_at) \
+             VALUES (?1,?2,?3,'reserved',?4,?5,?5)",
             params![
                 environment.name().to_string(),
                 generation.get() as i64,
                 id.to_string(),
+                inputs.map(serde_json::to_string).transpose()?,
                 txn.now()
             ],
         )?;
@@ -1415,6 +1940,7 @@ impl WorkspaceActivationReservation {
             state: ActivationReservationState::Reserved,
             environment_run: None,
             session: None,
+            inputs: inputs.cloned(),
         })
     }
 
@@ -1448,6 +1974,10 @@ impl WorkspaceActivationReservation {
     }
     pub fn record(&self) -> &ActivationReservationRecord {
         &self.record
+    }
+    /// The publish inputs `decide` froze when it reserved E, if it decided.
+    pub fn inputs(&self) -> Option<&PublishInputs> {
+        self.record.inputs.as_ref()
     }
 
     /// `claim(reservation_id, EnvRun)`: the claim a caller hands to
@@ -1736,6 +2266,27 @@ impl WorkspaceActivationReservation {
         environment_run: &Run<'_>,
         session_run: &Run<'_>,
     ) -> Result<CommittedActivation, RunError> {
+        let _ = (cx, root, environment_run, session_run);
+        // The generic commit published `active(E)`, the mapping and the session's
+        // `Borrow` with no record of the guest bytes that generation selects,
+        // which is exactly the window §8.11 closes. There is one commit path:
+        // `commit_selection`.
+        Err(ActivationRefusal::SelectionRequired.into())
+    }
+
+    /// The one commit: re-validate the stored plan, the held runs and the
+    /// validated selection receipt, then write `active(E)`, the session
+    /// mapping, the session's `Borrow` attachment and a `Pending` selection
+    /// obligation in one transaction, or none of them.
+    pub(super) fn commit_with(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment_run: &Run<'_>,
+        session_run: &Run<'_>,
+        selection: &SelectionReceipt,
+        launch: &SessionLaunch,
+    ) -> Result<CommittedActivation, RunError> {
         let fence = environment_run.fence().clone();
         if fence.resource != self.record.environment {
             return Err(RunError::from(ActivationRefusal::WrongEnvironment));
@@ -1749,7 +2300,7 @@ impl WorkspaceActivationReservation {
         // private Task slot across this entire commit; death of its process
         // necessarily aborts this transaction too. No Task gate is probed or
         // acquired while the environment run holds Env.
-        let plan = {
+        let (plan, frozen) = {
             let observe = activation_observe(cx)?;
             let reader = activation_reader(&observe, root)?;
             let stored = read_reservation(
@@ -1768,11 +2319,61 @@ impl WorkspaceActivationReservation {
             if !session_run.owns_workspace_session(root, &plan.session)? {
                 return Err(ActivationRefusal::SessionGone.into());
             }
-            plan
+            (plan, stored.inputs)
         };
         let receipt = plan.validate_publication(environment_run)?;
+        selection.require_validated_document()?;
+        selection.validate(&plan)?;
+        // The commit holds the session's live custody: the launch that published
+        // this lease, for this session, with the key and listener still in hand.
+        // A receipt alone cannot publish a session nothing is serving.
+        if launch.binding() != *plan.binding() {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        let custody = launch.hold_lease(selection.serving())?;
+        // The decision froze its inputs before anything was applied. Publishing
+        // is the moment they are due: the artifact and target this run
+        // acknowledged must be exactly the ones the decision recorded, or the
+        // generation would serve bytes nobody decided on.
+        let Some(frozen) = frozen else {
+            return Err(ActivationRefusal::Unfrozen.into());
+        };
+        let selected = selection.selection().objects.binary.digest.clone();
+        // A fresh project cannot name an artifact before its image platform is
+        // read, so its decision records `Unselected`: this commit freezes the
+        // artifact the run actually selected, once, in its own transaction. Any
+        // later activation compares against that frozen digest.
+        let fresh_artifact = match &frozen.artifact {
+            ArtifactEvidence::Selected { digest, .. } if *digest == selected => None,
+            ArtifactEvidence::Selected { .. } => {
+                return Err(ActivationRefusal::SelectionMismatch.into())
+            }
+            ArtifactEvidence::Unselected { .. } => Some(ArtifactEvidence::Selected {
+                digest: selected.clone(),
+                object: selection.selection().objects.binary.path.clone(),
+            }),
+        };
+        // The resolved selection the decision froze is the one the published
+        // context document names. A context prepared for another selection is
+        // never published under this decision.
+        if selection.selection_digest() != &frozen.selection {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        if let TargetEvidence::Observed(identity) = &frozen.target {
+            if receipt.publication.container_id != identity.container_id
+                || receipt.publication.vm_boot_id != identity.vm_boot_id
+            {
+                return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+            }
+        }
+        // The receipt the commit publishes is the one the run recorded: a
+        // selection built against another publication names other bytes.
+        if selection.publication() != &receipt {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
         let plan_before = plan.clone();
         crate::fault_point!(ActivationCommitBefore)?;
+        crate::fault_point!(SelectionCommitBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let committed = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             run::check_activation_fence(txn.conn(), &fence)?;
@@ -1793,8 +2394,64 @@ impl WorkspaceActivationReservation {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
             }
             plan.validate_receipt(&receipt)?;
+            // Freeze the artifact a fresh project just selected, in this same
+            // transaction and exactly once: a row that already names another
+            // artifact refuses instead of being rewritten.
+            if let Some(fresh) = fresh_artifact.as_ref() {
+                let stored_inputs: Option<String> = txn.conn().query_row(
+                    "SELECT inputs FROM workspace_activation_reservations \
+                     WHERE environment=?1 AND environment_generation=?2",
+                    params![
+                        self.record.environment.name().to_string(),
+                        self.record.generation.get() as i64
+                    ],
+                    |row| row.get(0),
+                )?;
+                let Some(stored_inputs) = stored_inputs else {
+                    return Err(ActivationRefusal::Frozen.into());
+                };
+                let mut inputs: PublishInputs = serde_json::from_str(&stored_inputs)?;
+                match &inputs.artifact {
+                    ArtifactEvidence::Selected { digest, .. } if *digest == selected => {}
+                    ArtifactEvidence::Selected { .. } => {
+                        return Err(ActivationRefusal::Frozen.into())
+                    }
+                    ArtifactEvidence::Unselected { .. } => {
+                        inputs.artifact = fresh.clone();
+                        txn.conn().execute(
+                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
+                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved'",
+                            params![
+                                self.record.environment.name().to_string(),
+                                self.record.generation.get() as i64,
+                                serde_json::to_string(&inputs)?,
+                                txn.now()
+                            ],
+                        )?;
+                    }
+                }
+            }
             if stored.state == ActivationReservationState::Committed {
-                return Ok(CommittedActivation { plan });
+                // A retry answers with the obligation the first commit wrote. A
+                // retry that names different bytes is refused: the committed
+                // generation's selection is frozen.
+                let obligation =
+                    selection::read_obligation(txn.conn(), &self.record.environment, self.record.generation)?;
+                if let Some(stored) = obligation.as_ref() {
+                    if selection.selection() != stored.receipt().selection()
+                        || selection.selection_digest() != stored.receipt().selection_digest()
+                    {
+                        return Err(ActivationRefusal::SelectionMismatch.into());
+                    }
+                }
+                // A committed reservation without its obligation is a record
+                // this kernel cannot explain; it never answers as success.
+                if obligation.is_none() {
+                    return Err(RunError::broken(
+                        "a committed workspace activation records no selection obligation",
+                    ));
+                }
+                return Ok(CommittedActivation { plan, obligation });
             }
             let existing: Option<(String, i64)> = txn
                 .conn()
@@ -1855,9 +2512,20 @@ impl WorkspaceActivationReservation {
             if changed != 1 {
                 return Err(RunError::from(ActivationRefusal::SessionAlreadyCommitted));
             }
-            Ok(CommittedActivation { plan })
+            // The selection obligation is written by this commit's own
+            // transaction: there is no window in which the generation is
+            // committed and no durable record of the pointers it needs.
+            custody.revalidate(selection.serving())?;
+            let obligation = Some(selection::record_obligation(
+                txn,
+                &plan,
+                environment_run.id(),
+                selection,
+            )?);
+            Ok(CommittedActivation { plan, obligation })
         })?;
         crate::fault_point!(ActivationCommitAfter)?;
+        crate::fault_point!(SelectionCommitAfter)?;
         Ok(committed)
     }
 
@@ -2321,11 +2989,13 @@ impl ActivationPlan {
     }
 }
 
-/// A committed activation: the plan it validated and the session identity every
-/// front end now resolves.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A committed activation: the plan it validated, the session identity every
+/// front end now resolves, and — on the workspace path — the selection
+/// obligation its own transaction wrote.
+#[derive(Debug, Clone)]
 pub struct CommittedActivation {
     plan: ActivationPlan,
+    obligation: Option<SelectionObligation>,
 }
 
 impl CommittedActivation {

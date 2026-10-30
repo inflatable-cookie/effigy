@@ -1125,19 +1125,30 @@ impl<'r> EnvRun<'r> {
     }
 
     /// Commits a staged workspace activation under this run's held `Gate(Env)`:
-    /// the guest publication this run recorded is validated against the staged
-    /// plan, and then `active(E)`, the environment's session mapping and the
-    /// session's `Borrow` attachment commit in one transaction (§8.7, §8.11).
-    /// The live holders of a predecessor generation are left attached: a
+    /// the guest publication this run recorded and the validated guest selection
+    /// are validated against the staged plan, and then `active(E)`, the
+    /// environment's session mapping, the session's `Borrow` attachment and the
+    /// durable `Pending` selection obligation commit in one transaction (§8.7,
+    /// §8.11). The live holders of a predecessor generation are left attached: a
     /// successor never stops a predecessor or rebinds its listener. The caller
-    /// retains the owning session Run from Task admission through this commit;
-    /// its borrowed private slot closes the session-death/publication race.
+    /// retains the owning session Run from Task admission through this commit and
+    /// the launch that published the selection's locator; the borrowed private
+    /// slot closes the session-death/publication race.
     pub fn commit_activation(
         &mut self,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
         session_run: &effigy_kernel::run::Run<'_>,
+        selection: &effigy_kernel::workspace_session::SelectionReceipt,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
     ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
-        let result = reservation.commit(&self.cx, self.root, &self.run, session_run);
+        let result = reservation.commit_selection(
+            &self.cx,
+            self.root,
+            &self.run,
+            session_run,
+            selection,
+            launch,
+        );
         let committed = self.kernel(result)?;
         self.published = true;
         Ok(committed.session())
@@ -1262,6 +1273,309 @@ mod tests {
     use super::super::record::Retention;
     use super::super::tests::{bring_up, closure, env, holder, home, root, Fake};
     use super::*;
+
+    /// The shipped adapter must be able to commit a staged activation: it
+    /// threads the validated selection (and the launch that published its
+    /// locator) into the kernel's one commit, in the held-run order.
+    #[test]
+    fn a_staged_activation_commits_through_the_environment_run_adapter() {
+        use super::super::tests::checkout;
+        use effigy_kernel::ctx::CleanupContext;
+        use effigy_kernel::ctx::{EffectClass, Placement};
+        use effigy_kernel::id::{ExecutionTarget, Route, Surface, TaskId};
+        use effigy_kernel::observe::{Evidence, Observed};
+        use effigy_kernel::run::{AttachmentId, BeginOpts, Reconciled, SettlementAdapter};
+        use effigy_kernel::workspace_session::{
+            ActivationDecision, ArtifactEvidence, ChannelListener, GuestObject, GuestSelection,
+            HostChannelListener, PublishInputs, SelectionObjects, SelectionReceipt, SelectorChange,
+            ServingKey, ServingProbe, SessionRef, TargetEvidence,
+        };
+        use std::collections::BTreeMap;
+        use std::time::{Duration, Instant};
+
+        #[derive(Debug)]
+        struct NoEffects;
+        impl SettlementAdapter for NoEffects {
+            fn observe(
+                &mut self,
+                effect: &effigy_kernel::run::Effect,
+                _cx: &CleanupContext,
+            ) -> Observed<effigy_kernel::run::Fence> {
+                Observed::Verified(effect.spec.target.clone(), evidence())
+            }
+            fn release(
+                &mut self,
+                _effect: &effigy_kernel::run::Effect,
+                _cx: &CleanupContext,
+            ) -> Observed<()> {
+                Observed::Verified((), evidence())
+            }
+            fn reconcile(
+                &mut self,
+                _effect: &effigy_kernel::run::Effect,
+                _cx: &CleanupContext,
+            ) -> Observed<Reconciled> {
+                Observed::Verified(Reconciled::Released, evidence())
+            }
+        }
+        fn evidence() -> Evidence {
+            Evidence::new("container adapter".into(), None).expect("evidence")
+        }
+        #[derive(Debug)]
+        struct Pinned;
+        impl ServingProbe for Pinned {
+            fn pinned_handshake(
+                &mut self,
+                _endpoint: std::net::SocketAddr,
+                _pin: &effigy_kernel::id::Digest,
+                _deadline: Duration,
+            ) -> Observed<()> {
+                Observed::Verified((), evidence())
+            }
+        }
+
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("environment context");
+        let stack = env("adapter");
+        let task = TaskId::new(checkout(), "", Surface::Published, "workspace", None)
+            .expect("workspace task")
+            .resource();
+        let binary = effigy_kernel::id::Digest::of(b"adapter artifact");
+        let inputs = PublishInputs {
+            artifact: ArtifactEvidence::Selected {
+                digest: binary.clone(),
+                object: format!("/run/effigy/objects/bin/{binary}"),
+            },
+            selection: effigy_kernel::id::Digest::of(b"adapter selection"),
+            inputs_digest: effigy_kernel::id::Digest::of(b"adapter inputs"),
+            target: TargetEvidence::Absent {
+                project: "adapter".to_owned(),
+                backend: "colima".to_owned(),
+            },
+        };
+        let reservation =
+            match effigy_kernel::workspace_session::WorkspaceActivationReservation::decide(
+                &ctx.cx,
+                &state,
+                &stack.resource,
+                &inputs,
+                Wait::FailFast,
+            )
+            .expect("activation decision")
+            {
+                ActivationDecision::Activate(reservation) => *reservation,
+                ActivationDecision::Attach(_) => {
+                    panic!("a fresh environment reserves a generation")
+                }
+            };
+        let session_run_id = effigy_kernel::id::RunId::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis() as u64)
+                .unwrap_or(0),
+            [3; 10],
+        )
+        .expect("session id");
+        reservation
+            .stage_session_binding(&ctx.cx, &state, &task, session_run_id)
+            .expect("frozen successor identity");
+        let invocation =
+            effigy_kernel::id::ResolvedInvocation::new(effigy_kernel::id::InvocationSpec {
+                task: TaskId::new(checkout(), "", Surface::Published, "workspace", None)
+                    .expect("task"),
+                route: Route::Task,
+                argv: vec![],
+                cwd: "".into(),
+                target: ExecutionTarget::Host,
+                env: BTreeMap::new(),
+                owner: task.clone(),
+                gates: vec![],
+                attachments: vec![],
+                class: EffectClass::Mutate,
+                placement: Placement::Host,
+                provenance: BTreeMap::new(),
+            })
+            .expect("invocation");
+        let cleanup = ctx
+            .cx
+            .operation()
+            .cleanup(Duration::from_secs(10))
+            .expect("cleanup budget");
+        let (session_run, session) = SessionRef::admit_reserved(
+            &ctx.cx,
+            &state,
+            &invocation,
+            BeginOpts {
+                id: session_run_id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: effigy_kernel::outcome::Invocation::validated(
+                    vec!["recover".into()],
+                    |args| args == ["recover"],
+                )
+                .expect("recovery"),
+                custody: None,
+            },
+            &cleanup,
+            &mut NoEffects,
+            &reservation,
+            effigy_kernel::supervise::Placement::Detached,
+        )
+        .expect("reserved session");
+        let mut session_run =
+            effigy_kernel::workspace_session::SessionSupervisor::adopt(session_run, "supervisor-1")
+                .expect("detached custody");
+        let mut run =
+            EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
+                .expect("claimed admission");
+        let plan = {
+            let observe = ctx.cx.operation().observe().expect("observe");
+            let reader = match effigy_kernel::store::Store::read(&observe, &state) {
+                Observed::Verified(reader, _) => reader,
+                _ => panic!("the kernel store is not readable here"),
+            };
+            reservation
+                .plan(&reader)
+                .verified()
+                .cloned()
+                .flatten()
+                .expect("staged plan")
+        };
+        let publication = effigy_kernel::workspace_session::WorkspacePublicationReceipt {
+            publication: effigy_kernel::run::GuestPublicationReceipt {
+                environment: plan.fence(),
+                container_id: "a1".repeat(32),
+                vm_boot_id: "boot-0001".to_owned(),
+                artifact_digest: format!("sha256:{}", binary.hex()),
+                context_generation: 1,
+            },
+            activation_run: run.id(),
+            session: plan.binding().clone(),
+        };
+        run.publish_workspace_guest_with(&plan, |_| Ok(publication.clone()))
+            .expect("guest publication");
+        // The adapter's own commit path: the selection and the launch that
+        // published its locator are threaded through, not bypassed.
+        let listener =
+            HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind");
+        let key = ServingKey::new(vec![9u8; 32], effigy_kernel::id::Digest::of(b"adapter pin"))
+            .expect("key");
+        let mut launch = effigy_kernel::workspace_session::SessionLaunch::launch(
+            &mut session_run,
+            &plan.session(),
+            "supervisor-1",
+            key,
+            Box::new(listener),
+        )
+        .expect("launch");
+        launch
+            .qualify(&mut Pinned, Duration::from_secs(1))
+            .expect("qualified");
+        let _ = std::time::Instant::now() as Instant;
+        let lease = {
+            let bound = launch.publish(&session_run).expect("published");
+            bound.lease().clone()
+        };
+        let document = serde_json::to_vec(&serde_json::json!({
+            "schema": "effigy.workspace-context.v2",
+            "context_generation": 1,
+            "environment_generation": plan.environment_generation().get(),
+            "session": {
+                "run_id": plan.session_run().to_string(),
+                "generation": plan.session_generation().get(),
+            },
+            "artifact_digest": format!("sha256:{}", binary.hex()),
+            "container_id": publication.publication.container_id,
+            "vm_boot_id": publication.publication.vm_boot_id,
+            "credential": {
+                "generation": 1,
+                "path": "/run/effigy/objects/enrol/1",
+                "digest": effigy_kernel::id::Digest::of(b"enrol").hex(),
+            },
+            "locator": { "endpoint": lease.endpoint(), "pin": lease.pin().hex() },
+            "selection_digest": inputs.selection.hex(),
+        }))
+        .expect("context document");
+        let context = effigy_kernel::id::Digest::of(&document);
+        struct EmptyGuest;
+        impl effigy_kernel::workspace_session::SelectorReader for EmptyGuest {
+            fn target(&self) -> effigy_kernel::workspace_session::ContainerIdentity {
+                effigy_kernel::workspace_session::ContainerIdentity {
+                    container_id: "a1".repeat(32),
+                    vm_boot_id: "boot-0001".into(),
+                    backend: "colima".into(),
+                }
+            }
+            fn read_selector(&mut self, _: &str) -> Observed<String> {
+                Observed::Absent(effigy_kernel::observe::AbsenceProof::NoRow {
+                    table: "selector".into(),
+                })
+            }
+            fn read_object(&mut self, _: &str) -> Observed<effigy_kernel::id::Digest> {
+                panic!("prior snapshot reads no objects")
+            }
+        }
+        let selection = SelectionReceipt::new(
+            &plan,
+            publication,
+            GuestSelection {
+                backend: "colima".to_owned(),
+                objects: SelectionObjects {
+                    binary: GuestObject {
+                        path: format!("/run/effigy/objects/bin/{binary}"),
+                        digest: binary.clone(),
+                    },
+                    context: GuestObject {
+                        path: format!("/run/effigy/objects/context/{context}"),
+                        digest: context,
+                    },
+                    credential: GuestObject {
+                        path: "/run/effigy/objects/enrol/1".to_owned(),
+                        digest: effigy_kernel::id::Digest::of(b"enrol"),
+                    },
+                    context_generation: effigy_kernel::id::Generation::new(1),
+                    credential_generation: effigy_kernel::id::Generation::new(1),
+                },
+                switches: [
+                    SelectorChange {
+                        path: effigy_kernel::workspace_session::BINARY_SELECTOR.to_owned(),
+                        expected: None,
+                        next: format!("/run/effigy/objects/bin/{binary}"),
+                    },
+                    SelectorChange {
+                        path: effigy_kernel::workspace_session::ENTRY_SELECTOR.to_owned(),
+                        expected: None,
+                        next: format!("/run/effigy/objects/bin/{binary}"),
+                    },
+                    SelectorChange {
+                        path: effigy_kernel::workspace_session::CONTEXT_SELECTOR.to_owned(),
+                        expected: None,
+                        next: "1".to_owned(),
+                    },
+                ],
+            },
+            &document,
+            &session_run,
+            &mut launch,
+            &mut EmptyGuest,
+        )
+        .expect("selection receipt");
+        let committed = run
+            .commit_activation(&reservation, &session_run, &selection, &launch)
+            .expect("the adapter commits the staged activation");
+        assert_eq!(committed, session);
+        let _ = AttachmentId::new([1; 16]);
+        let _ = (
+            ctx.cx.operation().remaining(),
+            Duration::from_secs(1),
+            Instant::now(),
+        );
+        let _ = ChannelListener::phase(
+            &HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind"),
+        );
+        run.finish(true).expect("settle the activation");
+    }
 
     #[test]
     fn claimed_admission_keeps_the_reserved_fence_under_the_live_gate_probe() {

@@ -346,7 +346,6 @@ pub struct BeginOpts {
     /// Planned custody requires a re-executable sentinel before any workload.
     pub custody: Option<crate::supervise::LifecyclePlan>,
 }
-#[derive(Debug)]
 pub struct Run<'a> {
     root: &'a StateRoot,
     store: Store,
@@ -369,6 +368,15 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
+}
+
+impl std::fmt::Debug for Run<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Run")
+            .field("id", &self.id)
+            .field("owner", &self.owner)
+            .finish_non_exhaustive()
+    }
 }
 impl<'a> Run<'a> {
     pub fn begin(
@@ -765,6 +773,86 @@ impl<'a> Run<'a> {
     /// Borrowing this exact owner keeps its Task-ranked liveness slot held
     /// through activation commit. A cross-process probe cannot provide this
     /// guarantee: the probed process may die before the transaction starts.
+    /// The owning proof a channel listener may be launched under.
+    ///
+    /// Only a run whose private session slot the journal records as an admitted
+    /// workspace session yields one, so a listener and key are always launched
+    /// for the detached session owner itself, never for a binding a caller
+    /// assembled or for an environment run.
+    pub fn session_owner(&mut self) -> Result<crate::workspace_session::SessionOwner, RunError> {
+        self.can_effect()?;
+        if self.owner.resource.kind() != crate::id::ResourceKind::Task {
+            return Err(RunError::refused(
+                "only an admitted workspace session owns a channel listener",
+            ));
+        }
+        // Custody is a detached registration the serving supervisor made, on a
+        // run the journal records as this workspace session.
+        let registered: bool = self.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_session_custody WHERE run_id=?1)",
+            params![self.id.to_string()],
+            |row| row.get(0),
+        )?;
+        if !registered {
+            return Err(RunError::refused(
+                "this run holds no detached session custody registration",
+            ));
+        }
+        let known: bool = self.store.conn().query_row(
+            "SELECT (EXISTS(SELECT 1 FROM workspace_session_runs \
+             WHERE run_id=?1 AND owner=?2 AND generation=?3) \
+             OR EXISTS(SELECT 1 FROM workspace_sessions \
+             WHERE run_id=?1 AND session_generation=?3)) \
+             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
+            params![
+                self.id.to_string(),
+                self.owner.resource.name().to_string(),
+                self.owner.generation.get() as i64
+            ],
+            |row| row.get(0),
+        )?;
+        if !known {
+            return Err(RunError::refused(
+                "only an admitted workspace session owns a channel listener",
+            ));
+        }
+        // The proof names the exact detached run. The session's gate stays with
+        // that run, so settlement releases it; a launch only serves while the
+        // run it names is still open (and can abandon the proof explicitly).
+        Ok(crate::workspace_session::SessionOwner::of(
+            self.id,
+            self.owner.clone(),
+        ))
+    }
+
+    /// Register this run as a detached session's custody owner, on behalf of
+    /// the serving supervisor that holds it. The detached supervisor performs
+    /// this when it adopts the session; a run without it is not a custody
+    /// owner, however it was admitted.
+    pub(crate) fn register_session_custody(&mut self, supervisor_id: &str) -> Result<(), RunError> {
+        self.can_effect()?;
+        if self.owner.resource.kind() != crate::id::ResourceKind::Task
+            || supervisor_id.trim().is_empty()
+        {
+            return Err(RunError::refused(
+                "only a detached workspace session registers custody, under a named supervisor",
+            ));
+        }
+        if crate::workspace_session::session_of_run(self.store.conn(), self.id)?.is_none() {
+            return Err(RunError::refused(
+                "only a recorded workspace session registers custody",
+            ));
+        }
+        self.store.transaction(&self.cx, |txn| {
+            txn.conn().execute(
+                "INSERT INTO workspace_session_custody(run_id,supervisor,created_at) VALUES (?1,?2,?3) \
+                 ON CONFLICT(run_id) DO UPDATE SET supervisor=excluded.supervisor",
+                params![self.id.to_string(), supervisor_id, txn.now()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+    }
+
     pub(crate) fn owns_workspace_session(
         &self,
         root: &StateRoot,
@@ -1186,11 +1274,24 @@ impl<'a> Run<'a> {
             Ok::<_,RunError>(())
         })
     }
+    /// Register an action the run performs when it settles (or is dropped
+    /// un-settled). A session's listener and key custody are released this way,
+    /// so settlement closes the socket and wipes the secret.
+    pub fn on_settle(&mut self, action: impl FnOnce() + Send + 'static) {
+        self.guard.on_release(action);
+    }
+
+    /// Run everything registered with [`Run::on_settle`], exactly once.
+    fn run_settle_actions(&mut self) {
+        self.guard.release_actions();
+    }
+
     pub fn settle(
         mut self,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.run_settle_actions();
         self.settle_inner(cleanup, adapter)
     }
 }

@@ -756,7 +756,7 @@ remains a finding. A changed blob gets scanned again.
 
 ## Q-021: Guest facts the workspace client channel still needs
 
-Status: open (normative seam bounded; production implementation and qualification outstanding)
+Status: open (kernel owner seam implemented by #488; guest identity, transport and glue implementation and qualification outstanding)
 Asked: 2026-10-29
 Owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
 Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
@@ -791,15 +791,30 @@ Three production facts remain to implement and prove:
   receipt and atomic commit of active(E), mapping and Borrow. The immutable v2
   context publishes the actual session run and S, separate from environment E.
   Preserve canonical Task-before-Env order and the predecessor's live holders.
-  The post-#484 atomic attach-or-reserve decision is still required: re-read the
-  live mapping and matching inputs under the same Env gate that reserves a
-  successor, so simultaneous callers cannot revoke a matching live session.
-  The proposed normative `SelectionReceipt`/`SelectionObligation` handoff also
-  binds immutable binary/context/credential objects, expected/next selectors and
-  serving lease to that commit. Switching follows the durable commit; recovery
-  completes those exact comparisons or settles/revokes/abandons the successor.
-  Unknown remains Pending. This compact handoff is unimplemented; the detailed
-  appendix is still non-normative, and #484 alone does not supply it.
+  The kernel seam for all of this landed in effigy#488
+  (`WorkspaceActivationReservation::decide`, `commit_selection`,
+  `Attachments::selection_switched`, `unfinished_selection`,
+  `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
+  `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
+  the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
+  that publishes a generation: it needs the session's live launch, a parsed and
+  validated v2 context document, and inputs a decision froze — a fresh
+  project's unselected artifact is frozen by its first publication), the
+  per-selector readback switch/recovery order (the kernel reads selectors and
+  objects through a `SelectorReader` under `Gate(Env)` and records only what it
+  observed) and the settled-successor abandonment are implemented and
+  fault-proven against the real journal, including concurrent decision callers.
+  Listener/key custody is rooted in the detached session owner: a launch needs
+  a mutable admitted session `Run` and its exact `SessionRef`; `SessionOwner` is
+  identity evidence, not duplicate gate custody. Both `selection_switched` and
+  `selection_recovered` require the retained `SessionLaunch`; recovery also takes
+  target and serving probes. `SelectionReceipt::new` takes the session Run and
+  an exact-target prior-selector reader, while `SelectorReader::target` binds
+  readback to the committed backend/container/boot. Deserialized receipts carry
+  no constructor-validation authority. What remains for #482 is the container/runner typed wrapper and
+  guest selector switching, for #483 the transport, server-key generation and
+  TLS qualification, and for #452 the glue and supervisor ownership transfer. The
+  detailed appendix is still non-normative.
 
 Recovery judges listener liveness independently of session and target. A bounded
 pinned TLS-only probe must be available while selection is unfinished, including

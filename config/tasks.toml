@@ -379,6 +379,11 @@
 # 052 §8.11 kernel seam: replay-safe keyed admission, its kill boundaries and
 # secondary terminal attachments (effigy#441).
 "test:kernel:workspace" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::workspace::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+# 052 §8.11: the session-owned activation seam — the atomic attach-or-reserve
+# decision, the durable guest selection it commits with `active(E)`, the mapping
+# and the session's `Borrow` attachment, its switch/recovery/abandonment and the
+# listener/key custody a detached session holds (effigy#488).
+"test:kernel:workspace-session" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^workspace_session::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 # §8.11 lane A: the workspace channel's wire, pin check, negotiation, grant and
 # replay ordering, against a scripted transport, strict host-engine fakes and
 # the kernel's own reservation records. Bounded to its own module; the kernel

@@ -174,6 +174,40 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- **A workspace activation is decided, selected and served by one owner.**
+  `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
+  `Attach` or reserves exactly the next environment generation from the frozen
+  publish inputs, so two callers cannot revoke a matching live session or create
+  two activations; a changed policy, profile, backend or artifact supersedes with
+  a fenced successor, while a target that disagrees with the published container
+  or boot, or a generation whose selection is unfinished, refuses by name. The
+  workspace commit now records the guest selection it published — binary,
+  context and credential objects, the three expected→next selector values and
+  the serving lease — in the same transaction as `active(E)`, the session
+  mapping and the session's `Borrow` attachment. That is the only commit: the
+  generic one refuses rather than publishing a generation with no durable
+  selection, a generation never *decided* refuses as unfrozen, the artifact,
+  target and context selection must be the ones the decision froze (a fresh
+  project's unselected artifact is frozen by its first publication), the
+  context document is parsed and checked field by field, and the commit requires
+  the session's own live launch — bound, qualified and rooted in the run that
+  owns it. `unfinished_selection`,
+  `Attachments::selection_switched`, `selection_recovered` (three proven
+  liveness facts *and* every selector and object read back through a
+  `SelectorReader` under `Gate(Env)` at its committed value) and
+  `selection_abandoned` (only once the exact successor is settled) complete,
+  complete-from-recovery or revoke it without ever publishing an unserved
+  generation or restoring the predecessor. Concurrent decision callers are
+  proven to reserve one generation or attach one session. One
+  session owns its listener and memory-only serving key
+  (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
+  lifetime, and refuses to publish an unbound, unqualified or stopped listener.
+  Cached locators are revalidated, and a selection stays Pending if its
+  successor loses owner or listener custody before live or recovery completion.
+  Selector reads are bound to the committed container/boot, prior values are
+  observed before receipt construction, and deserialized receipts cannot publish.
+  Transport, TLS qualification and the runner/container adapters remain with
+  #482/#483/#452.
 - **A container-mode workspace is prepared for the workspace client.** Host
   Prepare publishes an immutable guest context and a version-locked Linux
   Effigy into the container, outside the bind-mounted checkout. Activation

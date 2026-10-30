@@ -222,6 +222,7 @@ fn checkout_fence(
     }
     Ok(CheckoutFenceGuard {
         guard: GateGuard {
+            release_actions: Default::default(),
             gates: Vec::new(),
             scopes: vec![("machine".into(), namespace), (name, file)],
         },

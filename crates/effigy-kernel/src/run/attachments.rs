@@ -35,7 +35,7 @@ pub const GUEST_PUBLICATION_KIND: &str = "kernel:workspace-guest-publication";
 pub struct GuestPublicationTicket(EffectTicket);
 
 /// Verified publication facts recorded before the environment becomes active.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestPublicationReceipt {
     pub environment: Fence,
     pub container_id: String,
@@ -316,6 +316,53 @@ impl Attachments {
         }
         run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
         run.completed(&ticket.0, crate::outcome::RequiredObligation::Applied)
+    }
+
+    /// Record that the guest holds exactly the selection this obligation's
+    /// commit wrote, under the environment run's own held `Gate(Env)`.
+    ///
+    /// The caller supplies only a reader of the exact target: the kernel reads
+    /// every selector and every selected object back itself and compares them
+    /// with the committed targets, so a partial switch, a third value or a
+    /// missing object is refused and a receipt the caller assembled is never
+    /// accepted. It also refuses a generation that no longer serves this
+    /// obligation and a second completion: a selection completes or abandons
+    /// exactly once. The retained launch pins the successor owner gate through
+    /// completion and revalidates its bound listener after readback. No
+    /// transaction spans guest I/O.
+    pub fn selection_switched(
+        run: &mut Run<'_>,
+        obligation: &crate::workspace_session::SelectionObligation,
+        launch: &crate::workspace_session::SessionLaunch,
+        reader: &mut dyn crate::workspace_session::SelectorReader,
+    ) -> Result<(), RunError> {
+        use crate::workspace_session::SelectionState;
+        run.can_effect()?;
+        if run.id != obligation.run()
+            || run.owner != obligation.fence()
+            || run.owner.resource != *obligation.environment()
+        {
+            return Err(crate::workspace_session::ActivationRefusal::SelectionMismatch.into());
+        }
+        let receipt = obligation.observe(reader)?;
+        obligation.validate_switch(&receipt)?;
+        let custody = launch.hold_lease(obligation.receipt().serving())?;
+        let result = (|| {
+            crate::fault_point!(SelectionSwitchBefore)?;
+            run.store
+                .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                    journal::check_fence(txn.conn(), &run.owner)?;
+                    obligation.require_serving(txn)?;
+                    custody.revalidate(obligation.receipt().serving())?;
+                    obligation.finish(txn, SelectionState::Switched, None)
+                })?;
+            crate::fault_point!(SelectionSwitchAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            run.poisoned = true;
+        }
+        result
     }
 
     /// An attempted publication with no trustworthy receipt is uncertain;
