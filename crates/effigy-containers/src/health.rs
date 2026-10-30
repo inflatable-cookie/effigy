@@ -255,6 +255,12 @@ pub fn split_host_port(authority: &str, default_port: u16) -> Option<(String, u1
     Some((authority.to_owned(), default_port))
 }
 
+/// How long one complete HTTP status line may take to arrive, and how long its
+/// bytes may be. TCP may split the response, so the whole line is read within
+/// this bound rather than trusting one `read` (effigy#455).
+const STATUS_LINE_DEADLINE: Duration = Duration::from_millis(400);
+const STATUS_LINE_LIMIT: usize = 512;
+
 fn probe_http(host: &str, port: u16, path: &str) -> HealthProbe {
     let Some(mut stream) = connect_tcp(host, port) else {
         return HealthProbe::Unanswered;
@@ -263,33 +269,69 @@ fn probe_http(host: &str, port: u16, path: &str) -> HealthProbe {
     if stream.write_all(request.as_bytes()).is_err() {
         return HealthProbe::Unanswered;
     }
-    let mut buf = [0u8; 256];
-    let read = stream.read(&mut buf).ok().unwrap_or(0);
-    if read == 0 {
+    // Only a complete, well-formed status line is evidence. A response that is
+    // still arriving, or that a peer closes after a prefix, is not: waiting can
+    // still change it, so it stays in the budgeted wait (effigy#455).
+    let deadline = Instant::now() + STATUS_LINE_DEADLINE;
+    let Some(line) = read_status_line(&mut stream, deadline) else {
         return HealthProbe::Unanswered;
-    }
-    let head = String::from_utf8_lossy(&buf[..read]);
-    match http_status(&head) {
+    };
+    match http_status(&line) {
         Some(status) if (200..400).contains(&status) => HealthProbe::Ready,
         Some(status) => HealthProbe::StatusMismatch(status),
         None => HealthProbe::Unanswered,
     }
 }
 
+/// Read until the first line break, the response deadline, or the status-line
+/// limit. A response may arrive in any number of writes.
+fn read_status_line(stream: &mut TcpStream, deadline: Instant) -> Option<Vec<u8>> {
+    let mut line = Vec::with_capacity(64);
+    let mut chunk = [0u8; 128];
+    while !line.contains(&b'\n') {
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        stream.set_read_timeout(Some(remaining)).ok()?;
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return None,
+            Ok(count) => {
+                line.extend_from_slice(&chunk[..count]);
+                if line.len() > STATUS_LINE_LIMIT {
+                    return None;
+                }
+            }
+        }
+    }
+    let end = line.iter().position(|byte| *byte == b'\n')?;
+    line.truncate(end + 1);
+    Some(line)
+}
+
 /// The status code of a complete HTTP/1.x status line, or `None` when no
 /// definite status line arrived.
-fn http_status(head: &str) -> Option<u16> {
-    let line = head.lines().next()?;
-    let mut parts = line.split(' ');
+///
+/// `HTTP/1.<digit> <3-digit code> <reason>` with the reason field present even
+/// when empty, per RFC 9112 section 4: a line without its terminator, its
+/// status code, or the space after it is a partial response, not an answer.
+fn http_status(line: &[u8]) -> Option<u16> {
+    let text = line.strip_suffix(b"\n")?;
+    let text = text.strip_suffix(b"\r").unwrap_or(text);
+    let mut parts = text.splitn(3, |byte| *byte == b' ');
     let version = parts.next()?;
-    if version != "HTTP/1.0" && version != "HTTP/1.1" {
+    if version.len() != 8 || !version.starts_with(b"HTTP/1.") || !version[7].is_ascii_digit() {
         return None;
     }
     let status = parts.next()?;
-    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+    if status.len() != 3 || !status.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    status.parse().ok()
+    let reason = parts.next()?;
+    let reason_is_valid = reason
+        .iter()
+        .all(|&byte| byte == b'\t' || (0x20..=0x7e).contains(&byte) || byte >= 0x80);
+    if !reason_is_valid {
+        return None;
+    }
+    std::str::from_utf8(status).ok()?.parse::<u16>().ok()
 }
 
 fn probe_tcp(host: &str, port: u16) -> bool {

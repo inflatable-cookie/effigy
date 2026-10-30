@@ -165,8 +165,11 @@ declared `restart: "no"` and exited successfully is complete, not unready, so a
 one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
 a definite status line outside `2xx`/`3xx` is refused at once, naming the status
 it observed and the primary container's own last output, instead of spending
-the declared budget on an answer waiting cannot change (effigy#455); a check
-that does not answer at all keeps the budgeted wait. The container named in
+the declared budget on an answer waiting cannot change (effigy#455). Only a
+complete, well-formed status line is evidence: the probe reads one bounded
+status line across partial reads, so a check that does not answer, that splits
+its response, or that closes after a prefix keeps the budgeted wait instead of
+reporting readiness or a mismatch it never observed. The container named in
 that evidence — in the human diagnostic as well as `waiting_on` — is the one the
 runtime's own row reports for the primary service, so a declared Compose
 `container_name` is read and reported as it is rather than assumed from the

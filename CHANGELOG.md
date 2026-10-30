@@ -697,7 +697,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `[containers.<NAME>.health]` check that answers a definite status outside
   `2xx`/`3xx` is refused at once with the status it observed and the primary
   container's last output, instead of spending the whole health budget on an
-  answer waiting cannot change (effigy#455). That container is the identity the
+  answer waiting cannot change (effigy#455). Only a complete status line counts
+  as that answer: the probe reads one bounded line across partial reads, so a
+  split response or a peer that closes after a prefix keeps the budgeted wait
+  instead of reporting readiness or a mismatch it never observed. That
+  container is the identity the
   runtime's own row reports for the service, so an explicit Compose
   `container_name` reads its own logs and is the one the diagnostic and
   `waiting_on` name; when the runtime cannot name a container, the diagnostic
