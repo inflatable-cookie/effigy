@@ -134,7 +134,8 @@ fn run_container_profile_prune_health_pid_files(
     let deadline = Instant::now() + PROFILE_PRUNE_TIMEOUT;
     let progress = ProfileProgress::new(
         output_json,
-        profile_probe(&profile),
+        &profile,
+        format!("the stale health-check pid files of Colima profile `{profile}` to be pruned"),
         format!("pruning stale health-check pid files in Colima profile `{profile}`"),
     );
     progress.observe(&status);
@@ -182,7 +183,12 @@ fn run_container_profile_runtime_recovery(
     // (effigy#461).
     let progress = ProfileProgress::new(
         output_json,
-        profile_probe(&policy.profile),
+        &policy.profile,
+        format!(
+            "the Colima runtime {} of profile `{}` to finish",
+            if repair { "recovery" } else { "stop" },
+            policy.profile
+        ),
         format!(
             "{} the Colima runtime of profile `{}`",
             if repair { "recovering" } else { "stopping" },
@@ -219,44 +225,82 @@ fn run_container_profile_runtime_recovery(
 }
 
 /// The live progress of one profile command (effigy#461): the profile
-/// operation now running, how far through its Colima calls it is, and the last
-/// state `colima list --json` reported for the profile.
+/// operation now running, the exact completion it awaits, how far through its
+/// Colima calls it is, and the last state `colima list --json` reported for the
+/// profile. The wait follows the operation: a stalled `colima stop` names
+/// `colima stop`, never the list probe that finished before it started.
 struct ProfileProgress {
+    profile: String,
     source: Option<effigy_ui::steps::ProgressSource>,
     step: Option<effigy_ui::steps::Step>,
 }
 
-/// The exact probe every profile frame falls back to when the command has
-/// published no state of its own: the one command that reports the profile.
+/// The exact probe that reports a profile's state: `colima list --json`.
 fn profile_probe(profile: &str) -> String {
     format!("`colima list --json` to answer for profile `{profile}`")
 }
 
 impl ProfileProgress {
-    /// `waiting_for` names the exact probe that reports this profile, and
+    /// `awaiting` is the first exact completion this command waits on, and
     /// `operation` is what is running until the command says otherwise.
-    fn new(output_json: bool, waiting_for: String, operation: String) -> Self {
+    fn new(
+        output_json: bool,
+        profile: impl Into<String>,
+        awaiting: impl Into<String>,
+        operation: impl Into<String>,
+    ) -> Self {
+        let profile = profile.into();
         if output_json {
             return Self {
+                profile,
                 source: None,
                 step: None,
             };
         }
-        let source = effigy_ui::steps::ProgressSource::waiting_for(waiting_for);
+        let source = effigy_ui::steps::ProgressSource::waiting_for(awaiting);
         source.update(operation, None, None);
         let step = effigy_ui::steps::live_step(source.clone());
         Self {
+            profile,
             source: Some(source),
             step: Some(step),
         }
     }
 
-    /// The profile operation now running, with a known count when the command
-    /// runs a known number of Colima calls.
-    fn phase(&self, operation: impl Into<String>, count: Option<(u64, u64)>) {
+    /// The operation now running and the exact completion it awaits, with a
+    /// known count when the command runs a known number of steps.
+    fn awaiting(
+        &self,
+        operation: impl Into<String>,
+        awaiting: impl Into<String>,
+        count: Option<(u64, u64)>,
+    ) {
         if let Some(source) = &self.source {
+            // The last state Colima reported belongs to the profile, not to
+            // the finished probe, so it stays as the last event while the wait
+            // names the operation now in flight.
+            source.waiting_on(awaiting);
             source.update(operation, count, None);
         }
+    }
+
+    /// A Colima command now in flight: the frame awaits that command's exit.
+    fn colima_command(
+        &self,
+        command: &str,
+        operation: impl Into<String>,
+        count: Option<(u64, u64)>,
+    ) {
+        self.awaiting(
+            operation,
+            format!("`{command}` to finish for profile `{}`", self.profile),
+            count,
+        );
+    }
+
+    /// The state read: the frame awaits `colima list --json` again.
+    fn reading_state(&self, operation: impl Into<String>) {
+        self.awaiting(operation, profile_probe(&self.profile), None);
     }
 
     /// What `colima list --json` last reported for this profile.
@@ -377,6 +421,7 @@ fn run_container_profile_recreate(
 
     let progress = ProfileProgress::new(
         output_json,
+        &profile,
         profile_probe(&profile),
         format!("reading the state Colima reports for profile `{profile}`"),
     );
@@ -384,9 +429,14 @@ fn run_container_profile_recreate(
     let result = (|| -> Result<String, RunnerError> {
         let existed = before.row.is_some();
         if existed {
-            progress.phase(format!("stopping Colima profile `{profile}`"), Some((1, 3)));
+            progress.colima_command(
+                "colima stop",
+                format!("stopping Colima profile `{profile}`"),
+                Some((1, 3)),
+            );
             run_colima_allow_failure(&["stop", "--profile", &profile], "colima stop")?;
-            progress.phase(
+            progress.colima_command(
+                "colima delete",
                 format!("deleting Colima profile `{profile}` and its runtime data"),
                 Some((2, 3)),
             );
@@ -395,7 +445,8 @@ fn run_container_profile_recreate(
                 "colima delete",
             )?;
         }
-        progress.phase(
+        progress.colima_command(
+            "colima start",
             format!("starting Colima profile `{profile}` with the managed sizing"),
             Some(if existed { (3, 3) } else { (1, 1) }),
         );
@@ -405,10 +456,9 @@ fn run_container_profile_recreate(
         let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
         run_command(&start.program, &start_args, &start.label, false)?;
 
-        progress.phase(
-            format!("reading the state Colima reports for profile `{profile}`"),
-            None,
-        );
+        progress.reading_state(format!(
+            "reading the state Colima reports for profile `{profile}`"
+        ));
         let after = inspect_profile_with_disk(&profile, disk_gib)?;
         progress.observe(&after);
         Ok(render_profile_recreate(&before, &after, output_json))
@@ -443,15 +493,21 @@ fn run_container_profile_purge(
 
     let progress = ProfileProgress::new(
         output_json,
+        &profile,
         profile_probe(&profile),
         format!("reading the state Colima reports for profile `{profile}`"),
     );
     progress.observe(&before);
     let result = (|| -> Result<String, RunnerError> {
         if before.row.is_some() {
-            progress.phase(format!("stopping Colima profile `{profile}`"), Some((1, 2)));
+            progress.colima_command(
+                "colima stop",
+                format!("stopping Colima profile `{profile}`"),
+                Some((1, 2)),
+            );
             run_colima_allow_failure(&["stop", "--profile", &profile], "colima stop")?;
-            progress.phase(
+            progress.colima_command(
+                "colima delete",
                 format!("deleting Colima profile `{profile}` and its runtime data"),
                 Some((2, 2)),
             );
@@ -461,10 +517,9 @@ fn run_container_profile_purge(
             )?;
         }
 
-        progress.phase(
-            format!("reading the state Colima reports for profile `{profile}`"),
-            None,
-        );
+        progress.reading_state(format!(
+            "reading the state Colima reports for profile `{profile}`"
+        ));
         let after = inspect_profile(&profile)?;
         progress.observe(&after);
         Ok(render_profile_purge(&before, &after, output_json))
@@ -487,14 +542,16 @@ fn run_container_profile_resize(
         .ok_or_else(|| not_managed_profile_error("resize", &profile))?;
     let progress = ProfileProgress::new(
         output_json,
+        &profile,
         profile_probe(&profile),
         format!("reading the state Colima reports for profile `{profile}`"),
     );
     let result = (|| -> Result<String, RunnerError> {
         let before = inspect_profile(&profile)?;
         progress.observe(&before);
-        progress.phase(
+        progress.awaiting(
             format!("preparing the managed configuration for Colima profile `{profile}`"),
+            format!("the managed Colima configuration for profile `{profile}` to be written"),
             None,
         );
         prepare_managed_colima_profile_name(&profile).map_err(RunnerError::task_invocation)?;
@@ -504,11 +561,16 @@ fn run_container_profile_resize(
             .as_ref()
             .is_some_and(|row| row.status.eq_ignore_ascii_case("running"));
         if was_running {
-            progress.phase(format!("stopping Colima profile `{profile}`"), Some((1, 2)));
+            progress.colima_command(
+                "colima stop",
+                format!("stopping Colima profile `{profile}`"),
+                Some((1, 2)),
+            );
             run_colima(&["stop", "--profile", &profile], "colima stop")?;
         }
 
-        progress.phase(
+        progress.colima_command(
+            "colima start",
             format!("starting Colima profile `{profile}` with the managed sizing"),
             Some(if was_running { (2, 2) } else { (1, 1) }),
         );
@@ -516,10 +578,9 @@ fn run_container_profile_resize(
         let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
         run_command(&start.program, &start_args, &start.label, false)?;
 
-        progress.phase(
-            format!("reading the state Colima reports for profile `{profile}`"),
-            None,
-        );
+        progress.reading_state(format!(
+            "reading the state Colima reports for profile `{profile}`"
+        ));
         let after = inspect_profile(&profile)?;
         progress.observe(&after);
         let resized = after
@@ -1212,42 +1273,80 @@ mod progress_tests {
         }
     }
 
-    /// effigy#461: a profile frame names the operation now running and the
-    /// state Colima last reported, with the elapsed wait. Before there is any
-    /// observation it names the exact probe, never a canned label.
+    /// effigy#461: a profile frame names the operation now running, the exact
+    /// completion it awaits and the state Colima last reported, with the
+    /// elapsed wait. The wait follows the operation: once the list probe has
+    /// answered, a stop or start in flight is what the frame awaits.
     #[test]
     fn fake_clock_frames_name_the_profile_operation_and_its_state() {
         let progress = ProfileProgress::new(
             false,
-            profile_probe("effigy"),
-            "repairing the Colima runtime of profile `effigy`".to_owned(),
+            "effigy",
+            "the Colima runtime recovery of profile `effigy` to finish",
+            "repairing the Colima runtime of profile `effigy`",
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(3)),
-            "repairing the Colima runtime of profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; 3s elapsed"
+            "repairing the Colima runtime of profile `effigy`; waiting for the Colima runtime recovery of profile `effigy` to finish; 3s elapsed"
         );
 
         progress.observe(&running_profile(100));
         let frame = progress.frame_at(Duration::from_secs(42));
         assert_eq!(
             frame,
-            "repairing the Colima runtime of profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
+            "repairing the Colima runtime of profile `effigy`; waiting for the Colima runtime recovery of profile `effigy` to finish; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
         );
 
-        progress.phase(
-            "starting Colima profile `effigy` with the managed sizing",
-            Some((2, 2)),
+        // The list probe has answered and a recreate's own calls begin: the
+        // frame awaits `colima stop`, never the finished list read.
+        progress.reading_state("reading the state Colima reports for profile `effigy`");
+        let frame = progress.frame_at(Duration::from_secs(50));
+        assert!(
+            frame.contains("waiting for `colima list --json` to answer for profile `effigy`"),
+            "{frame}"
+        );
+        progress.colima_command(
+            "colima stop",
+            "stopping Colima profile `effigy`",
+            Some((1, 2)),
         );
         let frame = progress.frame_at(Duration::from_secs(57));
         assert!(
-            frame.starts_with("starting Colima profile `effigy` with the managed sizing (2/2)"),
+            frame.starts_with("stopping Colima profile `effigy` (1/2)"),
             "{frame}"
+        );
+        assert!(
+            frame.contains("waiting for `colima stop` to finish for profile `effigy`"),
+            "{frame}"
+        );
+        assert!(
+            !frame.contains("`colima list --json`"),
+            "a finished probe is not the operation in flight: {frame}"
         );
         assert!(frame.contains("100GiB disk (target=300GiB)"), "{frame}");
         assert!(frame.ends_with("; 57s elapsed"), "{frame}");
 
-        progress.observe(&running_profile(300));
+        // A later operation moves the wait with it, at a second fake time.
+        progress.colima_command(
+            "colima start",
+            "starting Colima profile `effigy` with the managed sizing",
+            Some((2, 2)),
+        );
         let frame = progress.frame_at(Duration::from_secs(61));
+        assert!(
+            frame.starts_with("starting Colima profile `effigy` with the managed sizing (2/2)"),
+            "{frame}"
+        );
+        assert!(
+            frame.contains("waiting for `colima start` to finish for profile `effigy`"),
+            "{frame}"
+        );
+        assert!(
+            !frame.contains("`colima list --json`"),
+            "a stale probe must not name the wait: {frame}"
+        );
+        progress.observe(&running_profile(300));
+        let frame = progress.frame_at(Duration::from_secs(70));
         assert!(frame.contains("300GiB disk (target=300GiB)"), "{frame}");
         progress.succeed("recovered the Colima runtime of profile `effigy`");
     }
@@ -1264,8 +1363,9 @@ mod progress_tests {
         };
         let progress = ProfileProgress::new(
             false,
+            "effigy",
             profile_probe("effigy"),
-            "reading the state Colima reports for profile `effigy`".to_owned(),
+            "reading the state Colima reports for profile `effigy`",
         );
         progress.observe(&absent);
         assert_eq!(
@@ -1275,8 +1375,9 @@ mod progress_tests {
 
         let quiet = ProfileProgress::new(
             true,
+            "effigy",
             profile_probe("effigy"),
-            "reading the state Colima reports for profile `effigy`".to_owned(),
+            "reading the state Colima reports for profile `effigy`",
         );
         assert!(quiet.source.is_none() && quiet.step.is_none());
         quiet.observe(&running_profile(300));

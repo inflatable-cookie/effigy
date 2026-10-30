@@ -439,7 +439,9 @@ until the host-log writer has a safe secret-handling boundary.
   wait; every frame keeps the awaited object next to the last event, so
   publishing a Compose progress line no longer hides the `docker compose up`
   still running (a state capture's push frame likewise keeps its destination
-  while the finished capture task stays as its last event); a heavy admission wait names
+  while the finished capture task stays as its last event), and a Colima
+  profile command waits on the command now in flight — `colima stop`,
+  `delete` or `start` — rather than the list probe that already answered; a heavy admission wait names
   the hook's decision probe and the hook's own progress line, and its immediate
   refusals are one plain line; a teardown
   the runtime never narrates names its phase, the runtime report it awaits and

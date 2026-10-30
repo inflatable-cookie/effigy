@@ -93,7 +93,7 @@ of its own.
 
 | Audited site | What it was | Now | Disposition |
 | --- | --- | --- | --- |
-| `src/runner/container_command/profile.rs:218` | `steps::step(label)` held for the recovery/reset | `profile.rs:245-247` — `ProfileProgress` builds a `ProgressSource` from the exact probe and a `live_step`; `phase` (256) and `observe` (263) move it | live |
+| `src/runner/container_command/profile.rs:218` | `steps::step(label)` held for the recovery/reset | `profile.rs:246-311` — `ProfileProgress` builds a `ProgressSource` from its first exact wait and a `live_step`; `awaiting` (272) moves the wait with the operation, `colima_command` (288) names `colima stop`/`delete`/`start` while that command runs, `reading_state` (302) names the list probe, and `observe` (307) records the last reported profile state as the event | live |
 
 ### Environment gate and settle
 
