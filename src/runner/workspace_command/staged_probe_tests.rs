@@ -14,6 +14,7 @@
 use super::super::reserved_guest::WorkspaceGuestProbe;
 use super::*;
 use crate::contract_test_support::EnvGuard;
+use crate::runner::workspace_client::guest_probe::GuestProbeReply;
 use crate::runner::workspace_client::identity::GuestSelfObservation;
 use effigy_cli::{Command, GuestProbeArgs};
 use effigy_test_support::Fixture;
@@ -34,6 +35,7 @@ struct Backend {
     fixture: Fixture,
     capture: PathBuf,
     reply: PathBuf,
+    spawns: PathBuf,
 }
 
 impl Backend {
@@ -43,10 +45,12 @@ impl Backend {
         let reply = fixture.path().join("reply.json");
         std::fs::write(&reply, "{}").expect("initial reply");
         let capture = fixture.path().join("exec-argv");
+        let spawns = fixture.path().join("spawns");
         let backend = Self {
             fixture,
             capture,
             reply,
+            spawns,
         };
         backend.body(&format!(
             "exec cat {}",
@@ -55,19 +59,29 @@ impl Backend {
         backend
     }
 
-    /// Replace the fake guest's behaviour. The argv is always recorded first.
+    /// Replace the fake guest's behaviour. The argv and the spawn count are
+    /// always recorded first, so a proof can show that a refusal spawned
+    /// nothing.
     fn body(&self, body: &str) {
         let program = self.fixture.path().join("bin").join("docker");
         std::fs::write(
             &program,
             format!(
-                "#!/bin/sh\nprintf '%s\\0' \"$@\" > {capture}\n{body}\n",
+                "#!/bin/sh\nprintf '%s\\0' \"$@\" > {capture}\nprintf 'x' >> {spawns}\n{body}\n",
                 capture = shell_quote(&self.capture.display().to_string()),
+                spawns = shell_quote(&self.spawns.display().to_string()),
             ),
         )
         .expect("fake backend script");
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
             .expect("fake backend mode");
+    }
+
+    /// How many external execs this guest was asked to perform.
+    fn spawns(&self) -> usize {
+        std::fs::read(&self.spawns)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0)
     }
 
     fn respond(&self, reply: &serde_json::Value) {
@@ -174,19 +188,28 @@ fn pin() -> Digest {
     Digest::parse_hex(PIN_HEX).expect("canonical pin")
 }
 
+/// The digest a probe reply must name for the object the publication staged.
+fn pinned_executable() -> String {
+    format!("sha256:{}", object().digest.hex())
+}
+
+/// A probe reply built from the guest entry's own reply type, so these proofs
+/// fail if the wire document and the adapter ever disagree.
 fn reply(identity: &WorkspaceContainerIdentity) -> serde_json::Value {
-    serde_json::json!({
-        "schema": "effigy.guest-probe.v1",
-        "identity": {
-            "container_id": &identity.container_id,
-            "vm_boot_id": &identity.vm_boot_id,
-            "platform": &identity.platform,
-            "libc": &identity.libc,
+    let document = GuestProbeReply {
+        schema: "effigy.guest-probe.v1".to_owned(),
+        identity: GuestSelfObservation {
+            container_id: identity.container_id.clone(),
+            vm_boot_id: identity.vm_boot_id.clone(),
+            platform: identity.platform.clone(),
+            libc: identity.libc.clone(),
         },
-        "address": serde_json::Value::Null,
-        "peer": serde_json::Value::Null,
-        "pin": serde_json::Value::Null,
-    })
+        executable: Some(pinned_executable()),
+        address: None,
+        peer: None,
+        pin: None,
+    };
+    serde_json::to_value(document).expect("probe reply document")
 }
 
 fn observed_unknown<T: std::fmt::Debug>(observed: &Observed<T>) -> String {
@@ -227,13 +250,24 @@ fn identity_observes_the_staged_object_in_the_verified_target() {
     assert!(argv.iter().any(|arg| arg == CONTAINER_ID));
     assert!(!argv.iter().any(|arg| arg == "app"));
     let script = argv.last().expect("the shell that runs the object");
-    // The object's digest is gated in the same process that then execs it.
+    // The object's digest is gated in the same process that then execs it, and
+    // a refusal is marker-signalled so a guest exit status is never mistaken
+    // for one.
     assert!(script.contains(&staged.digest.hex()));
     assert!(script.contains("exec \"$p\""));
     assert!(
-        script.find("exit 5").expect("digest gate")
+        script
+            .find("h=${h%% *}")
+            .expect("the digest field the gate compares")
             < script.find("exec \"$p\"").expect("object exec"),
         "the digest gate precedes the exec"
+    );
+    assert!(
+        script
+            .find(GATE_OBJECT_DIFFERS)
+            .expect("the gate's own refusal marker")
+            < script.find("exec \"$p\"").expect("object exec"),
+        "a refusal comes from the gate, before the object runs"
     );
     assert!(script.contains("__guest-identity"));
     assert_eq!(
@@ -296,7 +330,21 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     let policy = backend.policy();
     let staged = object();
 
-    backend.body("exit 3");
+    // A staged program that exits with the gate's old-style code is not an
+    // absence proof: the gate's marker must name the refusal too.
+    for code in ["3", "64", "65", "66"] {
+        backend.body(&format!("printf 'the object is fine' >&2; exit {code}"));
+        let mut probe = backend.linked_probe(&policy);
+        let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
+        assert!(
+            reason.contains(&format!("ended with {code}")),
+            "exit {code} is a failed observation, not a gate refusal: {reason}"
+        );
+        assert!(reason.contains("the object is fine"), "{reason}");
+    }
+
+    // Only the gate's own marker plus its reserved code proves absence.
+    backend.body(&format!("printf '{GATE_OBJECT_ABSENT}\\n' >&2; exit 64"));
     let mut probe = backend.linked_probe(&policy);
     assert_eq!(
         probe.identity(&claimed(), &staged, Duration::from_secs(5)),
@@ -305,12 +353,18 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
         })
     );
 
-    backend.body("exit 4");
+    // The marker with the wrong code does not become an absence proof either.
+    backend.body(&format!("printf '{GATE_OBJECT_ABSENT}\\n' >&2; exit 70"));
+    let mut probe = backend.linked_probe(&policy);
+    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
+    assert!(reason.contains("ended with 70"), "{reason}");
+
+    backend.body(&format!("printf '{GATE_NO_HASH_TOOL}\\n' >&2; exit 65"));
     let mut probe = backend.linked_probe(&policy);
     let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
     assert!(reason.contains("no SHA-256 utility"), "{reason}");
 
-    backend.body("exit 5");
+    backend.body(&format!("printf '{GATE_OBJECT_DIFFERS}\\n' >&2; exit 66"));
     let mut probe = backend.linked_probe(&policy);
     let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
     assert!(reason.contains("requested immutable digest"), "{reason}");
@@ -319,12 +373,178 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     let mut probe = backend.linked_probe(&policy);
     let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
     assert!(reason.contains("no probe document"), "{reason}");
+}
 
-    backend.body("printf 'the guest has no object' >&2; exit 7");
-    let mut probe = backend.linked_probe(&policy);
-    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("ended with 7"), "{reason}");
-    assert!(reason.contains("no object"), "{reason}");
+#[test]
+fn identity_refuses_a_reply_from_another_executable() {
+    let backend = Backend::new("other-executable");
+    let _env = backend.env();
+    let policy = backend.policy();
+    let staged = object();
+
+    // The guest hashes `/proc/self/exe`; a reply for another binary is not
+    // evidence about the staged object, whatever path was executed.
+    for other in [
+        serde_json::json!(format!("sha256:{}", "e".repeat(64))),
+        serde_json::Value::Null,
+    ] {
+        let mut reply = reply(&claimed());
+        reply["executable"] = other.clone();
+        backend.respond(&reply);
+        let mut probe = backend.linked_probe(&policy);
+        let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
+        assert!(
+            reason.contains("another executable than the pinned object"),
+            "{reason}"
+        );
+    }
+    assert_eq!(backend.spawns(), 2, "each refusal is one observation");
+}
+
+#[test]
+fn the_object_gate_runs_the_pinned_bytes_and_refuses_everything_else() {
+    // The gate is real POSIX shell over real files and the image's own digest
+    // tools: this is the only step between a staged path and running it.
+    let fixture = Fixture::new("effigy-staged-probe-gate-").expect("fixture root");
+    let object_bytes = b"#!/bin/sh\nprintf 'probe-ran'\n".to_vec();
+    let digest = Digest::of(&object_bytes);
+    // The object path is digest-addressed, as production object paths are, so a
+    // path token can never stand in for the hashed bytes.
+    let object_path = fixture.path().join(digest.hex());
+    std::fs::write(&object_path, &object_bytes).expect("staged object");
+    std::fs::set_permissions(&object_path, std::fs::Permissions::from_mode(0o755))
+        .expect("staged object mode");
+    let empty_bin = fixture.path().join("empty-bin");
+    std::fs::create_dir(&empty_bin).expect("empty bin");
+
+    let gate = |path: &str, digest: Digest, search_path: &Path| {
+        let script = staged_object_probe_script(
+            &GuestObject {
+                path: path.to_owned(),
+                digest,
+            },
+            &identity_args(),
+        );
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .env("PATH", search_path)
+            .output()
+            .expect("run the staged-object gate");
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        )
+    };
+    let system_path = Path::new("/usr/bin:/bin:/usr/sbin:/sbin");
+
+    let (code, stdout, stderr) = gate(
+        &object_path.display().to_string(),
+        digest.clone(),
+        system_path,
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(stdout, "probe-ran", "the pinned bytes run");
+
+    // Same digest-named path, different bytes: refused before it runs.
+    std::fs::write(&object_path, b"#!/bin/sh\nprintf 'replaced'\n").expect("replaced object");
+    let (code, stdout, stderr) = gate(
+        &object_path.display().to_string(),
+        digest.clone(),
+        system_path,
+    );
+    assert_eq!(code, 66);
+    assert_eq!(stderr, GATE_OBJECT_DIFFERS);
+    assert!(stdout.is_empty(), "a refused object never runs");
+
+    let missing = fixture.path().join("missing-object");
+    let (code, stdout, stderr) = gate(&missing.display().to_string(), digest.clone(), system_path);
+    assert_eq!(code, 64);
+    assert_eq!(stderr, GATE_OBJECT_ABSENT);
+    assert!(stdout.is_empty());
+
+    std::fs::write(&object_path, &object_bytes).expect("restore staged object");
+    let (code, stdout, stderr) = gate(
+        &object_path.display().to_string(),
+        digest,
+        empty_bin.as_path(),
+    );
+    assert_eq!(code, 65, "an image with no digest tool is unavailable");
+    assert_eq!(stderr, GATE_NO_HASH_TOOL);
+    assert!(stdout.is_empty());
+}
+
+#[test]
+fn the_publication_guest_shares_one_deadline_and_refuses_without_spawning() {
+    let backend = Backend::new("deadline-guest");
+    let _env = backend.env();
+    let policy = backend.policy();
+    let target = target();
+
+    // Reads, digests and the identity probe all go through the bounded Compose
+    // route the publication stages with.
+    backend.body("printf 'context bytes'");
+    let mut guest = DeadlineGuest::new(
+        backend.path(),
+        &policy,
+        &target,
+        Instant::now() + Duration::from_secs(5),
+    )
+    .expect("deadline guest");
+    assert_eq!(
+        guest
+            .read_file("/run/effigy/context/7/context.json")
+            .expect("bounded read"),
+        Some(b"context bytes".to_vec())
+    );
+    assert_eq!(backend.spawns(), 1);
+
+    backend.body(&format!(
+        "printf '{PIN_HEX}  /run/effigy/objects/bin/effigy\\n'"
+    ));
+    assert_eq!(
+        guest
+            .file_sha256("/run/effigy/objects/bin/effigy")
+            .expect("bounded digest")
+            .as_deref(),
+        Some(PIN_HEX)
+    );
+    backend.body(&format!(
+        "printf 'boot={BOOT_ID}\\nplatform=x86_64\\nlibc=gnu\\n'"
+    ));
+    let observed = guest.probe_container_identity().expect("bounded identity");
+    assert_eq!(observed.container_id, target.container_id);
+    assert_eq!(observed.vm_boot_id, target.vm_boot_id);
+    assert_eq!(backend.spawns(), 3, "one bounded exec per operation");
+
+    // One absolute deadline: past it, every operation refuses before spawning.
+    let mut expired = DeadlineGuest::new(
+        backend.path(),
+        &policy,
+        &target,
+        Instant::now() - Duration::from_secs(1),
+    )
+    .expect("deadline guest");
+    assert!(expired
+        .read_file("/run/effigy/context/7/context.json")
+        .is_err());
+    assert!(expired.probe_container_identity().is_err());
+    assert_eq!(backend.spawns(), 3, "an expired deadline spawns nothing");
+
+    // A Compose service alias can never become the exec target.
+    let alias = ContainerIdentity {
+        container_id: "app".to_owned(),
+        vm_boot_id: BOOT_ID.to_owned(),
+        backend: "docker-desktop".to_owned(),
+    };
+    assert!(DeadlineGuest::new(
+        backend.path(),
+        &policy,
+        &alias,
+        Instant::now() + Duration::from_secs(5)
+    )
+    .is_err());
 }
 
 #[test]

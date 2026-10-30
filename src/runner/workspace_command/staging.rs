@@ -173,11 +173,15 @@ pub(in crate::runner) struct StagedGuestProbe<'a> {
     object: Option<GuestObject>,
 }
 
-/// The staged-object gate's exit codes. They are this adapter's contract with
-/// the shell that runs the object, never a guest program's exit status.
-const EXIT_OBJECT_ABSENT: i32 = 3;
-const EXIT_NO_HASH_TOOL: i32 = 4;
-const EXIT_OBJECT_DIFFERS: i32 = 5;
+/// The staged-object gate's refusals. Each one is a marker line on stderr plus
+/// a reserved exit code, so a guest program's own exit status can never be read
+/// as this adapter's refusal: both the code and the exact marker must match.
+const EXIT_OBJECT_ABSENT: i32 = 64;
+const EXIT_NO_HASH_TOOL: i32 = 65;
+const EXIT_OBJECT_DIFFERS: i32 = 66;
+const GATE_OBJECT_ABSENT: &str = "effigy-staged-guest-gate:object-absent";
+const GATE_NO_HASH_TOOL: &str = "effigy-staged-guest-gate:no-hash-tool";
+const GATE_OBJECT_DIFFERS: &str = "effigy-staged-guest-gate:object-differs";
 /// The guest entry's reply schema. A reply that does not name it is another
 /// program's output.
 const GUEST_PROBE_SCHEMA: &str = "effigy.guest-probe.v1";
@@ -187,6 +191,10 @@ const PREPARED_ALIAS: &str = "effigy-host";
 const GUEST_DIAL_CEILING_MS: u128 = 30_000;
 const PROBE_STDOUT_BYTES: u64 = 64 * 1024;
 const PROBE_STDERR_BYTES: u64 = 8 * 1024;
+/// One publication's whole guest-I/O allowance: every staging read, digest and
+/// identity probe shares these capture bounds and one absolute deadline.
+const PUBLICATION_STDOUT_BYTES: u64 = 1024 * 1024;
+const PUBLICATION_STDERR_BYTES: u64 = 256 * 1024;
 
 impl<'a> StagedGuestProbe<'a> {
     /// Bind the host-verified target this publication applies to. The staged
@@ -304,36 +312,39 @@ impl<'a> StagedGuestProbe<'a> {
             }
             Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
         };
-        match captured.status.code() {
-            Some(0) => {}
-            Some(EXIT_OBJECT_ABSENT) => {
+        match gate_refusal(&captured) {
+            Some(GateRefusal::ObjectAbsent) => {
                 return Observed::Absent(AbsenceProof::NoFile { name: object.path })
             }
-            Some(EXIT_NO_HASH_TOOL) => {
+            Some(GateRefusal::NoHashTool) => {
                 return Observed::Unknown(UnknownReason::ToolUnavailable(
                     "the guest has no SHA-256 utility, so the staged object cannot be pinned \
                      before it runs"
                         .into(),
                 ))
             }
-            Some(EXIT_OBJECT_DIFFERS) => {
+            Some(GateRefusal::ObjectDiffers) => {
                 return Observed::Unknown(UnknownReason::Inconsistent(
                     "the staged object differs from the requested immutable digest".into(),
                 ))
             }
-            code => {
-                let detail = String::from_utf8_lossy(&captured.stderr);
-                let detail = detail.trim();
-                return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                    "the bounded staged guest probe ended with {}{}",
-                    code.map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
-                    if detail.is_empty() {
-                        " and reported nothing".to_owned()
-                    } else {
-                        format!(": {detail}")
-                    }
-                )));
-            }
+            None => {}
+        }
+        if !captured.status.success() {
+            let detail = String::from_utf8_lossy(&captured.stderr);
+            let detail = detail.trim();
+            return Observed::Unknown(UnknownReason::Inconsistent(format!(
+                "the bounded staged guest probe ended with {}{}",
+                captured
+                    .status
+                    .code()
+                    .map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
+                if detail.is_empty() {
+                    " and reported nothing".to_owned()
+                } else {
+                    format!(": {detail}")
+                }
+            )));
         }
         let reply: GuestProbeReply = match serde_json::from_slice(&captured.stdout) {
             Ok(reply) => reply,
@@ -346,6 +357,15 @@ impl<'a> StagedGuestProbe<'a> {
         if reply.schema != GUEST_PROBE_SCHEMA {
             return Observed::Unknown(UnknownReason::Unparsable(
                 "the bounded staged guest probe returned another schema".into(),
+            ));
+        }
+        // The bytes that ran must be the object the publication pinned. The
+        // guest hashes `/proc/self/exe`, so a replaced object cannot report
+        // evidence on behalf of the object it replaced.
+        let pinned = format!("sha256:{}", object.digest.hex());
+        if reply.executable.as_deref() != Some(pinned.as_str()) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the staged guest ran another executable than the pinned object".into(),
             ));
         }
         // The guest's independent identity must be this publication's target:
@@ -375,10 +395,13 @@ impl<'a> StagedGuestProbe<'a> {
 
 /// The shell that gates and then runs the staged object.
 ///
-/// The digest is compared in the same process that `exec`s the path, so there
-/// is no window in which a replaced object can be read as the pinned one. The
-/// digest tool is the one `GuestReader::file_sha256` already requires of the
-/// image; a guest without one is an unavailable observation, never a pass.
+/// The digest is compared in the same process that `exec`s the path, so a
+/// replaced object is refused before it runs. `sha256sum` and `shasum` print the
+/// digest first and `openssl` last, so each branch reduces the output to the
+/// digest field and only that field is compared: a digest that happens to
+/// appear in the object's own path is never taken as the hash. The digest tool
+/// is the one `GuestReader::file_sha256` already requires of the image; a guest
+/// without one is an unavailable observation, never a pass.
 fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
     let path = shell_quote(&object.path);
     let digest = object.digest.hex();
@@ -389,19 +412,43 @@ fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
         .join(" ");
     format!(
         "p={path}\n\
-         [ -f \"$p\" ] || exit {absent}\n\
+         [ -f \"$p\" ] || {{ printf '%s\\n' {absent_marker} >&2; exit {absent}; }}\n\
          if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum \"$p\")\n\
          elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 \"$p\")\n\
-         elif command -v openssl >/dev/null 2>&1; then h=$(openssl dgst -sha256 \"$p\")\n\
-         else exit {no_tool}\nfi\n\
-         found=\n\
-         for token in $h; do [ \"$token\" = {digest} ] && found=1; done\n\
-         [ \"$found\" = 1 ] || exit {differs}\n\
+         elif command -v openssl >/dev/null 2>&1; then h=$(openssl dgst -sha256 \"$p\"); h=${{h##* }}\n\
+         else printf '%s\\n' {no_tool_marker} >&2; exit {no_tool}\n\
+fi\n\
+         h=${{h%% *}}\n\
+         [ \"$h\" = {digest} ] || {{ printf '%s\\n' {differs_marker} >&2; exit {differs}; }}\n\
          exec \"$p\" {args}",
         absent = EXIT_OBJECT_ABSENT,
         no_tool = EXIT_NO_HASH_TOOL,
         differs = EXIT_OBJECT_DIFFERS,
+        absent_marker = shell_quote(GATE_OBJECT_ABSENT),
+        no_tool_marker = shell_quote(GATE_NO_HASH_TOOL),
+        differs_marker = shell_quote(GATE_OBJECT_DIFFERS),
     )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GateRefusal {
+    ObjectAbsent,
+    NoHashTool,
+    ObjectDiffers,
+}
+
+/// A gate refusal needs both its reserved exit code and its exact marker line.
+/// A staged program that exits one of those codes, or logs to stderr, is a
+/// failed observation — never another object's absence or a wrong digest.
+fn gate_refusal(captured: &BoundedCapture) -> Option<GateRefusal> {
+    let (refusal, marker) = match captured.status.code()? {
+        EXIT_OBJECT_ABSENT => (GateRefusal::ObjectAbsent, GATE_OBJECT_ABSENT),
+        EXIT_NO_HASH_TOOL => (GateRefusal::NoHashTool, GATE_NO_HASH_TOOL),
+        EXIT_OBJECT_DIFFERS => (GateRefusal::ObjectDiffers, GATE_OBJECT_DIFFERS),
+        _ => return None,
+    };
+    let stderr = String::from_utf8_lossy(&captured.stderr);
+    (stderr.trim() == marker).then_some(refusal)
 }
 
 /// A remaining budget the guest entry may spend on its own dial: never zero,
@@ -608,6 +655,113 @@ impl super::reserved_guest::WorkspaceGuestProbe for StagedGuestProbe<'_> {
             "bounded exec of the staged digest object reported its own container identity",
         )
         .map(|reply| reply.identity)
+    }
+}
+
+/// A guest whose every external exec shares the publication's one absolute
+/// deadline.
+///
+/// The reserved publication stages a binary, any number of immutable documents
+/// and selector readbacks before it publishes. Each of those is an external
+/// exec, so the input builder hands this adapter to `prepare_reserved_guest` as
+/// the guest: every operation runs through `ComposeWorkspaceGuest::bounded`
+/// inside one cumulative capture budget with one deadline, and an expired
+/// deadline refuses without spawning anything.
+#[derive(Debug)]
+pub(in crate::runner) struct DeadlineGuest<'a> {
+    repo_root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    target_id: String,
+    budget: BoundedCommandBudget,
+}
+
+impl<'a> DeadlineGuest<'a> {
+    /// `target` is the host-verified bound target, copied here so the caller
+    /// keeps no borrow of it; `deadline` is the publication's one absolute
+    /// deadline, shared by every guest operation this adapter performs.
+    pub(in crate::runner) fn new(
+        repo_root: &'a Path,
+        policy: &'a EffectiveContainerPolicy,
+        target: &ContainerIdentity,
+        deadline: std::time::Instant,
+    ) -> Result<Self, RunnerError> {
+        let full_id = target.container_id.len() == 64
+            && target
+                .container_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+        if !full_id {
+            return Err(RunnerError::task_invocation(
+                "workspace guest I/O needs the host-verified full container id, not a service \
+                 alias or a short id",
+            ));
+        }
+        Ok(Self {
+            repo_root,
+            policy,
+            target_id: target.container_id.clone(),
+            budget: BoundedCommandBudget::new(
+                std::time::Instant::now(),
+                deadline,
+                PUBLICATION_STDOUT_BYTES,
+                PUBLICATION_STDERR_BYTES,
+            ),
+        })
+    }
+
+    fn guest(&mut self) -> ComposeWorkspaceGuest<'_> {
+        ComposeWorkspaceGuest::bounded(
+            self.repo_root,
+            self.policy,
+            &self.target_id,
+            &mut self.budget,
+        )
+    }
+}
+
+impl GuestReader for DeadlineGuest<'_> {
+    fn read_file(&mut self, path: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+        self.guest().read_file(path)
+    }
+
+    fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        self.guest().file_sha256(path)
+    }
+}
+
+impl GuestWorkspace for DeadlineGuest<'_> {
+    fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        self.guest().read_link(path)
+    }
+    fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError> {
+        self.guest().ensure_dir(path, mode)
+    }
+    fn write_file(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        self.guest().write_file(path, bytes, mode)
+    }
+    fn write_no_replace(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        self.guest().write_no_replace(path, bytes, mode)
+    }
+    fn install_no_replace(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        self.guest().install_no_replace(staging, path)
+    }
+    fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError> {
+        self.guest().set_owner(path, owner)
+    }
+    fn stage_host_file(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError> {
+        self.guest().stage_host_file(host_path, guest_path)
+    }
+    fn install_executable(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        self.guest().install_executable(staging, path)
+    }
+    fn replace_pointer(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        self.guest().replace_pointer(path, target)
+    }
+    fn replace_link(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        self.guest().replace_link(path, target)
+    }
+    fn probe_container_identity(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
+        self.guest().probe_container_identity()
     }
 }
 
