@@ -672,6 +672,10 @@ impl super::HostActivation for KernelActivation<'_> {
         Ok(super::ReadinessOutcome::Ready)
     }
 
+    fn discard_dependencies(&mut self) {
+        self.pending.clear();
+    }
+
     fn launch(&mut self, process: &EffectiveHostProcess) -> Result<(), RunnerError> {
         let resource = host_process_resource(self.policy, &process.name)?;
         let env = resolved_host_process_environment(process, self.facts)?;

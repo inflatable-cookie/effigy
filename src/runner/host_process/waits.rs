@@ -418,8 +418,14 @@ pub(in crate::runner) trait HostActivation {
         on_wait: &mut dyn FnMut(Instant),
     ) -> Result<ReadinessOutcome, RunnerError>;
 
+    /// Forgets the dependency records collected for an earlier entry: a
+    /// withheld entry's verified readers must never enter the next entry's
+    /// runtime specification.
+    fn discard_dependencies(&mut self);
+
     /// The replace step: settle the previous generation of this exact process
-    /// and start its successor.
+    /// and start its successor. Its specification carries only the records
+    /// collected for this process.
     fn launch(&mut self, process: &EffectiveHostProcess) -> Result<(), RunnerError>;
 
     /// Waits for the launched listener's own declared readiness. A withheld
@@ -483,6 +489,10 @@ pub(in crate::runner) fn run_host_activation(
         if selection.is_some_and(|selection| !selection.contains(&process.name)) {
             continue;
         }
+        // One entry's records never cross into the next: a dependency verified
+        // for a host this activation then withheld stays out of every later
+        // specification.
+        kernel.discard_dependencies();
         let listener = kernel.listener(process);
         // The activation's observation budget is spent: nothing further is
         // started. A dependency this activation withheld withholds this
@@ -744,6 +754,10 @@ mod tests {
         pub(super) spawns: Vec<String>,
         /// The entries whose listener this activation withdrew.
         pub(super) withdrawn: Vec<String>,
+        /// The dependencies collected for the process about to launch.
+        pub(super) pending: Vec<String>,
+        /// What each launch's specification carried, in launch order.
+        pub(super) spec_dependencies: Vec<Vec<String>>,
         /// The published records at each observed moment.
         pub(super) frames: Vec<Vec<EntryState>>,
     }
@@ -783,11 +797,18 @@ mod tests {
             self.clock.advance(1_000);
             on_wait(self.clock.at());
             self.observe();
+            self.pending.push(dependency.to_owned());
             Ok(ReadinessOutcome::Ready)
+        }
+
+        fn discard_dependencies(&mut self) {
+            self.pending.clear();
         }
 
         fn launch(&mut self, process: &EffectiveHostProcess) -> Result<(), RunnerError> {
             self.spawns.push(process.name.clone());
+            self.spec_dependencies
+                .push(std::mem::take(&mut self.pending));
             Ok(())
         }
 
@@ -888,6 +909,8 @@ mod tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         run_plan(&ordered, None, &mut graph, &mut launcher, &clock).expect("the plan finishes");
@@ -970,6 +993,8 @@ mod tests {
             )),
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         run_plan(&ordered, None, &mut graph, &mut launcher, &clock)
@@ -1107,6 +1132,8 @@ mod environment_tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
@@ -1298,6 +1325,8 @@ mod environment_tests {
             )),
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
@@ -1506,6 +1535,8 @@ mod environment_tests {
             )),
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
@@ -1584,6 +1615,8 @@ mod environment_tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
@@ -1632,6 +1665,69 @@ mod environment_tests {
         assert_eq!(launcher.spawns, vec!["api", "front", "admin", "jobs"]);
     }
 
+    /// A host with two dependencies is withheld when its second reader is:
+    /// the first reader it verified is not left in the activation's collected
+    /// records, so the next independent host's specification declares no
+    /// dependency it never asked for (effigy#458).
+    #[test]
+    fn a_withheld_entry_takes_no_verified_dependency_into_the_next_spec() {
+        let (_dir, checkout) = fixture();
+        let mut policy = four_entry_policy(&checkout);
+        policy.host_processes = vec![
+            process("api", &[], true),
+            process("auth", &[], true),
+            process("front", &["api", "auth"], false),
+            process("jobs", &[], false),
+        ];
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        let clock = Clock::new();
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
+        let all = policy
+            .host_processes
+            .iter()
+            .map(|process| process.name.clone())
+            .collect::<BTreeSet<_>>();
+        let mut graph = HostWaitGraph::for_policy(&checkout, &policy, &all, clock.at());
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            withheld: Some((
+                "auth".to_owned(),
+                "readiness probe GET / returned 500; the listener never became ready".to_owned(),
+            )),
+            spawns: Vec::new(),
+            withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
+            frames: Vec::new(),
+        };
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock)
+            .expect("a withheld listener does not abort the plan");
+
+        // `api` verified for the withheld `front`, and `front` never launched:
+        // every launch carries its own dependencies only.
+        assert_eq!(launcher.spawns, vec!["api", "auth", "jobs"]);
+        assert_eq!(
+            launcher.spec_dependencies,
+            vec![Vec::<String>::new(), Vec::new(), Vec::new()],
+            "no launch inherits a withheld entry's verified readers"
+        );
+        let published = records(&checkout);
+        let front = state_of(&published, "front");
+        assert_eq!(front.phase, EntryPhase::NotStarted);
+        assert_eq!(
+            front
+                .not_started_because
+                .as_ref()
+                .map(|cause| cause.name.as_str()),
+            Some("auth"),
+            "the withheld host is attributed to its second reader"
+        );
+        // And the independent host started with no dependency edge at all.
+        assert_eq!(state_of(&published, "jobs").phase, EntryPhase::Ready);
+    }
+
     /// A completed non-listener launch stops holding the scheduler: while the
     /// next entry blocks re-confirming a reader another activation started, an
     /// independent queued entry names nothing, and once that next entry's own
@@ -1659,6 +1755,8 @@ mod environment_tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         run_plan(&ordered, Some(&selected), &mut graph, &mut launcher, &clock)
@@ -1732,6 +1830,8 @@ mod environment_tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
@@ -1814,6 +1914,8 @@ mod environment_tests {
             withheld: None,
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
@@ -1892,6 +1994,8 @@ mod environment_tests {
             )),
             spawns: Vec::new(),
             withdrawn: Vec::new(),
+            pending: Vec::new(),
+            spec_dependencies: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
