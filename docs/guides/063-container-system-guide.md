@@ -1490,7 +1490,7 @@ activated: a sequence or catalog-routed step into another catalog's container is
 judged by that catalog's declaration, so a seed cannot start an unrelated shared
 service elsewhere. Because bringing a stopped environment that has shared
 services up would reconcile them, a data seed for a target in such an
-environment refuses when it is stopped and names `effigy container up <NAME>`
+environment refuses when it is stopped and names `effigy container <NAME> up`
 instead of starting anything. An environment with no shared services keeps its
 prior behaviour: a stopped local stack is still brought up before the seed.
 `data dump` stays read-only and starts nothing.
@@ -1648,7 +1648,7 @@ delivers, never a command body.
 Before such a run starts, Effigy proves the scope's backing service: its route
 must belong to this checkout and publish an upstream port. When it does not,
 the task refuses with the alias, the service and the command that starts the
-stack (`effigy container up <NAME>`), and nothing runs. The primary checkout
+stack (`effigy container <NAME> up`), and nothing runs. The primary checkout
 keeps its declared name, and a container-bound task is not rewritten because
 its target's own network already answers both names. A `--plan` render refuses
 nothing: a task plan shows the aliases it would deliver.

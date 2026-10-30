@@ -88,7 +88,7 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         // every shared service. A command that must not touch them asks the
         // user for the environment command instead.
         return Err(RunnerError::task_invocation(format!(
-            "container `{}` is not running, and this command must not start it because bringing it up would reconcile its shared services. Run `effigy container up {}` first, then re-run.",
+            "container `{}` is not running, and this command must not start it because bringing it up would reconcile its shared services. Run `effigy container {} up` first, then re-run.",
             container_name.unwrap_or(policy.name.as_str()),
             container_name.unwrap_or(policy.name.as_str()),
         )));

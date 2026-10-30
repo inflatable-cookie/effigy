@@ -2008,7 +2008,7 @@ before children launch:
 - routed and deferred container tasks
 
 Plain primary-service `effigy exec` requires that the primary service is
-already running. If it is down, Effigy reports `effigy container up <NAME>`
+already running. If it is down, Effigy reports `effigy container <NAME> up`
 and returns before workspace repair or the requested child. `effigy dev` is
 also a project start path. Plain exec does not start the VM, service, or
 gateway. Explicit `container up` and the existing routed-task activation path
@@ -2239,7 +2239,7 @@ deadline. A record left behind by a stopped stack is stale, not published. The p
 as the rewrite, so text that merely mentions an effective alias proves nothing
 and refuses nothing. A missing route, a route another checkout owns, or a route with no
 published port refuses the run with the declared alias, the backing service and
-`effigy container up <NAME>`, and the task's command never runs. A primary
+`effigy container <NAME> up`, and the task's command never runs. A primary
 checkout keeps its declared name and resolves nothing, and a container-bound
 run is untouched: its target's own network already answers both names.
 
