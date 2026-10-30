@@ -276,6 +276,14 @@
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
     },
+    "src/runner/container_command/data_credentials.rs": {
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::remove_file": 2
+    },
+    "src/runner/container_command/data_custody_tests.rs": {
+      "std::fs::remove_file": 1,
+      "std::fs::write": 3
+    },
     "src/runner/container_command/gateway_registration/mod.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
@@ -753,7 +761,7 @@
       "std::fs::write": 10
     },
     "src/runner/container_command/data.rs": {
-      "std::fs::write": 3
+      "std::fs::write": 4
     },
     "src/runner/container_command/lifecycle.rs": {
       "std::env::remove_var": 3,
