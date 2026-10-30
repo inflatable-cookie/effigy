@@ -423,9 +423,9 @@ impl Redactor {
 
 /// The byte a re-formed secret is replaced with: the first value a reader keeps
 /// and no secret contains, preferred in an order that keeps output readable.
-/// Every reader Effigy has drops the C0 controls and DEL and interprets ESC, so
-/// only printable ASCII and TAB are candidates. `None` when the secrets cover
-/// them all: no replacement could then be both safe and readable.
+/// Every control is either dropped by a reader or moved by a renderer, so only
+/// printable ASCII is a candidate. `None` when the secrets cover them all: no
+/// replacement could then be both safe and readable.
 fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
     const PREFERRED: &[u8] = b"~`^|\\{}<>$&*?!;:+=@%#/\"',()[]";
     let absent = |byte: u8| !secrets.iter().any(|secret| secret.contains(&byte));
@@ -433,7 +433,6 @@ fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
         .iter()
         .copied()
         .chain((0x20..=0x7e).filter(|byte| !PREFERRED.contains(byte)))
-        .chain(std::iter::once(b'\t'))
         .find(|byte| absent(*byte))
 }
 struct RedactionPass {

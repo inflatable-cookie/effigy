@@ -593,13 +593,15 @@ fn managed_tui_vt_display(stdout: &[u8]) -> String {
         .join("\n")
 }
 
-/// Every byte the front end's `sanitize_log_text` drops *and joins across*: a
-/// sink holding one hands the reader a join it will make. The CR of a line
-/// ending is not one of them, because the LF beside it stays a separator.
+/// Every byte a reader drops or a renderer moves, so a sink holding one hands
+/// the reader a join it will make: TAB is here because the terminal emulator
+/// renders it as a cursor-forward escape, which the pane's ANSI parser drops.
+/// The CR of a line ending is not one of them, because the LF beside it stays a
+/// separator.
 fn reader_removed(byte: u8) -> bool {
     matches!(
         byte,
-        0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
+        b'\t' | 0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
     )
 }
 
@@ -820,6 +822,67 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
     assert!(
         pre_fix.contains(SECRET),
         "the terminal emulator must drop a C1 control and join its neighbours"
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+}
+
+/// The same value split by a TAB, on a real pseudo-terminal: the emulator
+/// renders a TAB as a cursor-forward escape, and the pane's ANSI parser drops
+/// that escape, so the bytes either side meet on screen.
+#[test]
+fn managed_delivery_redaction_drops_a_tab_the_pty_renderer_would_shift_with() {
+    const SECRET: &str = "split-known-secret-value";
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-tab-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\tsecret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value tab".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    for (what, bytes) in [
+        ("tab pty stdout", &stdout),
+        ("tab pty stderr", &stderr),
+        ("tab pty merged tail", &tail),
+    ] {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            !bytes.iter().any(|byte| reader_removed(*byte)),
+            "the {what} still carries a control a reader drops or a renderer moves"
+        );
+        assert_printable_bytes(what, bytes);
+    }
+    assert!(
+        String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+        "the tab pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(
+        display.contains("[REDACTED]"),
+        "tab pty display: {display:?}"
+    );
+    assert!(
+        !display.contains(SECRET),
+        "the tab pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    // Reversible break probe: the emulator renders a TAB as a cursor-forward
+    // escape and the pane drops it, so the pre-fix arrival shape reached the
+    // screen as one value.
+    let pre_fix = managed_tui_vt_display(b"split-known-\tsecret-value");
+    assert!(
+        pre_fix.contains(SECRET),
+        "the pane must drop the emulator's cursor-forward escape and join its neighbours"
     );
     assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
 }

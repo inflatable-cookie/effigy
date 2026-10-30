@@ -398,7 +398,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output is reduced to well-formed, control-free text and then redacted, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. A redaction replacement is a byte readers keep and no secret contains, so no reader can join across it. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a secret split by a C1 control or an invalid byte a renderer drops; a retained lone carriage return that hides a split from redaction; a redaction replacement a reader drops (a NUL or other control); a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output is reduced to well-formed text whose only control is `LF` (plus the `CR` of a line ending) and then redacted, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. A redaction replacement is a byte readers keep and no secret contains, so no reader can join across it. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a secret split by a C1 control or an invalid byte a renderer drops; a secret split by a lone carriage return or a TAB, which a display moves the next bytes with; a redaction replacement a reader drops (a NUL or other control); a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1255,13 +1255,15 @@ secret-bearing process — one whose spawn spec carries a `SecretValue` — the
 merged stdout/stderr bytes carry each byte's origin stream and pass through a
 bounded streaming terminal-control sanitizer *before* redaction. CSI, OSC,
 DCS, SOS, PM and APC strings, escape intermediates, two-byte escapes, the
-other C0 controls and DEL are dropped; TAB and LF keep the line structure. A
-carriage return survives only as the CR of a `CR LF` line ending: a lone CR is
-a horizontal control, which a display applies by erasing what it covers and
-which a reader that strips it turns into a join, so a value split by one would
-never be one run to the redactor. Dropping it joins the halves before
-redaction, which is the frame a display could show, and the `LF` of a line
-ending remains a separator no reader joins across.
+other C0 controls, TAB and DEL are dropped; `LF` is the only control that
+passes, because it is a line break no reader joins across. A carriage return
+survives only as the CR of a `CR LF` line ending. The two horizontal controls
+are dropped for the same reason: a display applies a lone CR by erasing what it
+covers and expands a TAB to the next tab stop, so the bytes after either are
+moved rather than printed where they stand — and a reader that strips the
+control, or a soft wrap a TAB forces, is a join no separator breaks. A value
+split by one would never be one run to the redactor; dropping them joins the
+halves before redaction, which is the frame a display could show.
 
 What reaches a sink is well-formed text: a multi-byte character is validated
 before any of it is emitted, and a C1 control (`U+0080`..=`U+009F`, the UTF-8
@@ -1299,9 +1301,10 @@ secret, so a second streaming pass removes that occurrence. What it removes it
 *with* must survive a reader: a control byte (a NUL, say) is dropped by the
 front end's `sanitize_log_text`, which joins the bytes either side of it and
 rebuilds the secret the pass took out. The replacement is therefore one byte
-value that every reader keeps and no secret contains — printable ASCII in a
-fixed preference order, then TAB — so it can neither hold a secret nor be
-spanned by one. When the secret set covers every such byte, no replacement is
+value that every reader keeps and no secret contains — printable ASCII, in a
+fixed preference order — so it can neither hold a secret nor be spanned by one,
+and every control, TAB included, is excluded because a reader drops it or a
+renderer moves with it. When the secret set covers every such byte, no replacement is
 both safe and readable: the capture then stops and reports `Truncated` with the
 reason, emitting nothing, rather than write a marker a reader would join across.
 The workload itself is unaffected; this is capture state only.
@@ -1422,6 +1425,10 @@ and a consumer that wants a bounded tail takes the merged tail.
   `U+10FFFF`, across reads and across streams: every sink is well-formed,
   control-free and free of the value, ordinary non-ASCII text survives, and a
   secret that itself carries a C1 control is matched in its C1-free form.
+- `redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with` splits
+  a value with a TAB in one read, across reads and across streams, and with
+  padding that wraps a row: every sink is free of the value and of the TAB, and
+  an ordinary process keeps its own TABs.
 - `redaction_drops_a_lone_carriage_return_and_keeps_a_line_ending` drops a CR
   inside a value, at a read boundary, at a stream boundary and at EOF, so the
   halves reach redaction as one value and no sink holds a lone CR; a `CR LF`
@@ -1447,7 +1454,9 @@ and a consumer that wants a bounded tail takes the merged tail.
   pseudo-terminal whose display goes through the session's terminal emulator
   (`LiveTerminalBuffer`), which applies carriage returns, and a third split by
   a UTF-8 C1 control, whose break probe shows the emulator dropping that
-  character and joining its neighbours. Its break probe feeds
+  character and joining its neighbours. A fourth proof feeds a TAB-split value
+  to the same emulator and shows the pane dropping the cursor-forward escape a
+  TAB renders as, which is the join this task removes. Its break probe feeds
   the pre-fix arrival shape to that same reader, which reassembles it, so the
   assertion fails if the sanitizer is removed. The companion
   `managed_delivery_redaction_keeps_colour_for_a_child_without_secrets`

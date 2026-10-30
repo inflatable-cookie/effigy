@@ -16,14 +16,17 @@
 //! rather than emitted, an unterminated control or sequence drops its bytes at
 //! EOF, and no path ever emits a byte it held back.
 //!
-//! Line structure is kept, but a carriage return survives only as part of a
-//! line ending: `CR LF` passes, every other CR is dropped. A lone CR is a
-//! horizontal control — a display erases what it covers, and a reader that
-//! strips it instead joins the runs on either side — so a secret split by one
-//! is a split a redactor over the retained bytes never sees. Dropping it joins
-//! the halves before redaction, which is the frame a display could show. The
-//! `LF` of a line ending stays a separator no reader joins across, and a
-//! secret that itself contains a newline stays matchable.
+//! `LF` is the only horizontal-free control that passes: it is a line break, so
+//! no reader joins across it, and a secret that itself contains a newline stays
+//! matchable. A carriage return survives only as part of a line ending — `CR LF`
+//! passes, every other CR is dropped. A lone CR is a horizontal control (a
+//! display erases what it covers, and a reader that strips it instead joins the
+//! runs on either side), and a TAB is a horizontal control too (a renderer
+//! expands it to the next tab stop and can wrap on it, so what it shows is a
+//! shift of the following bytes rather than their text). A secret split by
+//! either is a split a redactor over the retained bytes never sees; dropping
+//! them joins the halves before redaction, which is the frame a display could
+//! show.
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -171,12 +174,13 @@ impl TerminalSanitizer {
         match byte {
             0x1b => State::Escape,
             0x0d => State::CarriageReturn,
-            // TAB and LF keep the output's line structure.
-            0x09 | 0x0a => {
+            // LF keeps the output's line structure.
+            0x0a => {
                 out.push((tag, byte));
                 State::Ground
             }
-            // Every other C0 control and DEL is dropped.
+            // Every other C0 control — TAB included, which a renderer shifts
+            // the following bytes with — and DEL is dropped.
             0x00..=0x1f | 0x7f => State::Ground,
             // A multi-byte sequence starts: hold it until it validates, so an
             // invalid or C1 character never reaches a reader that would drop

@@ -1374,13 +1374,15 @@ impl FakeCapture {
     }
 }
 
-/// The bytes the managed TUI's `sanitize_log_text` drops *and joins across*.
-/// The CR of a line ending is excluded: a reader drops it too, but the LF beside
-/// it stays a separator, so nothing is joined there.
+/// The bytes a reader drops or a renderer moves, so the rendered text is not
+/// the byte text and a removal joins the runs either side. TAB is here because
+/// a renderer expands it to the next tab stop and can wrap on it, which shifts
+/// the bytes after it rather than printing them. The CR of a line ending is
+/// excluded: a reader drops it too, but the LF beside it stays a separator.
 fn is_reader_removed(byte: u8) -> bool {
     matches!(
         byte,
-        0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
+        b'\t' | 0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
     )
 }
 
@@ -2014,4 +2016,48 @@ fn redaction_drops_utf8_c1_controls_and_invalid_bytes_before_redaction() {
     for (what, bytes) in capture.sinks(&cx) {
         assert_absent(&what, &bytes, b"c1-inside");
     }
+}
+
+#[test]
+fn redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with() {
+    // A renderer expands a TAB to the next tab stop, and a TAB that reaches the
+    // right edge wraps the row, so the bytes after it are shifted rather than
+    // printed after it — and a soft wrap is a join no separator breaks. A value
+    // split by one is dropped here, before redaction, where the halves meet in
+    // the frame the redactor sees.
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let cx = cx();
+    let shapes: Vec<Vec<(Stream, &'static [u8])>> = vec![
+        vec![(STD, &b"custody-split-\tsecret-value\n"[..])],
+        vec![
+            (STD, &b"custody-split-\t"[..]),
+            (STD, &b"secret-value\n"[..]),
+        ],
+        vec![
+            (STD, &b"custody-split-\t"[..]),
+            (ERR, &b"secret-value\n"[..]),
+        ],
+        // Padding, then a TAB, then the value: the shape that wraps a row.
+        vec![(STD, &b"custody-split-\t\t\tsecret-value\n"[..])],
+    ];
+    for steps in shapes {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in steps {
+            capture.feed(stream, bytes);
+        }
+        capture.close();
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&what, &bytes, SECRET);
+        }
+        assert!(
+            String::from_utf8_lossy(&capture.tail()).contains("[REDACTED]"),
+            "the tail keeps the marker"
+        );
+    }
+    // Only a secret-bearing process loses its TABs: an ordinary process keeps
+    // its layout, exactly as before this pipeline existed.
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    capture.feed(Stream::Stdout, b"name\tvalue\n");
+    capture.close();
+    assert_eq!(&capture.tail()[..], b"name\tvalue\n");
 }
