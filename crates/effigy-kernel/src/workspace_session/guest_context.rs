@@ -18,6 +18,7 @@ pub struct GuestSourcePin {
     pub kind: String,
     pub name: String,
     pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
 }
 
@@ -37,16 +38,27 @@ fn absolute(path: &str) -> bool {
 }
 impl GuestContextInputs {
     pub fn validate(&self) -> Result<(), RunError> {
-        if self.version.trim().is_empty()
-            || self.version.contains('\0')
-            || !absolute(&self.paths.host_checkout)
-            || !absolute(&self.paths.guest_checkout)
-            || !absolute(&self.paths.workdir)
-            || !absolute(&self.paths.home)
-            || self.paths.user.trim().is_empty()
-            || self.paths.user.contains('\0')
-        {
-            return Err(ActivationRefusal::SelectionMismatch.into());
+        if self.version.trim().is_empty() || self.version.contains('\0') {
+            return Err(RunError::refused(
+                "guest version must be nonempty and contain no NUL",
+            ));
+        }
+        for (field, path) in [
+            ("host_checkout", &self.paths.host_checkout),
+            ("guest_checkout", &self.paths.guest_checkout),
+            ("workdir", &self.paths.workdir),
+            ("home", &self.paths.home),
+        ] {
+            if !absolute(path) {
+                return Err(RunError::refused(format!(
+                    "guest paths.{field} must be absolute without dot components or NUL"
+                )));
+            }
+        }
+        if self.paths.user.trim().is_empty() || self.paths.user.contains('\0') {
+            return Err(RunError::refused(
+                "guest paths.user must be nonempty and contain no NUL",
+            ));
         }
         let mut seen = std::collections::BTreeSet::new();
         for pin in &self.sources {
@@ -61,7 +73,7 @@ impl GuestContextInputs {
                     .as_ref()
                     .is_some_and(|snapshot| !absolute(snapshot))
             {
-                return Err(ActivationRefusal::SelectionMismatch.into());
+                return Err(RunError::refused(format!("guest source pin `{}` has an invalid kind, name, digest, duplicate identity or snapshot path", pin.name)));
             }
         }
         Ok(())

@@ -906,9 +906,10 @@ pub struct PublishInputs {
 }
 impl PublishInputs {
     fn validate(&self) -> Result<(), RunError> {
-        if let Some(guest) = &self.guest {
-            guest.validate()?;
-        }
+        self.guest
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace decisions require frozen guest inputs"))?
+            .validate()?;
         if let Some(platform) = &self.platform {
             platform.validate()?;
         }
@@ -2433,16 +2434,11 @@ impl WorkspaceActivationReservation {
         // read, so its decision records `Unselected`: this commit freezes the
         // artifact the run actually selected, once, in its own transaction. Any
         // later activation compares against that frozen digest.
-        let fresh_artifact = match &frozen.artifact {
-            ArtifactEvidence::Selected { digest, .. } if *digest == selected => None,
-            ArtifactEvidence::Selected { .. } => {
-                return Err(ActivationRefusal::SelectionMismatch.into())
+        if let ArtifactEvidence::Selected { digest, .. } = &frozen.artifact {
+            if *digest != selected {
+                return Err(ActivationRefusal::SelectionMismatch.into());
             }
-            ArtifactEvidence::Unselected { .. } => Some(ArtifactEvidence::Selected {
-                digest: selected.clone(),
-                object: selection.selection().objects.binary.path.clone(),
-            }),
-        };
+        }
         // The resolved selection the decision froze is the one the published
         // context document names. A context prepared for another selection is
         // never published under this decision.
@@ -2484,49 +2480,13 @@ impl WorkspaceActivationReservation {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
             }
             plan.validate_receipt(&receipt)?;
-            // Freeze the artifact a fresh project just selected, in this same
-            // transaction and exactly once: a row that already names another
-            // artifact refuses instead of being rewritten.
-            if let Some(fresh) = fresh_artifact.as_ref() {
-                let stored_inputs: Option<String> = txn.conn().query_row(
-                    "SELECT inputs FROM workspace_activation_reservations \
-                     WHERE environment=?1 AND environment_generation=?2",
-                    params![
-                        self.record.environment.name().to_string(),
-                        self.record.generation.get() as i64
-                    ],
-                    |row| row.get(0),
-                )?;
-                let Some(stored_inputs) = stored_inputs else {
-                    return Err(ActivationRefusal::Frozen.into());
-                };
-                let mut inputs: PublishInputs = serde_json::from_str(&stored_inputs)?;
-                match &inputs.artifact {
-                    ArtifactEvidence::Selected { digest, .. } if *digest == selected => {}
-                    ArtifactEvidence::Selected { .. } => {
-                        return Err(ActivationRefusal::Frozen.into())
-                    }
-                    ArtifactEvidence::Unselected { .. } => {
-                        inputs.artifact = fresh.clone();
-                        txn.conn().execute(
-                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
-                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved'",
-                            params![
-                                self.record.environment.name().to_string(),
-                                self.record.generation.get() as i64,
-                                serde_json::to_string(&inputs)?,
-                                txn.now()
-                            ],
-                        )?;
-                    }
-                }
-            }
+            // Publish all bound facts once, atomically with the selection.
             if stored.state == ActivationReservationState::Reserved {
                 let mut bound_inputs = stored.inputs.clone().ok_or(ActivationRefusal::Unfrozen)?;
                 bound_inputs.target = TargetEvidence::Observed(staged_binary.binding.target.clone());
                 bound_inputs.platform = Some(staged_binary.binding.platform.clone());
                 bound_inputs.artifact = ArtifactEvidence::Selected { digest: staged_binary.binding.artifact.digest.clone(), object: staged_binary.binding.artifact.path.clone() };
-                txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 WHERE environment=?1 AND environment_generation=?2", params![self.environment().name().to_string(), self.generation().get() as i64, serde_json::to_string(&bound_inputs)?, txn.now()])?;
+                txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 WHERE environment=?1 AND environment_generation=?2 AND state='reserved'", params![self.environment().name().to_string(), self.generation().get() as i64, serde_json::to_string(&bound_inputs)?, txn.now()])?;
             }
             if stored.state == ActivationReservationState::Committed {
                 // A retry answers with the obligation the first commit wrote. A

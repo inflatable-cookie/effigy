@@ -5568,6 +5568,22 @@ fn a_context_document_for_another_activation_is_refused() {
         &session_run,
         &mut good_launch,
     );
+    for invariant in 0..3 {
+        let mut invalid = good.selection().clone();
+        match invariant {
+            0 => invalid.objects.credential_generation = Generation::new(99),
+            1 => {
+                invalid.objects.credential.path =
+                    "/run/effigy/objects/enrol/another-generation".into()
+            }
+            _ => {
+                invalid.objects.binary.path = "/run/effigy/bin/current".into();
+                invalid.switches[0].next = invalid.objects.binary.path.clone();
+                invalid.switches[1].next = invalid.objects.binary.path.clone();
+            }
+        }
+        assert!(invalid.validate().is_err());
+    }
     // The document a prepare would write for this activation, byte for byte.
     let base_document = context_document(
         &plan,
@@ -5611,6 +5627,12 @@ fn a_context_document_for_another_activation_is_refused() {
         let mut parsed: serde_json::Value =
             serde_json::from_slice(&base_document).expect("document");
         parsed[field] = value;
+        cases.push(serde_json::to_vec(&parsed).expect("document"));
+    }
+    for field in ["version", "paths", "sources", "binary_path", "backend"] {
+        let mut parsed: serde_json::Value =
+            serde_json::from_slice(&base_document).expect("document");
+        parsed.as_object_mut().expect("object").remove(field);
         cases.push(serde_json::to_vec(&parsed).expect("document"));
     }
     let mut session_mutated: serde_json::Value =
@@ -6889,7 +6911,7 @@ fn binary_binding(run: RunId) -> BoundPlatform {
             path: format!("/run/effigy/objects/bin/{digest}"),
             digest,
         },
-        emulation_available: true,
+        execution_available: true,
         artifact_version: env!("CARGO_PKG_VERSION").into(),
     }
 }
@@ -6934,7 +6956,7 @@ fn guest_stage_platform_is_image_selected_frozen_and_exact_target() {
             1 => wrong.platform.architecture = "riscv64".into(),
             2 => wrong.platform.variant = "v7".into(),
             3 => wrong.artifact_platform.loader = LoaderFamily::Gnu,
-            4 => wrong.emulation_available = false,
+            4 => wrong.execution_available = false,
             5 => wrong.artifact.digest = Digest::of(b"wrong artifact"),
             6 => wrong.target.vm_boot_id = "stale-boot".into(),
             _ => wrong.artifact_version = "wrong-version".into(),
@@ -6988,6 +7010,9 @@ fn guest_stage_intent_readback_unknown_and_recovery_never_select_or_retarget() {
         .bind_platform(&mut run, Observed::Verified(binding, evidence()))
         .expect("platform");
     let stage = reservation.guest_binary_stage(&run).expect("stage");
+    let mut wrong_reservation = stage.clone();
+    wrong_reservation.reservation = ActivationReservationId::parse(&"ff".repeat(16)).expect("id");
+    assert!(Attachments::intend_guest_binary(&mut run, &wrong_reservation).is_err());
     let mut foreign = stage.clone();
     foreign.binding.artifact.digest = Digest::of(b"wrong");
     assert!(Attachments::intend_guest_binary(&mut run, &foreign).is_err());
@@ -7239,11 +7264,10 @@ fn a_legacy_context_without_frozen_guest_fields_is_never_attached() {
         txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?2 WHERE environment=?1 AND state='committed'", rusqlite::params![environment.name().to_string(), serde_json::to_string(&inputs)?])?;
         Ok::<_, RunError>(())
     }).expect("legacy journal fixture");
-    assert!(matches!(
+    let error =
         WorkspaceActivationReservation::decide(&cx, &root, &environment, &inputs, Wait::FailFast)
-            .expect("decision"),
-        ActivationDecision::Activate(_)
-    ));
+            .expect_err("new decisions require guest inputs");
+    assert!(error.to_string().contains("guest inputs"));
     assert_eq!(
         resolved(&read_journal(&cx, &root), &environment),
         Some(first)
@@ -7359,4 +7383,85 @@ fn guest_stage_settlement_retains_uncertainty_without_replaying_a_write() {
         SessionRef::resolve(&read_journal(&cx, &root), &environment()),
         Observed::Absent(_)
     ));
+}
+
+#[test]
+fn guest_stage_platform_requires_target_and_matching_unselected_backend() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let reservation = decided(&cx, &root, &environment());
+    let mut run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(reservation.environment().clone(), "environment:up"),
+        opts(run_id(227)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("run");
+    let binding = binary_binding(run.id());
+    assert!(reservation
+        .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+        .is_err());
+    assert!(run.effects().expect("effects").is_empty());
+    let mut inputs = reservation.inputs().expect("inputs").clone();
+    inputs.artifact = ArtifactEvidence::Unselected {
+        image_reference: "fixture-image".into(),
+        backend: "foreign-backend".into(),
+    };
+    assert!(binding.validate(&inputs).is_err());
+    let mut native = binding;
+    native.platform.architecture = "amd64".into();
+    native.platform.variant.clear();
+    native.artifact_platform = native.platform.clone();
+    native
+        .validate(reservation.inputs().expect("inputs"))
+        .expect("native execution needs no emulation flag");
+}
+
+#[test]
+fn guest_inputs_refuse_before_reserving_and_optional_snapshot_decodes() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let mut inputs = decision_inputs(99);
+    inputs.guest = None;
+    assert!(WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment(),
+        &inputs,
+        Wait::FailFast
+    )
+    .expect_err("guest required")
+    .to_string()
+    .contains("guest inputs"));
+    inputs.guest = Some(fake_guest_context());
+    inputs.guest.as_mut().expect("guest").paths.home = "relative".into();
+    assert!(WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment(),
+        &inputs,
+        Wait::FailFast
+    )
+    .expect_err("absolute home required")
+    .to_string()
+    .contains("paths.home"));
+    inputs.guest.as_mut().expect("guest").paths.home = "/home/worker".into();
+    let ActivationDecision::Activate(reservation) =
+        WorkspaceActivationReservation::decide(&cx, &root, &environment(), &inputs, Wait::FailFast)
+            .expect("valid decision")
+    else {
+        panic!("activate")
+    };
+    assert_eq!(reservation.generation().get(), 1);
+    let mut pin = serde_json::to_value(&fake_guest_context().sources[0]).expect("pin");
+    pin.as_object_mut().expect("object").remove("snapshot");
+    assert!(serde_json::from_value::<GuestSourcePin>(pin)
+        .expect("optional snapshot")
+        .snapshot
+        .is_none());
 }

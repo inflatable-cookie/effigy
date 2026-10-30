@@ -1523,7 +1523,7 @@ mod tests {
                 path: format!("/run/effigy/objects/bin/{binary}"),
                 digest: binary.clone(),
             },
-            emulation_available: true,
+            execution_available: true,
         };
         run.bind_platform(
             &reservation,

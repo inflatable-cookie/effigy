@@ -28,9 +28,7 @@ impl ImagePlatform {
                 _ => false,
             };
         if !supported {
-            return Err(RunError::refused(
-                "UnsupportedPlatform: no pinned Linux artifact family",
-            ));
+            return Err(RunError::refused("no pinned Linux artifact family"));
         }
         Ok(())
     }
@@ -38,7 +36,7 @@ impl ImagePlatform {
 
 /// Host-observed image facts and the pinned artifact selected for them.
 /// `artifact_platform` comes from the artifact manifest, independently of the
-/// image observation. Emulation availability is backend evidence; the host's
+/// image observation. Execution availability is backend evidence; the host's
 /// architecture never selects an artifact for an emulated image.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundPlatform {
@@ -47,7 +45,10 @@ pub struct BoundPlatform {
     pub artifact_platform: ImagePlatform,
     pub artifact: GuestObject,
     pub artifact_version: String,
-    pub emulation_available: bool,
+    /// True for native execution or verified emulation on this backend.
+    /// Keep the journal field name stable for already-bound reservations.
+    #[serde(rename = "emulation_available")]
+    pub execution_available: bool,
 }
 impl BoundPlatform {
     pub(crate) fn validate(&self, inputs: &PublishInputs) -> Result<(), RunError> {
@@ -56,48 +57,34 @@ impl BoundPlatform {
             .as_ref()
             .is_none_or(|guest| guest.version != self.artifact_version)
         {
-            return Err(RunError::refused(
-                "ArtifactMismatch: artifact version differs",
-            ));
+            return Err(RunError::refused("artifact version differs"));
         }
         if let ArtifactEvidence::Unselected { backend, .. } = &inputs.artifact {
             if backend != &self.target.backend {
-                return Err(RunError::refused(
-                    "ArtifactMismatch: artifact backend differs",
-                ));
+                return Err(RunError::refused("artifact backend differs"));
             }
         }
         self.platform.validate()?;
         self.artifact_platform.validate()?;
         if self.platform != self.artifact_platform {
-            return Err(RunError::refused(
-                "PlatformDisagreement: artifact and image differ",
-            ));
+            return Err(RunError::refused("artifact and image differ"));
         }
-        if !self.emulation_available {
-            return Err(RunError::refused(
-                "EmulationUnavailable: artifact cannot execute",
-            ));
+        if !self.execution_available {
+            return Err(RunError::refused("artifact cannot execute"));
         }
         if inputs
             .platform
             .as_ref()
             .is_some_and(|platform| platform != &self.platform)
         {
-            return Err(RunError::refused(
-                "PlatformDisagreement: decision observed another image",
-            ));
+            return Err(RunError::refused("decision observed another image"));
         }
         if self.artifact.path != format!("/run/effigy/objects/bin/{}", self.artifact.digest) {
-            return Err(RunError::refused(
-                "ArtifactMismatch: object is not digest addressed",
-            ));
+            return Err(RunError::refused("object is not digest addressed"));
         }
         if let ArtifactEvidence::Selected { digest, object } = &inputs.artifact {
             if digest != &self.artifact.digest || object != &self.artifact.path {
-                return Err(RunError::refused(
-                    "ArtifactMismatch: decision selected another artifact",
-                ));
+                return Err(RunError::refused("decision selected another artifact"));
             }
         }
         Ok(())

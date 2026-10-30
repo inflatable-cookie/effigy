@@ -785,9 +785,7 @@ impl Run<'_> {
         let bound = match observed {
             Observed::Verified(bound, _) => bound,
             Observed::Unknown(reason) => return Err(RunError::unavailable(reason.to_string())),
-            Observed::Absent(_) => {
-                return Err(RunError::refused("UnsupportedPlatform: image facts absent"))
-            }
+            Observed::Absent(_) => return Err(RunError::refused("image facts absent")),
         };
         crate::fault_point!(IntendBefore)?;
         self.store
@@ -809,9 +807,7 @@ impl Run<'_> {
                     let existing: BoundPlatform =
                         workspace_fact(txn.conn(), self.id, WORKSPACE_PLATFORM_KIND)?;
                     if existing != bound {
-                        return Err(RunError::refused(
-                            "ArtifactMismatch: platform binding is immutable",
-                        ));
+                        return Err(RunError::refused("platform binding is immutable"));
                     }
                     return Ok(existing);
                 }
@@ -926,9 +922,7 @@ impl Attachments {
                 _ => return Err(ActivationRefusal::WrongReservation.into()),
             };
         if &run.workspace_binary_stage(&reservation)? != stage {
-            return Err(RunError::refused(
-                "ArtifactMismatch: stage differs from frozen binding",
-            ));
+            return Err(RunError::refused("stage differs from frozen binding"));
         }
         crate::fault_point!(IntendBefore)?;
         let sequence = run.store.transaction(&run.cx, |txn| {
@@ -1011,7 +1005,7 @@ impl Attachments {
                 UnknownReason::Inconsistent("binary stage readback mismatch".into()),
             )?;
             return Err(RunError::refused(
-                "ArtifactMismatch: exact-target digest/platform readback differs",
+                "exact-target digest/platform readback differs",
             ));
         }
         if effect.state != EffectState::Applied {
@@ -1081,8 +1075,11 @@ pub fn unfinished_guest_binary(
         Ok(Some(stage)) => {
             Observed::Verified(Some(stage), crate::workspace_session::session_evidence())
         }
-        Ok(None) => Observed::Absent(crate::observe::AbsenceProof::NoRow {
-            table: "events".into(),
+        Ok(None) => Observed::Absent(crate::observe::AbsenceProof::NotInInventory {
+            inventory: crate::observe::InventoryRef {
+                source: "unfinished workspace guest binary stages".into(),
+                generation: environment.generation,
+            },
         }),
         Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
     }
