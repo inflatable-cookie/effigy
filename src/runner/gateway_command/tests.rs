@@ -2039,10 +2039,7 @@ fn bind_probe_failure_names_the_address_and_keeps_its_reason() {
 fn a_bind_probe_child_result_is_read_from_its_own_output() {
     let report = bind_report(&[("127.0.0.1:80", BindOutcome::Bound)]);
     let json = serde_json::to_string(&report).expect("report JSON");
-    for output in [
-        format!("{json}\n"),
-        format!("a startup warning\n{json}\n"),
-    ] {
+    for output in [format!("{json}\n"), format!("a startup warning\n{json}\n")] {
         let child = BindProbeChildResult {
             code: 0,
             output: output.into_bytes(),

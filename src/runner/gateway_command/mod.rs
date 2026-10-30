@@ -2033,7 +2033,11 @@ impl BindProbeChildResult {
     fn report(&self) -> std::io::Result<effigy_gateway::linux_operator::BindProbeReport> {
         let text = String::from_utf8_lossy(&self.output);
         let mut unreadable = None;
-        for line in text.lines().map(str::trim).filter(|line| line.starts_with('{')) {
+        for line in text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('{'))
+        {
             match effigy_gateway::linux_operator::BindProbeReport::parse(line.as_bytes()) {
                 Ok(report) => return Ok(report),
                 Err(error) => unreadable = Some(error),
