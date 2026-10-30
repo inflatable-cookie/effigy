@@ -220,7 +220,9 @@ pub fn run_docker_capture(
     run_compose_capture(repo_root, policy, args, label)
 }
 
-/// Ask the runtime for a restart policy on these containers. This is a runtime
+/// Ask the runtime for a restart policy on these containers, named by verified
+/// full ID only. The caller proves ownership first (`restart::apply_after_start`).
+/// This is a runtime
 /// configuration change on the containers Compose created, not a start of
 /// anything, so it cannot race Compose's own create/start (effigy#383).
 pub fn set_restart_policy(
@@ -945,6 +947,100 @@ pub fn verify_owned_running_compose_identities(
         verified.push(ownership.verify_inspected(repo_root, policy, row, &output.stdout)?);
     }
     Ok(verified)
+}
+
+/// The full ID of one shared-service container the restart-policy apply may
+/// update. A shared stack belongs to no checkout, so its container is proven by
+/// its own inspected identity: full ID, shared project, declared service,
+/// running state and the render label equal to the render `up` just published.
+pub fn verify_shared_render_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+    service: &str,
+    container_name: &str,
+    render_digest: &str,
+    deadline: Instant,
+) -> Result<String, ContainerExecError> {
+    let remaining = super::process::remaining_until_deadline(deadline, "inspect shared container")?;
+    let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
+        repo_root,
+        policy,
+        &[OsString::from("inspect"), OsString::from(container_name)],
+        "inspect shared container",
+        deadline,
+        remaining,
+    )?;
+    shared_render_identity(
+        &output.stdout,
+        project_name,
+        service,
+        container_name,
+        render_digest,
+    )
+}
+
+/// Prove one inspect record is the shared container `container_name` of
+/// `project_name` and `service`, running and rendered from `render_digest`,
+/// and return its full ID. Anything else is refused with its reason.
+pub fn shared_render_identity(
+    stdout: &[u8],
+    project_name: &str,
+    service: &str,
+    container_name: &str,
+    render_digest: &str,
+) -> Result<String, ContainerExecError> {
+    let refuse = |reason: String| ContainerExecError::Failure {
+        command: "inspect shared container".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!("binding unavailable: {reason}"),
+    };
+    let identity =
+        super::parse::parse_inspected_container_identity(&String::from_utf8_lossy(stdout))
+            .map_err(|error| {
+                refuse(format!(
+                    "no canonical full identity for `{container_name}`: {error}"
+                ))
+            })?;
+    let raw: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|_| refuse(format!("inspect of `{container_name}` is not JSON")))?;
+    let render = raw
+        .as_array()
+        .and_then(|records| records.first())
+        .and_then(|record| record.get("Config"))
+        .and_then(|config| config.get("Labels"))
+        .and_then(|labels| labels.get(crate::runtime::scope::SHARED_RENDER_LABEL))
+        .and_then(|value| value.as_str());
+    if identity.name != container_name {
+        return Err(refuse(format!(
+            "`{container_name}` now inspects as `{}`",
+            identity.name
+        )));
+    }
+    if identity.project.as_deref() != Some(project_name) {
+        return Err(refuse(format!(
+            "`{container_name}` belongs to project `{}`, not shared project `{project_name}`",
+            identity.project.as_deref().unwrap_or("(none)")
+        )));
+    }
+    if identity.service.as_deref() != Some(service) || identity.oneoff {
+        return Err(refuse(format!(
+            "`{container_name}` is not the declared shared service `{service}`"
+        )));
+    }
+    if !(identity.running && super::parse::compose_status_is_running(&identity.status)) {
+        return Err(refuse(format!("`{container_name}` is not running")));
+    }
+    match render {
+        Some(rendered) if rendered == render_digest => Ok(identity.id),
+        Some(rendered) => Err(refuse(format!(
+            "`{container_name}` was rendered from `{rendered}`, not the current render `{render_digest}`"
+        ))),
+        None => Err(refuse(format!(
+            "`{container_name}` carries no shared render label"
+        ))),
+    }
 }
 
 const OWNED_SERVICE_LISTING_FORMAT: &str = "{{.ID}}\t{{.Status}}\t{{.Label \"com.docker.compose.oneoff\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.effigy.checkout\"}}\t{{.Label \"com.effigy.scope\"}}";

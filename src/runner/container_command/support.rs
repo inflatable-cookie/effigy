@@ -724,12 +724,14 @@ fn ensure_shared_services_with_renders_observed(
             );
         };
         // The shared stack is started, so it gets the restart policy here too
-        // (effigy#383).
-        effigy_containers::policy::restart::apply_after_start_observed(
+        // (effigy#383). Its containers are proven against the render just
+        // published, not against a checkout.
+        effigy_containers::policy::restart::apply_after_start_shared_observed(
             &policy.repo_root,
             policy,
             &service.project_name,
             std::slice::from_ref(&service.compose_file),
+            &service.render_digest,
             None,
             &mut restart_stage,
         );
@@ -2304,6 +2306,7 @@ mod tests {
         root: PathBuf,
         volume: PathBuf,
         compose: Vec<u8>,
+        inspections: PathBuf,
     }
 
     impl SharedFixture {
@@ -2342,10 +2345,15 @@ mod tests {
             let volume = volumes.join(format!("{project}-data"));
             std::fs::create_dir_all(&volume).unwrap();
             std::fs::write(volume.join("rows"), "kept\n").unwrap();
+            // `inspect` answers the test's sequence in `inspections`: the nth
+            // call reads `n.json`, and calls past the sequence read `last.json`.
+            let inspections = root.join("inspections");
+            std::fs::create_dir_all(&inspections).unwrap();
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'volume rm'*)\n    rm -rf {volumes}\n    ;;\n  *'--format'*)\n    {listing}\n    ;;\nesac\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'volume rm'*)\n    rm -rf {volumes}\n    ;;\n  *'volume inspect'*)\n    ;;\n  inspect\\ *|*\\ inspect\\ *)\n    n=$(cat {inspections}/count 2>/dev/null || echo 0)\n    n=$((n + 1))\n    echo \"$n\" > {inspections}/count\n    if [ -f {inspections}/$n.json ]; then cat {inspections}/$n.json; else cat {inspections}/last.json 2>/dev/null; fi\n    ;;\n  *'--format'*)\n    {listing}\n    ;;\nesac\n",
                 log = log.display(),
                 volumes = volumes.display(),
+                inspections = inspections.display(),
                 listing = listing,
             );
             for name in ["docker", "colima"] {
@@ -2368,7 +2376,20 @@ mod tests {
                 root,
                 volume,
                 compose: compose.as_bytes().to_vec(),
+                inspections,
             }
+        }
+
+        /// The answers `inspect` gives in call order; the last one repeats.
+        fn answer_inspections(&self, answers: &[String]) {
+            for (index, answer) in answers.iter().enumerate() {
+                std::fs::write(self.inspections.join(format!("{}.json", index + 1)), answer)
+                    .unwrap();
+            }
+            if let Some(last) = answers.last() {
+                std::fs::write(self.inspections.join("last.json"), last).unwrap();
+            }
+            std::fs::remove_file(self.inspections.join("count")).ok();
         }
 
         fn calls(&self) -> Vec<String> {
@@ -2521,6 +2542,15 @@ mod tests {
             "services:\n  legacy_mysql:\n    image: mariadb:latest\n",
             &listing,
         );
+        // The apply proves the listed container before it updates it.
+        fixture.answer_inspections(&[shared_inspect_record(
+            'a',
+            &container,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        )]);
         let _env = runtime_env(&fixture);
         let policy = fixture.policy(project, "this-render");
         let progress = ProgressSource::waiting_for("shared services");
@@ -2534,11 +2564,11 @@ mod tests {
             "asking the runtime to keep the containers of shared `legacy_mysql` on `restart: unless-stopped` (0/1); waiting for `restart: unless-stopped` on shared `legacy_mysql`; 9s elapsed"
         );
         assert!(
-            fixture
-                .calls()
-                .iter()
-                .any(|call| call.starts_with("update ")),
-            "the update was sent: {:?}",
+            fixture.calls().iter().any(|call| call.ends_with(&format!(
+                "update --restart unless-stopped {}",
+                "a".repeat(64)
+            ))),
+            "the update was sent to the verified full ID: {:?}",
             fixture.calls()
         );
     }
@@ -2615,6 +2645,199 @@ mod tests {
             "the shared data volume is kept: {calls:?}"
         );
         assert!(fixture.volume_kept());
+    }
+
+    /// One `inspect` record for the shared restart-policy proof: a container
+    /// `name` of `project` and `service`, rendered from `render` when one is
+    /// given, running or not.
+    fn shared_inspect_record(
+        id: char,
+        name: &str,
+        project: &str,
+        service: &str,
+        render: Option<&str>,
+        running: bool,
+    ) -> String {
+        let mut labels = serde_json::json!({
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": service,
+            "com.docker.compose.oneoff": "False",
+        });
+        if let Some(render) = render {
+            labels["com.effigy.shared-render"] = serde_json::json!(render);
+        }
+        let status = if running { "running" } else { "exited" };
+        serde_json::json!([{
+            "Id": id.to_string().repeat(64),
+            "Name": format!("/{name}"),
+            "State": {"Status": status, "Running": running},
+            "Config": {"Labels": labels},
+            "NetworkSettings": {"Ports": {}},
+        }])
+        .to_string()
+    }
+
+    /// Runs the shared ensure against a runtime whose `inspect` answers
+    /// `answers` in order, with one listed `legacy_mysql` container of `project`
+    /// named `name`. Returns the runtime calls, and the frame the restart stage
+    /// showed after its update was sent.
+    fn shared_restart_run(project: &str, name: &str, answers: &[String]) -> (Vec<String>, String) {
+        shared_restart_run_listing(project, name, answers, 1)
+    }
+
+    /// As [`shared_restart_run`], with `rows` listed containers of the same
+    /// service; more than one makes the service ambiguous.
+    fn shared_restart_run_listing(
+        project: &str,
+        name: &str,
+        answers: &[String],
+        rows: usize,
+    ) -> (Vec<String>, String) {
+        use std::time::Duration;
+
+        let restart_row = format!(
+            "printf '%s\\t%s\\t\\t%s\\t%s\\tlegacy_mysql\\t\\n' '{name}' 'Up 2 minutes' '{project}' '{project}'; "
+        );
+        let restart_rows = restart_row.repeat(rows);
+        let listing = format!(
+            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\n' '{name}' 'Up 2 minutes' 'this-render' '{project}' ;; *) {restart_rows} ;; esac"
+        );
+        let fixture = SharedFixture::with_compose(
+            "effigy-shared-restart-proof-",
+            project,
+            "services:\n  legacy_mysql:\n    image: mariadb:latest\n",
+            &listing,
+        );
+        fixture.answer_inspections(answers);
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+        let progress = ProgressSource::waiting_for("shared services");
+        let renders = vec![fixture.render("this-render")];
+        super::ensure_shared_services_with_renders_observed(&policy, &renders, &progress)
+            .expect("a healthy shared service starts; the restart policy is best-effort");
+        let frame = progress.frame_at(Duration::from_secs(9));
+        (fixture.calls(), frame)
+    }
+
+    #[test]
+    fn a_shared_service_with_two_listed_containers_is_ambiguous_and_receives_no_update() {
+        let project = "effigy-shared-restart-ambiguous";
+        let name = format!("{project}-legacy_mysql-1");
+        let verified = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let (calls, _) =
+            shared_restart_run_listing(project, &name, &[verified.clone(), verified], 2);
+
+        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
+    }
+
+    /// The restart-policy updates a run sent, in order.
+    fn restart_updates(calls: &[String]) -> Vec<String> {
+        calls
+            .iter()
+            .filter(|call| call.contains("update --restart"))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn a_shared_restart_update_names_only_the_verified_full_id() {
+        let project = "effigy-shared-restart-verified";
+        let name = format!("{project}-legacy_mysql-1");
+        let verified = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let (calls, _) = shared_restart_run(project, &name, &[verified.clone(), verified]);
+
+        let updates = restart_updates(&calls);
+        assert_eq!(updates.len(), 1, "one verified update: {calls:?}");
+        assert!(
+            updates[0].ends_with(&format!(
+                "update --restart unless-stopped {}",
+                "a".repeat(64)
+            )),
+            "the update names the verified full ID, not the listed name: {updates:?}"
+        );
+        assert!(!updates[0].contains(&name), "{updates:?}");
+    }
+
+    #[test]
+    fn a_same_name_container_of_a_foreign_project_receives_no_shared_update() {
+        let project = "effigy-shared-restart-foreign";
+        let name = format!("{project}-legacy_mysql-1");
+        let foreign = shared_inspect_record(
+            'a',
+            &name,
+            "effigy-other-project",
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let (calls, _) = shared_restart_run(project, &name, &[foreign.clone(), foreign]);
+
+        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
+    }
+
+    #[test]
+    fn a_container_rendered_from_a_stale_render_receives_no_shared_update() {
+        let project = "effigy-shared-restart-stale";
+        let name = format!("{project}-legacy_mysql-1");
+        let stale = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("previous-render"),
+            true,
+        );
+        let (calls, _) = shared_restart_run(project, &name, &[stale.clone(), stale]);
+
+        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
+    }
+
+    #[test]
+    fn a_shared_container_whose_full_id_changes_between_inspections_receives_no_update() {
+        let project = "effigy-shared-restart-changed";
+        let name = format!("{project}-legacy_mysql-1");
+        let first = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let replaced = shared_inspect_record(
+            'b',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let (calls, _) = shared_restart_run(project, &name, &[first, replaced]);
+
+        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
+    }
+
+    #[test]
+    fn a_shared_container_with_no_inspect_identity_receives_no_update() {
+        let project = "effigy-shared-restart-missing";
+        let name = format!("{project}-legacy_mysql-1");
+        let (calls, _) = shared_restart_run(project, &name, &["[]".to_owned()]);
+
+        assert!(restart_updates(&calls).is_empty(), "{calls:?}");
     }
 
     /// A container created from the current render, whose render directory has

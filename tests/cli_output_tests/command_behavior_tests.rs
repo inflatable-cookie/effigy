@@ -3749,13 +3749,17 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
     }
 
     // The policy is the runtime's, applied once per `up` after the stack started.
+    // It names the container's verified full ID, never the listed name.
     let updates = fs::read_to_string(&restart_updates).expect("read restart updates");
     let updates = updates.lines().collect::<Vec<_>>();
     assert_eq!(updates.len(), 2, "one update per up: {updates:?}");
+    // The colima backend prefixes its nerdctl wrapper, so match the subcommand
+    // tail: the update names the verified full ID and never the listed name.
+    let verified_update = format!("update --restart unless-stopped {}", "a".repeat(64));
     for update in updates {
         assert!(
-            update.contains("update --restart unless-stopped fixture-web-dev-app-1"),
-            "the runtime keeps the started container up: {update}"
+            update.ends_with(&verified_update),
+            "the runtime keeps the verified container up by its full ID: {update}"
         );
     }
 }

@@ -909,6 +909,10 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Fixed
 
+- The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
+
+- A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
+
 - A direct foreground task stays in memory custody and records no `latest` or
   `history` entry, even when the user config declares a `[programs]` block.
   Only a block that puts a shim on the run's `PATH` (program absent, or
