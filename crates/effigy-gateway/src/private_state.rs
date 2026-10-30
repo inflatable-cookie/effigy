@@ -109,6 +109,10 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
                     }
                 }
             }
+            if entry.file_name() == "runtime" && is_operator_gateway_root(path) {
+                validate_gateway_runtime(&child, &metadata)?;
+                continue;
+            }
             if !matches!(entry.file_name().to_str(), Some("certs" | "ca")) {
                 return Err(unsafe_child(&child, "unexpected private state directory"));
             }
@@ -121,6 +125,57 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
         }
     }
     Ok(())
+}
+
+/// Whether `path` is the operator gateway root, `<HOME>/.effigy/gateway`.
+fn is_operator_gateway_root(path: &Path) -> bool {
+    path.file_name() == Some(std::ffi::OsStr::new("gateway"))
+        && path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(".effigy"))
+}
+
+/// The kernel keeps gateway control sockets in `<operator root>/runtime`, an
+/// owner-only directory. Only that directory is admitted, and only sockets
+/// inside it: the directory's own mode keeps other users out.
+fn validate_gateway_runtime(path: &Path, metadata: &std::fs::Metadata) -> Result<(), GatewayError> {
+    validate_private_metadata(path, metadata, true)?;
+    for entry in std::fs::read_dir(path).map_err(GatewayError::Io)? {
+        let entry = entry.map_err(GatewayError::Io)?;
+        let child = entry.path();
+        let metadata = match std::fs::symlink_metadata(&child) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(GatewayError::Io(error)),
+        };
+        validate_control_socket(&child, &metadata)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_control_socket(path: &Path, metadata: &std::fs::Metadata) -> Result<(), GatewayError> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    if !metadata.file_type().is_socket() {
+        return Err(unsafe_child(
+            path,
+            "the gateway runtime directory holds only control sockets",
+        ));
+    }
+    if metadata.uid() != nix::unistd::Uid::effective().as_raw() {
+        return Err(unsafe_child(path, "the current user must own it"));
+    }
+    if metadata.mode() & 0o077 != 0 {
+        return Err(unsafe_child(path, "control sockets must be owner-only"));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_control_socket(path: &Path, metadata: &std::fs::Metadata) -> Result<(), GatewayError> {
+    let _ = (path, metadata);
+    Err(GatewayError::Io(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "private gateway state currently requires Unix ownership and permission checks",
+    )))
 }
 
 fn validate_directory_entries(path: &Path) -> Result<(), GatewayError> {
@@ -296,6 +351,101 @@ mod tests {
         let foreign = root.join("foreign");
         std::fs::create_dir(&foreign).expect("foreign directory");
         set_private_permissions(&foreign).expect("foreign permissions");
+        assert!(validate_root(&root).is_err());
+    }
+
+    /// `<fixture>/.effigy/gateway` with the kernel's owner-only `runtime` child.
+    #[cfg(unix)]
+    fn operator_root(fixture: &Path) -> PathBuf {
+        let root = fixture.join(".effigy/gateway");
+        std::fs::create_dir_all(&root).expect("operator root");
+        set_private_permissions(&root).expect("operator root permissions");
+        let root = std::fs::canonicalize(&root).expect("canonical operator root");
+        let runtime = root.join("runtime");
+        std::fs::create_dir(&runtime).expect("runtime directory");
+        set_private_permissions(&runtime).expect("runtime permissions");
+        root
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("fixture mode");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_root_admits_its_owner_only_runtime_and_control_sockets() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let root = operator_root(fixture.path());
+        let runtime = root.join("runtime");
+        validate_root(&root).expect("fresh runtime directory is admitted");
+
+        // Sockets are admitted only when owner-only, as the kernel creates them.
+        let socket = runtime.join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("control socket");
+        set_mode(&socket, 0o600);
+        validate_root(&root).expect("owner-only control socket is admitted");
+        drop(listener);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_runtime_refuses_unsafe_children_and_modes() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let root = operator_root(fixture.path());
+        let runtime = root.join("runtime");
+
+        // A group-readable control socket is refused.
+        let socket = runtime.join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("control socket");
+        set_mode(&socket, 0o640);
+        assert!(validate_root(&root).is_err());
+        set_mode(&socket, 0o600);
+        drop(listener);
+
+        // A regular file is refused: the runtime directory holds only sockets.
+        let file = runtime.join("stray");
+        std::fs::write(&file, b"not a socket\n").expect("stray file");
+        set_mode(&file, 0o600);
+        assert!(validate_root(&root).is_err());
+        std::fs::remove_file(&file).expect("remove stray file");
+
+        // A wider runtime directory mode is refused.
+        set_mode(&runtime, 0o755);
+        assert!(validate_root(&root).is_err());
+        set_mode(&runtime, 0o700);
+
+        // A runtime symlink is refused, not followed to its target.
+        let target = fixture.path().join("elsewhere");
+        std::fs::create_dir(&target).expect("symlink target");
+        set_private_permissions(&target).expect("target permissions");
+        std::fs::remove_file(&socket).expect("remove control socket");
+        std::fs::remove_dir(&runtime).expect("replace runtime");
+        std::os::unix::fs::symlink(&target, &runtime).expect("runtime symlink");
+        assert!(validate_root(&root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_directory_is_admitted_only_under_an_operator_root() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        // Same shape under a root that is not `<HOME>/.effigy/gateway`.
+        let root = fixture.path().join("gateway");
+        std::fs::create_dir(&root).expect("private root");
+        set_private_permissions(&root).expect("private root permissions");
+        let root = std::fs::canonicalize(&root).expect("canonical private root");
+        let runtime = root.join("runtime");
+        std::fs::create_dir(&runtime).expect("runtime directory");
+        set_private_permissions(&runtime).expect("runtime permissions");
+        assert!(validate_root(&root).is_err());
+
+        // Unrelated extra directories still refuse under an operator root.
+        let root = operator_root(&fixture.path().join("operator"));
+        let extra = root.join("extra");
+        std::fs::create_dir(&extra).expect("extra directory");
+        set_private_permissions(&extra).expect("extra permissions");
         assert!(validate_root(&root).is_err());
     }
 }

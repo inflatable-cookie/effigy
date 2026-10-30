@@ -66,13 +66,10 @@
 "test:gateway:operator:identity" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(identity::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:ci-regressions" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway --lib -E 'test(listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record) | test(run_gateway_propagates_proxy_bind_failure)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:rebase" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(run::tests::gateway_) | test(run_store_record_) | test(source_directory_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-# The machine gateway shares 127.0.0.1:80/:443 and the privileged bind
-# broker with every HOME, so these real-daemon cases refuse to run while a
-# gateway listens there and never stop a running one (papercut 06d1cd9e).
-"test:gateway:operator:process" = { durable = true, run = [
-  { id = "machine-gateway-free", run = "sh tests/scripts/gateway-operator-guard.sh", timeout_ms = 60000 },
-  { id = "operator-lifecycle", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_operator --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-] }
+# The real-daemon cases run under a private HOME, private state root and
+# unprivileged loopback ports, so they run beside a running machine gateway
+# and never read, signal or stop it.
+"test:gateway:operator:process" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_operator --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "proof:gateway:operator:migration" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(root_gateway_migration_preserves_redacted_operator_snapshot)' --run-ignored only --no-capture --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:broker" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway --lib -E 'test(bind_broker::) | test(setup::broker::) | test(parse_gateway_setup_remove)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:bind" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(bind_broker::)' --no-capture --retries 0 --no-tests fail", timeout_ms = 600000 }
