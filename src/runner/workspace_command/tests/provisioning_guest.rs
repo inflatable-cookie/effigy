@@ -29,6 +29,13 @@ use crate::runner::workspace_command::provisioning::{
 };
 
 const ENTRY_PATH: &str = "/usr/local/bin/effigy";
+
+mod workspace_client_matrix {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/workspace_client/provisioning.rs"
+    ));
+}
 const HOST_CONTAINER_ID: &str = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
 
 fn fixture(label: &str) -> PathBuf {
