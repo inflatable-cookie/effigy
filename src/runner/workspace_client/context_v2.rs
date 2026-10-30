@@ -4,7 +4,13 @@
 #![allow(dead_code)] // The workspace-client owner binds the final guest entry.
 
 use super::*;
-use crate::runner::workspace_client::identity::{GuestIdentity, GuestIdentityRefusal};
+use crate::runner::workspace_client::context::{
+    ContextReadError, ContextRefusal, GuestReader, LocalReadSource, WorkspaceContainerIdentity,
+    WorkspacePathMap, WorkspacePinnedSource,
+};
+use crate::runner::workspace_client::identity::{
+    GuestIdentity, GuestIdentityRefusal, GuestSelfObservation,
+};
 use crate::runner::workspace_transport::qualification::QualifiedHostLocator;
 use effigy_kernel::id::{Digest, RunId};
 use effigy_kernel::workspace_session::{ActivationPlan, SelectionObjects};
@@ -23,6 +29,98 @@ impl std::ops::Deref for WorkspaceContextV2 {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+/// The pinned facts a guest-local read is answered from. The v2 document is the
+/// one canonical source: `sources`, `paths` and `binary_path` are exactly the
+/// pinned generation, and no v1 projection is consulted.
+impl LocalReadSource for WorkspaceContextV2 {
+    fn context_generation(&self) -> u64 {
+        self.context_generation
+    }
+    fn host_version(&self) -> &str {
+        &self.version
+    }
+    fn guest_version(&self) -> &str {
+        &self.version
+    }
+    fn guest_digest(&self) -> &str {
+        &self.artifact_digest
+    }
+    fn protocol(&self) -> u32 {
+        self.protocol
+    }
+    fn paths(&self) -> &WorkspacePathMap {
+        &self.paths
+    }
+    fn sources(&self) -> &[WorkspacePinnedSource] {
+        &self.sources
+    }
+}
+
+/// One strict published v2 context that this guest already checked against its
+/// own independent identity observation.
+///
+/// The observation is retained, not trusted as authority: every authority
+/// request re-verifies the same document against it, and the host re-resolves
+/// and fences the request on its own records.
+#[derive(Debug)]
+pub(crate) struct PublishedGuestContext {
+    pub(crate) generation: u64,
+    pub(crate) document: WorkspaceContextV2,
+    pub(crate) observation: GuestSelfObservation,
+}
+
+impl PublishedGuestContext {
+    /// The container facts the document claims, for comparison.
+    pub(crate) fn container(&self) -> WorkspaceContainerIdentity {
+        WorkspaceContainerIdentity {
+            container_id: self.document.container_id.clone(),
+            vm_boot_id: self.document.vm_boot_id.clone(),
+            platform: self.document.platform.clone(),
+            libc: self.document.libc.clone(),
+        }
+    }
+}
+
+/// The guest entry: read the strict v2 document and independently observe the
+/// container this process runs in before selecting it.
+///
+/// A v1 document is refused by [`WorkspaceContextV2::parse`], never
+/// reinterpreted; an observation that disagrees with the document refuses
+/// before any local read or connection.
+pub(crate) fn read_published_guest(
+    guest: &mut dyn GuestReader,
+    identity: &mut dyn GuestIdentity,
+) -> Result<Option<PublishedGuestContext>, ContextReadError> {
+    let Some(document) = read_published_v2(guest)? else {
+        return Ok(None);
+    };
+    let observed = identity.observe().map_err(|reason| {
+        let message =
+            format!("guest-local identity is unproven ({reason}); re-prepare on the host");
+        ContextReadError::Refused(match reason {
+            GuestIdentityRefusal::Mismatch => ContextRefusal::identity_mismatch(message),
+            _ => ContextRefusal::unavailable(message),
+        })
+    })?;
+    let claimed = WorkspaceContainerIdentity {
+        container_id: document.container_id.clone(),
+        vm_boot_id: document.vm_boot_id.clone(),
+        platform: document.platform.clone(),
+        libc: document.libc.clone(),
+    };
+    observed.compare(&claimed).map_err(|reason| {
+        ContextReadError::Refused(ContextRefusal::identity_mismatch(format!(
+            "guest-local identity disagrees with the published context ({reason}); \
+             re-prepare on the host"
+        )))
+    })?;
+    Ok(Some(PublishedGuestContext {
+        generation: document.context_generation,
+        document,
+        observation: observed,
+    }))
 }
 
 /// Strict v2 guest-reader entry. A legacy v1 document is refused by this

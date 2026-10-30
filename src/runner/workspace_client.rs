@@ -73,12 +73,14 @@ use std::path::{Path, PathBuf};
 
 use crate::runner::error::RunnerError;
 
+use context::v2::{PublishedGuestContext, WorkspaceContextV2};
 use context::{
     CheckoutReader, ContextReadError, ContextRefusal, GuestLocalReads, GuestOperationClass,
     GuestReader, LiveGuestRun, LocalRead, LocalReadError, LocalReadOutcome,
-    PublishedWorkspaceContext, VerifiedWorkspaceContext, WorkspaceContainerIdentity,
-    WorkspaceContext, WorkspacePathMap, CLIENT_ROOT, ENROL_CREDENTIAL_PATH, HOST_REPREPARE_COMMAND,
+    VerifiedWorkspaceContext, WorkspaceContainerIdentity, WorkspacePathMap, CLIENT_ROOT,
+    ENROL_CREDENTIAL_PATH, HOST_REPREPARE_COMMAND,
 };
+use identity::{GuestIdentity, GuestSelfObservation, ProcGuestIdentity};
 
 /// How long a guest may spend opening the pinned TLS connection. Bounded so a
 /// wedged host never keeps a command alive.
@@ -101,8 +103,9 @@ pub(crate) enum GuestPlacement {
     /// Hybrid mode always lands here, because nothing publishes a context for
     /// it and this path writes nothing.
     Host,
-    /// The workspace is in container mode and prepared for one generation.
-    Guest(PublishedWorkspaceContext),
+    /// The workspace is in container mode and prepared for one generation,
+    /// already matched against this guest's own independent observation.
+    Guest(Box<PublishedGuestContext>),
 }
 
 /// Read the published context, or report that this is not a prepared
@@ -110,8 +113,21 @@ pub(crate) enum GuestPlacement {
 /// published for this container, not a hostname, address or marker file
 /// (§8.1).
 pub(crate) fn detect(guest: &mut dyn GuestReader) -> Result<GuestPlacement, RunnerError> {
-    match context::read_published_context(guest) {
-        Ok(Some(published)) => Ok(GuestPlacement::Guest(published)),
+    detect_with(guest, &mut ProcGuestIdentity::process())
+}
+
+/// [`detect`] with the guest's own identity observation supplied.
+///
+/// The strict v2 document is selected only after the observation independently
+/// matches the container it claims to be; a v1 document is refused by the v2
+/// parser rather than reinterpreted, and an unmatched observation refuses
+/// before any local read or connection.
+pub(crate) fn detect_with(
+    guest: &mut dyn GuestReader,
+    identity: &mut dyn GuestIdentity,
+) -> Result<GuestPlacement, RunnerError> {
+    match context::v2::read_published_guest(guest, identity) {
+        Ok(Some(published)) => Ok(GuestPlacement::Guest(Box::new(published))),
         Ok(None) => Ok(GuestPlacement::Host),
         Err(error) => Err(context_read_error(error)),
     }
@@ -317,10 +333,11 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
             "help is rendered from the guest binary and never crosses the channel".to_owned(),
         ),
         // The gateway owns a host listener and never runs in a guest (§8.6).
-        Command::Gateway(_) => GuestOperation::Refused(format!(
+        Command::Gateway(_) => GuestOperation::Refused(
             "`effigy gateway` runs on the host, never in a container-mode guest; run it on the host \
              or ask the host session for the route table with `effigy container hosts`"
-        )),
+                .to_owned(),
+        ),
         // The staged guest probe is the producer's own guest entry: the ordinary
         // dispatch runs it (guest_probe module), and it never crosses the
         // channel. A guest that asked for it is not making a host request.
@@ -477,6 +494,11 @@ impl Intent {
 
 /// One channel connection, as far as one command needs it.
 pub(crate) trait ChannelRequest {
+    /// Authenticate this connection. The pinned peer was verified and the
+    /// protocol negotiated before this is called, and the credential is read
+    /// from guest storage only after that, so no capability crosses a
+    /// connection whose peer is not the pinned host (§8.11).
+    fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError>;
     /// Send one intent. A transport failure returns [`ChannelError::Unknown`];
     /// the caller replays the same intent, whose id the host has already
     /// recorded or will record exactly once.
@@ -508,12 +530,15 @@ pub(crate) struct SessionIdentity {
 }
 
 /// Read the capability this guest may present, or the enrolment credential,
-/// from guest-private storage. A missing, unreadable or stale credential never
-/// unlocks anything: it reports host access unavailable and leaves local reads
-/// working (§8.8).
+/// from guest-private storage. A missing, unreadable or mismatched credential
+/// never unlocks anything: it reports host access unavailable and leaves local
+/// reads working (§8.8).
+///
+/// The caller reaches this only after the pinned peer check, so a credential is
+/// never read — let alone sent — for a peer that is not the pinned host.
 pub(crate) fn load_auth(
     guest: &mut dyn GuestReader,
-    context: &WorkspaceContext,
+    context: &WorkspaceContextV2,
 ) -> Result<GuestAuth, RunnerError> {
     if let Some(bytes) = guest.read_file(&client_capability_path())? {
         let text = String::from_utf8_lossy(&bytes);
@@ -529,13 +554,24 @@ pub(crate) fn load_auth(
             return Ok(GuestAuth::Capability(capability));
         }
     }
-    let Some(bytes) = guest.read_file(ENROL_CREDENTIAL_PATH)? else {
+    let path = context.credential.path.as_str();
+    let Some(bytes) = guest.read_file(path)? else {
         return Err(RunnerError::task_invocation(format!(
             "this terminal holds no workspace capability and the workspace installed no \
-             enrolment credential; local reads work and host authority is unavailable. Open the \
-             terminal with `effigy workspace`, or run the command on the host"
+             enrolment credential at `{path}`; local reads work and host authority is unavailable. \
+             Open the terminal with `effigy workspace`, or run the command on the host"
         )));
     };
+    // The pinned document names the credential's own digest: bytes that differ
+    // from what the host staged are refused instead of presented.
+    let digest = context::sha256_text(&bytes);
+    if digest != context.credential.digest {
+        return Err(RunnerError::task_invocation(format!(
+            "the workspace enrolment credential at `{path}` is {digest} but the context pins {}; \
+             run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            context.credential.digest
+        )));
+    }
     let credential = parse_enrolment_credential(&String::from_utf8_lossy(&bytes))?;
     let session = enrolment_session(context)?;
     Ok(GuestAuth::Enrolment {
@@ -544,33 +580,28 @@ pub(crate) fn load_auth(
     })
 }
 
-/// The session a direct terminal enrols into.
-///
-/// The published context names the session run. It does not publish the
-/// session generation, and lane A's `enrol` frame must present exactly the
-/// generation the host recorded (`EnrolRequest::session_generation`). A guest
-/// that guessed it would present a fact nobody gave it, so a direct terminal
-/// refuses instead and names the missing field and its owner.
-fn enrolment_session(context: &WorkspaceContext) -> Result<SessionIdentity, RunnerError> {
-    let Some(run) = context.session_run_id.as_deref() else {
-        return Err(RunnerError::task_invocation(format!(
-            "the workspace context names no session run, so this terminal cannot enrol; run \
-             `{HOST_REPREPARE_COMMAND}` on the host to prepare the workspace session"
-        )));
-    };
-    let run = run.parse::<RunId>().map_err(|_| {
+/// The session a direct terminal enrols into: the run and the generation the
+/// strict v2 document publishes. Both are host-recorded facts, so the guest
+/// presents exactly what it was given and never guesses one.
+fn enrolment_session(context: &WorkspaceContextV2) -> Result<SessionIdentity, RunnerError> {
+    let run = context.session.run_id.parse::<RunId>().map_err(|_| {
         RunnerError::task_invocation(format!(
-            "the workspace context names session run `{run}`, which is not a session identity; run \
-             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+            "the workspace context names session run `{}`, which is not a session identity; run \
+             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            context.session.run_id
         ))
     })?;
-    Err(RunnerError::task_invocation(format!(
-        "this direct terminal holds the workspace enrolment credential, but the published context \
-         names session run `{run}` without the session generation the channel's `enrol` request \
-         must present; a guest will not present a generation nobody published. Open the terminal \
-         with `effigy workspace`, which hands its terminal a capability, or run the command on the \
-         host"
-    )))
+    if context.session.generation == 0 {
+        return Err(RunnerError::task_invocation(
+            "the workspace context publishes no admitted session generation, so this terminal \
+             cannot enrol; run `effigy container up` on the host to prepare the workspace session"
+                .to_owned(),
+        ));
+    }
+    Ok(SessionIdentity {
+        run,
+        generation: Generation::new(context.session.generation),
+    })
 }
 
 /// Parse the `key=value` body Prepare writes 0600 for the workspace user
@@ -646,48 +677,16 @@ fn digest_of_file(path: &Path) -> Result<String, RunnerError> {
     Ok(context::render_digest(digest))
 }
 
-/// The guest's own observation of the container it runs in. Production has
-/// none yet (see the module docs), so it refuses; a proof supplies one.
-pub(crate) trait GuestIdentity {
-    fn container(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError>;
-}
-
-/// The production observation: none is merged, so host access refuses.
-#[derive(Debug, Default)]
-pub(crate) struct UnobservedContainer;
-
-impl GuestIdentity for UnobservedContainer {
-    fn container(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
-        Err(RunnerError::task_invocation(format!(
-            "this container-mode workspace has a prepared context, but a guest has no local \
-             observation of its own container identity yet (the container id, VM boot, platform \
-             and libc are probed by the host's Prepare, not by the guest), so the guest cannot \
-             fence itself and host authority is unavailable. Local reads work; run the command on \
-             the host, or with `{HOST_REPREPARE_COMMAND}` from a host terminal"
-        )))
-    }
-}
-
-/// Build the run facts lane C verifies the context against.
+/// Build the run facts the strict context is verified against.
 ///
-/// The binary half is observed; the environment generation and session run id
-/// are the context's own, because the host binds both to its grant and fences
-/// every request on its own records rather than on these claims (§8.11).
+/// The binary half is this process's own (version and the digest of the
+/// executable actually running); placement is the observation `detect` already
+/// matched against the document. The environment generation and session are the
+/// document's own, because the host binds both to its grant and fences every
+/// request on its own records rather than on these claims (§8.11).
 pub(crate) fn live_guest_run(
-    context: &WorkspaceContext,
-    generation: u64,
-    identity: &mut dyn GuestIdentity,
-) -> Result<LiveGuestRun, RunnerError> {
-    let binary = RunningBinary::observe()?;
-    let container = identity.container()?;
-    Ok(live_run_from(context, generation, binary, container))
-}
-
-fn live_run_from(
-    context: &WorkspaceContext,
-    generation: u64,
+    published: &PublishedGuestContext,
     binary: RunningBinary,
-    container: WorkspaceContainerIdentity,
 ) -> LiveGuestRun {
     LiveGuestRun {
         binary: context::GuestBinaryIdentity {
@@ -695,13 +694,27 @@ fn live_run_from(
             digest: binary.digest,
             protocol: context::CHANNEL_PROTOCOL_VERSION,
         },
-        container,
-        environment_generation: context.activation.environment.generation.clone(),
-        session_run_id: context.session_run_id.clone(),
-        // The v1 context publishes no session generation; the v2 entry verifies
-        // one, and the binding then fills this from the published S.
-        session_generation: context.session_generation,
-        context_generation: generation,
+        container: WorkspaceContainerIdentity {
+            container_id: published.observation.container_id.clone(),
+            vm_boot_id: published.observation.vm_boot_id.clone(),
+            platform: published.observation.platform.clone(),
+            libc: published.observation.libc.clone(),
+        },
+        environment_generation: published.document.environment_generation.to_string(),
+        session_run_id: Some(published.document.session.run_id.clone()),
+        session_generation: Some(published.document.session.generation),
+        context_generation: published.generation,
+    }
+}
+
+/// The identity `detect` already independently observed, re-presented so the
+/// full context verification re-checks the same facts instead of re-reading
+/// `/proc`.
+pub(crate) struct ObservedGuest(GuestSelfObservation);
+
+impl GuestIdentity for ObservedGuest {
+    fn observe(&mut self) -> Result<GuestSelfObservation, identity::GuestIdentityRefusal> {
+        Ok(self.0.clone())
     }
 }
 
@@ -730,16 +743,17 @@ impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
 }
 
 impl<T: Transport> WorkspaceClient<T> {
-    /// Pin, negotiate, authenticate, then hold the connection open for one
-    /// request. The pinned host identity is checked before a single byte is
-    /// written, so a mispinned peer receives no `hello` and no credential;
-    /// nothing else is read or written before the negotiation, and no request
-    /// is sent before authentication (§8.11).
+    /// Pin, then negotiate, and hold the connection open for one command.
+    ///
+    /// The pinned host identity is checked before a single byte is written, so
+    /// a mispinned peer receives no `hello` and — because no credential has
+    /// been read yet — no credential bytes at all. Nothing else is read or
+    /// written before the negotiation, and no request is sent before
+    /// [`Self::authenticate`] succeeded (§8.11).
     pub(crate) fn connect(
         mut transport: T,
         verified: VerifiedWorkspaceContext,
         live: LiveGuestRun,
-        auth: GuestAuth,
     ) -> Result<Self, ChannelError> {
         // §8.11 orders this first: the server identity the selected context
         // pinned, against the identity this transport verified. A peer that is
@@ -768,9 +782,21 @@ impl<T: Transport> WorkspaceClient<T> {
                 ))
             }
         }
-        // Authentication follows negotiation inside the connection. A failure
-        // arrives as the connection's refusal on the first response read, so
-        // no request can be built on an unauthenticated connection.
+        Ok(Self {
+            transport,
+            verified,
+            live,
+            admitted: None,
+            cursors: std::collections::BTreeMap::new(),
+        })
+    }
+
+    /// Present this connection's capability or enrolment credential.
+    ///
+    /// Authentication follows negotiation inside the connection. A failure
+    /// arrives as the connection's refusal on the first response read, so no
+    /// request can be built on an unauthenticated connection.
+    pub(crate) fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError> {
         let frame = match auth {
             GuestAuth::Capability(capability) => Frame::Authenticate(capability),
             GuestAuth::Enrolment {
@@ -782,24 +808,17 @@ impl<T: Transport> WorkspaceClient<T> {
                 session_run_id: session.run,
                 session_generation: session.generation,
                 environment_generation: Generation::new(
-                    live.environment_generation.parse().map_err(|_| {
+                    self.live.environment_generation.parse().map_err(|_| {
                         ChannelError::local(
                             "the workspace context's environment generation is not a number",
                         )
                     })?,
                 ),
-                container_id: live.container.container_id.clone(),
-                vm_boot_id: live.container.vm_boot_id.clone(),
+                container_id: self.live.container.container_id.clone(),
+                vm_boot_id: self.live.container.vm_boot_id.clone(),
             }),
         };
-        channel::write_frame(&mut transport, &frame).map_err(ChannelError::from_refusal)?;
-        Ok(Self {
-            transport,
-            verified,
-            live,
-            admitted: None,
-            cursors: std::collections::BTreeMap::new(),
-        })
+        channel::write_frame(&mut self.transport, &frame).map_err(ChannelError::from_refusal)
     }
 
     fn request_for(&self, intent: &Intent) -> Request {
@@ -908,6 +927,10 @@ impl<T: Transport> WorkspaceClient<T> {
 }
 
 impl<T: Transport> ChannelRequest for WorkspaceClient<T> {
+    fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError> {
+        WorkspaceClient::authenticate(self, auth)
+    }
+
     fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
         self.exchange(intent)
     }
@@ -1038,13 +1061,14 @@ fn fresh_bytes() -> [u8; 16] {
     bytes
 }
 
-/// Open the one connection a guest command uses.
+/// Open the one connection a guest command uses, through the pin check and the
+/// protocol negotiation. It never receives a credential: the caller reads one
+/// only after this returned a connection whose peer verified as the pinned host.
 pub(crate) trait ChannelOpener {
     fn open(
         &mut self,
         verified: &VerifiedWorkspaceContext,
         live: &LiveGuestRun,
-        auth: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError>;
 }
 
@@ -1067,7 +1091,6 @@ impl ChannelOpener for PinnedChannelTransport {
         &mut self,
         verified: &VerifiedWorkspaceContext,
         live: &LiveGuestRun,
-        auth: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
         let unavailable = |message: String| ChannelError::Refused {
             code: channel::RefusalCode::Unavailable.as_str(),
@@ -1092,12 +1115,8 @@ impl ChannelOpener for PinnedChannelTransport {
                 self.backend
             ))
                 })?;
-        let client = WorkspaceClient::connect(
-            BoxedTransport(transport),
-            verified.clone(),
-            live.clone(),
-            auth,
-        )?;
+        let client =
+            WorkspaceClient::connect(BoxedTransport(transport), verified.clone(), live.clone())?;
         Ok(Box::new(client))
     }
 }
@@ -1124,26 +1143,24 @@ impl Transport for BoxedTransport {
 /// against guest state or a guest engine.
 pub(crate) fn dispatch(
     cmd: &Command,
-    published: &PublishedWorkspaceContext,
+    published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
-    identity: &mut dyn GuestIdentity,
     opener: &mut dyn ChannelOpener,
 ) -> Result<String, RunnerError> {
     let cwd = std::env::current_dir().map_err(|error| {
         RunnerError::task_invocation(format!("cannot read the working directory: {error}"))
     })?;
-    dispatch_in(cmd, published, guest, checkout, identity, opener, &cwd)
+    dispatch_in(cmd, published, guest, checkout, opener, &cwd)
 }
 
 /// [`dispatch`] from a named working directory, so a proof does not depend on
 /// where the test process happens to stand.
 pub(crate) fn dispatch_in(
     cmd: &Command,
-    published: &PublishedWorkspaceContext,
+    published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
-    identity: &mut dyn GuestIdentity,
     opener: &mut dyn ChannelOpener,
     cwd: &Path,
 ) -> Result<String, RunnerError> {
@@ -1156,12 +1173,12 @@ pub(crate) fn dispatch_in(
                 op,
                 target: Some(target),
             });
-            ask_host(published, guest, identity, opener, body, wants_json, cwd)
+            ask_host(published, guest, opener, body, wants_json, cwd)
         }
         GuestOperation::Invoke { selector, target } => {
             let body = RequestBody::Invoke(InvocationBody {
                 selector,
-                cwd: checkout_relative(&published.context.paths, cwd)?,
+                cwd: checkout_relative(&published.document.paths, cwd)?,
                 target,
                 args: invocation_args(cmd)?,
                 output: if wants_json {
@@ -1170,21 +1187,22 @@ pub(crate) fn dispatch_in(
                     ChannelOutputMode::Text
                 },
             });
-            ask_host(published, guest, identity, opener, body, wants_json, cwd)
+            ask_host(published, guest, opener, body, wants_json, cwd)
         }
     }
 }
 
-/// Serve one local read from the pinned context and the mounted checkout.
+/// Serve one local read from the strict pinned document and the mounted
+/// checkout. Nothing here admits, enrols or opens a connection.
 fn run_local(
     read: LocalRead,
-    published: &PublishedWorkspaceContext,
+    published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
     wants_json: bool,
 ) -> Result<String, RunnerError> {
     let mut reads = GuestLocalReads {
-        context: &published.context,
+        context: &published.document,
         guest,
         checkout,
     };
@@ -1197,10 +1215,15 @@ fn run_local(
 /// Ask the host, once. A connection that dies before answering is replayed on
 /// one fresh connection under the same request id, so the host answers from its
 /// record rather than admitting a second run (§8.11).
+///
+/// Order is the contract's: verify the strict context against this guest's own
+/// observation, open the pinned connection and let it check the server pin and
+/// negotiate, and only then read a credential from guest storage and present
+/// it. A mispinned peer therefore learns nothing and never causes a credential
+/// to be read, let alone sent.
 fn ask_host(
-    published: &PublishedWorkspaceContext,
+    published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
-    identity: &mut dyn GuestIdentity,
     opener: &mut dyn ChannelOpener,
     body: RequestBody,
     wants_json: bool,
@@ -1210,17 +1233,20 @@ fn ask_host(
         RequestBody::Observe(_) => GuestOperationClass::Observe,
         _ => GuestOperationClass::Mutate,
     };
-    let live = live_guest_run(&published.context, published.generation, identity)?;
+    let live = live_guest_run(published, RunningBinary::observe()?);
     let verified = published
-        .context
-        .verify(&live)
+        .document
+        .verify(&mut ObservedGuest(published.observation.clone()), &live)
         .map_err(context_refusal_error)?;
-    let auth = load_auth(guest, &published.context)?;
+    let mut client = opener
+        .open(&verified, &live)
+        .map_err(ChannelError::into_runner)?;
+    let auth = load_auth(guest, &published.document)?;
     // Only an authority-bearing request enrols a direct terminal; a Static or
     // Observe request that holds no capability refuses instead (§8.8).
     let auth = match (auth, class.requires_enrolment()) {
         (GuestAuth::Capability(capability), _) => GuestAuth::Capability(capability),
-        (GuestAuth::Enrolment { .. }, true) => load_auth(guest, &published.context)?,
+        (auth @ GuestAuth::Enrolment { .. }, true) => auth,
         (GuestAuth::Enrolment { .. }, false) => {
             return Err(RunnerError::task_invocation(format!(
                 "this command reads live host facts, and this terminal holds only the enrolment \
@@ -1232,16 +1258,18 @@ fn ask_host(
         }
     };
     let intent = Intent::new(body);
-    let mut client = opener
-        .open(&verified, &live, auth.clone())
-        .map_err(ChannelError::into_runner)?;
-    let outcome = match client.send(&intent) {
+    let outcome = match client
+        .authenticate(auth.clone())
+        .and_then(|()| client.send(&intent))
+    {
         Ok(outcome) => Ok(outcome),
         Err(error) if error.is_replayable() => {
             let mut replay = opener
-                .open(&verified, &live, auth)
+                .open(&verified, &live)
                 .map_err(ChannelError::into_runner)?;
-            replay.send(&intent)
+            replay
+                .authenticate(auth)
+                .and_then(|()| replay.send(&intent))
         }
         Err(error) => Err(error),
     };
@@ -1454,20 +1482,12 @@ pub(crate) fn guest_command(cmd: &Command) -> Result<Option<String>, RunnerError
         GuestPlacement::Host => return Ok(None),
         GuestPlacement::Guest(published) => published,
     };
-    let mut checkout = MountedCheckout::new(&published.context.paths);
+    let mut checkout = MountedCheckout::new(&published.document.paths);
     let mut opener = PinnedChannelTransport {
-        backend: published.context.backend.kind.clone(),
+        backend: published.document.backend.clone(),
         budget: CHANNEL_OPEN_BUDGET,
     };
-    dispatch(
-        cmd,
-        &published,
-        &mut guest,
-        &mut checkout,
-        &mut UnobservedContainer,
-        &mut opener,
-    )
-    .map(Some)
+    dispatch(cmd, &published, &mut guest, &mut checkout, &mut opener).map(Some)
 }
 
 /// A container-mode guest never runs the host engines locally, so a raw

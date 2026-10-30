@@ -3469,21 +3469,61 @@ ServingOwner::adopt_owned(
 ) -> Result<ServingOwner, AdoptError>
 ```
 
-**Remaining #452 integration scope (owner ruling, 2026-10-30).** With #482 and
-#504 merged, two adapters are this task's own work rather than another lane's:
+**#452 integration scope and its binding state (owner ruling, 2026-10-30).**
+With #482 and #504 merged, two adapters are this task's own work rather than
+another lane's.
 
-- A narrow production adapter for the kernel `Dispatcher<Admission, Resolver,
-  Observer, RunIds>` using the existing host engine: every `InvocationBody` is
-  re-resolved under host authority, the reserved `AdmissionTicket` is handed
-  unchanged to `EngineLaunch::admission` / `Run::begin_admitted`, observation
-  uses the host `ObserveContext` read-only, and run ids come from the engine. No
-  fabricated grant, second engine or generic command fallback.
-- A guest-local read adapter over the one strict canonical
-  `WorkspaceContextDocument` (`sources`, `paths`, `binary_path`), so
-  `LocalRead`/`GuestLocalReads` serve the pinned task list and checkout reads
-  from v2 with the same pinned-checkout verification, reads that never enrol,
-  and v1 still rejected. `detect()` binds to it only after the independent guest
-  identity observation and the pin check.
+*Bound (this branch):*
+
+- **Guest-local reads over the one strict canonical document.**
+  `workspace_client::context::LocalReadSource` is the narrow view a local read
+  uses, and `LocalReadSource for v2::WorkspaceContextV2` serves
+  `context_generation`, version/artifact digest/protocol, `paths` and `sources`
+  from the canonical `WorkspaceContextDocument`. `GuestLocalReads` therefore
+  has one bounded read implementation for both the producer's v1 projection and
+  the guest's v2 document; it holds no capability and no writer, so
+  `LocalRead`/`Static`/local `Observe` still admit nothing and enrol nothing.
+- **`detect()` binds v2 after an independent identity observation.**
+  `context::v2::read_published_guest(&mut dyn GuestReader, &mut dyn
+  identity::GuestIdentity) -> Result<Option<v2::PublishedGuestContext>,
+  ContextReadError>` strictly parses the published generation (v1 bytes refuse,
+  nothing is reinterpreted) and compares the document's container id, VM boot,
+  platform and libc against `ProcGuestIdentity::process()`'s own observation
+  before selecting `GuestPlacement::Guest`. An unproven or disagreeing
+  observation refuses before any local read or connection. The placeholder
+  identity seam (`GuestIdentity`, `UnobservedContainer`, `live_guest_run` over
+  v1) is deleted in the same binding.
+- **Pin, then credential.** `WorkspaceClient::connect` performs
+  `check_server_pin` and the `hello`/`HelloOk` negotiation only;
+  `ChannelRequest::authenticate` presents the capability or enrolment
+  credential after that, and the guest reads the credential from private
+  storage only once the connection's peer verified as the pinned host. A
+  mispinned peer therefore receives zero `hello` bytes and causes zero
+  credential reads. The v2 document's `credential.path` and
+  `credential.digest` are the ones used, and bytes that differ from the pinned
+  digest refuse instead of being presented. A direct terminal presents the
+  published `session { run_id, generation }`.
+
+*Blocked, with the exact missing API (do not substitute a stub):*
+
+- **The production `Dispatcher` admission seam.** `Resolver`, `Observer` and
+  `RunIds` are constructible over the existing host engine, but the kernel
+  `Admission::admit(&EffectContext, &AdmissionTicket, &ResolvedInvocation)`
+  contract requires the reserved ticket to reach `Run::begin_admitted` in the
+  process that admits the run. The runner driver exposes the ticket end to end
+  (`EngineLaunch.admission` → supervisor config → `EngineSession::admission()`)
+  but nothing consumes it: `TaskRun` begins every production run with
+  `Run::begin` and a fresh id. The missing binding is
+  `task_engine::run::TaskRunRequest<'a> { …, admission: Option<effigy_kernel::run::AdmissionTicket> }`,
+  with `TaskRun::begin_with` calling
+  `Run::begin_admitted(cx, root, &invocation, opts, &cleanup, &mut TaskSettlement::default(), ticket)`
+  when it is present, threaded from `managed_run::engine::own` as
+  `session.admission().cloned()`. Those are engine-owned modules outside this
+  task's source boundary, so the dispatcher is not wired rather than admitted
+  through a second engine or an unrecorded ticket. A bounded follow-up owns
+  that hook; the fake-runtime proofs in `workspace_client/tests.rs` exercise
+  the dispatcher seams and the kernel's own reservation/admission records
+  meanwhile.
 
 **Guest entry (v2, binding when #482 lands).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a
@@ -3511,11 +3551,12 @@ second seam:
   session_run_id, generation: Generation::new(session_generation) }` from it, and
   the "no published session generation" refusal disappears.
 
-The binding commit deletes this module's placeholder identity seam
-(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and binds the paths
-above at the same call site; until then the v1
-`read_published_context`/`LiveGuestRun` path is the bridge and keeps host
-authority refused rather than trusting a claim nothing observed.
+The binding commit deleted this module's placeholder identity seam
+(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and bound the paths
+above at the same call site: `detect` now selects the strict document only after
+`ProcGuestIdentity` observed and compared the container itself, and every
+authority request re-verifies that same document against the retained
+observation before it opens a connection.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's
@@ -3551,9 +3592,10 @@ The pinned TLS connection is the production transport now that #504 merged: a
 context that qualifies a locator is opened through `PinnedChannelOpener`
 (alias resolution, exact bound port, SPKI pin during the handshake) and the
 guest client's own `check_server_pin` still runs before the first byte. A
-context without a qualified locator refuses `unavailable` and local reads keep
-working. What remains is #482's production context and guest-local identity
-observation (§8.1 forbids trusting the context's own container claim).
+context whose locator is not a qualified alias refuses `unavailable` and local
+reads keep working. #482's production context and the guest-local identity
+observation are bound by `read_published_guest` (§8.1: the context's own
+container claim is never trusted).
 
 Session custody is durable and released in the close. `SessionSupervisor::adopt`
 records `workspace_session_custody`, and a run's close transaction now deletes

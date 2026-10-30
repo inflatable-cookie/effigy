@@ -15,6 +15,18 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- A container-mode guest reads host authority credentials only after the pinned
+  peer verified: the client checks the context's server pin and negotiates the
+  protocol first, then presents a capability or the enrolment credential whose
+  bytes must match the digest the strict context pins. A mispinned peer receives
+  no handshake and causes no credential read.
+- Container-mode guest-local reads are served from the one strict v2 workspace
+  context the host publishes: task lists, source pins, version and checkout
+  reads come from that document and its pinned checkouts, and a guest selects it
+  only after independently observing its own container identity. v1 context
+  bytes refuse instead of being reinterpreted, and a local read admits nothing
+  and enrols nothing.
+
 - Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
 
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.

@@ -151,7 +151,9 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
 /// `selection_switched` record. This conversion is a literal field move: no run
 /// or listener is rebuilt, re-adopted or dropped, and the activation must not
 /// keep its own copies once it has handed the owner over.
-impl From<crate::runner::environment::workspace::WorkspaceOwner> for OwnedWorkspaceChannel<'static> {
+impl From<crate::runner::environment::workspace::WorkspaceOwner>
+    for OwnedWorkspaceChannel<'static>
+{
     fn from(owner: crate::runner::environment::workspace::WorkspaceOwner) -> Self {
         Self {
             supervisor: owner.supervisor,

@@ -7,13 +7,16 @@
 //! records the reservation and the admission. Nothing here starts a container,
 //! a supervisor or a real channel listener.
 
+use super::context::v2::{PublishedGuestContext, WorkspaceContextV2};
 use super::context::{
-    context_path, sha256_text, snapshot_path, GuestBinaryIdentity, WorkspaceActivationIdentity,
-    WorkspaceBackendDescriptor, WorkspaceContextInput, WorkspaceEnvironmentIdentity,
-    WorkspaceHostIdentity, WorkspacePinnedSource, CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND,
+    context_path, sha256_text, snapshot_path, WorkspacePinnedSource, CHANNEL_PROTOCOL_VERSION,
+    COMPOSED_MANIFEST_KIND,
 };
 use super::*;
 use crate::runner::workspace_client::guest_fake::FakeGuest;
+use crate::runner::workspace_client::identity::{
+    GuestIdentity, GuestIdentityRefusal, GuestSelfObservation,
+};
 use effigy_cli::{parse_command, Command};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -47,11 +50,20 @@ fn container() -> WorkspaceContainerIdentity {
     }
 }
 
-fn ready_channel() -> context::WorkspaceChannelLocator {
-    context::WorkspaceChannelLocator {
-        endpoint: Some("unix:///run/effigy/channel".to_owned()),
-        server_identity: Some(format!("sha256:{}", server_identity().hex())),
-    }
+const CHANNEL_ENDPOINT: &str = "effigy-host:47121";
+const CHANNEL_PIN_NOTE: &str = "pinned workspace host";
+
+/// The enrolment credential body Prepare writes 0600, and the digest the strict
+/// document pins for it.
+fn enrolment_body() -> String {
+    format!(
+        "environment_generation={ENVIRONMENT_GENERATION}\ncontainer_id={CONTAINER_ID}\ncredential={}\n",
+        secret_text(&Secret::new([0x11; 32]))
+    )
+}
+
+fn enrolment_path() -> String {
+    format!("/run/effigy/objects/enrol/{GENERATION}")
 }
 
 fn manifest_pin() -> WorkspacePinnedSource {
@@ -63,70 +75,87 @@ fn manifest_pin() -> WorkspacePinnedSource {
     }
 }
 
-fn workspace_context(
-    session: Option<RunId>,
-    channel: context::WorkspaceChannelLocator,
-) -> WorkspaceContext {
+/// The strict v2 document a container-mode workspace publishes, built from the
+/// same host facts `WorkspaceContextV2::prepared` renders and cross-parsed.
+fn workspace_document(session: Option<RunId>, pin: Option<String>) -> WorkspaceContextV2 {
     let binary = running_binary();
-    WorkspaceContext::new(WorkspaceContextInput {
-        generation: GENERATION,
-        host: WorkspaceHostIdentity {
-            version: binary.version.clone(),
-            protocol: CHANNEL_PROTOCOL_VERSION,
-        },
-        binary: GuestBinaryIdentity {
-            version: binary.version,
-            digest: binary.digest,
-            protocol: CHANNEL_PROTOCOL_VERSION,
-        },
-        activation: WorkspaceActivationIdentity {
-            host_user: "operator".to_owned(),
-            checkout_id: "checkout".to_owned(),
-            environment: WorkspaceEnvironmentIdentity {
-                resource_id: "env".to_owned(),
-                generation: ENVIRONMENT_GENERATION.to_owned(),
+    let run = session.unwrap_or_else(session_run);
+    let credential = enrolment_body();
+    WorkspaceContextV2::parse(
+        &serde_json::to_vec(&serde_json::json!({
+            "schema": context::v2::SCHEMA,
+            "context_generation": GENERATION,
+            "environment_generation": ENVIRONMENT_GENERATION.parse::<u64>().expect("generation"),
+            "session": { "run_id": run.to_string(), "generation": 1 },
+            "artifact_digest": binary.digest,
+            "binary_path": context::binary_path(&binary.digest),
+            "container_id": CONTAINER_ID,
+            "vm_boot_id": VM_BOOT,
+            "platform": "x86_64",
+            "libc": "gnu",
+            "credential": {
+                "generation": GENERATION,
+                "path": enrolment_path(),
+                "digest": sha256_text(credential.as_bytes()),
             },
-            container: container(),
-        },
-        session_run_id: session.map(|run| run.to_string()),
-        session_generation: session.map(|_| 1),
-        paths: context::WorkspacePathMap {
-            host_checkout: "/Users/operator/app".to_owned(),
-            guest_checkout: GUEST_CHECKOUT.to_owned(),
-            workdir: GUEST_CHECKOUT.to_owned(),
-            user: "app".to_owned(),
-            home: "/home/app".to_owned(),
-        },
-        backend: WorkspaceBackendDescriptor {
-            kind: "docker".to_owned(),
-            profile: "default".to_owned(),
-            runtime: None,
-            vm_type: None,
-        },
-        sources: vec![manifest_pin()],
-        routes: Vec::new(),
-        channel,
-    })
+            "locator": {
+                "endpoint": CHANNEL_ENDPOINT,
+                "pin": pin.unwrap_or_else(|| format!("sha256:{}", server_identity().hex())),
+            },
+            "selection_digest": Digest::of(b"selection").hex(),
+            "version": binary.version,
+            "protocol": CHANNEL_PROTOCOL_VERSION,
+            "host_user": "operator",
+            "checkout_id": "checkout",
+            "environment_resource": "env",
+            "backend": "docker",
+            "profile": "default",
+            "runtime": null,
+            "vm_type": null,
+            "paths": {
+                "host_checkout": "/Users/operator/app",
+                "guest_checkout": GUEST_CHECKOUT,
+                "workdir": GUEST_CHECKOUT,
+                "user": "app",
+                "home": "/home/app",
+            },
+            "sources": [manifest_pin()],
+            "routes": [],
+        }))
+        .expect("serialized document"),
+    )
+    .expect("a complete strict v2 document")
 }
 
-fn published(context: &WorkspaceContext) -> PublishedWorkspaceContext {
-    PublishedWorkspaceContext {
-        generation: context.generation,
-        context: context.clone(),
+fn guest_observation() -> GuestSelfObservation {
+    GuestSelfObservation {
+        container_id: CONTAINER_ID.to_owned(),
+        vm_boot_id: VM_BOOT.to_owned(),
+        platform: "x86_64".to_owned(),
+        libc: "gnu".to_owned(),
+    }
+}
+
+/// The strict document already matched against this guest's own observation.
+fn published(document: &WorkspaceContextV2) -> PublishedGuestContext {
+    PublishedGuestContext {
+        generation: document.context_generation,
+        document: document.clone(),
+        observation: guest_observation(),
     }
 }
 
 /// Publish one context generation, its manifest snapshot and (optionally) a
 /// capability into a fake guest, exactly as Prepare would.
-fn publish(guest: &mut FakeGuest, context: &WorkspaceContext, capability: Option<&Secret>) {
+fn publish(guest: &mut FakeGuest, document: &WorkspaceContextV2, capability: Option<&Secret>) {
     guest.put_file(
         context::CONTEXT_CURRENT_PATH,
-        context.generation.to_string(),
+        document.context_generation.to_string(),
         0o644,
     );
     guest.put_file(
-        &context_path(context.generation),
-        context.render().expect("rendered context"),
+        &context_path(document.context_generation),
+        document.render().expect("rendered context"),
         0o444,
     );
     guest.put_file(&snapshot_path(&sha256_text(MANIFEST)), MANIFEST, 0o444);
@@ -169,12 +198,14 @@ impl CheckoutReader for FakeCheckout {
     }
 }
 
-#[derive(Debug)]
-struct ObservedContainer(WorkspaceContainerIdentity);
+/// One scripted guest-local observation: the production reader's shape, so a
+/// proof can present a matching or a disagreeing container without touching
+/// `/proc`.
+struct ObservedIt(Option<GuestSelfObservation>);
 
-impl GuestIdentity for ObservedContainer {
-    fn container(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
-        Ok(self.0.clone())
+impl GuestIdentity for ObservedIt {
+    fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal> {
+        self.0.clone().ok_or(GuestIdentityRefusal::Unavailable)
     }
 }
 
@@ -186,7 +217,6 @@ impl ChannelOpener for NoChannel {
         &mut self,
         _: &VerifiedWorkspaceContext,
         _: &LiveGuestRun,
-        _: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
         panic!("a local read must not open the workspace channel")
     }
@@ -203,7 +233,6 @@ impl ChannelOpener for RefusingChannel {
         &mut self,
         _: &VerifiedWorkspaceContext,
         _: &LiveGuestRun,
-        _: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
         self.opened += 1;
         Err(ChannelError::Refused {
@@ -225,19 +254,17 @@ fn parsed(words: &[&str]) -> Command {
 
 #[test]
 fn a_pinned_task_list_is_read_from_the_context_without_a_channel() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, None);
     let before = guest.tree_digest();
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
 
     let rendered = dispatch_in(
         &parsed(&["tasks"]),
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut NoChannel,
         Path::new(GUEST_CHECKOUT),
     )
@@ -250,21 +277,19 @@ fn a_pinned_task_list_is_read_from_the_context_without_a_channel() {
 
 #[test]
 fn a_stale_generation_refuses_before_any_read() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, None);
     let before = guest.tree_digest();
     let mut stale = published(&context);
     stale.generation = GENERATION - 1;
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
 
     let error = dispatch_in(
         &parsed(&["tasks"]),
         &stale,
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut NoChannel,
         Path::new(GUEST_CHECKOUT),
     )
@@ -272,6 +297,47 @@ fn a_stale_generation_refuses_before_any_read() {
 
     assert!(error.to_string().contains("stale"), "{error}");
     assert_eq!(guest.tree_digest(), before);
+}
+
+#[test]
+fn guest_local_reads_are_answered_from_the_strict_v2_document() {
+    let document = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &document, None);
+    let before = guest.tree_digest();
+    let mut checkout = FakeCheckout::default();
+    let mut reads = GuestLocalReads {
+        context: &document,
+        guest: &mut guest,
+        checkout: &mut checkout,
+    };
+
+    let version = reads
+        .read(&LocalRead::Version, GENERATION)
+        .expect("the pinned version");
+    assert_eq!(
+        version,
+        LocalReadOutcome::Version {
+            host_version: document.version.clone(),
+            guest_version: document.version.clone(),
+            digest: document.artifact_digest.clone(),
+            protocol: CHANNEL_PROTOCOL_VERSION,
+            context_generation: GENERATION,
+        }
+    );
+    assert_eq!(
+        reads
+            .read(&LocalRead::Sources, GENERATION)
+            .expect("sources"),
+        LocalReadOutcome::Sources(document.sources.clone())
+    );
+    assert_eq!(
+        reads.read(&LocalRead::Tasks, GENERATION).expect("tasks"),
+        LocalReadOutcome::Tasks(vec!["build".to_owned(), "seed".to_owned()])
+    );
+    // A local read admits nothing, enrols nothing and writes nothing.
+    assert_eq!(guest.tree_digest(), before);
+    assert_eq!(checkout.reads, 0);
 }
 
 #[test]
@@ -334,7 +400,8 @@ fn a_container_guest_classifies_its_commands_by_coverage() {
 
 #[test]
 fn the_checkout_relative_directory_never_escapes_the_mount() {
-    let paths = workspace_context(Some(session_run()), ready_channel()).paths;
+    let document = workspace_document(Some(session_run()), None);
+    let paths = document.paths.clone();
     assert_eq!(
         checkout_relative(&paths, Path::new("/workspace/packages/app")).expect("relative"),
         "packages/app"
@@ -348,27 +415,70 @@ fn the_checkout_relative_directory_never_escapes_the_mount() {
 }
 
 #[test]
-fn a_guest_without_a_container_observation_refuses_instead_of_trusting_the_context() {
-    let error = UnobservedContainer
-        .container()
-        .expect_err("no guest-local observation is merged");
-    assert!(error.to_string().contains("observation"), "{error}");
+fn detect_selects_the_strict_document_only_after_the_guest_observes_its_own_container() {
+    let document = workspace_document(Some(session_run()), None);
+    for observed in [
+        None,
+        Some(GuestSelfObservation {
+            container_id: "b2".repeat(32),
+            ..guest_observation()
+        }),
+        Some(GuestSelfObservation {
+            vm_boot_id: "another-boot".to_owned(),
+            ..guest_observation()
+        }),
+    ] {
+        let mut guest = FakeGuest::new();
+        publish(&mut guest, &document, None);
+        let error = detect_with(&mut guest, &mut ObservedIt(observed)).expect_err("unproven");
+        assert!(
+            error.to_string().contains("identity") || error.to_string().contains("unproven"),
+            "{error}"
+        );
+    }
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &document, None);
+    let placement =
+        detect_with(&mut guest, &mut ObservedIt(Some(guest_observation()))).expect("detect");
+    match placement {
+        GuestPlacement::Guest(published) => {
+            assert_eq!(published.generation, GENERATION);
+            assert_eq!(published.document, document);
+            assert_eq!(published.observation, guest_observation());
+        }
+        GuestPlacement::Host => panic!("a published strict document is a guest"),
+    }
 }
 
 #[test]
-fn an_unqualified_transport_refuses_without_reaching_guest_state() {
-    let context = workspace_context(
-        Some(session_run()),
-        context::WorkspaceChannelLocator::default(),
+fn a_v1_document_is_refused_instead_of_being_reinterpreted_as_v2() {
+    let document = workspace_document(Some(session_run()), None);
+    let mut bytes = serde_json::to_value(&*document).expect("json");
+    bytes["generation"] = GENERATION.into();
+    let mut guest = FakeGuest::new();
+    guest.put_file(context::CONTEXT_CURRENT_PATH, GENERATION.to_string(), 0o644);
+    guest.put_file(
+        &context_path(GENERATION),
+        serde_json::to_vec(&bytes).expect("bytes"),
+        0o444,
     );
+    let error =
+        detect_with(&mut guest, &mut ObservedIt(Some(guest_observation()))).expect_err("v1");
+    assert!(error.to_string().contains("strict full v2"), "{error}");
+}
+
+#[test]
+fn a_context_whose_locator_is_not_a_qualified_alias_refuses_before_the_connection() {
+    let mut context = workspace_document(Some(session_run()), None);
+    context.0.locator.endpoint = "unix:///run/effigy/channel".to_owned();
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let before = guest.tree_digest();
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
-    let mut opener = PinnedChannelTransport {
-        backend: "docker".to_owned(),
-        budget: CHANNEL_OPEN_BUDGET,
+    let mut opener = RefusingChannel {
+        code: "unavailable",
+        message: "the opener must never be reached".to_owned(),
+        opened: 0,
     };
 
     let error = dispatch_in(
@@ -376,17 +486,16 @@ fn an_unqualified_transport_refuses_without_reaching_guest_state() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
-    .expect_err("an unqualified channel refuses");
+    .expect_err("an unqualified locator refuses");
+    assert_eq!(opener.opened, 0, "no connection was attempted");
 
+    assert!(error.to_string().contains("unavailable"), "{error}");
     assert!(
-        error
-            .to_string()
-            .contains("no host authority channel is qualified"),
-        "{error}"
+        !error.to_string().contains("effigy-host:47121"),
+        "the guest reported its own sentence: {error}"
     );
     assert_eq!(guest.tree_digest(), before, "a refusal writes nothing");
     assert_eq!(checkout.reads, 0, "a refusal never falls back to a read");
@@ -394,12 +503,11 @@ fn an_unqualified_transport_refuses_without_reaching_guest_state() {
 
 #[test]
 fn a_host_refusal_returns_an_error_and_never_falls_back() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let before = guest.tree_digest();
     let mut checkout = FakeCheckout::with_file("effigy.toml", b"[tasks]\nbuild = \"\"\n");
-    let mut identity = ObservedContainer(container());
     let mut opener = RefusingChannel {
         code: "unauthenticated",
         message: "this capability was not issued by this session".to_owned(),
@@ -411,7 +519,6 @@ fn a_host_refusal_returns_an_error_and_never_falls_back() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -425,12 +532,11 @@ fn a_host_refusal_returns_an_error_and_never_falls_back() {
 
 #[test]
 fn a_version_mismatch_refuses_before_the_connection() {
-    let mut context = workspace_context(Some(session_run()), ready_channel());
-    context.binary.version = "0.0.0-other".to_owned();
+    let mut context = workspace_document(Some(session_run()), None);
+    context.0.version = "0.0.0-other".to_owned();
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let mut opener = RefusingChannel {
         code: "unavailable",
         message: "the opener must never be reached".to_owned(),
@@ -442,7 +548,6 @@ fn a_version_mismatch_refuses_before_the_connection() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -454,14 +559,15 @@ fn a_version_mismatch_refuses_before_the_connection() {
 
 #[test]
 fn an_identity_mismatch_refuses_before_the_connection() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
+    let mut mismatched = published(&context);
+    mismatched.observation = GuestSelfObservation {
+        container_id: "c3".repeat(32),
+        ..guest_observation()
+    };
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(WorkspaceContainerIdentity {
-        container_id: "another-container".to_owned(),
-        ..container()
-    });
     let mut opener = RefusingChannel {
         code: "unavailable",
         message: "the opener must never be reached".to_owned(),
@@ -470,10 +576,9 @@ fn an_identity_mismatch_refuses_before_the_connection() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
-        &published(&context),
+        &mismatched,
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -484,19 +589,28 @@ fn an_identity_mismatch_refuses_before_the_connection() {
 }
 
 #[test]
-fn a_direct_terminal_without_a_session_generation_refuses_locally() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+fn a_direct_terminal_enrols_with_the_published_session_generation_and_credential() {
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, None);
-    guest.put_file(
-        ENROL_CREDENTIAL_PATH,
-        format!("environment_generation={ENVIRONMENT_GENERATION}\ncontainer_id={CONTAINER_ID}\ncredential={}\n", secret_text(&Secret::new([0x11; 32]))),
-        0o600,
-    );
+    guest.put_file(&enrolment_path(), enrolment_body(), 0o600);
 
-    let error = load_auth(&mut guest, &context).expect_err("no session generation is published");
+    let auth = load_auth(&mut guest, &context).expect("the published credential");
+    match auth {
+        GuestAuth::Enrolment {
+            session,
+            credential: _,
+        } => {
+            assert_eq!(session.run, session_run());
+            assert_eq!(session.generation, Generation::new(1));
+        }
+        other => panic!("a direct terminal enrols, not {other:?}"),
+    }
 
-    assert!(error.to_string().contains("session generation"), "{error}");
+    // Bytes the document did not pin are refused instead of presented.
+    guest.put_file(&enrolment_path(), b"credential=not-the-staged-one\n", 0o600);
+    let error = load_auth(&mut guest, &context).expect_err("a replaced credential");
+    assert!(error.to_string().contains("context pins"), "{error}");
 }
 
 // ---------------------------------------------------------------------------
@@ -621,14 +735,14 @@ impl SettlementAdapter for NoEffects {
 }
 
 fn live_run() -> LiveGuestRun {
-    let context = workspace_context(Some(session_run()), ready_channel());
-    let mut identity = ObservedContainer(container());
-    live_guest_run(&context, GENERATION, &mut identity).expect("live run claims")
+    let document = workspace_document(Some(session_run()), None);
+    live_guest_run(&published(&document), running_binary())
 }
 
 fn verified() -> VerifiedWorkspaceContext {
-    workspace_context(Some(session_run()), ready_channel())
-        .verify(&live_run())
+    let document = workspace_document(Some(session_run()), None);
+    document
+        .verify(&mut ObservedIt(Some(guest_observation())), &live_run())
         .expect("a verified context")
 }
 
@@ -958,11 +1072,10 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let (client_side, host_side) = connection_pair();
     let (served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let mut opener = PeerChannel {
         connections: vec![client_side],
     };
@@ -972,7 +1085,6 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new("/workspace/packages/app"),
     )
@@ -1008,7 +1120,6 @@ impl ChannelOpener for PeerChannel {
         &mut self,
         verified: &VerifiedWorkspaceContext,
         live: &LiveGuestRun,
-        auth: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
         if self.connections.is_empty() {
             return Err(ChannelError::local("the proof ran out of connections"));
@@ -1018,7 +1129,6 @@ impl ChannelOpener for PeerChannel {
             PeerTransport::new(connection),
             verified.clone(),
             live.clone(),
-            auth,
         )?;
         Ok(Box::new(client))
     }
@@ -1029,12 +1139,11 @@ fn a_wrong_capability_refuses_before_any_effect() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let (client_side, host_side) = connection_pair();
     let (served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     // A capability this host never issued.
     publish(&mut guest, &context, Some(&Secret::new([0xcd; 32])));
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let mut opener = PeerChannel {
         connections: vec![client_side],
     };
@@ -1044,7 +1153,6 @@ fn a_wrong_capability_refuses_before_any_effect() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -1080,13 +1188,12 @@ fn a_repeated_intent_is_answered_from_the_hosts_record() {
         output: ChannelOutputMode::Text,
     }));
 
-    let mut first = WorkspaceClient::connect(
-        PeerTransport::new(first_client),
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the first connection");
+    let mut first =
+        WorkspaceClient::connect(PeerTransport::new(first_client), verified(), live_run())
+            .expect("the first connection");
+    first
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let admitted = first.send(&intent).expect("the host admitted");
     drop(first);
     let ChannelOutcome::Accepted { run, .. } = admitted else {
@@ -1095,13 +1202,12 @@ fn a_repeated_intent_is_answered_from_the_hosts_record() {
 
     // A reconnect replays the same intent under the same id: the host answers
     // from the record it wrote, and never admits a second run.
-    let mut second = WorkspaceClient::connect(
-        PeerTransport::new(second_client),
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the second connection");
+    let mut second =
+        WorkspaceClient::connect(PeerTransport::new(second_client), verified(), live_run())
+            .expect("the second connection");
+    second
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let replayed = second.send(&intent).expect("the host replayed");
     assert_eq!(replayed, admitted);
     assert_eq!(
@@ -1128,9 +1234,11 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
         MuteTransport::answering_negotiation(),
         verified(),
         live_run(),
-        GuestAuth::Capability(capability()),
     )
     .expect("the negotiation answered");
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let intent = Intent::new(RequestBody::Observe(ObserveBody {
         op: "doctor".to_owned(),
         target: Some(Target::Host),
@@ -1150,13 +1258,11 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
 fn a_secondary_terminal_cannot_detach_the_owners_run() {
     let transport = MuteTransport::answering_negotiation();
     let written = transport.written.clone();
-    let mut client = WorkspaceClient::connect(
-        transport,
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the negotiation answered");
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run())
+        .expect("the negotiation answered");
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let before = written.lock().expect("written").len();
 
     let error = client
@@ -1179,11 +1285,10 @@ fn an_observation_reaches_the_hosts_observe_engine() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let (client_side, host_side) = connection_pair();
     let (served, handle) = serve_host(vec![host_side], calls.clone(), &[]);
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let mut opener = PeerChannel {
         connections: vec![client_side],
     };
@@ -1193,7 +1298,6 @@ fn an_observation_reaches_the_hosts_observe_engine() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -1224,15 +1328,14 @@ fn mispinned() -> Digest {
 
 #[test]
 fn an_unusable_pinned_locator_refuses_as_unavailable() {
-    let mut context = workspace_context(Some(session_run()), ready_channel());
+    let mut context = workspace_document(Some(session_run()), None);
     // A ready locator whose pin is not a digest: the production transport
     // refuses it before dialling, and the guest reports unavailable.
-    context.channel.server_identity = Some("sha256:not-a-digest".to_owned());
+    context.0.locator.pin = "sha256:not-a-digest".to_owned();
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
     let before = guest.tree_digest();
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let mut opener = PinnedChannelTransport {
         backend: "docker".to_owned(),
         budget: CHANNEL_OPEN_BUDGET,
@@ -1243,7 +1346,6 @@ fn an_unusable_pinned_locator_refuses_as_unavailable() {
         &published(&context),
         &mut guest,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -1255,16 +1357,12 @@ fn an_unusable_pinned_locator_refuses_as_unavailable() {
 
 #[test]
 fn a_mispinned_peer_receives_no_hello_and_no_credential() {
-    let mut transport = MuteTransport::answering_negotiation_with_peer(mispinned());
+    let transport = MuteTransport::answering_negotiation_with_peer(mispinned());
     let written = transport.written.clone();
-    let error = WorkspaceClient::connect(
-        transport,
-        verified(),
-        live_run(),
-        // A real capability is present: it must never reach the wire.
-        GuestAuth::Capability(capability()),
-    )
-    .expect_err("an unpinned peer has no session");
+    // A real capability is present in guest storage: a mispinned peer must
+    // never cause it to be read, let alone sent.
+    let error = WorkspaceClient::connect(transport, verified(), live_run())
+        .expect_err("an unpinned peer has no session");
 
     match error {
         ChannelError::Refused { code, .. } => assert_eq!(code, "identity_mismatch"),
@@ -1278,24 +1376,29 @@ fn a_mispinned_peer_receives_no_hello_and_no_credential() {
 
 #[test]
 fn a_mispinned_peer_refuses_the_guest_dispatch_before_any_effect() {
-    let context = workspace_context(Some(session_run()), ready_channel());
+    let context = workspace_document(Some(session_run()), None);
     let mut guest = FakeGuest::new();
     publish(&mut guest, &context, Some(&capability()));
-    let before = guest.tree_digest();
     let mut checkout = FakeCheckout::default();
-    let mut identity = ObservedContainer(container());
     let written = Arc::new(Mutex::new(Vec::new()));
     let mut opener = ScriptedPeerChannel {
         peer: mispinned(),
         written: written.clone(),
     };
 
+    // A real enrolment credential is staged: a mispinned peer must never cause
+    // it to be read, because the pin is checked first.
+    let mut guarded = NoCredentialReads { inner: guest };
+    guarded
+        .inner
+        .put_file(&enrolment_path(), enrolment_body(), 0o600);
+    let before = guarded.inner.tree_digest();
+
     let error = dispatch_in(
         &parsed(&["build"]),
         &published(&context),
-        &mut guest,
+        &mut guarded,
         &mut checkout,
-        &mut identity,
         &mut opener,
         Path::new(GUEST_CHECKOUT),
     )
@@ -1303,7 +1406,32 @@ fn a_mispinned_peer_refuses_the_guest_dispatch_before_any_effect() {
 
     assert!(error.to_string().contains("identity_mismatch"), "{error}");
     assert!(written.lock().expect("written").is_empty());
-    assert_eq!(guest.tree_digest(), before, "a pin refusal writes nothing");
+    assert_eq!(
+        guarded.inner.tree_digest(),
+        before,
+        "a pin refusal writes nothing"
+    );
+}
+
+/// A guest whose enrolment credential read is a hard failure: the proof that a
+/// mispinned peer never reaches the credential at all.
+struct NoCredentialReads {
+    inner: FakeGuest,
+}
+
+impl GuestReader for NoCredentialReads {
+    fn read_file(&mut self, path: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+        assert_ne!(
+            path,
+            enrolment_path(),
+            "the credential was read before the pinned peer verified"
+        );
+        self.inner.read_file(path)
+    }
+
+    fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        self.inner.file_sha256(path)
+    }
 }
 
 /// Opens a connection to a peer that verifies as `peer`, for the pin proof.
@@ -1317,11 +1445,10 @@ impl ChannelOpener for ScriptedPeerChannel {
         &mut self,
         verified: &VerifiedWorkspaceContext,
         live: &LiveGuestRun,
-        auth: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
         let mut transport = MuteTransport::answering_negotiation_with_peer(self.peer.clone());
         transport.written = self.written.clone();
-        let client = WorkspaceClient::connect(transport, verified.clone(), live.clone(), auth)?;
+        let client = WorkspaceClient::connect(transport, verified.clone(), live.clone())?;
         Ok(Box::new(client))
     }
 }
@@ -1344,13 +1471,12 @@ fn an_attach_intent_replays_to_the_same_attachment() {
     let (_served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
 
     // The owning connection admits the run and then opens its own attachment.
-    let mut owner = WorkspaceClient::connect(
-        PeerTransport::new(client_side),
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the owning connection");
+    let mut owner =
+        WorkspaceClient::connect(PeerTransport::new(client_side), verified(), live_run())
+            .expect("the owning connection");
+    owner
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let invoke = Intent::new(RequestBody::Invoke(InvocationBody {
         selector: Selector::Task("build".to_owned()),
         cwd: "packages/app".to_owned(),
@@ -1390,13 +1516,12 @@ fn an_unresumable_cursor_is_a_typed_refusal_with_no_fallback() {
     let (cursor_client, cursor_host) = connection_pair();
     let (_served, handle) = serve_host(vec![owner_host, cursor_host], calls.clone(), &[9]);
 
-    let mut owner = WorkspaceClient::connect(
-        PeerTransport::new(owner_client),
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the owning connection");
+    let mut owner =
+        WorkspaceClient::connect(PeerTransport::new(owner_client), verified(), live_run())
+            .expect("the owning connection");
+    owner
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let invoke = Intent::new(RequestBody::Invoke(InvocationBody {
         selector: Selector::Task("build".to_owned()),
         cwd: "packages/app".to_owned(),
@@ -1411,13 +1536,12 @@ fn an_unresumable_cursor_is_a_typed_refusal_with_no_fallback() {
 
     let mut cursors = std::collections::BTreeMap::new();
     cursors.insert(1u32, 0u64);
-    let mut terminal = WorkspaceClient::connect(
-        PeerTransport::new(cursor_client),
-        verified(),
-        live_run(),
-        GuestAuth::Capability(capability()),
-    )
-    .expect("the attaching terminal");
+    let mut terminal =
+        WorkspaceClient::connect(PeerTransport::new(cursor_client), verified(), live_run())
+            .expect("the attaching terminal");
+    terminal
+        .authenticate(GuestAuth::Capability(capability()))
+        .expect("authenticated");
     let error = terminal
         .send(&Intent::attach(run, vec![StreamKind::Stdout], cursors))
         .expect_err("the host cannot resume a stream that wrote nothing");
@@ -1572,7 +1696,7 @@ fn the_owned_channel_is_adopted_retained_and_settled() {
             .as_deref()
             .and_then(|endpoint| endpoint.strip_prefix("effigy-host:"))
             .and_then(|port| port.parse::<u16>().ok())
-            .and_then(|port| Some(SocketAddr::from(([127, 0, 0, 1], port))))
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
             .expect("a published alias endpoint");
 
         let owner = ServingOwner::adopt_owned(
