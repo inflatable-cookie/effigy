@@ -270,13 +270,10 @@ impl<'a> ServiceOwner<'a> {
             session,
             lease,
         } = handoff;
-        let adopted = match ServingOwner::adopt_production(owner) {
-            Ok(adopted) => adopted,
-            // A refused adoption closes the candidate: `adopt_production`
-            // consumed the prepared channel, whose custody stops the listener
-            // and wipes the key when it is dropped.
-            Err(error) => return Err(error),
-        };
+        // A refused adoption closes the candidate: `adopt_production` consumed
+        // the prepared channel, whose custody stops the listener and wipes the
+        // key when it is dropped.
+        let adopted = ServingOwner::adopt_production(owner)?;
         Self::retained(adopted, session, lease)
     }
 
