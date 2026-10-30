@@ -536,3 +536,149 @@ fn managed_delivery_cleanup_refuses_a_replaced_directory_and_changed_owner() {
     assert!(remove(&replacement).is_err());
     assert!(replacement.path.join("env.delivery").exists());
 }
+
+/// What the managed TUI puts on screen for a process's stored output. The
+/// front end splits each stream's log on `\n` (`Shared::read_logs`), feeds the
+/// line to `ingest_log_payload`, and renders it with `ansi_line`; the visible
+/// text is the concatenation of the rendered spans. This is the reader that
+/// reassembles a value a control sequence split, so it is the one custody has
+/// to satisfy.
+fn managed_tui_display(stdout: &[u8], stderr: &[u8]) -> String {
+    use effigy_tui::core::LogEntryKind;
+    use effigy_tui::terminal_text::{ansi_line, ingest_log_payload};
+    let mut buffer = std::collections::VecDeque::new();
+    for (kind, bytes) in [
+        (LogEntryKind::Stdout, stdout),
+        (LogEntryKind::Stderr, stderr),
+    ] {
+        for line in bytes.split(|byte| *byte == b'\n') {
+            let text = String::from_utf8_lossy(line)
+                .trim_end_matches('\r')
+                .to_owned();
+            if !text.is_empty() {
+                ingest_log_payload(&mut buffer, kind.clone(), &text);
+            }
+        }
+    }
+    buffer
+        .iter()
+        .map(|entry| {
+            ansi_line(&entry.line, ratatui::style::Style::default())
+                .spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn shell_spec(root: &Path, script: String, secret: Option<&str>) -> ProcessSpec {
+    let mut env = BTreeMap::from([(
+        "PATH".into(),
+        EnvValue::Plain(std::env::var_os("PATH").unwrap()),
+    )]);
+    if let Some(secret) = secret {
+        env.insert(
+            "SPLIT_VALUE".into(),
+            EnvValue::Secret(SecretValue::new(secret.as_bytes().to_vec()).unwrap()),
+        );
+    }
+    ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        cwd: root.into(),
+        env,
+        grace: Duration::from_secs(1),
+        lifetime: Lifetime::Finite(Duration::from_secs(10)),
+        terminal: Terminal::None,
+        label: "split value".into(),
+    }
+}
+
+fn wait_for_exit(owner: &mut TaskRun, child: &mut effigy_kernel::custody::OwnedProcess) -> i32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Observed::Verified(exit, _) = child.poll() {
+            break exit;
+        }
+        assert!(Instant::now() < deadline, "fixture did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    owner.complete(child, exit).unwrap();
+    exit.code
+}
+
+/// K12 on the TUI path: a known secret split by a control sequence reaches no
+/// sink, and the front end that interprets those controls shows no value.
+#[test]
+fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_them() {
+    const SECRET: &str = "split-known-secret-value";
+    // A CSI inside the value, written in pieces, then the same value split
+    // across streams with an OSC opened on stdout and closed on stderr.
+    let csi = "printf 'split-known-'; printf '\\033[1m'; printf 'secret-value\\n'";
+    let osc = "printf 'split-known-\\033]0;ti'; printf 'tle\\007secret-value\\n' >&2";
+    for script in [csi, osc] {
+        let fixture = effigy_test_support::Fixture::workspace("managed-redaction-tui-").unwrap();
+        let root = fixture.path();
+        let mut owner = run(root, false);
+        let mut child = owner
+            .spawn(shell_spec(root, script.into(), Some(SECRET)), false)
+            .unwrap();
+        assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+        let tail = child.tail();
+        let (stdout, stderr) = child.take_stream_output();
+        // The front end first: this is the sink the counterexample leaked on.
+        let display = managed_tui_display(&stdout, &stderr);
+        assert!(
+            !display.contains(SECRET),
+            "the TUI display carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            display.contains("[REDACTED]"),
+            "the TUI display keeps the marker"
+        );
+        for (what, bytes) in [
+            ("stdout queue", &stdout),
+            ("stderr queue", &stderr),
+            ("merged tail", &tail),
+        ] {
+            assert!(
+                !String::from_utf8_lossy(bytes).contains(SECRET),
+                "{what} carries a known secret ({} bytes)",
+                SECRET.len()
+            );
+            assert!(!bytes.contains(&0x1b), "{what} still carries a control");
+        }
+        assert!(
+            String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+            "the merged tail keeps the marker"
+        );
+        // Reversible break probe: the reader itself reassembles the pre-fix
+        // arrival shape, so the display assertion is sensitive to the fix.
+        let pre_fix = managed_tui_display("split-known-\u{1b}[1msecret-value".as_bytes(), b"");
+        assert!(
+            pre_fix.contains(SECRET),
+            "the reader must reassemble a control-split value"
+        );
+        assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+    }
+}
+
+/// The same custody leaves an ordinary process's colour alone.
+#[test]
+fn managed_delivery_redaction_keeps_colour_for_a_child_without_secrets() {
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-colour-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(root, "printf '\\033[31mred\\033[0m plain\\n'".into(), None);
+    spec.label = "colour".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let (stdout, _) = child.take_stream_output();
+    assert!(
+        stdout.windows(4).any(|window| window == b"\x1b[31"),
+        "an ordinary process keeps its terminal colour"
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+}

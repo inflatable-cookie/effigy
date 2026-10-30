@@ -237,7 +237,8 @@ Injection rules:
   the child shell commands do not spell out the env names directly
 - managed host process launches receive those task secrets through the child
   process environment, outside the rendered shell command and argv; captured
-  headless log output redacts the resolved values
+  headless log output drops terminal controls and then redacts the resolved
+  values in merged arrival order (052 K12, 052 §5.7 output capture)
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting

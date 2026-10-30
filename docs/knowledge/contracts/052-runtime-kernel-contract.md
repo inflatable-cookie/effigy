@@ -398,7 +398,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor, and are redacted before any sink. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output drops terminal controls, then redacts, in merged arrival order, before every sink; the canonical captured tail is that same merged result. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1231,8 +1231,10 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   is residue only while the member is still present: a member that exited
   between the group inventory and its evidence read is re-inventoried, so a
   clean settle cannot report residue for a process that is already gone.
-- I-P5: capture is bounded (tail ring plus rotating log) and redacted at the
-  source, before any sink (K12).
+- I-P5: capture is bounded (tail ring plus rotating log) and, for a
+  secret-bearing process, sanitized of terminal controls and then redacted at
+  the source, in merged arrival order, before any sink (K12; output capture
+  below).
 - I-P6: secrets never appear in argv; no `set_var`.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
@@ -1245,6 +1247,40 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   by number. PGID, boot identity and a start after launch alone cannot prove
   continuity across an emptied and reused group. Guest-placement Effigy
   never creates sessions or clears the nonce.
+
+#### Output capture
+
+Capture is one pipeline over merged arrival order (K12, effigy#486). For a
+secret-bearing process — one whose spawn spec carries a `SecretValue` — the
+merged stdout/stderr bytes carry each byte's origin stream and pass through a
+bounded streaming terminal-control sanitizer *before* redaction. CSI, OSC,
+DCS, SOS, PM and APC strings, escape intermediates, two-byte escapes, the
+other C0 controls and DEL are dropped; TAB, LF and CR keep the line
+structure. Sanitizing first is what makes the redactor see the bytes a front
+end shows: a value a child split with `ESC [ 1 m` is one value on screen and
+two non-matching runs to a redactor over raw bytes, and a reader that
+interprets controls reassembles it.
+
+The sanitizer's state carries across reads and across streams and is O(1): a
+sequence's bytes are discarded as they arrive, so no read or stream boundary
+can split a decision and nothing is buffered. It fails closed — a malformed
+or unterminated control drops its bytes, an open sequence never completes at
+EOF, and no byte the machine cannot classify is emitted. Only the visible
+bytes it emits keep their origin tags, so the separately reported stdout and
+stderr queues are projections of the same sanitize-then-redact result and
+joining them never rebuilds a secret. A process whose spec carries no secret
+skips the sanitizer and keeps its colour. A secret whose own bytes hold a
+control is also matched in its visible form, so stripping the control from it
+cannot leave an unredacted remainder.
+
+Every reader draws from that one result: the per-stream rotating logs, the
+per-stream queues, the merged output queue, the bounded merged arrival-order
+tail (`tail()`, the canonical captured tail), the bounded diagnostic excerpt a
+settle or doctor report quotes, and any JSON envelope carrying their bytes.
+Nothing normalizes terminal bytes after redaction; a post-redaction
+normalization path would recreate the split. A consumer that needs both
+streams joins the projections, never the raw streams, and a consumer that
+wants a bounded tail takes the merged one rather than concatenating streams.
 
 #### Failure model
 
@@ -1331,6 +1367,30 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   gateway setup`) through `command(…, terminal = true)` twice in one run
   against fake absolute programs, settling with `Complete` cleanup.
 - No secret bytes appear in `ps -o args` during any run.
+- `redaction_sanitizes_controls_split_into_known_secrets_before_every_sink`
+  drives the shipping capture pipeline and capture logs with no live child:
+  a known secret split by CSI, OSC (BEL and ST), a CSI or an OSC split across
+  reads, a CSI or an OSC split across streams, interleaved streams, a
+  malformed CSI and a two-byte escape. Every sink — both per-stream logs,
+  both queues, the merged output, the merged tail, the settle excerpt and a
+  JSON envelope — is free of the value and of any terminal control, and the
+  merged tail keeps the redaction marker.
+- `redaction_drops_an_unterminated_control_and_its_tail_at_eof` shows the
+  fail-closed rule: an unterminated OSC, CSI or DCS word drops everything
+  after its introducer, and a later read never resumes inside it.
+- `redaction_keeps_terminal_colour_for_a_process_without_secrets` and
+  `redaction_covers_the_visible_form_of_a_secret_that_carries_a_control`
+  keep ordinary colour intact and redact a secret that itself holds a
+  control, in its visible form.
+- `managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_them`
+  is the end-to-end counterexample on the managed path: a live secret-bearing
+  child writes the split value, and the managed TUI's own reader
+  (`ingest_log_payload` then `ansi_line`, the existing main path) shows the
+  redaction marker and never the value. Its break probe feeds the pre-fix
+  arrival shape to that same reader, which reassembles it, so the assertion
+  fails if the sanitizer is removed. The companion
+  `managed_delivery_redaction_keeps_colour_for_a_child_without_secrets`
+  keeps an ordinary child's colour.
 - A Rhai script cannot swallow a stop.
 
 ### 5.8 Placement, supervisor and sentinel

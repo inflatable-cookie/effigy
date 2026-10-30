@@ -8,6 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
+  PM, APC and the other non-printing bytes) *before* redaction, over merged
+  stdout/stderr arrival order, so a value a child split with a control
+  sequence can no longer reappear unredacted in a log, tail, JSON envelope or
+  TUI transcript. Output for those processes is plain; ordinary processes keep
+  their colour. The merged redacted arrival-order tail is the canonical
+  captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
 

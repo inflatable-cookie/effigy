@@ -1261,3 +1261,353 @@ fn redaction_covers_multiline_pty_newlines_without_exposing_split_prefixes() {
         assert_eq!(captured, b"[REDACTED]");
     }
 }
+
+/// A deterministic stand-in for one secret-bearing custody child: the shipping
+/// `OutputPipeline` and real capture logs, fed bytes in a chosen order. No
+/// process runs, so every read boundary and stream boundary is exact.
+struct FakeCapture {
+    root: StateRoot,
+    /// Kept alive for the state root above; dropped after it.
+    _home: tempfile::TempDir,
+    core: Arc<Mutex<ProcessCore>>,
+}
+impl FakeCapture {
+    fn new(home: tempfile::TempDir, cx: &EffectContext, secrets: Vec<Vec<u8>>) -> Self {
+        let root = StateRoot::effects(cx, home.path()).unwrap();
+        let limits = cx.operation().limits();
+        let logs = [Stream::Stdout, Stream::Stderr]
+            .map(|stream| Some(capture::Log::open(&root, id(), 1, stream, limits).unwrap()));
+        let pid = std::process::id();
+        let receipt = ProcessReceipt {
+            identity: crate::ident::process_identity(pid)
+                .verified()
+                .expect("own process identity")
+                .clone(),
+            pgid: pid,
+            nonce: "fake-capture".into(),
+            grace_millis: 20,
+        };
+        let core = ProcessCore {
+            receipt,
+            anchor: None,
+            logs,
+            output: VecDeque::new(),
+            streams: [VecDeque::new(), VecDeque::new()],
+            queue_max: 4096,
+            stdout: None,
+            stderr: None,
+            stdin: None,
+            pipeline: OutputPipeline::new(secrets),
+            tail: VecDeque::new(),
+            tail_max: 4096,
+            capture: CaptureState::Complete,
+            exit: None,
+            reaped: false,
+            deadline: None,
+            terminal: None,
+            pty: false,
+            registration: None,
+        };
+        Self {
+            root,
+            _home: home,
+            core: Arc::new(Mutex::new(core)),
+        }
+    }
+    /// One read of `stream`: exactly the bytes a live read would hand `sink`.
+    fn feed(&self, stream: Stream, bytes: &[u8]) {
+        let index = usize::from(stream == Stream::Stderr);
+        lock(&self.core).sink(index, bytes, false);
+    }
+    /// The merged stream's EOF, which is the only flush the pipeline takes.
+    fn close(&self) {
+        lock(&self.core).sink(0, &[], true);
+    }
+    fn tail(&self) -> Vec<u8> {
+        lock(&self.core).tail.iter().copied().collect()
+    }
+    fn merged(&self) -> Vec<u8> {
+        lock(&self.core).output.iter().copied().collect()
+    }
+    fn streams(&self) -> (Vec<u8>, Vec<u8>) {
+        let core = lock(&self.core);
+        (
+            core.streams[0].iter().copied().collect(),
+            core.streams[1].iter().copied().collect(),
+        )
+    }
+    /// The bounded stderr excerpt a settle or doctor report quotes.
+    fn excerpt(&self) -> String {
+        diagnostic_tail(&self.core)
+    }
+    /// The stored per-stream log, read back the way a follower reads it.
+    fn log(&self, cx: &EffectContext, stream: Stream) -> Vec<u8> {
+        let observe = cx.operation().observe().unwrap();
+        match crate::run::read_log(&observe, &self.root, id(), 1, stream, 0, 64 * 1024) {
+            Observed::Verified(read, _) => read.bytes,
+            other => panic!("{} log must be readable: {other:?}", stream.name()),
+        }
+    }
+    /// Every sink a secret could reach, named for a failure message.
+    fn sinks(&self, cx: &EffectContext) -> Vec<(String, Vec<u8>)> {
+        let (stdout, stderr) = self.streams();
+        let json = serde_json::json!({
+            "stdout": String::from_utf8_lossy(&stdout),
+            "stderr": String::from_utf8_lossy(&stderr),
+            "tail": String::from_utf8_lossy(&self.tail()),
+        })
+        .to_string();
+        vec![
+            ("stdout log".into(), self.log(cx, Stream::Stdout)),
+            ("stderr log".into(), self.log(cx, Stream::Stderr)),
+            ("stdout queue".into(), stdout),
+            ("stderr queue".into(), stderr),
+            ("merged output".into(), self.merged()),
+            ("merged tail".into(), self.tail()),
+            ("error excerpt".into(), self.excerpt().into_bytes()),
+            ("json".into(), json.into_bytes()),
+        ]
+    }
+}
+
+/// A failing proof names the sink and the pattern's length, never its bytes.
+fn assert_absent(what: &str, bytes: &[u8], secret: &[u8]) {
+    assert!(
+        !bytes.windows(secret.len()).any(|window| window == secret),
+        "{what} carries a known secret ({} bytes)",
+        secret.len()
+    );
+    assert!(
+        !bytes.contains(&0x1b),
+        "{what} still carries a terminal control"
+    );
+}
+
+/// One scripted child: merged arrival order is the order of these steps.
+struct FakeWrite {
+    name: &'static str,
+    steps: Vec<(Stream, &'static [u8])>,
+    eof: bool,
+    /// Whether the whole known secret is present in the visible stream, so
+    /// the sink must show the redaction marker.
+    marker: bool,
+}
+
+const STD: Stream = Stream::Stdout;
+const ERR: Stream = Stream::Stderr;
+
+#[test]
+fn redaction_sanitizes_controls_split_into_known_secrets_before_every_sink() {
+    // The value a managed task hands its child: one token, no controls.
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let shapes = [
+        // The counterexample: a front end's own parser reassembles these two
+        // runs into one visible value, so a redactor over raw bytes misses it.
+        FakeWrite {
+            name: "csi",
+            steps: vec![(STD, b"custody-split-\x1b[1msecret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        FakeWrite {
+            name: "osc-bel",
+            steps: vec![(STD, b"custody-split-\x1b]0;title\x07secret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        FakeWrite {
+            name: "osc-st",
+            steps: vec![(STD, b"custody-split-\x1b]0;title\x1b\\secret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        // A read boundary inside the sequence.
+        FakeWrite {
+            name: "csi-across-reads",
+            steps: vec![(STD, b"custody-split-\x1b[3"), (STD, b"1msecret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        FakeWrite {
+            name: "osc-across-reads",
+            steps: vec![
+                (STD, b"custody-\x1b]0;ti"),
+                (STD, b"tle\x07split-secret-value\n"),
+            ],
+            eof: true,
+            marker: true,
+        },
+        // A stream boundary inside the sequence: stdout opens it, stderr ends it.
+        FakeWrite {
+            name: "osc-across-streams",
+            steps: vec![
+                (STD, b"custody-split-\x1b]0;ti"),
+                (ERR, b"tle\x07secret-value\n"),
+            ],
+            eof: true,
+            marker: true,
+        },
+        FakeWrite {
+            name: "csi-across-streams",
+            steps: vec![(STD, b"custody-split-\x1b["), (ERR, b"0msecret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        // Interleaved streams with a control between the halves.
+        FakeWrite {
+            name: "interleaved",
+            steps: vec![
+                (STD, b"custody-split"),
+                (ERR, b"-\x1b[0m"),
+                (STD, b"secret-value\n"),
+            ],
+            eof: true,
+            marker: true,
+        },
+        // Malformed: the control aborts and its bytes are dropped, so the
+        // halves still meet inside one redaction frame.
+        FakeWrite {
+            name: "malformed-csi",
+            steps: vec![(STD, b"custody\x1b[\x01-split-secret-value\n")],
+            eof: true,
+            marker: true,
+        },
+        // A two-byte escape between the halves: the whole sequence is dropped.
+        FakeWrite {
+            name: "two-byte-escape",
+            steps: vec![(STD, b"custody-split-\x1bs secret-value\n")],
+            eof: true,
+            // The escape eats one byte, so the two halves are not the value.
+            marker: false,
+        },
+        // No control at all: a secret split across streams stays whole.
+        FakeWrite {
+            name: "split-streams",
+            steps: vec![(STD, b"custody-split-"), (ERR, b"secret-value\n")],
+            eof: true,
+            marker: true,
+        },
+    ];
+    let cx = cx();
+    for shape in shapes {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in &shape.steps {
+            capture.feed(*stream, bytes);
+        }
+        if shape.eof {
+            capture.close();
+        }
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&format!("{}: {what}", shape.name), &bytes, SECRET);
+        }
+        let tail = String::from_utf8_lossy(&capture.tail()).into_owned();
+        assert_eq!(
+            tail.contains("[REDACTED]"),
+            shape.marker,
+            "{}: marker expectation: {tail:?}",
+            shape.name
+        );
+    }
+}
+
+#[test]
+fn redaction_drops_an_unterminated_control_and_its_tail_at_eof() {
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let cx = cx();
+    for shape in [
+        FakeWrite {
+            name: "unterminated-osc",
+            steps: vec![
+                (STD, b"custody-split-\x1b]0;title-sec"),
+                (ERR, b"ret-value"),
+            ],
+            eof: true,
+            marker: false,
+        },
+        FakeWrite {
+            name: "unterminated-csi",
+            steps: vec![(STD, b"custody-split-\x1b[1;2")],
+            eof: true,
+            marker: false,
+        },
+        FakeWrite {
+            name: "unterminated-string",
+            steps: vec![(STD, b"custody-split-\x1bP1;2secret-value")],
+            eof: true,
+            marker: false,
+        },
+        FakeWrite {
+            name: "unterminated-at-a-read",
+            // No EOF: a later read after the open sequence stays inside it.
+            steps: vec![
+                (STD, b"custody-split-\x1b]0;title"),
+                (STD, b"secret-value\n"),
+                (STD, b"later\n"),
+            ],
+            eof: false,
+            marker: false,
+        },
+    ] {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in &shape.steps {
+            capture.feed(*stream, bytes);
+        }
+        if shape.eof {
+            capture.close();
+        }
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&format!("{}: {what}", shape.name), &bytes, SECRET);
+        }
+        // Fail closed: the open control swallowed the rest, and the redactor
+        // is still holding a possible prefix when the stream has not ended.
+        let expected = if shape.eof { "custody-split-" } else { "" };
+        assert_eq!(
+            String::from_utf8_lossy(&capture.tail()),
+            expected,
+            "{}",
+            shape.name
+        );
+    }
+}
+
+#[test]
+fn redaction_keeps_terminal_colour_for_a_process_without_secrets() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let painted = b"\x1b[31mred\x1b[0m and \x1b]0;title\x07text\n";
+    capture.feed(Stream::Stdout, painted);
+    capture.close();
+    assert_eq!(&capture.tail()[..], &painted[..]);
+    assert_eq!(&capture.log(&cx, Stream::Stdout)[..], &painted[..]);
+    assert_eq!(&capture.merged()[..], &painted[..]);
+}
+
+#[test]
+fn redaction_covers_the_visible_form_of_a_secret_that_carries_a_control() {
+    // A secret may itself hold a terminal control. Stripping the control is
+    // what a reader shows, so that visible form is a pattern too: otherwise
+    // sanitizing would hand the redactor a value no pattern matches.
+    const SECRET: &[u8] = b"visible-\x1b[1mform";
+    let cx = cx();
+    for shape in [
+        vec![(STD, &SECRET[..])],
+        // The same value with the control already removed.
+        vec![(STD, &b"visible-form"[..])],
+        // Split so the control falls in the middle of a read.
+        vec![
+            (STD, &b"visi"[..]),
+            (STD, &b"ble-\x1b[1mfo"[..]),
+            (STD, &b"rm"[..]),
+        ],
+    ] {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in shape {
+            capture.feed(stream, bytes);
+        }
+        capture.close();
+        assert_eq!(&capture.tail()[..], b"[REDACTED]");
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&what, &bytes, b"visible-form");
+        }
+    }
+}

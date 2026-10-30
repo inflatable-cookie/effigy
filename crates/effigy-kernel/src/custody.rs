@@ -2,6 +2,7 @@
 mod anchor;
 pub(crate) mod capture;
 pub(crate) mod platform;
+mod terminal;
 /// Signal one external process only after the caller's fresh authority check.
 pub fn signal_verified_process(
     identity: &ProcessIdentity,
@@ -234,19 +235,24 @@ pub struct OwnedProcess {
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
     anchor: Option<ProcessIdentity>,
-    /// stdout and stderr logs, fed from the one merged redaction.
+    /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
-    /// Each byte comes from the merged redaction, attributed to the stream
-    /// that produced it, so joining the two never reconstructs a secret.
+    /// Each byte comes from the merged, sanitized redaction, attributed to the
+    /// stream that produced it, so joining the two never reconstructs a secret.
     streams: [VecDeque<u8>; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
     /// The owner's side of a `Terminal::Pipe` child's stdin.
     stdin: Option<OwnedFd>,
-    redactor: Redactor,
+    /// Sanitize then redact, once, over merged arrival order: every sink below
+    /// (per-stream logs, queues, merged output, tail) is a projection of it.
+    pipeline: OutputPipeline,
+    /// The canonical captured tail: the last bytes of that same merged,
+    /// sanitized and redacted arrival order. A reader never re-groups streams
+    /// to rebuild it.
     tail: VecDeque<u8>,
     tail_max: usize,
     capture: CaptureState,
@@ -256,6 +262,40 @@ pub(crate) struct ProcessCore {
     terminal: Option<spawn::TerminalLease>,
     pty: bool,
     registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
+}
+/// The one path from a secret-bearing process's merged raw output to every
+/// sink (K12): terminal controls are removed first, so the redactor sees
+/// exactly the visible bytes a front end would show, then redaction runs.
+/// Splitting that order, or normalizing after redaction, reopens the split
+/// secret: `super` CSI `secret` is one value to a terminal and two
+/// non-matching runs to a redactor over the raw bytes.
+#[derive(Debug)]
+struct OutputPipeline {
+    /// `Some` only for a secret-bearing process. An ordinary process keeps its
+    /// terminal colour, exactly as before this seam existed.
+    sanitizer: Option<terminal::TerminalSanitizer>,
+    redactor: Redactor,
+}
+impl OutputPipeline {
+    fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self {
+            sanitizer: (!secrets.is_empty()).then(terminal::TerminalSanitizer::new),
+            redactor: Redactor::new(secrets),
+        }
+    }
+    /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
+    /// each byte's origin tag, so a per-stream sink stays a projection of this
+    /// one merged result.
+    fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+        match self.sanitizer.as_mut() {
+            Some(sanitizer) => {
+                let visible = sanitizer.push_tagged(bytes, eof);
+                // Empty is not a no-op: EOF still flushes the redactor.
+                self.redactor.push_tagged(&visible, eof)
+            }
+            None => self.redactor.push_tagged(bytes, eof),
+        }
+    }
 }
 pub(crate) struct Redactor {
     display: RedactionPass,
@@ -285,6 +325,19 @@ impl Redactor {
             })
             .collect::<Vec<_>>();
         secrets.extend(terminal);
+        // A secret can itself carry a terminal control. The sanitizer removes
+        // it, so the bytes a reader shows are that value's visible form; match
+        // it too, or stripping a control out of a secret would leave a visible
+        // remainder no pattern covers (K12).
+        secrets.extend(
+            secrets
+                .iter()
+                .map(|secret| terminal::visible(secret))
+                .filter(|visible| !visible.is_empty())
+                .collect::<Vec<_>>(),
+        );
+        secrets.sort();
+        secrets.dedup();
         Self {
             display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
             // A secret can itself contain the display marker, or a replacement
@@ -766,7 +819,7 @@ impl Custody {
                 stdout: Some(stdout),
                 stderr: Some(stderr),
                 stdin,
-                redactor: Redactor::new(secrets),
+                pipeline: OutputPipeline::new(secrets),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -906,12 +959,14 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
-    /// One redaction over both streams in arrival order, before any sink:
-    /// per-stream redaction could reconstruct a secret split across them
-    /// wherever they are joined (a log reader, a tail, a terminal).
+    /// One sanitize-then-redact over both streams in arrival order, before any
+    /// sink: per-stream work could reconstruct a secret split across streams
+    /// wherever they are joined (a log reader, a tail, a terminal), and a
+    /// terminal control inside a known secret could hide it from redaction
+    /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
-        let clean = self.redactor.push_tagged(&tagged, eof);
+        let clean = self.pipeline.push_tagged(&tagged, eof);
         if clean.is_empty() {
             return;
         }
