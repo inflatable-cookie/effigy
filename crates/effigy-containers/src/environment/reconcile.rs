@@ -1135,6 +1135,44 @@ impl<'r> EnvRun<'r> {
         self.kernel(result)
     }
 
+    /// Freeze the backend's image evidence using this run's held authority.
+    pub fn bind_platform(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        observed: Observed<effigy_kernel::workspace_session::BoundPlatform>,
+    ) -> Result<effigy_kernel::workspace_session::BoundPlatform, EnvError> {
+        let result = reservation.bind_platform(&mut self.run, observed);
+        self.kernel(result)
+    }
+
+    /// Issue the required stage from journal facts, before the caller writes.
+    pub fn intend_guest_binary(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::run::GuestBinaryTicket, EnvError> {
+        let stage = self.kernel(reservation.guest_binary_stage(&self.run))?;
+        let result = Attachments::intend_guest_binary(&mut self.run, &stage);
+        self.kernel(result)
+    }
+
+    pub fn guest_binary_staged(
+        &mut self,
+        ticket: &effigy_kernel::run::GuestBinaryTicket,
+        receipt: Observed<effigy_kernel::workspace_session::GuestBinaryReceipt>,
+    ) -> Result<(), EnvError> {
+        let result = Attachments::guest_binary_staged(&mut self.run, ticket, receipt);
+        self.kernel(result)
+    }
+
+    pub fn guest_binary_unknown(
+        &mut self,
+        ticket: &effigy_kernel::run::GuestBinaryTicket,
+        reason: effigy_kernel::observe::UnknownReason,
+    ) -> Result<(), EnvError> {
+        let result = Attachments::guest_binary_unknown(&mut self.run, ticket, reason);
+        self.kernel(result)
+    }
+
     /// Commits a staged workspace activation under this run's held `Gate(Env)`:
     /// the guest publication this run recorded and the validated guest selection
     /// are validated against the staged plan, and then `active(E)`, the
@@ -1354,6 +1392,18 @@ mod tests {
             .resource();
         let binary = effigy_kernel::id::Digest::of(b"adapter artifact");
         let inputs = PublishInputs {
+            platform: None,
+            guest: Some(effigy_kernel::workspace_session::GuestContextInputs {
+                version: env!("CARGO_PKG_VERSION").into(),
+                paths: effigy_kernel::workspace_session::GuestPaths {
+                    host_checkout: "/host".into(),
+                    guest_checkout: "/workspace".into(),
+                    workdir: "/workspace".into(),
+                    user: "1000".into(),
+                    home: "/home/worker".into(),
+                },
+                sources: vec![],
+            }),
             artifact: ArtifactEvidence::Selected {
                 digest: binary.clone(),
                 object: format!("/run/effigy/objects/bin/{binary}"),
@@ -1440,6 +1490,61 @@ mod tests {
         let mut run =
             EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
                 .expect("claimed admission");
+        let target = effigy_kernel::workspace_session::ContainerIdentity {
+            container_id: "a1".repeat(32),
+            vm_boot_id: "boot-0001".into(),
+            backend: "colima".into(),
+        };
+        let creating_run = run.id();
+        run.bind_target(
+            &reservation,
+            Observed::Verified(
+                vec![effigy_kernel::workspace_session::TargetCandidate {
+                    identity: target.clone(),
+                    project: "adapter".into(),
+                    created_by: Some(creating_run),
+                }],
+                evidence(),
+            ),
+        )
+        .expect("bound target");
+        let platform = effigy_kernel::workspace_session::ImagePlatform {
+            os: "linux".into(),
+            architecture: "arm64".into(),
+            variant: "v8".into(),
+            loader: effigy_kernel::workspace_session::LoaderFamily::Musl,
+        };
+        let binding = effigy_kernel::workspace_session::BoundPlatform {
+            target: target.clone(),
+            platform: platform.clone(),
+            artifact_platform: platform.clone(),
+            artifact_version: env!("CARGO_PKG_VERSION").into(),
+            artifact: effigy_kernel::workspace_session::GuestObject {
+                path: format!("/run/effigy/objects/bin/{binary}"),
+                digest: binary.clone(),
+            },
+            emulation_available: true,
+        };
+        run.bind_platform(
+            &reservation,
+            Observed::Verified(binding.clone(), evidence()),
+        )
+        .expect("bound platform");
+        let binary_ticket = run
+            .intend_guest_binary(&reservation)
+            .expect("binary intent");
+        run.guest_binary_staged(
+            &binary_ticket,
+            Observed::Verified(
+                effigy_kernel::workspace_session::GuestBinaryReceipt {
+                    target,
+                    platform,
+                    object: binding.artifact,
+                },
+                evidence(),
+            ),
+        )
+        .expect("binary readback");
         let plan = {
             let observe = ctx.cx.operation().observe().expect("observe");
             let reader = match effigy_kernel::store::Store::read(&observe, &state) {
@@ -1490,6 +1595,11 @@ mod tests {
         };
         let document = serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.workspace-context.v2",
+            "version": inputs.guest.as_ref().expect("guest").version,
+            "paths": inputs.guest.as_ref().expect("guest").paths,
+            "sources": inputs.guest.as_ref().expect("guest").sources,
+            "binary_path": format!("/run/effigy/objects/bin/{binary}"),
+            "backend": "colima",
             "context_generation": 1,
             "environment_generation": plan.environment_generation().get(),
             "session": {

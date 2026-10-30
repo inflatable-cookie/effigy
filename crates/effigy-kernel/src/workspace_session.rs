@@ -37,6 +37,12 @@
 //! its listener. Cancellation/recovery takes only the exact successor's slot.
 
 mod down;
+mod guest_context;
+mod guest_stage;
+pub use guest_context::{GuestContextInputs, GuestPaths, GuestSourcePin};
+pub use guest_stage::{
+    BoundPlatform, GuestBinaryReceipt, GuestBinaryStage, ImagePlatform, LoaderFamily,
+};
 mod selection;
 mod serving;
 
@@ -891,9 +897,21 @@ pub struct PublishInputs {
     pub inputs_digest: Digest,
     /// What the decision knows about the target.
     pub target: TargetEvidence,
+    /// Optional image facts already observed when deciding. Fresh projects bind later.
+    #[serde(default)]
+    pub platform: Option<ImagePlatform>,
+    /// Guest-local materialisation frozen by the decision. Legacy rows remain readable but cannot publish without it.
+    #[serde(default)]
+    pub guest: Option<GuestContextInputs>,
 }
 impl PublishInputs {
     fn validate(&self) -> Result<(), RunError> {
+        if let Some(guest) = &self.guest {
+            guest.validate()?;
+        }
+        if let Some(platform) = &self.platform {
+            platform.validate()?;
+        }
         if let ArtifactEvidence::Selected { object, .. } = &self.artifact {
             if object.trim().is_empty() {
                 return Err(ActivationRefusal::ReceiptIncomplete.into());
@@ -1161,7 +1179,13 @@ fn attachable(
             return Err(ActivationRefusal::TargetEvidenceMismatch.into());
         }
     }
-    if frozen.selection != publishing.selection || frozen.inputs_digest != publishing.inputs_digest
+    if frozen.guest != publishing.guest
+        || publishing
+            .platform
+            .as_ref()
+            .is_some_and(|platform| frozen.platform.as_ref() != Some(platform))
+        || frozen.selection != publishing.selection
+        || frozen.inputs_digest != publishing.inputs_digest
     {
         return Ok(None);
     }
@@ -2374,6 +2398,17 @@ impl WorkspaceActivationReservation {
             (plan, stored.inputs)
         };
         let receipt = plan.validate_publication(environment_run)?;
+        let staged_binary = environment_run.verified_workspace_binary()?;
+        if staged_binary.reservation != self.id() {
+            return Err(ActivationRefusal::WrongReservation.into());
+        }
+        if receipt.publication.container_id != staged_binary.binding.target.container_id
+            || receipt.publication.vm_boot_id != staged_binary.binding.target.vm_boot_id
+            || selection.selection().backend != staged_binary.binding.target.backend
+            || selection.selection().objects.binary != staged_binary.binding.artifact
+        {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
         selection.require_validated_document()?;
         selection.validate(&plan)?;
         // The commit holds the session's live custody: the launch that published
@@ -2482,6 +2517,13 @@ impl WorkspaceActivationReservation {
                         )?;
                     }
                 }
+            }
+            if stored.state == ActivationReservationState::Reserved {
+                let mut bound_inputs = stored.inputs.clone().ok_or(ActivationRefusal::Unfrozen)?;
+                bound_inputs.target = TargetEvidence::Observed(staged_binary.binding.target.clone());
+                bound_inputs.platform = Some(staged_binary.binding.platform.clone());
+                bound_inputs.artifact = ArtifactEvidence::Selected { digest: staged_binary.binding.artifact.digest.clone(), object: staged_binary.binding.artifact.path.clone() };
+                txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 WHERE environment=?1 AND environment_generation=?2", params![self.environment().name().to_string(), self.generation().get() as i64, serde_json::to_string(&bound_inputs)?, txn.now()])?;
             }
             if stored.state == ActivationReservationState::Committed {
                 // A retry answers with the obligation the first commit wrote. A
@@ -2922,9 +2964,15 @@ pub struct ActivationPlan {
     environment_generation: Generation,
     environment_run: Option<RunId>,
     session: SessionBinding,
+    guest: Option<GuestContextInputs>,
 }
 
 impl ActivationPlan {
+    pub fn guest_context(&self) -> Result<&GuestContextInputs, RunError> {
+        self.guest
+            .as_ref()
+            .ok_or_else(|| ActivationRefusal::Unfrozen.into())
+    }
     pub fn reservation_id(&self) -> ActivationReservationId {
         self.reservation
     }
@@ -3106,6 +3154,10 @@ fn activation_plan(
         environment: record.environment.clone(),
         environment_generation: record.generation,
         environment_run: record.environment_run,
+        guest: record
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.guest.clone()),
         session,
     }))
 }

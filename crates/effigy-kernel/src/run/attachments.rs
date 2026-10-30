@@ -749,3 +749,341 @@ impl Run<'_> {
             })
     }
 }
+
+const WORKSPACE_PLATFORM_KIND: &str = "kernel:workspace-platform";
+pub const GUEST_BINARY_KIND: &str = "kernel:workspace-guest-binary";
+
+/// A ticket issued only after the required additive stage intent is durable.
+#[derive(Debug)]
+pub struct GuestBinaryTicket(EffectTicket);
+
+fn workspace_fact<T: serde::de::DeserializeOwned>(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    kind: &str,
+) -> Result<T, RunError> {
+    let facts: Vec<_> = journal::effects(conn, run)?
+        .into_iter()
+        .filter(|effect| effect.spec.kind == kind)
+        .collect();
+    if facts.len() != 1 || facts[0].state != EffectState::Applied {
+        return Err(RunError::refused(
+            "workspace binding is absent or uncertain",
+        ));
+    }
+    Ok(serde_json::from_value(facts[0].spec.payload.clone())?)
+}
+
+impl Run<'_> {
+    pub(crate) fn bind_workspace_platform(
+        &mut self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+        observed: Observed<crate::workspace_session::BoundPlatform>,
+    ) -> Result<crate::workspace_session::BoundPlatform, RunError> {
+        use crate::workspace_session::{BoundPlatform, ContainerIdentity};
+        self.can_effect()?;
+        let bound = match observed {
+            Observed::Verified(bound, _) => bound,
+            Observed::Unknown(reason) => return Err(RunError::unavailable(reason.to_string())),
+            Observed::Absent(_) => {
+                return Err(RunError::refused("UnsupportedPlatform: image facts absent"))
+            }
+        };
+        crate::fault_point!(IntendBefore)?;
+        self.store
+            .transaction(&self.cx, |txn| {
+                journal::check_fence(txn.conn(), &self.owner)?;
+                let inputs = reservation.claimed_inputs(txn.conn(), self.id, &self.owner)?;
+                let target: ContainerIdentity =
+                    workspace_fact(txn.conn(), self.id, WORKSPACE_TARGET_KIND)?;
+                if target != bound.target {
+                    return Err(
+                        crate::workspace_session::ActivationRefusal::TargetEvidenceMismatch.into(),
+                    );
+                }
+                bound.validate(&inputs)?;
+                if journal::effects(txn.conn(), self.id)?
+                    .iter()
+                    .any(|effect| effect.spec.kind == WORKSPACE_PLATFORM_KIND)
+                {
+                    let existing: BoundPlatform =
+                        workspace_fact(txn.conn(), self.id, WORKSPACE_PLATFORM_KIND)?;
+                    if existing != bound {
+                        return Err(RunError::refused(
+                            "ArtifactMismatch: platform binding is immutable",
+                        ));
+                    }
+                    return Ok(existing);
+                }
+                let value = serde_json::to_value(&bound)?;
+                let sequence = journal::insert_effect(
+                    txn,
+                    self.id,
+                    &EffectSpec {
+                        target: self.owner.clone(),
+                        kind: WORKSPACE_PLATFORM_KIND.into(),
+                        payload: value.clone(),
+                        settlement: Settlement::Retain,
+                        required: false,
+                    },
+                )?;
+                journal::write_effect(
+                    txn,
+                    self.id,
+                    sequence,
+                    EffectState::Applied,
+                    Some(&value),
+                    None,
+                )?;
+                Ok(bound.clone())
+            })
+            .and_then(|bound| {
+                crate::fault_point!(IntendAfter)?;
+                Ok(bound)
+            })
+    }
+
+    pub(crate) fn workspace_binary_stage(
+        &self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<crate::workspace_session::GuestBinaryStage, RunError> {
+        self.can_effect()?;
+        journal::check_fence(self.store.conn(), &self.owner)?;
+        reservation.claimed_inputs(self.store.conn(), self.id, &self.owner)?;
+        Ok(crate::workspace_session::GuestBinaryStage {
+            environment: self.owner.clone(),
+            run: self.id,
+            reservation: reservation.id(),
+            binding: workspace_fact(self.store.conn(), self.id, WORKSPACE_PLATFORM_KIND)?,
+        })
+    }
+
+    /// The exact staged object is mandatory for activation, even when a caller
+    /// omitted the intent entirely. Required-effect scanning alone cannot prove
+    /// that an obligatory effect was ever recorded.
+    pub(crate) fn verified_workspace_binary(
+        &self,
+    ) -> Result<crate::workspace_session::GuestBinaryStage, RunError> {
+        let stage: crate::workspace_session::GuestBinaryStage =
+            workspace_fact(self.store.conn(), self.id, GUEST_BINARY_KIND)?;
+        let effect = journal::effects(self.store.conn(), self.id)?
+            .into_iter()
+            .find(|effect| effect.spec.kind == GUEST_BINARY_KIND)
+            .ok_or_else(|| RunError::refused("binary stage is absent"))?;
+        if !effect.spec.required || effect.spec.target != self.owner {
+            return Err(RunError::refused(
+                "binary stage obligation is not required at this fence",
+            ));
+        }
+        let receipt: crate::workspace_session::GuestBinaryReceipt = serde_json::from_value(
+            effect
+                .receipt
+                .ok_or_else(|| RunError::refused("binary stage has no verified receipt"))?,
+        )?;
+        if receipt.target != stage.binding.target
+            || receipt.platform != stage.binding.platform
+            || receipt.object != stage.binding.artifact
+        {
+            return Err(RunError::refused(
+                "binary stage receipt differs from its intent",
+            ));
+        }
+        let binding: crate::workspace_session::BoundPlatform =
+            workspace_fact(self.store.conn(), self.id, WORKSPACE_PLATFORM_KIND)?;
+        if stage.environment != self.owner || stage.run != self.id || stage.binding != binding {
+            return Err(RunError::refused("workspace binary stage binding differs"));
+        }
+        Ok(stage)
+    }
+}
+
+impl Attachments {
+    /// Record a required no-replace stage before any guest write. A repeat
+    /// returns the same ticket; it never authorizes another object's write.
+    pub fn intend_guest_binary(
+        run: &mut Run<'_>,
+        stage: &crate::workspace_session::GuestBinaryStage,
+    ) -> Result<GuestBinaryTicket, RunError> {
+        use crate::workspace_session::{ActivationRefusal, WorkspaceActivationReservation};
+        run.can_effect()?;
+        let reader = match Store::read(
+            &run.cx
+                .operation()
+                .observe()
+                .map_err(|_| RunError::broken("stage needs observation"))?,
+            run.root,
+        ) {
+            Observed::Verified(reader, _) => reader,
+            _ => return Err(RunError::unavailable("stage journal unreadable")),
+        };
+        let reservation =
+            match WorkspaceActivationReservation::recover(&reader, &run.owner.resource) {
+                Observed::Verified(Some(reservation), _)
+                    if reservation.id() == stage.reservation =>
+                {
+                    reservation
+                }
+                _ => return Err(ActivationRefusal::WrongReservation.into()),
+            };
+        if &run.workspace_binary_stage(&reservation)? != stage {
+            return Err(RunError::refused(
+                "ArtifactMismatch: stage differs from frozen binding",
+            ));
+        }
+        crate::fault_point!(IntendBefore)?;
+        let sequence = run.store.transaction(&run.cx, |txn| {
+            journal::check_fence(txn.conn(), &run.owner)?;
+            reservation.claimed_inputs(txn.conn(), run.id, &run.owner)?;
+            if let Some(existing) = journal::effects(txn.conn(), run.id)?
+                .into_iter()
+                .find(|effect| effect.spec.kind == GUEST_BINARY_KIND)
+            {
+                if existing.spec.payload != serde_json::to_value(stage)?
+                    || !matches!(
+                        existing.state,
+                        EffectState::Intended | EffectState::Unknown | EffectState::Applied
+                    )
+                {
+                    return Err(RunError::refused("binary stage cannot be replaced"));
+                }
+                return Ok(existing.sequence);
+            }
+            journal::insert_effect(
+                txn,
+                run.id,
+                &EffectSpec {
+                    target: run.owner.clone(),
+                    kind: GUEST_BINARY_KIND.into(),
+                    payload: serde_json::to_value(stage)?,
+                    settlement: Settlement::Retain,
+                    required: true,
+                },
+            )
+        })?;
+        crate::fault_point!(IntendAfter)?;
+        Ok(GuestBinaryTicket(EffectTicket {
+            run: run.id,
+            owner: run.owner.clone(),
+            sequence,
+        }))
+    }
+
+    /// Only verified readback can complete a stage; a partial install remains
+    /// Unknown. Recovery may hash an existing exact object and submit readback
+    /// again, without copying or overwriting anything.
+    pub fn guest_binary_staged(
+        run: &mut Run<'_>,
+        ticket: &GuestBinaryTicket,
+        observed: Observed<crate::workspace_session::GuestBinaryReceipt>,
+    ) -> Result<(), RunError> {
+        run.can_effect()?;
+        if ticket.0.run != run.id || ticket.0.owner != run.owner {
+            return Err(RunError::refused("foreign binary-stage ticket"));
+        }
+        let effect = journal::effect(run.store.conn(), run.id, ticket.0.sequence)?;
+        if effect.spec.kind != GUEST_BINARY_KIND {
+            return Err(RunError::refused("foreign binary-stage effect"));
+        }
+        let stage: crate::workspace_session::GuestBinaryStage =
+            serde_json::from_value(effect.spec.payload)?;
+        let receipt = match observed {
+            Observed::Verified(receipt, _) => receipt,
+            Observed::Unknown(reason) => {
+                Self::guest_binary_unknown(run, ticket, reason)?;
+                return Err(RunError::refused("binary stage readback unknown"));
+            }
+            Observed::Absent(_) => {
+                Self::guest_binary_unknown(
+                    run,
+                    ticket,
+                    UnknownReason::Inconsistent("binary object absent".into()),
+                )?;
+                return Err(RunError::refused("binary stage object absent"));
+            }
+        };
+        if receipt.target != stage.binding.target
+            || receipt.platform != stage.binding.platform
+            || receipt.object != stage.binding.artifact
+        {
+            Self::guest_binary_unknown(
+                run,
+                ticket,
+                UnknownReason::Inconsistent("binary stage readback mismatch".into()),
+            )?;
+            return Err(RunError::refused(
+                "ArtifactMismatch: exact-target digest/platform readback differs",
+            ));
+        }
+        if effect.state != EffectState::Applied {
+            run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
+        }
+        run.verified_workspace_binary()?;
+        if !run.completed.contains_key(&ticket.0.sequence) {
+            run.completed(&ticket.0, crate::outcome::RequiredObligation::Applied)?;
+        }
+        Ok(())
+    }
+
+    pub fn guest_binary_unknown(
+        run: &mut Run<'_>,
+        ticket: &GuestBinaryTicket,
+        reason: UnknownReason,
+    ) -> Result<(), RunError> {
+        run.unknown(&ticket.0, reason)
+    }
+}
+
+/// Inspect a required stage whose exact-object readback is still unresolved.
+/// Retained uncertain effects remain visible after settlement; this read never
+/// replays a copy or treats an interrupted owner's absence as success.
+pub fn unfinished_guest_binary(
+    reader: &StoreReader,
+    environment: &Fence,
+) -> Observed<Option<crate::workspace_session::GuestBinaryStage>> {
+    let result = (|| -> Result<_, RunError> {
+        let mut query = reader
+            .conn()
+            .prepare("SELECT run_id FROM runs WHERE owner=?1 AND generation=?2")?;
+        let ids = query
+            .query_map(
+                params![
+                    environment.resource.name().to_string(),
+                    environment.generation.get() as i64
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut stages = Vec::new();
+        for id in ids {
+            let id = id
+                .parse()
+                .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?;
+            for effect in journal::effects(reader.conn(), id)? {
+                if effect.spec.kind == GUEST_BINARY_KIND
+                    && effect.state != EffectState::Applied
+                    && effect.receipt.is_none()
+                {
+                    let stage: crate::workspace_session::GuestBinaryStage =
+                        serde_json::from_value(effect.spec.payload)?;
+                    if stage.environment != *environment || stage.run != id {
+                        return Err(RunError::broken("foreign stage in environment journal"));
+                    }
+                    stages.push(stage);
+                }
+            }
+        }
+        if stages.len() > 1 {
+            return Err(RunError::broken("ambiguous unfinished binary stage"));
+        }
+        Ok(stages.pop())
+    })();
+    match result {
+        Ok(Some(stage)) => {
+            Observed::Verified(Some(stage), crate::workspace_session::session_evidence())
+        }
+        Ok(None) => Observed::Absent(crate::observe::AbsenceProof::NoRow {
+            table: "events".into(),
+        }),
+        Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
+    }
+}

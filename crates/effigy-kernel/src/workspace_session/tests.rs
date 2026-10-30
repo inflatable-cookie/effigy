@@ -851,6 +851,7 @@ fn admit_activation<'a>(
         claim,
     )
     .expect("activation run");
+    stage_fake_binary(reservation, &mut run, fake_artifact()).expect("stage fake binary");
     let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
     let receipt = publication_for(cx, root, reservation, &run);
     Attachments::workspace_guest_published(&mut run, &ticket, receipt)
@@ -1397,6 +1398,8 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
             "recording refuses a receipt with the wrong {field}"
         );
     }
+    stage_fake_binary(&reservation, &mut environment_run, fake_artifact())
+        .expect("stage fake binary");
     // The same run can still commit once its publication is complete.
     let receipt = publication_for(&cx, &root, &reservation, &environment_run);
     Attachments::workspace_guest_published(&mut environment_run, &ticket, receipt)
@@ -1961,6 +1964,7 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
             )?;
             activation_run = Some(run);
             let run = activation_run.as_mut().expect("activation run");
+            stage_fake_binary(&reservation, run, fake_artifact())?;
             let ticket = Attachments::intend_guest_publication(run)?;
             let receipt = publication_for(&cx, &root, &reservation, run);
             Attachments::workspace_guest_published(run, &ticket, receipt)?;
@@ -2895,6 +2899,8 @@ fn publish_inputs(byte: u8, target: Option<ContainerIdentity>) -> PublishInputs 
     let digest = artifact(byte);
     let object = format!("/run/effigy/objects/bin/{digest}");
     PublishInputs {
+        platform: None,
+        guest: Some(fake_guest_context()),
         artifact: ArtifactEvidence::Selected {
             digest: digest.clone(),
             object,
@@ -2934,6 +2940,7 @@ fn admit_activation_publishing<'a>(
         claim,
     )
     .expect("activation run");
+    stage_fake_binary(reservation, &mut run, binary.clone()).expect("stage fake binary");
     let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
     let plan = plan_of(reservation, &read_journal(cx, root)).expect("staged plan");
     let publication = WorkspacePublicationReceipt {
@@ -2969,6 +2976,8 @@ fn decision_inputs(byte: u8) -> PublishInputs {
     let digest = fake_artifact();
     let object = format!("/run/effigy/objects/bin/{digest}");
     PublishInputs {
+        platform: None,
+        guest: Some(fake_guest_context()),
         artifact: ArtifactEvidence::Selected {
             digest: digest.clone(),
             object,
@@ -3032,6 +3041,11 @@ fn context_document(
 ) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "schema": "effigy.workspace-context.v2",
+        "version": plan.guest_context().expect("guest").version,
+        "paths": plan.guest_context().expect("guest").paths,
+        "sources": plan.guest_context().expect("guest").sources,
+        "binary_path": selection.objects.binary.path,
+        "backend": selection.backend,
         "context_generation": selection.objects.context_generation.get(),
         "environment_generation": plan.environment_generation().get(),
         "session": {
@@ -5559,6 +5573,14 @@ fn a_context_document_for_another_activation_is_refused() {
         ("schema", serde_json::json!("effigy.workspace-context.v1")),
         ("environment_generation", serde_json::json!(99)),
         ("context_generation", serde_json::json!(42)),
+        ("version", serde_json::json!("0.0.0-foreign")),
+        (
+            "paths",
+            serde_json::json!({"host_checkout":"/host/other","guest_checkout":"/workspace","workdir":"/workspace","user":"1000","home":"/home/worker"}),
+        ),
+        ("sources", serde_json::json!([])),
+        ("binary_path", serde_json::json!("/run/effigy/bin/current")),
+        ("backend", serde_json::json!("foreign-backend")),
         (
             "artifact_digest",
             serde_json::json!(format!("sha256:{}", "ff".repeat(32))),
@@ -5690,6 +5712,8 @@ fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
     let (environment, _predecessor) = active_environment(&cx, &root);
     let binary = artifact(98);
     let inputs = PublishInputs {
+        platform: None,
+        guest: Some(fake_guest_context()),
         artifact: ArtifactEvidence::Unselected {
             image_reference: "registry.local/workspace:1".to_owned(),
             backend: "docker-desktop".to_owned(),
@@ -6806,4 +6830,351 @@ fn target_binding_observed_identity_refuses_a_stale_boot_and_foreign_reservation
     reservation
         .bind_target(&mut run, Observed::Verified(vec![candidate], evidence()))
         .expect("observed target");
+}
+
+fn binary_activation<'a>(
+    cx: &EffectContext,
+    root: &'a StateRoot,
+    byte: u8,
+) -> (WorkspaceActivationReservation, Run<'a>) {
+    let reservation = decided(cx, root, &environment());
+    let mut run = Run::begin_claimed(
+        cx,
+        root,
+        &inv(reservation.environment().clone(), "environment:up"),
+        opts(run_id(byte)),
+        || Ok(cleanup(cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("activation");
+    let candidate = target_candidate(run.id());
+    reservation
+        .bind_target(&mut run, Observed::Verified(vec![candidate], evidence()))
+        .expect("target");
+    (reservation, run)
+}
+
+fn binary_binding(run: RunId) -> BoundPlatform {
+    let platform = ImagePlatform {
+        os: "linux".into(),
+        architecture: "arm64".into(),
+        variant: "v8".into(),
+        loader: LoaderFamily::Musl,
+    };
+    let digest = fake_artifact();
+    BoundPlatform {
+        target: target_candidate(run).identity,
+        platform: platform.clone(),
+        artifact_platform: platform,
+        artifact: GuestObject {
+            path: format!("/run/effigy/objects/bin/{digest}"),
+            digest,
+        },
+        emulation_available: true,
+        artifact_version: env!("CARGO_PKG_VERSION").into(),
+    }
+}
+
+fn binary_receipt(stage: &GuestBinaryStage) -> GuestBinaryReceipt {
+    GuestBinaryReceipt {
+        target: stage.binding.target.clone(),
+        platform: stage.binding.platform.clone(),
+        object: stage.binding.artifact.clone(),
+    }
+}
+
+#[test]
+fn guest_stage_platform_is_image_selected_frozen_and_exact_target() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let (reservation, mut run) = binary_activation(&cx, &root, 216);
+    let binding = binary_binding(run.id());
+    for mutation in 0..8 {
+        let mut wrong = binding.clone();
+        match mutation {
+            0 => wrong.platform.os = "darwin".into(),
+            1 => wrong.platform.architecture = "riscv64".into(),
+            2 => wrong.platform.variant = "v7".into(),
+            3 => wrong.artifact_platform.loader = LoaderFamily::Gnu,
+            4 => wrong.emulation_available = false,
+            5 => wrong.artifact.digest = Digest::of(b"wrong artifact"),
+            6 => wrong.target.vm_boot_id = "stale-boot".into(),
+            _ => wrong.artifact_version = "wrong-version".into(),
+        }
+        assert!(reservation
+            .bind_platform(&mut run, Observed::Verified(wrong, evidence()))
+            .is_err());
+    }
+    assert!(reservation
+        .bind_platform(&mut run, Observed::Unknown(UnknownReason::Injected))
+        .is_err());
+    assert_eq!(
+        reservation
+            .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+            .expect("emulated arm64 image"),
+        binding
+    );
+    assert_eq!(
+        reservation
+            .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+            .expect("replay"),
+        binding
+    );
+    let mut replacement = binding.clone();
+    replacement.platform.loader = LoaderFamily::Gnu;
+    replacement.artifact_platform.loader = LoaderFamily::Gnu;
+    assert!(reservation
+        .bind_platform(&mut run, Observed::Verified(replacement, evidence()))
+        .is_err());
+    assert_eq!(
+        reservation
+            .guest_binary_stage(&run)
+            .expect("frozen stage")
+            .binding,
+        binding
+    );
+    assert!(
+        run.verified_workspace_binary().is_err(),
+        "binding cannot substitute for a required stage"
+    );
+}
+
+#[test]
+fn guest_stage_intent_readback_unknown_and_recovery_never_select_or_retarget() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let (reservation, mut run) = binary_activation(&cx, &root, 217);
+    let binding = binary_binding(run.id());
+    reservation
+        .bind_platform(&mut run, Observed::Verified(binding, evidence()))
+        .expect("platform");
+    let stage = reservation.guest_binary_stage(&run).expect("stage");
+    let mut foreign = stage.clone();
+    foreign.binding.artifact.digest = Digest::of(b"wrong");
+    assert!(Attachments::intend_guest_binary(&mut run, &foreign).is_err());
+    let ticket = Attachments::intend_guest_binary(&mut run, &stage).expect("intent");
+    let recovered_ticket =
+        Attachments::intend_guest_binary(&mut run, &stage).expect("lost ticket recovered");
+    assert_eq!(
+        run.effects()
+            .expect("effects")
+            .iter()
+            .filter(|effect| effect.spec.kind == run::GUEST_BINARY_KIND)
+            .count(),
+        1
+    );
+    Attachments::guest_binary_unknown(&mut run, &ticket, UnknownReason::Injected)
+        .expect("partial copy uncertain");
+    assert!(run.verified_workspace_binary().is_err());
+    assert!(
+        matches!(run::unfinished_guest_binary(&read_journal(&cx, &root), run.fence()), Observed::Verified(Some(ref unfinished), _) if unfinished == &stage)
+    );
+    let mut wrong = binary_receipt(&stage);
+    wrong.object.digest = Digest::of(b"wrong bytes");
+    assert!(Attachments::guest_binary_staged(
+        &mut run,
+        &recovered_ticket,
+        Observed::Verified(wrong, evidence())
+    )
+    .is_err());
+    assert!(run.verified_workspace_binary().is_err());
+    Attachments::guest_binary_staged(
+        &mut run,
+        &recovered_ticket,
+        Observed::Verified(binary_receipt(&stage), evidence()),
+    )
+    .expect("exact object hashed after interruption");
+    Attachments::guest_binary_staged(
+        &mut run,
+        &recovered_ticket,
+        Observed::Verified(binary_receipt(&stage), evidence()),
+    )
+    .expect("idempotent receipt");
+    assert_eq!(run.verified_workspace_binary().expect("verified"), stage);
+    assert!(matches!(
+        run::unfinished_guest_binary(&read_journal(&cx, &root), run.fence()),
+        Observed::Absent(_)
+    ));
+    assert!(
+        matches!(
+            SessionRef::resolve(&read_journal(&cx, &root), &environment()),
+            Observed::Absent(_)
+        ),
+        "staging alone publishes nothing"
+    );
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn guest_stage_faults_preserve_intent_uncertainty_and_staged_orphans() {
+    use crate::fault::{arm, arm_nth, fired, Fault, Point};
+    for (step, point) in [
+        (0, Point::IntendBefore),
+        (0, Point::IntendAfter),
+        (1, Point::IntendBefore),
+        (1, Point::IntendAfter),
+        (2, Point::AppliedBefore),
+        (2, Point::AppliedAfter),
+    ] {
+        let cx = context();
+        let home = home();
+        let root = StateRoot::effects(&cx, home.path()).expect("root");
+        let (reservation, mut run) = binary_activation(&cx, &root, 218);
+        let binding = binary_binding(run.id());
+        if step == 0 {
+            arm_nth(point, 0, Fault::Enospc);
+            assert!(reservation
+                .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+                .is_err());
+            assert!(fired());
+            arm(None);
+            reservation
+                .bind_platform(&mut run, Observed::Verified(binding, evidence()))
+                .expect("same platform replay");
+        } else {
+            reservation
+                .bind_platform(&mut run, Observed::Verified(binding, evidence()))
+                .expect("platform");
+        }
+        let stage = reservation.guest_binary_stage(&run).expect("stage");
+        if step == 1 {
+            arm_nth(point, 0, Fault::Enospc);
+            assert!(Attachments::intend_guest_binary(&mut run, &stage).is_err());
+            assert!(fired());
+            arm(None);
+        }
+        let ticket = Attachments::intend_guest_binary(&mut run, &stage).expect("intent or replay");
+        if step == 2 {
+            arm_nth(point, 0, Fault::Enospc);
+            assert!(Attachments::guest_binary_staged(
+                &mut run,
+                &ticket,
+                Observed::Verified(binary_receipt(&stage), evidence())
+            )
+            .is_err());
+            assert!(fired());
+            arm(None);
+        } else {
+            Attachments::guest_binary_staged(
+                &mut run,
+                &ticket,
+                Observed::Verified(binary_receipt(&stage), evidence()),
+            )
+            .expect("receipt");
+        }
+        let fence = run.fence().clone();
+        drop(run); // interrupted before commit; bytes are additive orphans
+        assert!(matches!(
+            SessionRef::resolve(&read_journal(&cx, &root), &environment()),
+            Observed::Absent(_)
+        ));
+        if step == 2 && point == Point::AppliedBefore {
+            assert!(matches!(
+                run::unfinished_guest_binary(&read_journal(&cx, &root), &fence),
+                Observed::Verified(Some(_), _)
+            ));
+        }
+    }
+}
+
+fn fake_guest_context() -> GuestContextInputs {
+    GuestContextInputs {
+        version: env!("CARGO_PKG_VERSION").into(),
+        paths: GuestPaths {
+            host_checkout: "/host/checkout".into(),
+            guest_checkout: "/workspace".into(),
+            workdir: "/workspace".into(),
+            user: "1000".into(),
+            home: "/home/worker".into(),
+        },
+        sources: vec![GuestSourcePin {
+            kind: "composed-manifest".into(),
+            name: "root".into(),
+            digest: format!("sha256:{}", Digest::of(b"frozen manifest")),
+            snapshot: Some("/run/effigy/sources/root.toml".into()),
+        }],
+    }
+}
+
+fn stage_fake_binary(
+    reservation: &WorkspaceActivationReservation,
+    run: &mut Run<'_>,
+    digest: Digest,
+) -> Result<(), RunError> {
+    let target = published_target();
+    let project = match &reservation.inputs().expect("inputs").target {
+        TargetEvidence::Absent { project, .. } => project.clone(),
+        _ => "fixture".into(),
+    };
+    let candidate = TargetCandidate {
+        identity: target.clone(),
+        project,
+        created_by: Some(run.id()),
+    };
+    reservation.bind_target(run, Observed::Verified(vec![candidate], evidence()))?;
+    let mut binding = binary_binding(run.id());
+    binding.target = target;
+    binding.artifact = GuestObject {
+        path: format!("/run/effigy/objects/bin/{digest}"),
+        digest,
+    };
+    reservation.bind_platform(run, Observed::Verified(binding, evidence()))?;
+    let stage = reservation.guest_binary_stage(run)?;
+    let ticket = Attachments::intend_guest_binary(run, &stage)?;
+    Attachments::guest_binary_staged(
+        run,
+        &ticket,
+        Observed::Verified(binary_receipt(&stage), evidence()),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn guest_stage_missing_or_unknown_cannot_replace_a_live_predecessor() {
+    for unknown in [false, true] {
+        let cx = context();
+        let home = home();
+        let root = StateRoot::effects(&cx, home.path()).expect("root");
+        let environment = pending_environment(&cx, &root);
+        let (_, _predecessor, first, activation) =
+            activate(&cx, &root, &environment, run_id(219), run_id(220));
+        finish_activation(&cx, activation);
+        let reservation = decided(&cx, &root, &environment);
+        let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(221));
+        let mut run = Run::begin_claimed(
+            &cx,
+            &root,
+            &inv(environment.clone(), "environment:up"),
+            opts(run_id(222)),
+            || Ok(cleanup(&cx)),
+            &mut adapter(),
+            reservation.claim().expect("claim"),
+        )
+        .expect("activation");
+        let candidate = target_candidate(run.id());
+        reservation
+            .bind_target(&mut run, Observed::Verified(vec![candidate], evidence()))
+            .expect("target");
+        let binding = binary_binding(run.id());
+        reservation
+            .bind_platform(&mut run, Observed::Verified(binding, evidence()))
+            .expect("platform");
+        if unknown {
+            let stage = reservation.guest_binary_stage(&run).expect("stage");
+            let ticket = Attachments::intend_guest_binary(&mut run, &stage).expect("intent");
+            Attachments::guest_binary_unknown(&mut run, &ticket, UnknownReason::Injected)
+                .expect("uncertainty");
+        }
+        let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
+        let receipt = publication_for(&cx, &root, &reservation, &run);
+        Attachments::workspace_guest_published(&mut run, &ticket, receipt).expect("publication");
+        assert!(commit_activation(&cx, &root, &reservation, &run, &mut session_run).is_err());
+        assert_eq!(
+            resolved(&read_journal(&cx, &root), &environment),
+            Some(first)
+        );
+    }
 }

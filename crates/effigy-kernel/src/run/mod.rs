@@ -37,8 +37,9 @@ pub use terminal::{
 
 pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
 pub use attachments::{
-    AttachMode, AttachmentTicket, Attachments, GuestPublicationReceipt, GuestPublicationTicket,
-    Holder, Liveness, TransitionPermit, GUEST_PUBLICATION_KIND,
+    unfinished_guest_binary, AttachMode, AttachmentTicket, Attachments, GuestBinaryTicket,
+    GuestPublicationReceipt, GuestPublicationTicket, Holder, Liveness, TransitionPermit,
+    GUEST_BINARY_KIND, GUEST_PUBLICATION_KIND,
 };
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
