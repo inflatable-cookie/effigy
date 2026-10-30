@@ -220,7 +220,14 @@ inspection re-verifies it immediately before the update; the update names the
 verified full ID, never the listed name. A foreign, replaced or unknown listed
 container, including a sibling of another owner, receives no update and is named
 in a warning; the selected service's own owned-binding check still refuses it
-separately. A service's declared
+separately. A shared service's stack belongs to no checkout, so its listed
+containers are proven by their own identity instead: the full ID, the shared
+project, the declared service, the running state, and the
+`com.effigy.shared-render` label equal to the render `up` just published. The
+same strict re-inspection runs before the update. A missing, foreign,
+stale-render, changed or ambiguous (more than one listed container of the
+service) identity receives no update and is named in a warning; no path falls
+back to a container name. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays
