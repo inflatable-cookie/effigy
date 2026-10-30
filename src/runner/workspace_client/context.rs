@@ -1092,6 +1092,13 @@ impl WorkspaceEnrolmentCredential {
         }
     }
 
+    /// The credential secret itself. It stays in trusted host memory: it is
+    /// handed to the session's grant book, never logged, serialized or copied
+    /// into a guest-visible field.
+    pub(crate) fn secret(&self) -> &str {
+        &self.secret
+    }
+
     /// The bytes Prepare writes 0600 for the workspace user. Never logged.
     pub(crate) fn file_body(&self) -> String {
         format!(

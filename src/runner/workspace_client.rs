@@ -55,6 +55,9 @@ pub(crate) mod context;
 pub(crate) mod guest_probe;
 pub(crate) mod identity;
 pub(crate) mod serving;
+pub(crate) mod serving_facts;
+
+pub(crate) use serving_facts::ServingFacts;
 
 #[cfg(test)]
 pub(crate) mod guest_fake;

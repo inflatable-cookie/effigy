@@ -3528,19 +3528,42 @@ another lane's.
   matrix. `task_engine`, `run_control`, `managed_secrets` and `remote` fixtures prove the
   ordinary paths keep their shape with `workspace_admission: None`.
 
-*Remaining binding (outside this task's source boundary):*
+*Bound (owner ruling 2026-10-30, C-to-glue serving-facts handoff):*
 
-- **The production `channel::Server` the dispatcher lives in.** `Dispatcher::new` needs
-  `Negotiation { context_generation, session_run_id, artifact: HostArtifact { effigy_version,
-  binary_digest } }`, `SessionFence { context_generation, environment_generation, session,
-  container_id, vm_boot_id }` and the `GrantBook` this session issued. None of those are
-  reachable from `environment::workspace::WorkspaceOwner` / `PreparedHostChannel` /
-  `ChannelBound` (they carry the session, listener, pin, locator and contexts, not the
-  published artifact and environment facts). The activation already holds them in
-  `WorkspacePublicationReceipt`/the rendered v2 document, so the fixing hunk is #482-owned:
-  the owner value must carry the published `Negotiation` and `SessionFence` facts (or the
-  document digest/version and environment generation) so the serving owner can construct
-  the server and its production `Resolver`/`Admission`/`Observer`/`RunIds` adapter.
+- **One typed serving value crosses the publication handoff.**
+  `workspace_client::ServingFacts::validated(document, receipt, selection, credential,
+  locator)` freezes `workspace_channel::Negotiation`, `SessionFence`, the TLS `pin`, the
+  host checkout and the narrow enrolment secret/scope from the strict v2 document, the
+  committed `SelectionReceipt`, the switched `GuestSelection` and the session-owned
+  qualified channel. It runs in `prepare_reserved_guest` **before** the Env commit and
+  the selector switch, and refuses when any equality disagrees: receipt vs document
+  (context generation, container, VM boot, artifact digest, environment generation),
+  selection vs session (binary digest, context/credential generations, run and
+  generation) and qualified channel vs document (session, pin, exact bound endpoint).
+  The numeric host bind stays distinct from the guest alias: only `ServingLease::endpoint`
+  names it.
+- **The value is carried, never rebuilt.** `WorkspacePublication` and `WorkspaceOwner`
+  gain the typed field, and `OwnedWorkspaceChannel` forwards it into `ServingOwner`,
+  which retains it for the session's whole life. Its `Debug` redacts the enrolment
+  secret; it is never serialized, logged or copied into a guest-visible field, and the
+  session's `GrantBook` is seeded from it only (`grant_book()`), so revocation and drop
+  follow the owner.
+- **The enrolment credential must be a canonical channel secret.** The 64-hex text the
+  guest presents is the exact bytes the grant book matches, so publication refuses any
+  other shape instead of installing an unusable credential. No production mint site
+  exists yet (the activation caller is still #482-owned); the focused fixtures mint a
+  canonical secret.
+
+*Remaining binding:*
+
+- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
+  now supplies every fact `channel::Server::new` needs, so the remaining work is the
+  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
+  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
+  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
+  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
+  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
+  no kernel or lane module changes are needed.
 
 **Guest entry (v2, binding when #482 lands).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a

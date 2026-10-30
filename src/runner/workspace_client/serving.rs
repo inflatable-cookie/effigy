@@ -131,6 +131,10 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     /// `environment::workspace::WorkspaceOwner::channel`: the launch, the TLS
     /// acceptor and the qualified locator publication produced.
     pub(crate) channel: PreparedHostChannel,
+    /// `environment::workspace::WorkspaceOwner::serving`: the validated
+    /// negotiation, fence, pin, host checkout and enrolment facts this session
+    /// serves with.
+    pub(crate) serving: super::ServingFacts,
     /// The activation's own effect context, retained rather than borrowed. The
     /// environment context is local to the activation and goes away when its
     /// call returns; this handle keeps the same operation and cancellation
@@ -159,6 +163,7 @@ impl From<crate::runner::environment::workspace::WorkspaceOwner>
             supervisor: owner.supervisor,
             session: owner.session,
             channel: owner.channel,
+            serving: owner.serving,
             effect: owner.effect,
             observe: owner.observe,
             root: owner.root,
@@ -246,6 +251,7 @@ where
         let OwnedWorkspaceChannel {
             supervisor,
             session,
+            serving,
             channel: prepared,
             effect,
             observe,
@@ -256,6 +262,7 @@ where
             acceptor,
             locator,
         } = prepared;
+        let _ = &serving;
         if locator.session().run != session.run()
             || locator.session().generation != session.generation()
         {
@@ -263,6 +270,7 @@ where
         }
         let mut owner = Self::new(supervisor, launch, acceptor, server, effect, observe, root);
         owner.custody.locator = Some(locator);
+        owner.serving = Some(serving);
         Ok(owner)
     }
 }
@@ -290,6 +298,10 @@ where
     cx: Arc<EffectContext>,
     observe: Arc<ObserveContext>,
     root: &'a StateRoot,
+    /// The validated serving facts this session was published with. Retained
+    /// for the owner's whole life so the session's server, grants and
+    /// enrolment secret die with it.
+    serving: Option<super::ServingFacts>,
     served: usize,
     _transport: PhantomData<fn() -> T>,
 }
@@ -345,6 +357,7 @@ where
             cx,
             observe,
             root,
+            serving: None,
             served: 0,
             _transport: PhantomData,
         }

@@ -1703,6 +1703,10 @@ fn the_owned_channel_is_adopted_retained_and_settled() {
             OwnedWorkspaceChannel {
                 supervisor,
                 session,
+                serving: super::ServingFacts::fixture(
+                    &prepared.locator,
+                    Path::new(GUEST_CHECKOUT).to_path_buf(),
+                ),
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),
@@ -1768,6 +1772,10 @@ fn a_channel_published_for_another_session_is_never_adopted() {
             OwnedWorkspaceChannel {
                 supervisor,
                 session: other,
+                serving: super::ServingFacts::fixture(
+                    &prepared.locator,
+                    Path::new(GUEST_CHECKOUT).to_path_buf(),
+                ),
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),
@@ -2236,6 +2244,10 @@ fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
             OwnedWorkspaceChannel {
                 supervisor,
                 session,
+                serving: super::ServingFacts::fixture(
+                    &prepared.locator,
+                    Path::new(GUEST_CHECKOUT).to_path_buf(),
+                ),
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),

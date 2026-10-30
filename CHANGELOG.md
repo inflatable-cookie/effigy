@@ -15,6 +15,14 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- Workspace publication now freezes one typed serving value (host negotiation, session
+  fence, TLS pin, host checkout and the narrow enrolment secret) from the strict v2
+  document, the committed selection receipt and the session-owned qualified channel,
+  and cross-checks every one of those equalities before the environment commit and the
+  selector switch. A document, receipt, selection or locator that disagree refuse
+  publication instead of serving a connection under mismatched facts; a serving owner
+  retains the value for the session's life and its debug output redacts the secret.
+
 - A workspace channel reservation now reaches exactly the run it reserved: the
   dispatcher's `AdmissionTicket` travels unchanged through the engine supervisor into
   the task run, which admits it with `Run::begin_admitted` under the ticket's own id and
