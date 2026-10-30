@@ -3408,12 +3408,45 @@ fake acceptor asserts `launch.serving(run)` on every hand-over), an accepted
 connection's negotiation reaches the dispatcher and is answered, and both
 `stop` and dropping the owner close the bound socket and wipe the key.
 
-Still not implementable in this module, and blocking production end-to-end
-evidence: #482 owns production context generation and the guest identity
-observation, and #504 owns the typed advertised locator. Until they merge, a
-container-mode guest refuses host authority rather than trusting the context's
-own claim or an unqualified locator (§8.1), and the serving owner has no
-production caller because nothing publishes a `QualifiedHostLocator` yet.
+**Frozen activation handoff (effigy#452, trace finding 11).**
+`ServingOwner::adopt_owned` is the consuming entry the environment calls once,
+after its environment commit, CAS receipt and `selection_switched` record, with
+the owned values it produced:
+
+```rust
+ServingOwner::adopt_owned(
+    OwnedWorkspaceChannel { run, session, prepared: PreparedHostChannel },
+    supervisor_id,
+    dispatcher,
+    &cx,
+    &observe,
+    &root,
+) -> Result<ServingOwner, AdoptError>
+```
+
+It refuses a prepared channel published for another session, adopts the run
+under the supervisor id (the kernel's durable `workspace_session_custody`
+record, not a copy of the binding), and retains the run, listener, key and
+advertised locator for the session's whole life. The activation must move them
+and not keep, drop or recreate them when its call returns. `settle` stops
+serving, stops the listener, wipes the key and settles the adopted run through
+the kernel's own close transaction; dropping the owner stops the listener and
+wipes the key without settling, so the supervisor decides the outcome.
+
+The pinned TLS connection is the production transport now that #504 merged: a
+context that qualifies a locator is opened through `PinnedChannelOpener`
+(alias resolution, exact bound port, SPKI pin during the handshake) and the
+guest client's own `check_server_pin` still runs before the first byte. A
+context without a qualified locator refuses `unavailable` and local reads keep
+working. What remains is #482's production context and guest-local identity
+observation (§8.1 forbids trusting the context's own container claim), and one
+kernel-owned gap: `workspace_session_custody` is insert-only
+(`run/mod.rs:833-855`; `session_owner()` at `:783-795` only checks existence),
+so a settled session leaves a custody row. The bounded follow-up is a kernel
+release on the run's close transaction, e.g.
+`Run::release_session_custody(&mut self) -> Result<(), RunError>`; this module
+does not delete that row itself, because store mutation belongs to the owning
+engine.
 
 ## 9. Authority map
 

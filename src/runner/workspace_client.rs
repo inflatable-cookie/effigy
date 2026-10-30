@@ -76,6 +76,10 @@ use context::{
     WorkspaceContext, WorkspacePathMap, CLIENT_ROOT, ENROL_CREDENTIAL_PATH, HOST_REPREPARE_COMMAND,
 };
 
+/// How long a guest may spend opening the pinned TLS connection. Bounded so a
+/// wedged host never keeps a command alive.
+const CHANNEL_OPEN_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The guest-private store lane C publishes under. A local read is confined to
 /// it, so a pinned snapshot read can never become a general host read.
 const GUEST_STORE_ROOT: &str = "/run/effigy/";
@@ -1030,40 +1034,72 @@ pub(crate) trait ChannelOpener {
     ) -> Result<Box<dyn ChannelRequest>, ChannelError>;
 }
 
-/// The production opener. A context pins a locator only once a transport is
-/// qualified for its backend (§8.3, §8.9); until one is, a guest cannot open a
-/// connection and says so instead of reaching for host state it does not have.
-#[derive(Debug, Default)]
-pub(crate) struct UnqualifiedTransport {
+/// The production guest transport.
+///
+/// A context pins a locator only once a transport is qualified for its backend
+/// (§8.3, §8.9, #504). The pinned TLS connection is that transport: it resolves
+/// the rendered alias, dials the exact bound port and verifies the SPKI pin
+/// during the handshake. This opener only selects it and refuses when the
+/// context has no qualified locator or the transport cannot be opened; it never
+/// reaches for host state the guest does not have.
+#[derive(Debug)]
+pub(crate) struct PinnedChannelTransport {
     pub(crate) backend: String,
+    pub(crate) budget: std::time::Duration,
 }
 
-impl ChannelOpener for UnqualifiedTransport {
+impl ChannelOpener for PinnedChannelTransport {
     fn open(
         &mut self,
         verified: &VerifiedWorkspaceContext,
-        _live: &LiveGuestRun,
-        _auth: GuestAuth,
+        live: &LiveGuestRun,
+        auth: GuestAuth,
     ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
-        let channel = &verified.channel;
-        if !channel.is_ready() {
-            return Err(ChannelError::Refused {
-                code: channel::RefusalCode::Unavailable.as_str(),
-                message: format!(
-                    "no host authority channel is qualified for backend `{}`; local reads work \
-                     and host access is unavailable",
-                    self.backend
-                ),
-            });
-        }
-        Err(ChannelError::Refused {
+        let unavailable = |message: String| ChannelError::Refused {
             code: channel::RefusalCode::Unavailable.as_str(),
-            message: format!(
-                "the host authority channel for backend `{}` is pinned but no guest transport is \
-                 implemented for it yet; local reads work and host access is unavailable",
+            message,
+        };
+        if !verified.channel.is_ready() {
+            return Err(unavailable(format!(
+                "no host authority channel is qualified for backend `{}`; local reads work and \
+                 host access is unavailable",
                 self.backend
-            ),
-        })
+            )));
+        }
+        let mut opener = crate::runner::workspace_transport::opener::PinnedChannelOpener {
+            timeout: self.budget,
+        };
+        let transport =
+            crate::runner::workspace_transport::opener::ChannelOpener::open(&mut opener, verified)
+                .map_err(|error| {
+                    unavailable(format!(
+                "the workspace host channel for backend `{}` could not be opened: {error}; local \
+                 reads work and host access is unavailable",
+                self.backend
+            ))
+                })?;
+        let client = WorkspaceClient::connect(
+            BoxedTransport(transport),
+            verified.clone(),
+            live.clone(),
+            auth,
+        )?;
+        Ok(Box::new(client))
+    }
+}
+
+/// A boxed transport, so the opener's dynamic `Transport` can feed the client.
+struct BoxedTransport(Box<dyn Transport>);
+
+impl Transport for BoxedTransport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.0.write_all(bytes)
+    }
+    fn verified_peer(&self) -> Option<channel::ServerIdentity> {
+        self.0.verified_peer()
     }
 }
 
@@ -1399,8 +1435,9 @@ pub(crate) fn guest_command(cmd: &Command) -> Result<Option<String>, RunnerError
         GuestPlacement::Guest(published) => published,
     };
     let mut checkout = MountedCheckout::new(&published.context.paths);
-    let mut opener = UnqualifiedTransport {
+    let mut opener = PinnedChannelTransport {
         backend: published.context.backend.kind.clone(),
+        budget: CHANNEL_OPEN_BUDGET,
     };
     dispatch(
         cmd,

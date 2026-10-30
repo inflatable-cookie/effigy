@@ -365,8 +365,9 @@ fn an_unqualified_transport_refuses_without_reaching_guest_state() {
     let before = guest.tree_digest();
     let mut checkout = FakeCheckout::default();
     let mut identity = ObservedContainer(container());
-    let mut opener = UnqualifiedTransport {
+    let mut opener = PinnedChannelTransport {
         backend: "docker".to_owned(),
+        budget: CHANNEL_OPEN_BUDGET,
     };
 
     let error = dispatch_in(
@@ -1218,6 +1219,37 @@ fn an_observation_reaches_the_hosts_observe_engine() {
 
 fn mispinned() -> Digest {
     Digest::of(b"a host this context did not pin")
+}
+
+#[test]
+fn an_unusable_pinned_locator_refuses_as_unavailable() {
+    let mut context = workspace_context(Some(session_run()), ready_channel());
+    // A ready locator whose pin is not a digest: the production transport
+    // refuses it before dialling, and the guest reports unavailable.
+    context.channel.server_identity = Some("sha256:not-a-digest".to_owned());
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let before = guest.tree_digest();
+    let mut checkout = FakeCheckout::default();
+    let mut identity = ObservedContainer(container());
+    let mut opener = PinnedChannelTransport {
+        backend: "docker".to_owned(),
+        budget: CHANNEL_OPEN_BUDGET,
+    };
+
+    let error = dispatch_in(
+        &parsed(&["build"]),
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut identity,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .expect_err("an unusable locator refuses");
+
+    assert!(error.to_string().contains("unavailable"), "{error}");
+    assert_eq!(guest.tree_digest(), before);
 }
 
 #[test]

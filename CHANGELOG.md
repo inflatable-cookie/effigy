@@ -490,6 +490,13 @@ until the host-log writer has a safe secret-handling boundary.
   before answering is replayed under the same request id, an attach is resumed
   by that id at the cursor the client actually consumed, and a gap never
   advances it.
+
+- **The frozen workspace activation hands its channel to a serving owner.** The
+  environment's committed session run, listener, key and advertised locator
+  move into one owner that adopts the run durably, serves accepted connections
+  through the kernel dispatcher, and stops the listener and wipes the key on
+  stop, drop or settlement. A prepared channel published for another session is
+  refused, not served.
 - **No command plane shows a canned progress label.** The Q-017 live-state
   rule is now a required lint gate rather than a migration list. A task-run
   step names its ordinal, the exact child step it waits on and the elapsed

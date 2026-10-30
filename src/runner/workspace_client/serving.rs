@@ -23,9 +23,13 @@ use effigy_kernel::ctx::{EffectContext, ObserveContext};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{Run, RunError};
 use effigy_kernel::workspace_channel::{self as channel, Refusal, Served, Streams, Transport};
+use effigy_kernel::workspace_session::SessionRef;
 use effigy_kernel::workspace_session::{ServingRefusal, SessionLaunch, SessionSupervisor};
 
 use crate::runner::workspace_transport::listener::{HostChannelAcceptor, ServerTlsTransport};
+use crate::runner::workspace_transport::qualification::{
+    PreparedHostChannel, QualifiedHostLocator,
+};
 
 /// Where accepted connections come from.
 ///
@@ -105,6 +109,123 @@ impl std::fmt::Display for ServeError {
     }
 }
 
+/// The frozen activation's owned channel, exactly as the environment hands it
+/// to this module: the session run it owns, the session identity, and the
+/// prepared listener/key/locator. Nothing here rebuilds any of them.
+///
+/// The activation produces this after its environment commit, its CAS receipt
+/// and its `selection_switched` record, and must not keep, drop or recreate the
+/// parts when its own call returns: ownership moves here, and the serving owner
+/// retains them for the session's whole life.
+pub(crate) struct OwnedWorkspaceChannel<'a> {
+    pub(crate) run: Run<'a>,
+    pub(crate) session: SessionRef,
+    pub(crate) prepared: PreparedHostChannel,
+}
+
+/// Why the frozen channel was not adopted for serving.
+#[derive(Debug)]
+pub(crate) enum AdoptError {
+    /// The run does not carry this session's custody, or the kernel refused the
+    /// adoption record.
+    Custody(RunError),
+    /// The prepared channel was published for another session. A listener is
+    /// only ever served for the session it was qualified and published for.
+    WrongSession,
+}
+
+impl std::fmt::Display for AdoptError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Custody(error) => write!(formatter, "{error}"),
+            Self::WrongSession => formatter.write_str(
+                "the prepared workspace channel belongs to another session; it is not served",
+            ),
+        }
+    }
+}
+
+impl From<RunError> for AdoptError {
+    fn from(error: RunError) -> Self {
+        Self::Custody(error)
+    }
+}
+
+/// The listener, key and advertised locator this owner holds. Dropping it stops
+/// the listener and wipes the key, so nothing outlives the owner even if the
+/// serving loop returns early.
+#[derive(Debug, Default)]
+struct ChannelCustody {
+    launch: Option<SessionLaunch>,
+    locator: Option<QualifiedHostLocator>,
+}
+
+impl ChannelCustody {
+    fn stop(&mut self) {
+        // A stopped listener publishes nothing, so the locator goes with it.
+        self.locator = None;
+        if let Some(mut launch) = self.launch.take() {
+            launch.stop();
+        }
+    }
+}
+
+impl Drop for ChannelCustody {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl<'a, Ad, Rs, Ob, Id> ServingOwner<'a, ServerTlsTransport, HostChannelAcceptor, Ad, Rs, Ob, Id>
+where
+    Ad: channel::Admission,
+    Rs: channel::Resolver,
+    Ob: channel::Observer,
+    Id: channel::RunIds,
+{
+    /// Adopt the frozen activation's owned channel and take its serving
+    /// custody.
+    ///
+    /// This is the consuming entry the environment calls once with the values
+    /// it committed: the run it owns, the session identity it published and the
+    /// prepared channel (`launch`, `acceptor`, `QualifiedHostLocator`). The run
+    /// is adopted under `supervisor_id` — the kernel's durable custody record,
+    /// not a copy of the binding — and is then retained by the returned owner,
+    /// which stops the listener and wipes the key when it is dropped or
+    /// stopped, and durably settles the run through [`Self::settle`].
+    ///
+    /// Refuses a prepared channel published for another session rather than
+    /// serving a listener it did not qualify.
+    pub(crate) fn adopt_owned(
+        owned: OwnedWorkspaceChannel<'a>,
+        supervisor_id: &str,
+        server: channel::Server<Ad, Rs, Ob, Id>,
+        cx: &'a EffectContext,
+        observe: &'a ObserveContext,
+        root: &'a StateRoot,
+    ) -> Result<Self, AdoptError> {
+        let OwnedWorkspaceChannel {
+            run,
+            session,
+            prepared,
+        } = owned;
+        let PreparedHostChannel {
+            launch,
+            acceptor,
+            locator,
+        } = prepared;
+        if locator.session().run != session.run()
+            || locator.session().generation != session.generation()
+        {
+            return Err(AdoptError::WrongSession);
+        }
+        let supervisor = SessionSupervisor::adopt(run, supervisor_id)?;
+        let mut owner = Self::new(supervisor, launch, acceptor, server, cx, observe, root);
+        owner.custody.locator = Some(locator);
+        Ok(owner)
+    }
+}
+
 /// One detached session's serving owner.
 ///
 /// The adopted supervisor is the session's custody. The launch is the listener
@@ -122,7 +243,7 @@ where
     Id: channel::RunIds,
 {
     supervisor: SessionSupervisor<'a>,
-    launch: Option<SessionLaunch>,
+    custody: ChannelCustody,
     acceptor: A,
     server: channel::Server<Ad, Rs, Ob, Id>,
     cx: &'a EffectContext,
@@ -141,6 +262,24 @@ where
     Ob: channel::Observer,
     Id: channel::RunIds,
 {
+    /// The advertised locator this owner's listener published, while it holds
+    /// one. Publication and the guest's dial are one fact (§8.11).
+    pub(crate) fn locator(&self) -> Option<&QualifiedHostLocator> {
+        self.custody.locator.as_ref()
+    }
+
+    /// Durable settlement: stop serving, release the listener and key, and
+    /// settle the adopted run so the session's own close transaction records
+    /// the outcome.
+    pub(crate) fn settle(
+        mut self,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+        adapter: &mut impl effigy_kernel::run::SettlementAdapter,
+    ) -> Result<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>, RunError> {
+        self.stop();
+        self.supervisor.settle(cleanup, adapter)
+    }
+
     /// Take the session's serving custody. The supervisor must be the adopted
     /// owner of the run the launch belongs to; the kernel refuses anything else
     /// at the first [`SessionLaunch::serve`].
@@ -156,7 +295,10 @@ where
     ) -> Self {
         Self {
             supervisor,
-            launch: Some(launch),
+            custody: ChannelCustody {
+                launch: Some(launch),
+                locator: None,
+            },
             acceptor,
             server,
             cx,
@@ -169,17 +311,21 @@ where
 
     /// The listener this owner still holds, while it holds one.
     pub(crate) fn launch(&self) -> Option<&SessionLaunch> {
-        self.launch.as_ref()
+        self.custody.launch.as_ref()
     }
 
     /// Whether the session's key is still in custody.
     pub(crate) fn key_held(&self) -> bool {
-        self.launch.as_ref().is_some_and(|launch| launch.key_held())
+        self.custody
+            .launch
+            .as_ref()
+            .is_some_and(|launch| launch.key_held())
     }
 
     /// Whether the launch may dispatch on its listener for this run.
     pub(crate) fn serving(&self) -> bool {
-        self.launch
+        self.custody
+            .launch
             .as_ref()
             .is_some_and(|launch| launch.serving(&self.supervisor))
     }
@@ -200,11 +346,11 @@ where
         streams: &mut impl Streams,
     ) -> Result<Option<Served>, ServeError> {
         {
-            let launch = self.launch.as_mut().ok_or(ServeError::Stopped)?;
+            let launch = self.custody.launch.as_mut().ok_or(ServeError::Stopped)?;
             launch.serve(&self.supervisor)?;
         }
         let Some(mut transport) = self.acceptor.accept(
-            self.launch.as_ref().ok_or(ServeError::Stopped)?,
+            self.custody.launch.as_ref().ok_or(ServeError::Stopped)?,
             &self.supervisor,
         )?
         else {
@@ -242,29 +388,11 @@ where
     /// custody with its supervisor. Nothing this owner published is servable
     /// afterwards.
     pub(crate) fn stop(&mut self) {
-        if let Some(mut launch) = self.launch.take() {
-            launch.stop();
-        }
+        self.custody.stop();
     }
 
     /// Release the launch's custody and stop serving.
     pub(crate) fn release(mut self) {
-        self.stop();
-    }
-}
-
-impl<T, A, Ad, Rs, Ob, Id> Drop for ServingOwner<'_, T, A, Ad, Rs, Ob, Id>
-where
-    T: Transport,
-    A: ChannelAccept<Transport = T>,
-    Ad: channel::Admission,
-    Rs: channel::Resolver,
-    Ob: channel::Observer,
-    Id: channel::RunIds,
-{
-    fn drop(&mut self) {
-        // An owner that goes away must not leave a socket or a signing key
-        // behind; the supervisor still settles the run.
         self.stop();
     }
 }
