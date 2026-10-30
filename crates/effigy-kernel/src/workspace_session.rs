@@ -1394,7 +1394,7 @@ impl WorkspaceActivationReservation {
         reader: &StoreReader,
         environment: &ResourceId,
     ) -> Observed<Option<WorkspaceActivationReservation>> {
-        match latest_reservation(reader.conn(), environment) {
+        match recoverable_reservation(reader.conn(), environment) {
             Ok(Some(record)) => Observed::Verified(Some(Self { record }), activation_evidence()),
             Ok(None) => Observed::Absent(AbsenceProof::NoRow {
                 table: RESERVATIONS.into(),
