@@ -2536,7 +2536,51 @@ fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work()
         )
         .is_err());
     }
+    // Explicit recovery/cancellation still leaves the predecessor usable.
     drop(successor);
+    for (owner, id) in [
+        (environment.clone(), run_id(153)),
+        (workspace_entry(), run_id(152)),
+    ] {
+        run::settle_interrupted(
+            &cx,
+            &root,
+            &owner,
+            id,
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("recover failed successor");
+    }
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("cancel failed activation");
+    holder
+        .intend_remote(EffectSpec {
+            target: fence.clone(),
+            kind: crate::remote::KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Retain,
+            required: false,
+        })
+        .expect("cancel does not revoke published predecessor authority");
+    // Once a successor atomically commits, the exception cannot start more
+    // work against the old environment fence, even for its existing borrower.
+    let (_, _next_session, _, _activation) =
+        activate(&cx, &root, &environment, run_id(157), run_id(158));
+    assert!(
+        holder
+            .intend_remote(EffectSpec {
+                target: fence,
+                kind: crate::remote::KIND.into(),
+                payload: serde_json::Value::Null,
+                settlement: Settlement::Retain,
+                required: false,
+            })
+            .is_err(),
+        "committed replacement ends the predecessor exception"
+    );
     drop(predecessor);
 }
 

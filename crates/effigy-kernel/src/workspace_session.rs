@@ -1045,10 +1045,17 @@ pub(crate) fn preserved_environment(
     }
     Ok(conn
         .query_row(
-            "SELECT state IN ('active','pending') AND last_applied=?2 FROM resources WHERE name=?1",
+            "SELECT r.state IN ('active','pending') AND r.last_applied=?2 \
+             AND EXISTS(SELECT 1 FROM workspace_activation_reservations a \
+                 JOIN runs ar ON ar.run_id=a.environment_run \
+                 WHERE a.environment=r.name AND a.environment_generation=r.generation \
+                 AND ar.owner=r.name AND ar.generation=r.generation AND a.state IN ('reserved','cancelled')) \
+             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?3 AND phase IN ('admitted','starting','active')) \
+             FROM resources r WHERE r.name=?1",
             params![
                 fence.resource.name().to_string(),
-                fence.generation.get().to_string()
+                fence.generation.get().to_string(),
+                session.run.to_string()
             ],
             |row| row.get::<_, Option<bool>>(0),
         )?
