@@ -224,7 +224,12 @@ fn update_shared_container(
     deadline: Instant,
 ) -> Result<(), ContainerExecError> {
     let service = row.service.as_deref().unwrap_or_default();
-    if rows.iter().filter(|other| other.service == row.service).count() > 1 {
+    if rows
+        .iter()
+        .filter(|other| other.service == row.service)
+        .count()
+        > 1
+    {
         return Err(restart_refusal(format!(
             "shared service `{service}` lists more than one container, so none can be proven current"
         )));
@@ -436,7 +441,9 @@ mod tests {
             .contains("no shared render label"));
 
         let stopped = shared_record("shared-project", Some("this-render"), false);
-        assert!(shared_identity(&stopped).unwrap_err().contains("not running"));
+        assert!(shared_identity(&stopped)
+            .unwrap_err()
+            .contains("not running"));
 
         assert!(shared_identity("[]").is_err());
     }

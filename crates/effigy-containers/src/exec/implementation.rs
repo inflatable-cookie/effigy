@@ -962,15 +962,11 @@ pub fn verify_shared_render_container(
     render_digest: &str,
     deadline: Instant,
 ) -> Result<String, ContainerExecError> {
-    let remaining =
-        super::process::remaining_until_deadline(deadline, "inspect shared container")?;
+    let remaining = super::process::remaining_until_deadline(deadline, "inspect shared container")?;
     let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
         repo_root,
         policy,
-        &[
-            OsString::from("inspect"),
-            OsString::from(container_name),
-        ],
+        &[OsString::from("inspect"), OsString::from(container_name)],
         "inspect shared container",
         deadline,
         remaining,
@@ -1003,7 +999,9 @@ pub fn shared_render_identity(
     let identity =
         super::parse::parse_inspected_container_identity(&String::from_utf8_lossy(stdout))
             .map_err(|error| {
-                refuse(format!("no canonical full identity for `{container_name}`: {error}"))
+                refuse(format!(
+                    "no canonical full identity for `{container_name}`: {error}"
+                ))
             })?;
     let raw: serde_json::Value = serde_json::from_slice(stdout)
         .map_err(|_| refuse(format!("inspect of `{container_name}` is not JSON")))?;

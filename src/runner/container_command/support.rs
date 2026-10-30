@@ -2681,11 +2681,7 @@ mod tests {
     /// `answers` in order, with one listed `legacy_mysql` container of `project`
     /// named `name`. Returns the runtime calls, and the frame the restart stage
     /// showed after its update was sent.
-    fn shared_restart_run(
-        project: &str,
-        name: &str,
-        answers: &[String],
-    ) -> (Vec<String>, String) {
+    fn shared_restart_run(project: &str, name: &str, answers: &[String]) -> (Vec<String>, String) {
         shared_restart_run_listing(project, name, answers, 1)
     }
 
@@ -2727,8 +2723,16 @@ mod tests {
     fn a_shared_service_with_two_listed_containers_is_ambiguous_and_receives_no_update() {
         let project = "effigy-shared-restart-ambiguous";
         let name = format!("{project}-legacy_mysql-1");
-        let verified = shared_inspect_record('a', &name, project, "legacy_mysql", Some("this-render"), true);
-        let (calls, _) = shared_restart_run_listing(project, &name, &[verified.clone(), verified], 2);
+        let verified = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let (calls, _) =
+            shared_restart_run_listing(project, &name, &[verified.clone(), verified], 2);
 
         assert!(restart_updates(&calls).is_empty(), "{calls:?}");
     }
@@ -2746,13 +2750,23 @@ mod tests {
     fn a_shared_restart_update_names_only_the_verified_full_id() {
         let project = "effigy-shared-restart-verified";
         let name = format!("{project}-legacy_mysql-1");
-        let verified = shared_inspect_record('a', &name, project, "legacy_mysql", Some("this-render"), true);
+        let verified = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
         let (calls, _) = shared_restart_run(project, &name, &[verified.clone(), verified]);
 
         let updates = restart_updates(&calls);
         assert_eq!(updates.len(), 1, "one verified update: {calls:?}");
         assert!(
-            updates[0].ends_with(&format!("update --restart unless-stopped {}", "a".repeat(64))),
+            updates[0].ends_with(&format!(
+                "update --restart unless-stopped {}",
+                "a".repeat(64)
+            )),
             "the update names the verified full ID, not the listed name: {updates:?}"
         );
         assert!(!updates[0].contains(&name), "{updates:?}");
@@ -2762,7 +2776,14 @@ mod tests {
     fn a_same_name_container_of_a_foreign_project_receives_no_shared_update() {
         let project = "effigy-shared-restart-foreign";
         let name = format!("{project}-legacy_mysql-1");
-        let foreign = shared_inspect_record('a', &name, "effigy-other-project", "legacy_mysql", Some("this-render"), true);
+        let foreign = shared_inspect_record(
+            'a',
+            &name,
+            "effigy-other-project",
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
         let (calls, _) = shared_restart_run(project, &name, &[foreign.clone(), foreign]);
 
         assert!(restart_updates(&calls).is_empty(), "{calls:?}");
@@ -2772,7 +2793,14 @@ mod tests {
     fn a_container_rendered_from_a_stale_render_receives_no_shared_update() {
         let project = "effigy-shared-restart-stale";
         let name = format!("{project}-legacy_mysql-1");
-        let stale = shared_inspect_record('a', &name, project, "legacy_mysql", Some("previous-render"), true);
+        let stale = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("previous-render"),
+            true,
+        );
         let (calls, _) = shared_restart_run(project, &name, &[stale.clone(), stale]);
 
         assert!(restart_updates(&calls).is_empty(), "{calls:?}");
@@ -2782,8 +2810,22 @@ mod tests {
     fn a_shared_container_whose_full_id_changes_between_inspections_receives_no_update() {
         let project = "effigy-shared-restart-changed";
         let name = format!("{project}-legacy_mysql-1");
-        let first = shared_inspect_record('a', &name, project, "legacy_mysql", Some("this-render"), true);
-        let replaced = shared_inspect_record('b', &name, project, "legacy_mysql", Some("this-render"), true);
+        let first = shared_inspect_record(
+            'a',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
+        let replaced = shared_inspect_record(
+            'b',
+            &name,
+            project,
+            "legacy_mysql",
+            Some("this-render"),
+            true,
+        );
         let (calls, _) = shared_restart_run(project, &name, &[first, replaced]);
 
         assert!(restart_updates(&calls).is_empty(), "{calls:?}");
