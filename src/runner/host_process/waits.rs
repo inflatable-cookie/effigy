@@ -356,9 +356,12 @@ impl HostWaitGraph {
         self.publish_all(now);
     }
 
-    /// One entry's current state.
-    pub(in crate::runner) fn state(&self, entry: &str, now: Instant) -> Option<EntryState> {
-        self.waits.state(entry, now)
+    /// A launched listener whose own readiness was withheld: it started and is
+    /// terminal as a failure, and its dependents are attributed to that failure
+    /// rather than to a start that never happened (effigy#458).
+    pub(in crate::runner) fn listener_failed(&mut self, entry: &str, reason: &str, now: Instant) {
+        self.waits.listener_failed(entry, reason, now);
+        self.publish_all(now);
     }
 
     /// The plan withheld this entry — its own readiness, or a prerequisite's,
@@ -380,28 +383,6 @@ impl HostWaitGraph {
         self.waits
             .abandon(effigy_tui::waits::Attribution::new("plan", detail), now);
         self.publish_all(now);
-    }
-
-    /// The entry failed: it is terminal with what it reported, and every
-    /// dependent is `not started` with that attribution. Returns the entries
-    /// that may no longer start.
-    pub(in crate::runner) fn failed(
-        &mut self,
-        entry: &str,
-        detail: &str,
-        now: Instant,
-    ) -> Vec<String> {
-        self.waits.failed(entry, detail, now);
-        // The plan stops here: every entry it never started is terminal and
-        // names what ended the plan, so an independent host is never left
-        // waiting after the plan itself is over (effigy#458).
-        self.waits.abandon_unstarted(entry, detail, now);
-        self.publish_all(now);
-        self.waits
-            .not_started()
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
     }
 }
 
@@ -428,14 +409,6 @@ pub(in crate::runner) trait HostLauncher {
         process: &str,
         on_wait: &mut dyn FnMut(Instant),
     ) -> Result<Option<ManagedHostListenerResult>, RunnerError>;
-
-    /// The clients this bring-up started, for the caller's detach and its
-    /// owner-loss fallback.
-    fn started(&self) -> &[(String, effigy_kernel::supervise::SupervisorClient)];
-
-    /// Takes the clients out: dropping them without a detach is the kernel's
-    /// owner-loss stop.
-    fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)>;
 }
 
 /// Runs the resolved plan in dependency order, publishing the graph as it goes
@@ -498,14 +471,11 @@ pub(in crate::runner) fn run_host_plan(
         }
         let listener = launcher.launch(&process.name, &mut |at| graph.publish_all(at))?;
         if let Some(reason) = launcher.withheld_reason(&process.name) {
-            // A withheld listener is terminal and attributed, and the plan
-            // still starts everything that does not need it.
-            graph.withheld(
-                &process.name,
-                withheld_attribution(&process.name, &reason),
-                now(),
-            );
-            withheld.insert(process.name.clone(), reason);
+            // The listener was launched, so its withheld readiness is a failed
+            // start, not a non-start; the plan still starts everything that
+            // does not need it.
+            graph.listener_failed(&process.name, &reason, now());
+            withheld.insert(process.name.clone(), format!("failed: {reason}"));
             continue;
         }
         graph.ready(&process.name, now());
@@ -683,14 +653,6 @@ mod tests {
             self.observe();
             Ok(None)
         }
-
-        fn started(&self) -> &[(String, effigy_kernel::supervise::SupervisorClient)] {
-            &[]
-        }
-
-        fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)> {
-            Vec::new()
-        }
     }
 
     /// Frame by frame: the dependents name `api` while it starts, `api` names
@@ -810,7 +772,11 @@ mod tests {
 
         let published = records(&checkout);
         let api = state_of(&published, "api");
-        assert_eq!(api.phase, EntryPhase::NotStarted);
+        assert_eq!(
+            api.phase,
+            EntryPhase::Failed,
+            "the launched listener failed, it did not fail to start"
+        );
         assert!(
             api.status_line().contains("500"),
             "api's own report names the status: {}",
@@ -823,7 +789,7 @@ mod tests {
                 state.not_started_because,
                 Some(Attribution::new(
                     "api",
-                    "did not become ready: readiness probe GET / returned 500; the listener never became ready"
+                    "failed: readiness probe GET / returned 500; the listener never became ready"
                 )),
                 "{dependent} names the prerequisite and its report"
             );
@@ -831,7 +797,7 @@ mod tests {
                 state.headless_line().as_deref(),
                 Some(
                     format!(
-                        "[managed] {dependent}: not started — api did not become ready: readiness \
+                        "[managed] {dependent}: not started — api failed: readiness \
                          probe GET / returned 500; the listener never became ready"
                     )
                     .as_str()
@@ -1134,7 +1100,7 @@ mod environment_tests {
         parent.settle_all(clock.at() + Duration::from_secs(4));
         let published = records(&checkout);
         let api = state_of(&published, "api");
-        assert_eq!(api.phase, EntryPhase::NotStarted);
+        assert_eq!(api.phase, EntryPhase::Failed);
         assert!(
             api.status_line().contains("500"),
             "api's own report survives: {}",
@@ -1164,7 +1130,7 @@ mod environment_tests {
         assert_eq!(
             front_tab.poll().statuses,
             vec![crate::runner::managed_run::HostStatus::NotStarted(
-                "not started — api did not become ready: readiness probe GET / returned 500; the listener never became ready"
+                "not started — api failed: readiness probe GET / returned 500; the listener never became ready"
                     .to_owned()
             )]
         );
@@ -1173,7 +1139,7 @@ mod environment_tests {
             state_of(&published, "front")
                 .headless_line()
                 .unwrap_or_default()
-                .contains("api did not become ready: readiness probe GET / returned 500"),
+                .contains("api failed: readiness probe GET / returned 500"),
             "{:?}",
             state_of(&published, "front").headless_line()
         );
@@ -1335,26 +1301,21 @@ mod environment_tests {
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
         let presented = frame(&checkout, &["api", "front", "admin"], "api");
-        assert!(
-            presented.contains("api [not started: api failed]"),
-            "{presented}"
-        );
+        assert!(presented.contains("api [failed]"), "{presented}");
         let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [not started: api failed]"),
             "{presented}"
         );
         assert!(
-            presented.contains(
-                "not started — api did not become ready: readiness probe GET / returned 500"
-            ),
+            presented.contains("not started — api failed: readiness probe GET / returned 500"),
             "{presented}"
         );
         let published = records(&checkout);
         assert!(state_of(&published, "front")
             .headless_line()
             .unwrap_or_default()
-            .contains("api did not become ready: readiness probe GET / returned 500"));
+            .contains("api failed: readiness probe GET / returned 500"));
         let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
         let front = views
             .iter()
@@ -1843,6 +1804,56 @@ mod environment_tests {
             elapsed_ms: 0,
         });
         assert_eq!(ledger.read_progress(), Some((1, 4)));
+    }
+
+    /// An entry the activation's spent budget never reached is terminal and
+    /// attributed, and the plan's final settle cannot turn its record into
+    /// evidence of a start: a tab never announces it and status keeps the
+    /// required `not started` result (effigy#458).
+    #[test]
+    fn a_skipped_entry_stays_not_started_through_the_plans_settle() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        let all = BTreeSet::from(["api".to_owned(), "front".to_owned(), "admin".to_owned()]);
+        let mut graph = HostWaitGraph::for_policy(&checkout, &policy, &all, clock.at());
+        graph.withheld(
+            "front",
+            withheld_attribution(
+                "front",
+                "the activation's observation budget expired before this process was reached",
+            ),
+            clock.at(),
+        );
+        // The plan returns: every started entry settles, the skipped one stays
+        // terminal.
+        graph.settle_all(clock.at());
+
+        let published = records(&checkout);
+        let front = state_of(&published, "front");
+        assert_eq!(front.phase, EntryPhase::NotStarted);
+        assert_eq!(
+            front
+                .not_started_because
+                .as_ref()
+                .map(|cause| cause.name.as_str()),
+            Some("front")
+        );
+        assert!(
+            front.status_line().contains("observation budget expired"),
+            "{}",
+            front.status_line()
+        );
+        let mut tab = follower(&checkout, "front");
+        tab.poll();
+        assert!(
+            !tab.may_announce_started(),
+            "a skipped entry is never evidence of a start"
+        );
+        assert_eq!(
+            tab.wait_state().map(EntryState::tab_label).as_deref(),
+            Some("front [not started: front failed]")
+        );
     }
 
     /// The environment's own failure is terminal for every host entry: none

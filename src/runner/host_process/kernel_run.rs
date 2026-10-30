@@ -670,9 +670,26 @@ fn start_host_processes_inner(
                         &mut withheld,
                         &mut listener_failures,
                     )?;
+                    // It never spawned: terminal and attributed, never a
+                    // settled record a tab could read as a start (effigy#458).
+                    graph.withheld(
+                        &hp.name,
+                        super::withheld_attribution(&dependency, &detail),
+                        Instant::now(),
+                    );
                     continue;
                 }
                 let Some(listener) = listener.as_ref() else {
+                    // A non-listener skipped by the spent budget also never
+                    // spawned, so it is terminal and attributed.
+                    graph.withheld(
+                        &hp.name,
+                        super::withheld_attribution(
+                            &hp.name,
+                            "the activation's observation budget expired before this process was reached",
+                        ),
+                        Instant::now(),
+                    );
                     continue;
                 };
                 let state_path = host_process_state_path(&dir, &hp.name);
@@ -775,7 +792,10 @@ fn start_host_processes_inner(
                     deadline,
                     &mut |at| graph.publish_all(at),
                 ) {
-                    Ok(super::ListenerWait::Ready(state)) => state,
+                    Ok(super::ListenerWait::Ready(state)) => {
+                        graph.dependency_ready(dependency, Instant::now());
+                        state
+                    }
                     // A dependency that failed its own readiness withholds this
                     // process's route too, and nothing else: the rest of the
                     // environment is still started (effigy#455).
@@ -962,11 +982,7 @@ fn start_host_processes_inner(
                             "{diagnostic}; its generation was settled before this activation returned, so it cannot publish that route later — `effigy container {} restart {}` starts it again",
                             policy.name, hp.name
                         );
-                        graph.withheld(
-                            &hp.name,
-                            super::withheld_attribution(&hp.name, &diagnostic),
-                            Instant::now(),
-                        );
+                        graph.listener_failed(&hp.name, &diagnostic, Instant::now());
                         withheld.insert(hp.name.clone(), (diagnostic.clone(), observed_status));
                         listener_failures.push(listener_failure(
                             hp,

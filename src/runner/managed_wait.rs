@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use effigy_tui::waits::{EntryPhase, EntryState, ENTRY_WAIT_SCHEMA};
 use serde::{Deserialize, Serialize};
 
-use crate::runner::error::RunnerError;
 use crate::runner::host_process::write_private_json;
 
 /// Every managed wait record lives under this checkout-relative directory.
@@ -393,31 +392,6 @@ fn read_snapshot<T>(
         }
     }
     None
-}
-
-/// The attribution of an entry that failed: the entry that reported it, and
-/// the first line of what it reported, bounded so a diagnostic never becomes a
-/// tab title.
-pub(in crate::runner) fn failure_attribution(
-    entry: &str,
-    error: &RunnerError,
-) -> effigy_tui::waits::Attribution {
-    let detail = match error {
-        // The listener's own readiness report is the evidence a person needs,
-        // and the error's own prefix would repeat the entry's name.
-        RunnerError::ManagedHostReadiness { diagnostic, .. } => diagnostic.clone(),
-        other => other.to_string(),
-    };
-    let line = detail.lines().next().unwrap_or_default().trim();
-    let bounded = line.chars().take(160).collect::<String>();
-    effigy_tui::waits::Attribution::new(
-        entry,
-        if bounded.is_empty() {
-            "failed".to_owned()
-        } else {
-            format!("failed: {bounded}")
-        },
-    )
 }
 
 /// The one injective encoding for a record path component (K1): `+` separates

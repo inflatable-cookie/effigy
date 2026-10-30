@@ -603,6 +603,26 @@ impl EntryWaits {
         self.fail_dependents(entry, Attribution::new(entry, detail), now, Dependents::All);
     }
 
+    /// A launched listener whose readiness was withheld: it started, so it is
+    /// terminal as a failure, and its dependents are attributed to that
+    /// failure. An entry that never spawned stays `withheld` (effigy#458).
+    pub fn listener_failed(&mut self, entry: &str, reason: &str, now: Instant) {
+        if let Some(record) = self.records.get_mut(entry) {
+            record.phase = EntryPhase::Failed;
+            record.since = now;
+            record.wait_since = now;
+            record.explicit = None;
+            record.detail = Some(reason.to_owned());
+        }
+        self.end_launch(entry);
+        self.fail_dependents(
+            entry,
+            Attribution::new(entry, format!("failed: {reason}")),
+            now,
+            Dependents::All,
+        );
+    }
+
     /// The plan withheld this entry: its own readiness was withheld, or a
     /// prerequisite's was. It is terminal and attributed, and nothing that
     /// depends on it may start; entries the plan still starts are untouched

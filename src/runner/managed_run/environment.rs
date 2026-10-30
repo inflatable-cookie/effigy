@@ -172,7 +172,9 @@ impl RouteHealth {
     /// reads it: `GET /api/health`.
     pub(in crate::runner) fn probe_label(&self) -> Option<String> {
         let url = self.urls.first()?;
-        let path = url.splitn(2, "://").nth(1).unwrap_or(url);
+        let path = url
+            .split_once("://")
+            .map_or(url.as_str(), |(_scheme, rest)| rest);
         let path = path.find('/').map_or("/", |slash| &path[slash..]);
         Some(format!("GET {path}"))
     }
