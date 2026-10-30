@@ -1078,7 +1078,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(31)),
-            "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); last: docker: daemon not responding; 31s elapsed"
+            "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); waiting for the environment's services to report healthy; last: docker: daemon not responding; 31s elapsed"
         );
     }
 

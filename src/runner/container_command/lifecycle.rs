@@ -2021,7 +2021,7 @@ mod tests {
         assert!(
             progress
                 .frame_at(Duration::from_secs(8))
-                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); last: service `db`"),
+                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; last: service `db`"),
             "{}",
             progress.frame_at(Duration::from_secs(8))
         );
