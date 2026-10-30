@@ -15,6 +15,13 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- A workspace channel reservation now reaches exactly the run it reserved: the
+  dispatcher's `AdmissionTicket` travels unchanged through the engine supervisor into
+  the task run, which admits it with `Run::begin_admitted` under the ticket's own id and
+  never mints, swaps or re-begins one. Engine-internal, standalone, nested, caller-keyed
+  and shared-lock run shapes refuse a ticket before any effect instead of admitting a
+  second run; ordinary runs keep their existing admission path.
+
 - A container-mode guest reads host authority credentials only after the pinned
   peer verified: the client checks the context's server pin and negotiates the
   protocol first, then presents a capability or the enrolment credential whose

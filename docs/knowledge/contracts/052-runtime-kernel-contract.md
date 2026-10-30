@@ -3504,26 +3504,43 @@ another lane's.
   digest refuse instead of being presented. A direct terminal presents the
   published `session { run_id, generation }`.
 
-*Blocked, with the exact missing API (do not substitute a stub):*
+*Bound (owner ruling 2026-10-30, bounded engine-owned handoff):*
 
-- **The production `Dispatcher` admission seam.** `Resolver`, `Observer` and
-  `RunIds` are constructible over the existing host engine, but the kernel
-  `Admission::admit(&EffectContext, &AdmissionTicket, &ResolvedInvocation)`
-  contract requires the reserved ticket to reach `Run::begin_admitted` in the
-  process that admits the run. The runner driver exposes the ticket end to end
-  (`EngineLaunch.admission` → supervisor config → `EngineSession::admission()`)
-  but nothing consumes it: `TaskRun` begins every production run with
-  `Run::begin` and a fresh id. The missing binding is
-  `task_engine::run::TaskRunRequest<'a> { …, admission: Option<effigy_kernel::run::AdmissionTicket> }`,
-  with `TaskRun::begin_with` calling
-  `Run::begin_admitted(cx, root, &invocation, opts, &cleanup, &mut TaskSettlement::default(), ticket)`
-  when it is present, threaded from `managed_run::engine::own` as
-  `session.admission().cloned()`. Those are engine-owned modules outside this
-  task's source boundary, so the dispatcher is not wired rather than admitted
-  through a second engine or an unrecorded ticket. A bounded follow-up owns
-  that hook; the fake-runtime proofs in `workspace_client/tests.rs` exercise
-  the dispatcher seams and the kernel's own reservation/admission records
-  meanwhile.
+- **The exact reservation reaches the admitting run.** `managed_run::client::start_admitted`
+  carries a dispatcher's `AdmissionTicket` unchanged into the same
+  `EngineLaunch.admission` field the supervisor config already had; the engine reads it
+  back as `EngineSession::admission()` and `managed_run::engine::own` threads it into
+  `task_engine::run::TaskRunRequest::workspace_admission` (a new field beside the existing
+  Q-006 `admission`). A ticketed top-level task run uses `opts.id = ticket.run()` and
+  `Run::begin_admitted(…, ticket)` under the same gate, predecessor settlement, custody
+  and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
+  calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
+  admission transaction, so the ticket alone binds nothing.
+- **Shapes that cannot honour the exact run refuse before any effect.**
+  `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
+  run, a nested task run, a caller-keyed run and a run that would take a task-declared
+  shared lock first: each would own another run or another id, so each refuses instead of
+  admitting a second run or discarding the reservation. Ordinary no-ticket runs take the
+  unchanged `Run::begin` / `begin_child` paths.
+- **Proofs.** `task_engine::tests` reserves a key against a live session run and shows the
+  admitted run id equals the ticket's, that the key replays from `Recorded` rather than
+  admitting again, that the spent ticket refuses a second admission, and the full refusal
+  matrix. `task_engine`, `run_control`, `managed_secrets` and `remote` fixtures prove the
+  ordinary paths keep their shape with `workspace_admission: None`.
+
+*Remaining binding (outside this task's source boundary):*
+
+- **The production `channel::Server` the dispatcher lives in.** `Dispatcher::new` needs
+  `Negotiation { context_generation, session_run_id, artifact: HostArtifact { effigy_version,
+  binary_digest } }`, `SessionFence { context_generation, environment_generation, session,
+  container_id, vm_boot_id }` and the `GrantBook` this session issued. None of those are
+  reachable from `environment::workspace::WorkspaceOwner` / `PreparedHostChannel` /
+  `ChannelBound` (they carry the session, listener, pin, locator and contexts, not the
+  published artifact and environment facts). The activation already holds them in
+  `WorkspacePublicationReceipt`/the rendered v2 document, so the fixing hunk is #482-owned:
+  the owner value must carry the published `Negotiation` and `SessionFence` facts (or the
+  document digest/version and environment generation) so the serving owner can construct
+  the server and its production `Resolver`/`Admission`/`Observer`/`RunIds` adapter.
 
 **Guest entry (v2, binding when #482 lands).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a

@@ -151,6 +151,7 @@ pub(in crate::runner) fn run_managed_task(
                 args: &preflight.runtime_args_exec.passthrough,
                 key: run_key,
                 admission: selection.task.admission,
+                workspace_admission: None,
                 cwd: Some(&preflight.invocation_cwd),
             })?;
             let result = run_workspace_with_repo_root_and_cleanup_override(

@@ -29,6 +29,7 @@ fn begin(target: &TaskTarget) -> Result<TaskRun, RunnerError> {
         args: &[],
         key: None,
         admission: None,
+        workspace_admission: None,
         cwd: None,
     })
 }
@@ -268,6 +269,7 @@ fn begin_scratching(target: &TaskTarget) -> TaskRun {
         args: &[],
         key: None,
         admission: None,
+        workspace_admission: None,
         cwd: None,
     })
     .expect("admitted")
@@ -555,6 +557,7 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
             args: &[],
             key: None,
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("the successor is admitted");
@@ -609,6 +612,7 @@ fn a_successful_step_never_decides_its_parents_scratch_retention() {
             args: &[],
             key: None,
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("the successor is admitted");
@@ -679,6 +683,7 @@ fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
             args: &[],
             key: Some(&first_key),
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("first keyed run");
@@ -696,6 +701,7 @@ fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
             args: &[],
             key: Some(&second_key),
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("second keyed run");
@@ -882,6 +888,7 @@ fn a_nested_run_that_opts_out_hides_its_parents_scratch() {
             args: &[],
             key: None,
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("the nested run is admitted");
@@ -1030,4 +1037,111 @@ fn only_an_unset_wait_takes_the_argument_scoped_default() {
         0,
         "every other selector still fails fast by default"
     );
+}
+
+/// The reservation a host dispatcher writes before an engine admits: the exact
+/// run, session and request key an `AdmissionTicket` names.
+fn reserve_ticket(
+    root: &Path,
+    session: effigy_kernel::run::Session,
+    marker: u8,
+    digest: &[u8],
+) -> effigy_kernel::run::Reservation {
+    use effigy_kernel::id::{Digest, RunId};
+    use effigy_kernel::run::{AdmissionKey, RequestId};
+
+    let cx = kernel::effects();
+    let state = kernel::effects_root(root).expect("effects root");
+    let run = RunId::new(1_760_000_000_000, [marker; 10]).expect("run id");
+    effigy_kernel::run::reserve(
+        &cx,
+        state,
+        AdmissionKey {
+            session,
+            request: RequestId::new([marker; 16]),
+        },
+        Digest::of(digest),
+        run,
+    )
+    .expect("the host records this request")
+}
+
+fn ticketed(
+    target: &TaskTarget,
+    ticket: effigy_kernel::run::AdmissionTicket,
+) -> Result<TaskRun, RunnerError> {
+    TaskRun::begin(TaskRunRequest {
+        target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        workspace_admission: Some(ticket),
+        cwd: None,
+    })
+}
+
+#[test]
+fn a_workspace_ticket_admits_exactly_its_reserved_run_and_never_mints_one() {
+    use effigy_kernel::run::{Recovered, Reservation, Session};
+
+    let root = tempfile::tempdir().expect("root");
+    let root_catalog = catalog(root.path(), "", "", 0);
+    // A live workspace session run: a reservation names an admitted session,
+    // never caller-chosen identity bytes.
+    let session_run = begin(&TaskTarget::for_catalog(
+        root.path(),
+        "session",
+        &root_catalog,
+    ))
+    .expect("a live workspace session");
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let target = TaskTarget::for_catalog(root.path(), "build", &root_catalog);
+    let ticket = match reserve_ticket(root.path(), session, 7, b"guest request") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("a fresh key is reserved once: {other:?}"),
+    };
+
+    let run = ticketed(&target, ticket.clone()).expect("the reserved run is admitted");
+    assert_eq!(run.id(), ticket.run(), "the engine admits the ticket's run");
+    assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
+
+    // Replay: the same key reads the host's own record instead of admitting a
+    // second run, and the spent ticket can never admit again.
+    match reserve_ticket(root.path(), session, 7, b"guest request") {
+        Reservation::Recorded(Recovered::Completed { run, .. })
+        | Reservation::Recorded(Recovered::Admitted { run, .. }) => {
+            assert_eq!(run, ticket.run(), "the replay names the admitted run")
+        }
+        other => panic!("a completed request is answered from its record: {other:?}"),
+    }
+    let error = ticketed(&target, ticket).expect_err("an admitted ticket cannot admit twice");
+    assert!(!error.to_string().is_empty(), "{error}");
+    assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
+}
+
+#[test]
+fn a_workspace_ticket_refuses_every_shape_that_would_own_another_run() {
+    use super::run::workspace_admission_refusal;
+
+    assert!(workspace_admission_refusal(true, false, false, false).is_none());
+    for (task_gate, nested, keyed, shared) in [
+        (false, false, false, false),
+        (true, true, false, false),
+        (true, false, true, false),
+        (true, false, false, true),
+    ] {
+        let refusal = workspace_admission_refusal(task_gate, nested, keyed, shared)
+            .expect("this shape cannot honour an exact ticket");
+        assert!(
+            refusal.to_string().contains("workspace-admitted"),
+            "{refusal}"
+        );
+    }
 }

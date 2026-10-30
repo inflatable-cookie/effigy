@@ -270,6 +270,7 @@ pub(in crate::runner) fn own<T>(
         args: &plan.args,
         key: None,
         admission: plan.admission,
+        workspace_admission: session.admission().cloned(),
         cwd: Some(&plan.cwd),
     }) {
         Ok(run) => run,

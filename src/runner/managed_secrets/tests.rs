@@ -25,6 +25,7 @@ fn run(root: &Path, custody: bool) -> TaskRun {
         args: &[],
         key: None,
         admission: None,
+        workspace_admission: None,
         cwd: Some(root),
     })
     .unwrap()

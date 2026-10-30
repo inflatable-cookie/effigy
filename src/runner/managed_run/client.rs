@@ -61,6 +61,29 @@ pub(in crate::runner) struct Started {
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
 pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
+    start_with(request, None)
+}
+
+/// [`start`] for the run a workspace dispatcher already reserved (052 §8.11).
+///
+/// The ticket travels unchanged into the supervisor's private config frame and
+/// reaches the engine as `EngineSession::admission()`; the engine then admits
+/// exactly the run the reservation names with `Run::begin_admitted`. Nothing
+/// here mints an id or admits a second run, and a refusal leaves the
+/// reservation for the client's retry to read from the host's own record.
+#[allow(dead_code)] // The production channel `Admission` adapter calls this once the
+                    // activation supplies the serving owner's negotiation and fence facts.
+pub(in crate::runner) fn start_admitted(
+    request: &ClientStart<'_>,
+    ticket: effigy_kernel::run::AdmissionTicket,
+) -> Result<Started, RunnerError> {
+    start_with(request, Some(ticket))
+}
+
+fn start_with(
+    request: &ClientStart<'_>,
+    admission: Option<effigy_kernel::run::AdmissionTicket>,
+) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
             "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
@@ -102,7 +125,7 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
             cwd: request.cwd.clone(),
             env,
             handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
-            admission: None,
+            admission,
         },
         &executable,
         ClientMode::Owning,
