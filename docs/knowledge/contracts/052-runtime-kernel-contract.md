@@ -2730,10 +2730,68 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   same session run as secondary clients (§5.8), and a host UI and a guest UI
   can attach to one managed child run. A secondary client's death stops
   nothing.
-- Duplicates are impossible. An environment has one workspace entry, and
-  K5 admits one unresolved run per owner, so a second `workspace` invocation
-  attaches instead of starting a session. Every `dev` or task request takes
-  its own owner gate on the host, whatever its origin.
+- An environment has one published workspace session, so another `workspace`
+  invocation attaches to that mapping. Generic Task admission keeps K5. The
+  typed activation reservation below is the only successor overlap; it does
+  not admit another ordinary task run.
+- **Reserved successor activation (Tom's ruling, 2026-10-29).** Preserve the live
+  predecessor, its selected bytes, listener and holders until the successor's
+  atomic commit. `WorkspaceActivationReservation::reserve` briefly takes and
+  releases `Gate(Env)`, returning a durable reservation id and E. Staging freezes
+  the exact workspace Task owner, successor RunId and its own generation S;
+  S and E are separate fences. Another contender cannot replace that staging,
+  even before admission. Cancellation and a new reservation are explicit.
+  `SessionRef::admit_reserved` authenticates the frozen claim and takes only its
+  run-specific liveness slot, before the Env activation is admitted. The logical
+  Task owner stays the same. Staging/admission never settle the predecessor or
+  advance its current fence. A staged run cannot create generic effects before
+  commit; earlier sessions retain run-bound callbacks, controls and settlement
+  afterwards, without authority to create new shared-owner effects.
+  `claim`/`Run::begin_claimed` bind the Env run at E. The guest must acknowledge
+  `WorkspacePublicationReceipt { publication, activation_run, session }`, including
+  the actual session owner, RunId and S; `ActivationPlan::validate_receipt` checks
+  those fields and E before commit. `Attachments::workspace_guest_published`
+  records that acknowledgement; a generic guest receipt cannot publish a reserved
+  workspace activation. `EnvRun::publish_workspace_guest_with` is the container
+  engine's typed handoff. The host never fills the session into a generic receipt
+  after publication.
+  `WorkspaceActivationReservation::commit` checks the frozen admitted session,
+  exact Env run, its ability to act and all required effects. Commit takes the
+  owning successor `Run` by reference, retaining its Task-ranked private slot
+  throughout the transaction; a read-only liveness probe is insufficient. The
+  session owner must perform the commit with that held handle, and
+  `EnvRun::commit_activation(reservation, session_run)` carries it into the kernel.
+  Detached custody registration authenticates this same run-specific owner slot.
+  One transaction compares the Task's preceding generation, advances it to S,
+  and writes active(E),
+  the session mapping and its Borrow attachment. Generic `publish_active` and
+  `publish_active_for` refuse an uncommitted workspace reservation, so neither
+  can bypass that atomic publication. No Task gate wait happens under Env. Private liveness identities remain durable across later mapping changes;
+  recovery takes the exact dead run's slot and never substitutes the shared Task
+  gate. Ordinary admission refuses reserved, live or unsettled private sessions,
+  including checkout-equivalent owner spellings. Read-only workspace replay on
+  older schema-1 journals does not install these additive tables: absent overlap
+  tables retain strict current-generation fencing and the shared Task owner gate.
+  Missing requests remain absent, and malformed existing tables remain unknown.
+  A failed or crashed pre-commit
+  activation leaves the predecessor authoritative: new Borrow attachments and
+  their remote intents may still use its exact mapped environment generation
+  while that generation remains `last_applied` and the state is active or pending.
+  Ordinary held/no-op reconciliation and activation preserve that applied fence,
+  even after reservation cancellation; newly attached holders may only Borrow it.
+  The current Env transition counter may advance without changing the published
+  workspace's applied generation. Only the atomic successor commit replaces it.
+  Exclusive attachment and transition authority retain the current generation
+  check. The predecessor exception ends when the atomic mapping changes or the
+  applied environment stops; it never authorizes the unpublished successor.
+  Immutable orphan publication
+  is retained without replay; recovery settles the failed successor and cancels
+  its reservation, then rolls forward. Both reserve and recover prefer the oldest
+  unfinished reservation, including a claimed fence after a crash; a later empty
+  fence never hides its bound runs. Reservation rules expose `ActivationRefusal`
+  and its stable `as_str()` names through `RunError::Refused`; admission also uses
+  the existing RunError refusal/gate types. Unreadable or unknown state stays
+  Broken/Unknown, and does not grant admission.
 - Down from inside (Tom's ruling, 2026-10-18) uses only existing
   primitives; no run settles another by cascade:
   1. The session supervisor observes the environment's holders. A live or
@@ -3044,9 +3102,9 @@ is the lane B session layer on top of them and owns no second authority:
   environment, so a `Borrow` row names a holder, never the session. Every read
   validates the record against the journal — the run is at the recorded
   generation and not closed, it still borrows the environment at the recorded
-  generation, and the environment has not advanced — and an invalid record
-  resolves as absent, so a stale session is never mistaken for a live one and a
-  successor can be admitted. `SessionRef::admit` refuses any placement other than
+  generation. Advancing the environment counter alone does not revoke the
+  predecessor: only a successor's atomic activation commit replaces its mapping.
+  An invalid record resolves as absent. `SessionRef::admit` refuses any placement other than
   `Detached`, holds the environment `Borrow` attachment for the run's life and
   records the mapping, refusing to replace a live one. The entry itself is guarded
   by the workspace entry's owner gate, and request ids inside the session are the

@@ -6,14 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Known limits
-
-- Environment-owned host processes write their child's raw stdout and stderr
-  directly to `.effigy/runtime/host-processes/.../<process>.log`. A secret echoed
-  by the child can appear in that log. This direct-log behavior predates
-  v0.15; the new custody output sanitizer does not cover this path. ANSI colour
-  forcing and plain-log projection for managed TUI panes are deferred to v0.16
-  until the host-log writer has a safe secret-handling boundary.
+Known limits: Environment-owned host processes write their child's raw stdout and stderr
+directly to `.effigy/runtime/host-processes/.../<process>.log`. A secret echoed
+by the child can appear in that log. This direct-log behavior predates
+v0.15; the new custody output sanitizer does not cover this path. ANSI colour
+forcing and plain-log projection for managed TUI panes are deferred to v0.16
+until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
@@ -726,6 +724,14 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
 
 - A declared database data target whose service is `shared = true` now seeds and
   dumps in that service's own machine-wide Compose project and render, so

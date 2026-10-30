@@ -42,7 +42,7 @@ impl Run<'_> {
         if self.sentinel.is_some() {
             return Err(RunError::broken("sentinel already registered"));
         }
-        if !self.guard.covers(&self.owner.resource) {
+        if !self.holds_owner_gate()? {
             return Err(RunError::broken("registration needs owner gate"));
         }
         let identity = ident::process_identity(std::process::id())
@@ -58,7 +58,7 @@ impl Run<'_> {
         let result: Result<(), RunError> = (|| {
             crate::fault_point!(LifecycleBefore)?;
             self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)),|txn| {
-                journal::check_fence(txn.conn(),&self.owner)?;
+                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                 txn.conn().execute("UPDATE runs SET kind='custody',placement=?2,owner_identity=?3,supervisor_identity=?4,sentinel_identity=?5 WHERE run_id=?1",
                     params![self.id.to_string(),plan.placement.name(),serde_json::to_string(&identity)?,
                     if plan.placement == crate::supervise::Placement::Detached {Some(serde_json::to_string(&identity)?)}else{None},serde_json::to_string(&lease.as_ref().expect("registration owns lease").identity)?])?;
