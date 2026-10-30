@@ -1071,6 +1071,11 @@ pub(crate) fn session_run_gate(
     owner: &ResourceId,
     run: RunId,
 ) -> Result<ResourceId, RunError> {
+    // Legacy schema-1 sessions have only the shared Task owner gate. Read-only
+    // reconnect must not require a writer to install the additive slot table.
+    if !crate::store::has_table(conn, "workspace_session_runs")? {
+        return Ok(owner.clone());
+    }
     let gate: Option<Option<String>> = conn
         .query_row(
             "SELECT gate_key FROM workspace_session_runs WHERE run_id=?1 AND owner=?2",

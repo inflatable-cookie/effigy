@@ -623,7 +623,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Keep the existing workspace session and its holders authoritative, including
   new borrowed operations after a failed activation, until the successor commits
   atomically. Register detached successors under their private liveness slot and
-  retain the owning successor handle throughout publication.
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
 
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target

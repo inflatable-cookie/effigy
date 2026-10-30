@@ -1206,6 +1206,13 @@ pub(super) fn require_live_owner(
 /// A staged session is unavailable until atomic publication. Committed older
 /// sessions may still serve their existing clients at their own run fence.
 fn service_fence(conn: &Connection, run: RunId, fence: &Fence) -> Result<(), RunError> {
+    // Observe never migrates an older schema-1 journal. Without the additive
+    // overlap tables, only the legacy current-generation fence can authorize it.
+    if !crate::store::has_table(conn, "workspace_session_runs")?
+        || !crate::store::has_table(conn, "workspace_activation_reservations")?
+    {
+        return journal::check_fence(conn, fence);
+    }
     let staged: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM workspace_session_runs s \
          JOIN workspace_activation_reservations a ON a.reservation_id=s.reservation_id \

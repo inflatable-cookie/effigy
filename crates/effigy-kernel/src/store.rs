@@ -1509,7 +1509,7 @@ fn has_activation_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_activation_reservations') WHERE name='session_owner')",
         [], |row| row.get(0))
 }
-fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+pub(crate) fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
         [name],

@@ -2639,7 +2639,11 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   can bypass that atomic publication. No Task gate wait happens under Env. Private liveness identities remain durable across later mapping changes;
   recovery takes the exact dead run's slot and never substitutes the shared Task
   gate. Ordinary admission refuses reserved, live or unsettled private sessions,
-  including checkout-equivalent owner spellings. A failed or crashed pre-commit
+  including checkout-equivalent owner spellings. Read-only workspace replay on
+  older schema-1 journals does not install these additive tables: absent overlap
+  tables retain strict current-generation fencing and the shared Task owner gate.
+  Missing requests remain absent, and malformed existing tables remain unknown.
+  A failed or crashed pre-commit
   activation leaves the predecessor authoritative: new Borrow attachments and
   their remote intents may still use its exact mapped environment generation
   while that generation remains `last_applied` and the state is active or pending.
