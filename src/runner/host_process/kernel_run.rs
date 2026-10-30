@@ -626,7 +626,8 @@ fn start_host_processes_inner(
         .filter(|process| selection.is_none_or(|selection| selection.contains(&process.name)))
         .map(|process| process.name.clone())
         .collect::<BTreeSet<_>>();
-    let mut graph = super::HostWaitGraph::for_policy(&checkout_root, policy, &starting, Instant::now());
+    let mut graph =
+        super::HostWaitGraph::for_policy(&checkout_root, policy, &starting, Instant::now());
     let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
     let mut listener_results = Vec::new();
     let mut listener_failures: Vec<ManagedHostListenerFailure> = Vec::new();
@@ -930,8 +931,12 @@ fn start_host_processes_inner(
                 match waited {
                     Ok(super::ListenerWait::Ready(state)) => {
                         graph.ready(&hp.name, Instant::now());
-                        listener_results
-                            .push(listener_result(&hp.name, listener, &state, &state_path))
+                        listener_results.push(listener_result(
+                            &hp.name,
+                            listener,
+                            &state,
+                            &state_path,
+                        ))
                     }
                     // This listener never published its own route, so only its
                     // own route is withheld.
@@ -979,7 +984,10 @@ fn start_host_processes_inner(
     })();
     if let Err(error) = start_result {
         graph.abandon_plan(
-            &format!("stopped after {}", error.to_string().lines().next().unwrap_or_default()),
+            &format!(
+                "stopped after {}",
+                error.to_string().lines().next().unwrap_or_default()
+            ),
             Instant::now(),
         );
         // Dropping the owning pipes without a detach is the kernel's

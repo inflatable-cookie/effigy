@@ -43,14 +43,14 @@ mod kernel_run;
 // graph before it starts polling, and both its own boundary and the plan's
 // bring-up use this one model.
 mod waits;
-pub(in crate::runner) use waits::{
-    attributed_environment_failure, begin_environment_phase, withheld_attribution, HostWaitGraph,
-};
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
     start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
     HostProcessStopReport,
+};
+pub(in crate::runner) use waits::{
+    attributed_environment_failure, begin_environment_phase, withheld_attribution, HostWaitGraph,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";

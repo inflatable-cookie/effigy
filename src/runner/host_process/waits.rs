@@ -1335,14 +1335,19 @@ mod environment_tests {
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
         let presented = frame(&checkout, &["api", "front", "admin"], "api");
-        assert!(presented.contains("api [not started: api failed]"), "{presented}");
+        assert!(
+            presented.contains("api [not started: api failed]"),
+            "{presented}"
+        );
         let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [not started: api failed]"),
             "{presented}"
         );
         assert!(
-            presented.contains("not started — api did not become ready: readiness probe GET / returned 500"),
+            presented.contains(
+                "not started — api did not become ready: readiness probe GET / returned 500"
+            ),
             "{presented}"
         );
         let published = records(&checkout);
