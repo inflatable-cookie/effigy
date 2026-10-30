@@ -1018,15 +1018,43 @@ SSH clients are never directly signalled by Effigy.
 
 These waits are bounded. A readiness wait polls every service's own health
 check and names it while it waits:
-`waiting for web to report healthy (attempt 4, last: GET / 404)`. A timeout
+`waiting for web to report healthy (attempt 4, last: GET / 404)`. The
+preparation before Compose names the stage it is in — recording the checkout
+identity, resolving the declaration with its ports and loopback, preparing
+render inputs, rendering the stack, preparing mount sources — and Compose's own
+step moves to the `restart: unless-stopped` read as soon as Compose returns, so
+a stalled read never shows a finished call. A timeout
 lists each service that is not ready with its health status, failing streak and
 bounded last check output, plus each exited service's exit code and last log
 line, and then the next commands (`effigy container logs --service <service>`,
 `effigy container status`). A stack whose unready services all fail the same
 way — every check reporting `command not found`, for example — is diagnosed
 after a few observations rather than waited out. `container status` shows an
-unhealthy service's last check output next to its status. An environment that
-declares `[containers.<name>.health]` keeps that check as its final gate.
+unhealthy service's last check output next to its status, and a readiness frame
+names which of the probe's two runtime reads is running — the project's
+container list, or the inspect of the names that list returned. A read that
+fails keeps that identity in the retry frame, the timeout diagnostic and the
+`--json` `waiting_on` probe entry, which also names the containers it covered.
+The timeout diagnostic's per-service log reads name the runtime container each
+one is reading (which can differ from the service name when Compose declares
+`container_name`), and report a read the runtime does not answer.
+An environment that
+declares `[containers.<name>.health]` keeps that check as its final gate: the
+wait names that probe and its attempt, and a check that answers a complete
+definite status outside `2xx`/`3xx` is refused at once with the status it
+observed and
+the primary container's last output, because waiting cannot change an answer
+the service already gave; a check that closes after a partial status line keeps
+waiting, because it has not answered. The container is the one the runtime's own row names
+for that service, so a declared Compose `container_name` is never guessed from
+the project and service names; that identity comes from the readiness probe's
+own observation, and only a wait that observed no services reads it again,
+under its own named step. The failed container's log tail is read under a step
+that names that container, and a log read the runtime does not answer is
+reported as unavailable. When no container can be read, the message names the
+environment and its primary service instead. The restart policy that
+follows Compose reports its own stages — the Compose declaration read, the
+runtime inventory read, then the update.
 A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
 Effigy never hand-starts a stopped service and never stops or mutates

@@ -156,6 +156,15 @@ impl ProgressSource {
         state.event = Some(event.into());
     }
 
+    /// Drop the last event when the work moves on to a different wait, so a
+    /// blocker that has been resolved is never shown against the new step.
+    pub fn clear_event(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .event = None;
+    }
+
     /// Name a new object or probe after the previous wait ended. Clears
     /// sub-step, count and event so frames name this wait until `update`.
     pub fn now_waiting_for(&self, awaiting: impl Into<String>) {

@@ -524,6 +524,53 @@ mounts = ["early:/workspace-root/early:ro"]
     assert_eq!(decisions[0].target, "/workspace-root/early");
 }
 
+#[test]
+fn a_creation_policy_load_reports_each_preparation_stage_in_order() {
+    let root = temp_repo("creation-policy-stages");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write compose");
+
+    let mut stages = Vec::new();
+    let (_policy, _decisions) =
+        crate::load_container_policy_for_creation_observed(&root, Some("web"), &mut |stage| {
+            stages.push(stage)
+        })
+        .expect("creation policy");
+
+    assert_eq!(
+        stages,
+        vec![
+            crate::CreationPolicyStage::CheckoutIdentity,
+            crate::CreationPolicyStage::Declaration,
+            crate::CreationPolicyStage::RenderInputs,
+            crate::CreationPolicyStage::ResolvedDeclaration,
+            crate::CreationPolicyStage::Render,
+            crate::CreationPolicyStage::MountSources,
+        ],
+        "each preparation stage is reported once, in the order it runs"
+    );
+    assert_eq!(
+        stages[0].description(),
+        "recording the checkout identity",
+        "a stage names what it is doing"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn creation_policy_canonicalizes_optional_symlink_sources() {

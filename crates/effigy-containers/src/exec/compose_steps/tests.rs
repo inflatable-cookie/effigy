@@ -175,3 +175,22 @@ fn image_build_and_container_steps_stay_distinct() {
     });
     assert_eq!(steps.touched(), 3);
 }
+
+#[test]
+fn a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait() {
+    let step = super::runtime_step("pulling postgres:16".to_owned());
+    let frame = step.label();
+    assert!(
+        frame.starts_with("pulling postgres:16; waiting for the runtime's next report; "),
+        "{frame}"
+    );
+    assert!(frame.ends_with("s elapsed"), "{frame}");
+    // A new runtime line replaces the label; nothing waits on a fixed one.
+    step.set_label("starting web");
+    assert!(
+        step.label()
+            .starts_with("starting web; waiting for the runtime's next report; "),
+        "{}",
+        step.label()
+    );
+}

@@ -160,9 +160,60 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. A service that
+Each shared service a bring-up ensures is its own wait: entering the next
+service replaces the awaited subject and drops the previous service's event, so
+a stalled gate, inventory read, render or Compose call never displays a
+finished service's wait.
+
+The route-registration stage polls the runtime for the declared gateway service
+ports for up to 60s; its frame names the read in flight (`reading the runtime's
+containers for the declared gateway service ports (attempt 2)`) and then the
+blocker that read reported, with the service and domain when the detail knows
+them, instead of holding the stage label. The work after a ready poll is
+reported as its own stages too — confirming the primary container's binding,
+resolving the declared routes against the published ports, writing the route
+table, and, on timeout, reading the exited containers for the diagnostic — and
+entering a stage clears the previous stage's blocker so a resolved one is never
+shown against later work.
+
+Readiness is Running plus the service's own health check. Its progress names
+which of the probe's two runtime reads is running — the project's container
+list, or the inspect of the container names that list returned, with those
+names in the frame — because a stalled `ps` and a stalled `inspect` are
+different waits. A read that fails keeps that identity: the retry frame and the
+timeout diagnostic name the read, its probe number and, for an inspect, the
+containers it was reading, and the `waiting_on` probe entry carries the same
+facts as `probe` (`container_list` or `containers_inspect`), `probe_number` and
+`containers`. A service whose health regresses after reporting healthy opens
+a fresh step with its own attempt and last check output. The timeout diagnostic
+reads each exited service's own last log line under a live step that names the
+runtime container the read is issued against — an explicit Compose
+`container_name` may differ from the service name — with its position in the
+set, and reports a read the runtime does not answer instead of leaving the
+finished probe on screen. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
-one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
+a definite status line outside `2xx`/`3xx` is refused at once, naming the status
+it observed and the primary container's own last output, instead of spending
+the declared budget on an answer waiting cannot change (effigy#455). Only a
+complete, well-formed status line is evidence: the probe reads one bounded
+status line across partial reads, so a check that does not answer, that splits
+its response, or that closes after a prefix keeps the budgeted wait instead of
+reporting readiness or a mismatch it never observed. The container named in
+that evidence — in the human diagnostic as well as `waiting_on` — is the one the
+runtime's own row reports for the primary service, so a declared Compose
+`container_name` is read and reported as it is rather than assumed from the
+project and service names; when the runtime cannot name one, the diagnostic
+describes the environment and its primary service instead of calling the
+environment a container. The identity is carried from the readiness probe that
+already observed that service, so naming it costs no second runtime read; only
+when the readiness wait observed no services is one inventory read made, under
+its own live step naming that row and its elapsed wait. The failed container's
+log tail is the same kind of bounded runtime read, so it too runs under its own
+live step, naming the container it reads and reporting when the runtime does
+not answer it; the refusal then carries no tail rather than an unread one. The restart-policy apply after Compose names its own
+stages as they start: the Compose declaration read, the runtime inventory read,
+then the update, which may not be sent at all when no service qualifies. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays

@@ -9,9 +9,11 @@ use effigy_catalog::volumes::{
 use effigy_containers::backend::endpoint_backend;
 use effigy_containers::{
     exec::{
-        list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
+        container_last_log_line_for_policy, list_running_compose_containers_for_policy,
+        list_running_compose_containers_for_policy_with_deadline, ContainerExecError,
+        RunningComposeContainer,
     },
-    health::wait_for_ready,
+    health::{wait_for_ready, HealthWaitError},
     EffectiveContainerPolicy,
 };
 use effigy_containers::{
@@ -20,6 +22,7 @@ use effigy_containers::{
 };
 use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
+use effigy_ui::steps::ProgressSource;
 use serde_json::json;
 
 use super::gateway_registration::{
@@ -71,22 +74,221 @@ pub(super) fn wait_for_container_ready(
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<&'static str>, RunnerError> {
-    match super::readiness::await_services_ready(
+    let readiness = super::readiness::await_services_ready(
         &policy.repo_root,
         policy,
         stop_requested,
         deadline,
-    )? {
+    )?;
+    match readiness.end {
         super::readiness::ReadinessEnd::Interrupted => return Ok(Some("interrupted")),
         super::readiness::ReadinessEnd::Ready | super::readiness::ReadinessEnd::NothingToAwait => {}
     }
+    let Some(check) = policy.health_check.as_deref() else {
+        return Ok(None);
+    };
+    // The declared check probes one service's endpoint, and the container that
+    // serves it is the identity the runtime reported for that service: the
+    // readiness probe already observed it, so it is carried from there. When it
+    // was never observed, one live step covers the runtime read that names it,
+    // so a stalled read is never an idle command (effigy#460, Q-017).
+    let container = readiness
+        .observed
+        .iter()
+        .find(|service| service.service == policy.primary_service)
+        .map(|service| service.container.clone())
+        .or_else(|| primary_service_container_observed(policy, deadline));
+    let subject = match &container {
+        Some(container) => format!("container `{container}`"),
+        None => format!(
+            "environment `{}` (primary service `{}`)",
+            policy.name, policy.primary_service
+        ),
+    };
     wait_for_ready(
-        &policy.name,
-        policy.health_check.as_deref(),
+        &subject,
+        Some(check),
         policy.health_timeout_secs,
         stop_requested,
     )
-    .map_err(RunnerError::task_invocation)
+    .map_err(|error| declared_health_refusal(policy, error, container))
+}
+
+/// The container the primary service actually runs as: the runtime's own row
+/// for that Compose service. Compose may declare an explicit `container_name`
+/// and a runtime may name it differently, so Effigy never assumes the
+/// `<project>-<service>-1` default for an identity it can read (effigy#460).
+///
+/// `deadline` is the bring-up's one observation budget, so this read never
+/// grants the runtime a fresh one. The read runs under its own live step: the
+/// readiness wait has already finished, and a runtime that stops answering here
+/// must still say what it is waiting for (Q-017).
+fn primary_service_container_observed(
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+) -> Option<String> {
+    let progress = primary_container_progress(policy);
+    let step = super::steps::TimedStep::live(progress);
+    let container = read_primary_service_container(policy, deadline);
+    match &container {
+        Some(container) => step.succeed(format!(
+            "primary service `{}` runs as `{container}`",
+            policy.primary_service
+        )),
+        // The declared wait names the environment and service instead; this
+        // read's own failure is not the reason the check failed.
+        None => step.finish_clear(),
+    }
+    container
+}
+
+/// The exact wait the identity read is in: the runtime's row for the primary
+/// service, with elapsed time (effigy#460, Q-017).
+fn primary_container_progress(policy: &EffectiveContainerPolicy) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!(
+        "the runtime to name the primary container of `{}`",
+        policy.project_name
+    ));
+    progress.update(
+        format!(
+            "reading the runtime's row for primary service `{}` of `{}`",
+            policy.primary_service, policy.project_name
+        ),
+        None,
+        None,
+    );
+    progress
+}
+
+/// One runtime inventory read, selecting the primary service's own row.
+fn read_primary_service_container(
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+) -> Option<String> {
+    let rows = list_running_compose_containers_for_policy_with_deadline(
+        &policy.repo_root,
+        policy,
+        deadline,
+    )
+    .ok()?;
+    rows.into_iter()
+        .find(|row| row.service.as_deref() == Some(policy.primary_service.as_str()))
+        .map(|row| row.container_name)
+}
+
+/// How many trailing log lines the failed container is read for.
+const DECLARED_HEALTH_LOG_TAIL: u32 = 20;
+
+/// The last line the container itself printed, read only when a declared check
+/// did not come ready: the evidence its health check cannot give (effigy#455).
+///
+/// The read is a bounded runtime call of its own (up to 30s), and the declared
+/// check's step has already ended, so it runs under a live step that names the
+/// container it reads and reports when the runtime does not answer
+/// (effigy#460, Q-017).
+fn declared_health_tail(policy: &EffectiveContainerPolicy, container: &str) -> Option<String> {
+    let step = super::steps::TimedStep::live(declared_health_tail_progress(container));
+    match container_last_log_line_for_policy(
+        &policy.repo_root,
+        policy,
+        container,
+        DECLARED_HEALTH_LOG_TAIL,
+    ) {
+        Ok(line) if !line.is_empty() => {
+            step.succeed(format!("read the last line `{container}` printed"));
+            Some(line)
+        }
+        // The container printed nothing this read kept; the refusal still
+        // carries the status it observed.
+        Ok(_) => {
+            step.finish_clear();
+            None
+        }
+        Err(error) => {
+            step.fail(format!(
+                "the runtime did not answer the log read for `{container}`: {}",
+                first_line(&error.to_string())
+            ));
+            None
+        }
+    }
+}
+
+/// The exact wait the log tail is in: the runtime's own log read for the
+/// container that failed, with elapsed time (effigy#460, Q-017).
+fn declared_health_tail_progress(container: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("the runtime's log tail of `{container}`"));
+    progress.update(
+        format!("reading the last line `{container}` printed"),
+        None,
+        None,
+    );
+    progress
+}
+
+/// The first line of a runtime error, bounded so one frame stays one line.
+fn first_line(text: &str) -> String {
+    const LIMIT: usize = 160;
+    let line = text.lines().next().unwrap_or_default();
+    if line.chars().count() <= LIMIT {
+        return line.to_owned();
+    }
+    let cut: String = line.chars().take(LIMIT).collect();
+    format!("{cut}…")
+}
+
+/// A declared health check that did not turn ready, as the wait it was in: the
+/// container, the check, the answer it gave and the container's own last
+/// output (effigy#460, Q-017). A definite answer is terminal, so the refusal
+/// names the status it observed instead of a spent budget (effigy#455).
+fn declared_health_refusal(
+    policy: &EffectiveContainerPolicy,
+    error: HealthWaitError,
+    container: Option<String>,
+) -> RunnerError {
+    let tail = container
+        .as_deref()
+        .and_then(|container| declared_health_tail(policy, container));
+    declared_health_refusal_with_evidence(policy, error, container, tail)
+}
+
+/// The same refusal with the container and its last output already read, so the
+/// message and its machine-readable waits are testable without a runtime.
+fn declared_health_refusal_with_evidence(
+    policy: &EffectiveContainerPolicy,
+    error: HealthWaitError,
+    container: Option<String>,
+    tail: Option<String>,
+) -> RunnerError {
+    let mut message = error.to_string();
+    if let Some(tail) = &tail {
+        message.push_str(&format!("; last container output: {tail}"));
+    }
+    let mut wait = json!({
+        "kind": "health_check",
+        "environment": policy.name,
+        "service": policy.primary_service,
+        "container": container,
+        "check": error.check(),
+        "timeout_secs": error.timeout_secs(),
+        "probe": "declared health check",
+        "answer": error.outcome(),
+    });
+    if let Some(status) = error.observed_status() {
+        wait["status"] = json!(status);
+    }
+    if let Some(tail) = &tail {
+        wait["last_output"] = json!(tail);
+    }
+    RunnerError::container_wait_refused(
+        &policy.name,
+        message,
+        json!({
+            "failure_kind": "container_readiness",
+            "readiness": "unverified",
+            "waiting_on": [wait],
+        }),
+    )
 }
 
 pub(in crate::runner) fn validate_running_container_runtime_match(
@@ -378,25 +580,63 @@ pub(super) fn ensure_pinned_host_ports_available(
 pub(in crate::runner) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
+    ensure_shared_services_observed(policy, &ProgressSource::waiting_for("shared services"))
+}
+
+/// The ensure with the wait it is in named on `progress`: for each shared
+/// service, the machine gate, the runtime's container read, the render
+/// publication and the `compose up` it runs (effigy#460, Q-017).
+pub(in crate::runner) fn ensure_shared_services_observed(
+    policy: &EffectiveContainerPolicy,
+    progress: &ProgressSource,
+) -> Result<Vec<String>, RunnerError> {
     let renders = policy
         .render
         .as_ref()
         .map_or(&[][..], |render| render.shared.as_slice());
-    ensure_shared_services_with_renders(policy, renders)
+    ensure_shared_services_with_renders_observed(policy, renders, progress)
 }
 
 /// The ensure with the shared renders it may publish. They are the ones the
 /// policy's one render produced; publication happens after the vanished-render
 /// refusal so a missing directory is never silently restored (ef5780da).
+#[cfg(test)]
 fn ensure_shared_services_with_renders(
     policy: &EffectiveContainerPolicy,
     renders: &[effigy_containers::SharedRender],
 ) -> Result<Vec<String>, RunnerError> {
+    ensure_shared_services_with_renders_observed(
+        policy,
+        renders,
+        &ProgressSource::waiting_for("shared services"),
+    )
+}
+
+fn ensure_shared_services_with_renders_observed(
+    policy: &EffectiveContainerPolicy,
+    renders: &[effigy_containers::SharedRender],
+    progress: &ProgressSource,
+) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
-    for service in &policy.shared_services {
+    let total = policy.shared_services.len() as u64;
+    for (done, service) in policy.shared_services.iter().enumerate() {
+        let done = done as u64;
+        // Each service is its own wait: entering it replaces the previous
+        // service's awaited subject and drops the event it ended on, so a
+        // stalled stage here never names the service that already finished
+        // (effigy#460, Q-017).
+        begin_shared_service_wait(progress, &service.service_name);
         // Held until this service's ensure is complete; a gate that cannot be
         // taken is named and the ensure proceeds, because the service still
         // has to run.
+        progress.update(
+            format!(
+                "waiting for the machine gate of shared project `{}`",
+                service.project_name
+            ),
+            Some((done, total)),
+            None,
+        );
         let _gate = match crate::runner::task_engine::shared_service_gate(&service.project_name) {
             Ok(gate) => Some(gate),
             Err(error) => {
@@ -408,37 +648,90 @@ fn ensure_shared_services_with_renders(
             }
         };
         // One inventory read serves the refusal and the replacement below.
+        progress.update(
+            format!(
+                "reading the runtime's containers for shared `{}`",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
         let containers = read_shared_containers(policy, service);
-        refuse_vanished_shared_render(policy, service, containers.as_deref())?;
+        refuse_vanished_shared_render(policy, service, containers.as_deref())
+            .map_err(|error| shared_service_refusal(policy, service, "render check", error))?;
         if let Some(render) = renders
             .iter()
             .find(|render| Some(render.directory.as_path()) == service.compose_file.parent())
         {
+            progress.update(
+                format!("publishing the render of shared `{}`", service.service_name),
+                Some((done, total)),
+                None,
+            );
             effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot publish shared {} render: {error}",
-                    service.service_name
-                ))
+                shared_service_refusal(
+                    policy,
+                    service,
+                    "render publication",
+                    RunnerError::task_invocation(format!(
+                        "cannot publish shared {} render: {error}",
+                        service.service_name
+                    )),
+                )
             })?;
         }
-        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())?;
+        progress.update(
+            format!(
+                "checking the render of shared `{}` against its container",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
+        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())
+            .map_err(|error| {
+                shared_service_refusal(policy, service, "render replacement", error)
+            })?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
+        progress.update(
+            format!(
+                "waiting for docker compose up (shared {}) to return",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
         run_shared_compose_capture(
             workdir,
             policy,
             &shared_compose_args(service, ["up", "-d", "--remove-orphans"]),
             &format!("docker compose up (shared {})", service.service_name),
-        )?;
+        )
+        .map_err(|error| shared_service_refusal(policy, service, "docker compose up", error))?;
+        // Compose has returned for this shared stack, so the frame follows the
+        // restart-policy apply stage by stage: the Compose declaration read,
+        // the runtime inventory read, then the update. A stalled read names
+        // that read, never the finished Compose call (effigy#460, Q-017).
+        let restart_subject = shared_service_subject(&service.service_name);
+        let mut restart_stage = |stage: super::steps::RestartPolicyStage| {
+            super::steps::restart_policy_stage(
+                progress,
+                &restart_subject,
+                stage,
+                Some((done, total)),
+            );
+        };
         // The shared stack is started, so it gets the restart policy here too
         // (effigy#383).
-        effigy_containers::policy::restart::apply_after_start(
+        effigy_containers::policy::restart::apply_after_start_observed(
             &policy.repo_root,
             policy,
             &service.project_name,
             std::slice::from_ref(&service.compose_file),
             None,
+            &mut restart_stage,
         );
         notes.push(match replaced {
             true => format!("replaced shared {} (render changed)", service.service_name),
@@ -449,6 +742,46 @@ fn ensure_shared_services_with_renders(
         });
     }
     Ok(notes)
+}
+
+/// The awaited subject for one shared service's wait.
+fn shared_service_subject(service_name: &str) -> String {
+    format!("shared `{service_name}`")
+}
+
+/// Enter one shared service's wait: it names that service and drops the
+/// previous service's event, which described work that already finished
+/// (effigy#460, Q-017).
+fn begin_shared_service_wait(progress: &ProgressSource, service_name: &str) {
+    progress.waiting_on(shared_service_subject(service_name));
+    progress.clear_event();
+}
+
+/// A shared service's failed step, as the wait it was in: the service, its
+/// project and the step that did not finish. A refusal that already carries
+/// its own machine-readable document keeps it (effigy#460, Q-017).
+fn shared_service_refusal(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+    step: &str,
+    error: RunnerError,
+) -> RunnerError {
+    if error.json_error_details().is_some() {
+        return error;
+    }
+    RunnerError::container_wait_refused(
+        &policy.name,
+        error.to_string(),
+        serde_json::json!({
+            "failure_kind": "shared_service",
+            "waiting_on": [{
+                "kind": "shared_service",
+                "service": service.service_name,
+                "project": service.project_name,
+                "step": step,
+            }],
+        }),
+    )
 }
 
 /// The shared project's containers as the runtime reports them. A failed read is
@@ -1247,6 +1580,7 @@ mod tests {
     use effigy_containers::{
         exec::RunningComposeContainer, EffectiveComposeSource, EffectiveContainerPolicy,
     };
+    use effigy_ui::steps::ProgressSource;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
@@ -1506,6 +1840,348 @@ mod tests {
     }
 
     #[test]
+    fn a_definite_health_refusal_names_the_status_the_container_and_its_tail() {
+        let mut policy = test_policy();
+        let check = "http://127.0.0.1:3000/health".to_owned();
+        policy.health_check = Some(check.clone());
+        policy.health_timeout_secs = 60;
+        // A Compose `container_name` is not the `<project>-<service>-1`
+        // default, so the refusal reports the identity the runtime gave.
+        let error = super::declared_health_refusal_with_evidence(
+            &policy,
+            effigy_containers::health::HealthWaitError::StatusMismatch {
+                subject: "container `ui-custom`".to_owned(),
+                check: check.clone(),
+                status: 500,
+                timeout_secs: 60,
+            },
+            Some("ui-custom".to_owned()),
+            Some("app: GET /health answered 500".to_owned()),
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("the health check of container `ui-custom`"),
+            "the refusal names the container the runtime reported: {message}"
+        );
+        assert!(
+            !message.contains("container `web`"),
+            "the environment is never named as the container: {message}"
+        );
+        assert!(
+            message.contains("answered HTTP 500") && message.contains("status_mismatch"),
+            "{message}"
+        );
+        assert!(
+            message.contains("last container output: app: GET /health answered 500"),
+            "{message}"
+        );
+        let details: serde_json::Value = serde_json::from_str(
+            error
+                .json_error_details()
+                .expect("a declared check refusal carries its wait"),
+        )
+        .expect("the wait details are JSON");
+        assert_eq!(details["failure_kind"], "container_readiness");
+        assert_eq!(details["waiting_on"][0]["kind"], "health_check");
+        assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
+        assert_eq!(details["waiting_on"][0]["status"], 500);
+        assert_eq!(details["waiting_on"][0]["check"], check);
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
+        assert_eq!(
+            details["waiting_on"][0]["last_output"],
+            "app: GET /health answered 500"
+        );
+    }
+
+    #[test]
+    fn a_spent_health_budget_names_the_environment_honestly_without_a_container() {
+        let policy = test_policy();
+        let error = super::declared_health_refusal_with_evidence(
+            &policy,
+            effigy_containers::health::HealthWaitError::NotReady {
+                subject: format!(
+                    "environment `{}` (primary service `{}`)",
+                    policy.name, policy.primary_service
+                ),
+                check: "tcp://127.0.0.1:9".to_owned(),
+                timeout_secs: 60,
+            },
+            None,
+            None,
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("did not become ready within 60s"),
+            "{message}"
+        );
+        // With no container identity, the diagnostic describes the environment
+        // and its service instead of calling the environment a container.
+        assert!(
+            message.contains("environment `web` (primary service `app`)"),
+            "{message}"
+        );
+        assert!(!message.contains("container `web`"), "{message}");
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["waiting_on"][0]["answer"], "not_ready");
+        assert!(details["waiting_on"][0].get("status").is_none());
+        // No container could be read, so the wait claims none instead of
+        // guessing one.
+        assert!(details["waiting_on"][0]["container"].is_null());
+    }
+
+    /// A checkout whose runtime answers one project row, an empty inspect, and
+    /// a log tail for the named container. `rows` decides whether the runtime
+    /// names the primary container at all.
+    fn runtime_fixture(
+        name: &str,
+        rows: bool,
+        logs: bool,
+        container: &str,
+        project: &str,
+    ) -> (effigy_test_support::Fixture, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = effigy_test_support::Fixture::workspace(name).expect("fixture workspace");
+        let root = fixture.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let listing = if rows {
+            format!(
+                "printf '{container}\\tUp 2 minutes\\t\\t{project}\\t{root}\\tapp\\t\\n'",
+                root = root.display(),
+            )
+        } else {
+            "exit 0".to_owned()
+        };
+        // The primary service reports Running with no health check, so the
+        // per-service readiness wait finishes and the declared check is the one
+        // under test.
+        let inspect = format!(
+            "[{{\"Name\":\"/{container}\",\"State\":{{\"Status\":\"running\"}},\"Config\":{{\"Labels\":{{\"com.docker.compose.service\":\"app\"}}}}}}]"
+        );
+        let log = root.join("calls");
+        let logs_answer = if logs {
+            "printf 'app: GET /health answered 500\\n'".to_owned()
+        } else {
+            "echo 'runtime logs unavailable' >&2; exit 1".to_owned()
+        };
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  logs*) {logs_answer} ;;\n  inspect*) printf '%s' '{inspect}' ;;\n  *) {listing} ;;\nesac\n",
+            log = log.display(),
+        );
+        for name in ["docker", "colima"] {
+            let executable = bin.join(name);
+            std::fs::write(&executable, &script).unwrap();
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::fs::write(root.join("effigy.toml"), "[tasks]\nbuild = \"true\"\n").unwrap();
+        (fixture, root)
+    }
+
+    /// One in-process HTTP answer on a loopback port, so the declared check's
+    /// probe sees a real status line.
+    fn answer_http_once(status_line: &str) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let answer = status_line.to_owned();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0u8; 256];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(
+                    format!("{answer}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                );
+            }
+        });
+        port
+    }
+
+    /// The runtime calls this fixture's fake runtime recorded.
+    fn runtime_calls(root: &Path) -> Vec<String> {
+        std::fs::read_to_string(root.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_definite_health_refusal_names_the_container_the_runtime_reports() {
+        let (_fixture, root) = runtime_fixture(
+            "effigy-declared-health-container-",
+            true,
+            true,
+            "ui-custom",
+            "demo-web-renamed",
+        );
+        let _env = runtime_env_for(&root);
+        let port = answer_http_once("HTTP/1.1 500 Internal Server Error");
+        let check = format!("http://127.0.0.1:{port}/health");
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        policy.health_check = Some(check.clone());
+        policy.health_timeout_secs = 60;
+        let error = super::wait_for_container_ready(&policy, None, None)
+            .expect_err("a definite 500 is a terminal refusal");
+        // The readiness probe already reported the primary service's container,
+        // so the declared wait carries that identity instead of asking the
+        // runtime a second time: no bare `ps` (the readiness read is `ps
+        // --all`) was issued for it.
+        let calls = runtime_calls(&root);
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("ps ") && !call.contains("--all")),
+            "the identity is carried from the readiness observation: {calls:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("answered HTTP 500"), "{message}");
+        assert!(
+            message.contains("the health check of container `ui-custom`"),
+            "the human message names the runtime's container: {message}"
+        );
+        assert!(
+            !message.contains("container `web`"),
+            "the environment is never named as the container: {message}"
+        );
+        assert!(
+            message.contains("last container output: app: GET /health answered 500"),
+            "{message}"
+        );
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["failure_kind"], "container_readiness");
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
+        assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
+        assert_eq!(details["waiting_on"][0]["status"], 500);
+        assert_eq!(
+            details["waiting_on"][0]["last_output"],
+            "app: GET /health answered 500"
+        );
+        // Without a readiness observation the same identity still comes from
+        // the runtime's row, read under its own live step.
+        assert_eq!(
+            super::primary_service_container_observed(&policy, None).as_deref(),
+            Some("ui-custom"),
+            "the runtime's own row names the container, not the Compose default"
+        );
+    }
+
+    #[test]
+    fn the_primary_container_read_names_the_runtime_row_it_waits_on() {
+        use std::time::Duration;
+
+        // The readiness wait has finished by the time this read starts, so the
+        // frame must name the read itself: a runtime that stalls here is never
+        // an idle command (effigy#460, Q-017).
+        let policy = test_policy();
+        let progress = super::primary_container_progress(&policy);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "reading the runtime's row for primary service `app` of `demo-web-renamed`; waiting for the runtime to name the primary container of `demo-web-renamed`; 12s elapsed"
+        );
+    }
+
+    #[test]
+    fn the_declared_health_log_read_names_the_container_and_its_elapsed_wait() {
+        use std::time::Duration;
+
+        // The declared check's own step has ended by the time the log tail is
+        // read, so the tail names the container it reads: a runtime that stalls
+        // here is never an idle command (effigy#460, Q-017).
+        let progress = super::declared_health_tail_progress("ui-custom");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "reading the last line `ui-custom` printed; waiting for the runtime's log tail of `ui-custom`; 12s elapsed"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_log_read_leaves_the_refusal_without_a_tail() {
+        let (_fixture, root) = runtime_fixture(
+            "effigy-declared-health-no-logs-",
+            true,
+            false,
+            "ui-custom",
+            "demo-web-renamed",
+        );
+        let _env = runtime_env_for(&root);
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        policy.health_check = Some("http://127.0.0.1:3000/health".to_owned());
+        policy.health_timeout_secs = 60;
+        assert_eq!(
+            super::declared_health_tail(&policy, "ui-custom"),
+            None,
+            "a log read the runtime does not answer yields no tail"
+        );
+        let error = super::declared_health_refusal(
+            &policy,
+            effigy_containers::health::HealthWaitError::StatusMismatch {
+                subject: "container `ui-custom`".to_owned(),
+                check: "http://127.0.0.1:3000/health".to_owned(),
+                status: 500,
+                timeout_secs: 60,
+            },
+            Some("ui-custom".to_owned()),
+        );
+        let message = error.to_string();
+        assert!(message.contains("answered HTTP 500"), "{message}");
+        assert!(!message.contains("last container output"), "{message}");
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
+        assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
+        assert!(
+            details["waiting_on"][0].get("last_output").is_none(),
+            "the wait claims no tail it did not read: {details}"
+        );
+    }
+
+    #[test]
+    fn a_health_refusal_without_a_container_names_the_environment_and_service() {
+        let (_fixture, root) = runtime_fixture(
+            "effigy-declared-health-no-container-",
+            false,
+            true,
+            "ui-custom",
+            "demo-web-renamed",
+        );
+        let _env = runtime_env_for(&root);
+        let port = answer_http_once("HTTP/1.1 500 Internal Server Error");
+        let check = format!("http://127.0.0.1:{port}/health");
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        policy.health_check = Some(check.clone());
+        policy.health_timeout_secs = 60;
+        assert_eq!(
+            super::primary_service_container_observed(&policy, None),
+            None
+        );
+        let error = super::wait_for_container_ready(&policy, None, None)
+            .expect_err("a definite 500 is a terminal refusal");
+        let message = error.to_string();
+        assert!(
+            message.contains("the health check of environment `web` (primary service `app`)"),
+            "with no container identity the diagnostic describes the environment: {message}"
+        );
+        assert!(!message.contains("container `web`"), "{message}");
+        assert!(!message.contains("last container output"), "{message}");
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert!(
+            details["waiting_on"][0]["container"].is_null(),
+            "no container identity is claimed: {details}"
+        );
+    }
+
+    #[test]
     fn runtime_mismatch_detects_stale_project_name_for_same_repo_service() {
         let mismatch = running_container_runtime_mismatch(
             Path::new("/tmp/demo"),
@@ -1627,6 +2303,7 @@ mod tests {
         _fixture: effigy_test_support::Fixture,
         root: PathBuf,
         volume: PathBuf,
+        compose: Vec<u8>,
     }
 
     impl SharedFixture {
@@ -1650,6 +2327,12 @@ mod tests {
         }
 
         fn build(name: &str, project: &str, listing: &str) -> Self {
+            Self::with_compose(name, project, "services: {}\n", listing)
+        }
+
+        /// The same checkout and runtime, with a Compose render that declares
+        /// `services`.
+        fn with_compose(name: &str, project: &str, compose: &str, listing: &str) -> Self {
             let fixture = effigy_test_support::Fixture::workspace(name).unwrap();
             let root = fixture.path().canonicalize().unwrap();
             let bin = root.join("bin");
@@ -1678,12 +2361,13 @@ mod tests {
             for digest in ["this-render", "previous-render"] {
                 let directory = root.join("store").join(digest);
                 std::fs::create_dir_all(&directory).unwrap();
-                std::fs::write(directory.join("compose.yml"), "services: {}\n").unwrap();
+                std::fs::write(directory.join("compose.yml"), compose).unwrap();
             }
             Self {
                 _fixture: fixture,
                 root,
                 volume,
+                compose: compose.as_bytes().to_vec(),
             }
         }
 
@@ -1725,7 +2409,7 @@ mod tests {
                 directory: self.render_dir(digest),
                 files: std::collections::BTreeMap::from([(
                     PathBuf::from("compose.yml"),
-                    b"services: {}\n".to_vec(),
+                    self.compose.clone(),
                 )]),
             }
         }
@@ -1760,6 +2444,103 @@ mod tests {
             ("HOME", Some(root.display().to_string())),
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
         ])
+    }
+
+    /// Each shared service is its own wait: entering it replaces the previous
+    /// service's subject and drops the event it ended on, so a stalled stage
+    /// never names the service that already finished (effigy#460, Q-017).
+    #[test]
+    fn each_shared_service_names_its_own_wait() {
+        use std::time::Duration;
+
+        let progress = ProgressSource::waiting_for("shared services");
+
+        // Service `db` reaches its restart-policy apply, which is where its
+        // wait ends.
+        super::begin_shared_service_wait(&progress, "db");
+        progress.update(
+            "waiting for the machine gate of shared project `demo-db`",
+            Some((0, 2)),
+            None,
+        );
+        super::super::steps::restart_policy_stage(
+            &progress,
+            &super::shared_service_subject("db"),
+            super::super::steps::RestartPolicyStage::Apply,
+            Some((0, 2)),
+        );
+        assert!(
+            progress
+                .frame_at(Duration::from_secs(5))
+                .contains("waiting for `restart: unless-stopped` on shared `db`"),
+            "{}",
+            progress.frame_at(Duration::from_secs(5))
+        );
+        // The completed service left an event behind for its own wait.
+        progress.event("shared `db` is running");
+
+        // Service `cache` is a different wait: its gate frame names `cache` and
+        // carries neither `db`'s subject nor its event.
+        super::begin_shared_service_wait(&progress, "cache");
+        progress.update(
+            "waiting for the machine gate of shared project `demo-cache`",
+            Some((1, 2)),
+            None,
+        );
+        let frame = progress.frame_at(Duration::from_secs(9));
+        assert_eq!(
+            frame,
+            "waiting for the machine gate of shared project `demo-cache` (1/2); waiting for shared `cache`; 9s elapsed"
+        );
+        assert!(!frame.contains("shared `db`"), "{frame}");
+        assert!(
+            !frame.contains("last:"),
+            "the previous service's event is cleared: {frame}"
+        );
+    }
+
+    /// A shared service's step follows the restart-policy apply stage by stage:
+    /// the Compose declaration read, the runtime inventory read, then the
+    /// update. A stalled read names that read, never the Compose call that
+    /// already returned (effigy#460, Q-017).
+    #[test]
+    fn a_shared_service_step_follows_the_restart_policy_stages() {
+        use std::time::Duration;
+
+        let project = "effigy-shared-restart-frame";
+        let container = format!("{project}-legacy_mysql-1");
+        // The runtime answers both the shared-project inventory this ensure
+        // reads and the project inventory the restart-policy apply reads, so
+        // the apply reaches its update.
+        let listing = format!(
+            "case \"$*\" in *com.effigy.shared-render*) printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' 'this-render' '{project}' ;; *) printf '%s\\t%s\\t\\t%s\\t%s\\tlegacy_mysql\\t\\n' '{container}' 'Up 2 minutes' '{project}' '{project}' ;; esac"
+        );
+        let fixture = SharedFixture::with_compose(
+            "effigy-shared-restart-frame-",
+            project,
+            "services:\n  legacy_mysql:\n    image: mariadb:latest\n",
+            &listing,
+        );
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+        let progress = ProgressSource::waiting_for("shared services");
+        let renders = vec![fixture.render("this-render")];
+        super::ensure_shared_services_with_renders_observed(&policy, &renders, &progress)
+            .expect("a healthy shared service starts");
+        // The step ends on the restart-policy update, not the Compose call it
+        // already returned from, and keeps the per-service count.
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(9)),
+            "asking the runtime to keep the containers of shared `legacy_mysql` on `restart: unless-stopped` (0/1); waiting for `restart: unless-stopped` on shared `legacy_mysql`; 9s elapsed"
+        );
+        assert!(
+            fixture
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("update ")),
+            "the update was sent: {:?}",
+            fixture.calls()
+        );
     }
 
     /// A shared service whose render is unchanged is never touched, so a second
@@ -2284,6 +3065,17 @@ variant = "default"
         ] {
             assert!(message.contains(expected), "{expected}: {message}");
         }
+        // The refusal names the shared wait it was in, machine-readably.
+        let details: serde_json::Value = serde_json::from_str(
+            error
+                .json_error_details()
+                .expect("a shared-service refusal carries its wait"),
+        )
+        .expect("the wait details are JSON");
+        assert_eq!(details["failure_kind"], "shared_service");
+        assert_eq!(details["waiting_on"][0]["kind"], "shared_service");
+        assert_eq!(details["waiting_on"][0]["service"], "db");
+        assert_eq!(details["waiting_on"][0]["step"], "render check");
         assert!(
             !render_dir.exists(),
             "the refusal does not re-render the shared service: {}",

@@ -48,6 +48,16 @@ pub enum RunnerError {
         /// The listeners that failed, with their bounded, redacted evidence.
         failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     },
+    /// A container bring-up ended in a wait it could not finish: services that
+    /// never reported ready, a declared health check, or a shared service step.
+    /// The display sentence is the human diagnostic; `details_json` carries
+    /// `failure_kind` and the machine-readable `waiting_on` list, one entry per
+    /// wait the bring-up was still in (effigy#460, Q-017).
+    ContainerWaitRefused {
+        environment: String,
+        diagnostic: String,
+        details_json: String,
+    },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
     ContainerSurfaceNotDefined {
@@ -299,6 +309,7 @@ impl RunnerError {
             | RunnerError::Task(_)
             | RunnerError::Ui(_)
             | RunnerError::TaskInvocation(_)
+            | RunnerError::ContainerWaitRefused { .. }
             | RunnerError::ContainerSurfaceRegistryMissing
             | RunnerError::ContainerSurfaceDefaultTargetMissing
             | RunnerError::ContainerSurfaceNotDefined { .. }
@@ -409,6 +420,21 @@ impl RunnerError {
 
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
+    }
+
+    /// A container wait that ended unfinished: its human `diagnostic`, and the
+    /// machine-readable `details` (`failure_kind`, `waiting_on`) for `--json`.
+    pub(in crate::runner) fn container_wait_refused(
+        environment: &str,
+        diagnostic: String,
+        mut details: serde_json::Value,
+    ) -> Self {
+        details["environment"] = environment.into();
+        Self::ContainerWaitRefused {
+            environment: environment.to_owned(),
+            diagnostic,
+            details_json: details.to_string(),
+        }
     }
 
     pub(in crate::runner) fn container_runtime_policy(

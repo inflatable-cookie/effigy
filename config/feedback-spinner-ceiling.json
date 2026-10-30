@@ -7,27 +7,15 @@
   ],
   [
     "crates/effigy-containers/src/exec/compose_steps.rs",
-    34,
+    47,
     "step: effigy_ui::steps::step(&label.into()),",
     37
   ],
   [
     "crates/effigy-containers/src/exec/compose_steps.rs",
-    91,
+    120,
     "TimedStep::new(label)",
     16
-  ],
-  [
-    "crates/effigy-containers/src/exec/compose_steps.rs",
-    127,
-    ".or_insert_with(|| (TimedStep::new(event.label(&project)), subject.clone()));",
-    44
-  ],
-  [
-    "crates/effigy-containers/src/health.rs",
-    49,
-    "let step = effigy_ui::steps::step(&format!(\"waiting for {container_name} to report healthy\"));",
-    34
   ],
   [
     "crates/effigy-runtime/src/write.rs",
@@ -79,117 +67,51 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    254,
+    263,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    877,
+    886,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1051,
+    1060,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1054,
+    1063,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1056,
+    1065,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1058,
+    1067,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1075,
+    1084,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1077,
+    1086,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    409,
-    "let integrations = steps::during(",
-    31
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    426,
-    "let settling = steps::phase(\"settling the environment\");",
-    27
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    493,
-    "let ports_step = steps::phase(\"preparing ports and loopback\");",
-    29
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    508,
-    "let rendering_step = steps::phase(\"rendering the stack\");",
-    33
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    533,
-    "steps::during(\"starting shared services\", \"shared services ready\", || {",
-    16
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    575,
-    "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
-    30
-  ],
-  [
-    "src/runner/container_command/readiness.rs",
-    134,
-    "let parent = TimedStep::new(\"waiting for services to report healthy\");",
-    29
-  ],
-  [
-    "src/runner/container_command/readiness.rs",
-    344,
-    "steps.insert(service.service.clone(), TimedStep::new(label));",
-    66
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    8,
-    "pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};",
-    42
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    21,
-    "let step = phase(label);",
-    16
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    41,
-    "during(\"registering routes\", \"routes registered\", || {",
-    13
   ],
   [
     "src/runner/execute/sequence_run.rs",

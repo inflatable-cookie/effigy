@@ -769,6 +769,73 @@ until the host-log writer has a safe secret-handling boundary.
   command or source they wait on, in place of one fixed label. JSON, piped and
   quiet output are unchanged.
 
+- `container up` progress now follows the bring-up's actual state. Readiness
+  counts the healthy services (`2/3`) and names the first one still failing
+  with its own problem; each waiting service shows its attempt and last check
+  output. A runtime that does not answer the health read names that exact read
+  with its error. Activation shows the Compose call it waits on and the last
+  runtime line it read, and each Compose child step moves with the runtime's
+  reports instead of holding one fixed label. Integration stages count the
+  stages finished (`3/8`) and name the one now running; the gateway-route stage
+  names the runtime read polling the declared service ports and the blocker it
+  last reported, with the service and domain that blocker knows; the work after
+  that poll — confirming the primary container's binding, resolving the declared
+  routes, writing the route table, and the timeout diagnostic's read of exited
+  containers — is reported as its own stages, and entering a new stage clears
+  the previous stage's blocker; shared services name the service they are
+  awaiting, and entering the next service replaces the previous one's subject
+  and event. Every frame carries elapsed time. JSON, piped and
+  quiet output stay silent. Rendering is a single finished line, not a spinner.
+  A readiness refusal carries its machine-readable `waiting_on` list in
+  `--json`: one entry per service still unready, with its problem, and one for
+  a health read the runtime did not answer, naming that read (`container_list`
+  or `containers_inspect`), its probe number and, for an inspect, the container
+  names it covered. A failed read keeps that identity in the retry frame and in
+  the timeout diagnostic too. Shared-service waits name the
+  machine gate, the runtime container read, the render publication, or the
+  `docker compose up` they are in. A readiness frame names which of the probe's
+  two runtime reads is in flight — the project's container list, then the
+  inspect of the names that list returned, with those names shown — alongside
+  its probe number, budget and the last known counts and event. A service whose
+  health regresses after reporting healthy opens a fresh step with its own
+  attempt and last check output. When an exited service's own last log line is
+  read for the timeout diagnostic, each read runs under a live step naming the
+  runtime container it is issued against (which can differ from the service
+  name when Compose declares `container_name`), and a read the runtime does not
+  answer is reported rather than shown as the finished probe. A declared health check names its probe and
+  attempt. A
+  failed shared-service step, and a declared health check that times out, carry
+  the same `waiting_on` list in `--json` and keep their text unchanged.
+- `container up` activation and preparation report their own state instead of a
+  fixed label. Compose's whole-stack step moves to the restart-policy read once
+  Compose returns, and a shared service's step does the same, so a stalled
+  `restart: unless-stopped` read never shows a finished Compose call. The
+  creation-time policy load names the preparation stage now running (checkout
+  identity, declaration with ports and loopback, render inputs, the second
+  declaration resolution that follows them, render, mount sources), and
+  environment activation draws only the transition's own live step instead of a
+  second fixed one. A declared
+  `[containers.<NAME>.health]` check that answers a definite status outside
+  `2xx`/`3xx` is refused at once with the status it observed and the primary
+  container's last output, instead of spending the whole health budget on an
+  answer waiting cannot change (effigy#455). Only a complete status line counts
+  as that answer: the probe reads one bounded line across partial reads, so a
+  split response or a peer that closes after a prefix keeps the budgeted wait
+  instead of reporting readiness or a mismatch it never observed. That
+  container is the identity the
+  runtime's own row reports for the service, so an explicit Compose
+  `container_name` reads its own logs and is the one the diagnostic and
+  `waiting_on` name. That identity is carried from the readiness probe's own
+  observation, so naming it costs no extra runtime read; a wait that observed
+  no services reads it once, under a live step naming the runtime row it waits
+  on; the failed container's log tail is read under its own named step too, and
+  a log read the runtime does not answer is reported as unavailable. When the runtime cannot name a container, the diagnostic describes the
+  environment and its primary service instead of calling the environment a
+  container. The restart-policy apply that follows Compose names
+  its own stages — the Compose declaration read, the runtime inventory read,
+  then the update — for the whole stack and for each shared service, so a
+  stalled read never claims an update was sent.
+
 ### Removed
 
 - The gateway's dead-route sweep, certificate deletion on `down`, the
