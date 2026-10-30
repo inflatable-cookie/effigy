@@ -198,7 +198,11 @@ fn install_interrupt_watcher() -> bool {
 }
 
 fn watch_interrupts(mut signals: signal_hook::iterator::Signals) {
-    for signal in signals.forever() {
+    // One interrupt is all this watcher handles: it publishes the interrupt,
+    // retires what this process owns, then lets the signal take its default
+    // action. `forever()` blocks the same way `next()` does, so an interrupt
+    // that never arrives keeps the watcher parked instead of returning.
+    if let Some(signal) = signals.forever().next() {
         // Publish the interrupt before touching anything: the main thread waits
         // for this cleanup instead of returning from the command, so the
         // process cannot exit with the registration still owned.
@@ -244,7 +248,6 @@ fn watch_interrupts(mut signals: signal_hook::iterator::Signals) {
         *done.lock().unwrap_or_else(|poison| poison.into_inner()) = true;
         ready.notify_all();
         let _ = signal_hook::low_level::emulate_default_handler(signal);
-        return;
     }
 }
 

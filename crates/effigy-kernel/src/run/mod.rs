@@ -35,7 +35,8 @@ pub use terminal::{
 };
 
 pub use attachments::{
-    AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
+    AttachMode, AttachmentTicket, Attachments, GuestPublicationReceipt, GuestPublicationTicket,
+    Holder, Liveness, TransitionPermit, GUEST_PUBLICATION_KIND,
 };
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
@@ -493,6 +494,9 @@ impl<'a> Run<'a> {
         // The gate is held: only now does the settlement window start, so the
         // wait above cannot spend it (effigy#447).
         let cleanup = cleanup()?;
+        if root.is_machine() {
+            settle::compact_machine_closed(&mut store, &inv.spec().owner, &cleanup)?;
+        }
         let mut predecessors = Vec::new();
         for owner in guard.ids() {
             predecessors.extend(
@@ -752,7 +756,8 @@ impl<'a> Run<'a> {
     }
 
     pub fn intend(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
-        // Environment mutation must go through TransitionPermit::intend.
+        // Destructive environment mutation needs TransitionPermit. Only the typed
+        // Attachments guest-publication operation admits additive immutable writes.
         if spec.target.resource.kind() == crate::id::ResourceKind::Env {
             return Err(RunError::broken(
                 "environment effect needs a transition permit",

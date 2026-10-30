@@ -1,0 +1,446 @@
+[
+  [
+    "crates/effigy-containers/src/exec.rs",
+    31,
+    "pub use compose_steps::{phase, ComposeSteps, TimedStep};",
+    25
+  ],
+  [
+    "crates/effigy-containers/src/exec/compose_steps.rs",
+    34,
+    "step: effigy_ui::steps::step(&label.into()),",
+    37
+  ],
+  [
+    "crates/effigy-containers/src/exec/compose_steps.rs",
+    91,
+    "TimedStep::new(label)",
+    16
+  ],
+  [
+    "crates/effigy-containers/src/exec/compose_steps.rs",
+    127,
+    ".or_insert_with(|| (TimedStep::new(event.label(&project)), subject.clone()));",
+    44
+  ],
+  [
+    "crates/effigy-containers/src/health.rs",
+    49,
+    "let step = effigy_ui::steps::step(&format!(\"waiting for {container_name} to report healthy\"));",
+    34
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    77,
+    ".then(|| effigy_containers::exec::phase(format!(\"stopping the `{}` stack\", policy.name)));",
+    43
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    389,
+    "use effigy_containers::exec::{phase, ComposeStepEvent, ComposeSteps};",
+    35
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    396,
+    "finish_whole_stack(&phase(\"stopping the `web` stack\"), ending);",
+    33
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    418,
+    "finish_whole_stack(&phase(\"stopping the `web` stack\"), ending);",
+    33
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    439,
+    "finish_whole_stack(&phase(\"stopping the `web` stack\"), ending);",
+    33
+  ],
+  [
+    "crates/effigy-runtime/src/write.rs",
+    454,
+    "finish_whole_stack(&phase(\"stopping the `web` stack\"), ending);",
+    33
+  ],
+  [
+    "crates/effigy-ui/src/plain_renderer/mod.rs",
+    137,
+    "self.render_spinner(label)",
+    14
+  ],
+  [
+    "crates/effigy-ui/src/plain_renderer/progress.rs",
+    18,
+    "let spinner = ProgressBar::new_spinner();",
+    27
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    235,
+    ".then(|| sink.start_bar(label));",
+    27
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    848,
+    "let _child = parent.step(\"waiting for web to report healthy\");",
+    29
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1022,
+    "let step = step(\"starting gateway\");",
+    24
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1025,
+    "let failed = step.step(\"starting DNS\");",
+    31
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1027,
+    "let cleared = step.step(\"starting proxy\");",
+    32
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1029,
+    "let unfinished = step.step(\"starting broker\");",
+    35
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1046,
+    "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
+    43
+  ],
+  [
+    "crates/effigy-ui/src/steps.rs",
+    1048,
+    "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
+    44
+  ],
+  [
+    "src/cli/entrypoint.rs",
+    261,
+    ".then(|| effigy_ui::steps::step(transient_spinner_label(&command)));",
+    36
+  ],
+  [
+    "src/runner/bootstrap_command/mod.rs",
+    242,
+    "self.running = Some(effigy_ui::steps::step(&label));",
+    47
+  ],
+  [
+    "src/runner/bootstrap_command/mod.rs",
+    257,
+    "let step = effigy_ui::steps::step(&summary);",
+    46
+  ],
+  [
+    "src/runner/bundle_command.rs",
+    380,
+    "let step = effigy_ui::steps::step(&label);",
+    42
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    397,
+    "let integrations = steps::during(",
+    31
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    414,
+    "let settling = steps::phase(\"settling the environment\");",
+    27
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    481,
+    "let ports_step = steps::phase(\"preparing ports and loopback\");",
+    29
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    496,
+    "let rendering_step = steps::phase(\"rendering the stack\");",
+    33
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    521,
+    "steps::during(\"starting shared services\", \"shared services ready\", || {",
+    16
+  ],
+  [
+    "src/runner/container_command/lifecycle.rs",
+    563,
+    "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
+    30
+  ],
+  [
+    "src/runner/container_command/readiness.rs",
+    74,
+    "let parent = TimedStep::new(\"waiting for services to report healthy\");",
+    29
+  ],
+  [
+    "src/runner/container_command/readiness.rs",
+    260,
+    "steps.insert(service.service.clone(), TimedStep::new(label));",
+    66
+  ],
+  [
+    "src/runner/container_command/steps.rs",
+    8,
+    "pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};",
+    42
+  ],
+  [
+    "src/runner/container_command/steps.rs",
+    21,
+    "let step = phase(label);",
+    16
+  ],
+  [
+    "src/runner/container_command/steps.rs",
+    41,
+    "during(\"registering routes\", \"routes registered\", || {",
+    13
+  ],
+  [
+    "src/runner/deploy_command/provider_package.rs",
+    251,
+    "let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));",
+    34
+  ],
+  [
+    "src/runner/execute/sequence_run.rs",
+    471,
+    "let step = effigy_ui::steps::step(&progress);",
+    38
+  ],
+  [
+    "src/runner/feedback.rs",
+    20,
+    "use effigy_ui::steps::{step, Step};",
+    24
+  ],
+  [
+    "src/runner/feedback.rs",
+    34,
+    "let step = step(label);",
+    16
+  ],
+  [
+    "src/runner/feedback.rs",
+    54,
+    "live(\"reading gateway state\", |step| {",
+    13
+  ],
+  [
+    "src/runner/feedback.rs",
+    66,
+    "live::<()>(\"starting the gateway\", |_| {",
+    13
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    27,
+    "use super::feedback::live;",
+    22
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    548,
+    "let result = live(\"starting the gateway\", |step| {",
+    22
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    574,
+    "let existing = live(\"reading gateway state\", |step| {",
+    20
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    589,
+    "live(\"replacing the running gateway\", |step| {",
+    13
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    598,
+    "live(\"starting the gateway\", |step| {",
+    5
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    625,
+    "let result = live(\"stopping the gateway\", |step| {",
+    22
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    644,
+    "let status = live(\"reading gateway state\", |step| {",
+    18
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    662,
+    "live(\"stopping the gateway\", |step| {",
+    9
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    692,
+    "live(\"removing the gateway record\", |step| {",
+    9
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    850,
+    "let result = live(\"reading gateway state\", |_| {",
+    22
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    877,
+    "let probed = live(\"reading gateway state\", |step| {",
+    18
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1828,
+    "let step = effigy_ui::steps::step(label);",
+    34
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1857,
+    "let (uid, home) = setup_step(\"verifying the operator account\", |_| {",
+    31
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1868,
+    "return setup_step(\"removing the platform setup (DNS, trust, broker)\", |_| {",
+    28
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1872,
+    "setup_step(\"migrating root-owned gateway state\", |_| {",
+    17
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1878,
+    "setup_step(",
+    17
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1919,
+    "setup_step(\"stopping the gateway\", |_| operator::down(&config))?;",
+    17
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1928,
+    "setup_step(",
+    17
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1940,
+    "setup_step(",
+    13
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1949,
+    "return setup_step(\"removing the setup receipt\", |_| {",
+    24
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    1955,
+    "setup_step(\"recording the setup receipt\", |_| {",
+    13
+  ],
+  [
+    "src/runner/gateway_command/mod.rs",
+    2002,
+    "let result = setup_step(\"starting the gateway\", |step| {",
+    22
+  ],
+  [
+    "src/runner/release_command/ops.rs",
+    117,
+    "let step = effigy_ui::steps::step(&release_run_label(&action, to));",
+    34
+  ],
+  [
+    "src/runner/release_command/ops.rs",
+    178,
+    "self.gate = Some(self.root.step(&label));",
+    36
+  ],
+  [
+    "src/runner/release_command/ops.rs",
+    329,
+    "self.running = Some(effigy_ui::steps::step(&label));",
+    47
+  ],
+  [
+    "src/runner/release_command/ops.rs",
+    338,
+    "let step = effigy_ui::steps::step(&summary);",
+    46
+  ],
+  [
+    "src/runner/state_command.rs",
+    201,
+    "let step = effigy_ui::steps::step(&action.label(&layer.key));",
+    42
+  ],
+  [
+    "src/runner/state_command.rs",
+    841,
+    "effigy_ui::steps::step(&label)",
+    27
+  ],
+  [
+    "src/runner/task_engine/admission.rs",
+    530,
+    "effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(",
+    31
+  ],
+  [
+    "src/runner/task_engine/admission.rs",
+    548,
+    "effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(",
+    27
+  ],
+  [
+    "src/runner/task_engine/admission.rs",
+    591,
+    "let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));",
+    34
+  ],
+  [
+    "src/runner/workspace_command/mod.rs",
+    565,
+    "let spinner = renderer.spinner(label).ok();",
+    32
+  ]
+]

@@ -25,6 +25,10 @@ pub struct TimedStep {
 }
 
 impl TimedStep {
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             step: effigy_ui::steps::step(&label.into()),
@@ -79,6 +83,10 @@ impl TimedStep {
 }
 
 /// A one-off step for a phase that has not finished yet.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 pub fn phase(label: impl Into<String>) -> TimedStep {
     TimedStep::new(label)
 }

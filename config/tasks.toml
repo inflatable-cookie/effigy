@@ -96,6 +96,13 @@
 # filter, for example `effigy test:focused -p effigy-deps --lib -E 'test(x)'`.
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
 "test:deps:lockfile-workflows" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-deps --lib --test cargo_link --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
+# Strict Clippy plus a compile for the whole `effigy-deps` crate (lib, tests and
+# integration targets). A full-workspace sweep also covers crates whose findings
+# are owned elsewhere, so a deps-only change proves itself here.
+"check:deps:all-targets" = { visibility = "internal", group = "Maintenance", run = [
+  { id = "deps-compile", run = "sh scripts/oxide-selector.sh check -p effigy-deps --all-targets", timeout_ms = 600000 },
+  { id = "deps-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy-deps --all-targets -- -D warnings", timeout_ms = 900000 },
+] }
 "test:bundles:pins" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --test local_bundle -E 'test(bundles::) | test(composition::) | binary(local_bundle)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 
@@ -1580,14 +1587,18 @@
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::error::tests::) | test(cli::output::envelope::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(health::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
-"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy-doctor -p effigy-manifest -p effigy-release -p effigy-secrets --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ task = "lint:feedback:inventory" }, { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy-doctor -p effigy-manifest -p effigy-release -p effigy-secrets --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"check:feedback:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-ui -p effigy-containers --all-targets", timeout_ms = 900000 }] }
+"test:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_feedback_inventory.py", timeout_ms = 900000 }] }
+"lint:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/check-feedback-inventory.py", timeout_ms = 900000 }] }
 # Human-facing feedback on the remaining command planes (effigy#315): live
 # steps for bootstrap/setup, bundle and catalog sources, secrets, release
 # gates, deploy provider resolution and task-run steps, plus the error texts
 # that wrap a child's failure. The runtime row proves the container-down
 # report and the whole-stack step endings (Q-017 gap H).
 "test:feedback:planes" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the live steps and error texts of bootstrap/setup, bundle sources, secrets, release gates, deploy and task runs.", run = [
-  { id = "runner-planes", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::bootstrap_command::tests::) | test(runner::bundle_command::tests::) | test(runner::release_command::tests::) | test(runner::deploy_command::provider_package::tests::) | test(runner::execute::sequence_run::tests::) | test(runner::task_engine::admission::tests::) | test(runner::secret_vault::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "runner-planes", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::bootstrap_command::tests::) | test(runner::bundle_command::tests::) | test(runner::release_command::tests::) | test(runner::deploy_command::provider_package::tests::) | test(runner::execute::sequence_run::tests::) | test(runner::task_engine::admission::tests::) | test(runner::secret_vault::tests::) | test(runner::secrets_command::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "doctor-progress", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib -E 'test(progress::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "manifest-sources", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::source::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "secrets-vault", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-secrets --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "runtime-feedback", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime --lib -E 'test(write::report::tests::) | test(write::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },

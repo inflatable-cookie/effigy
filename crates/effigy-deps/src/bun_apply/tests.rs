@@ -732,13 +732,12 @@ fn retirement_keeps_a_foreign_registration_and_its_claim() {
         &bun_registration_path(&fixture.home, "underlay"),
     );
     link(&fixture, &process);
-    assert_eq!(
-        BunRegistrationIndexStore::for_home(&fixture.home)
+    assert!(
+        !BunRegistrationIndexStore::for_home(&fixture.home)
             .read()
             .unwrap()
             .registrations[0]
-            .effigy_created,
-        false
+            .effigy_created
     );
 
     let retirement = retire_bun_registration_claims(
@@ -777,7 +776,10 @@ fn a_failed_retirement_keeps_the_claim_for_unlink() {
     );
 
     assert_eq!(retirement.failures.len(), 1, "{retirement:?}");
-    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert_eq!(
+        registration_consumers(&fixture),
+        std::slice::from_ref(&fixture.repo)
+    );
     assert!(matches!(
         FsBunPlanObserver
             .observe_path(&bun_registration_path(&fixture.home, "underlay"))
@@ -924,7 +926,7 @@ fn an_interrupted_owner_keeps_an_unverified_registration_when_the_index_cannot_b
     let process = FixtureProcess::new(&fixture.home);
     link(&fixture, &process);
     write(
-        &BunRegistrationIndexStore::for_home(&fixture.home).path(),
+        BunRegistrationIndexStore::for_home(&fixture.home).path(),
         "{\"schema\":\"effigy.deps.bun-registrations.v1\",\"truncated\":",
     );
 
@@ -1071,7 +1073,10 @@ fn a_relink_retires_an_existing_claim_instead_of_leaving_it_in_the_index() {
     let process = FixtureProcess::new(&fixture.home);
     // The fixture link leaves the claim and registration a recovery reads.
     link(&fixture, &process);
-    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert_eq!(
+        registration_consumers(&fixture),
+        std::slice::from_ref(&fixture.repo)
+    );
 
     // A re-link over that claim plans no index change of its own, so the
     // retirement alone has to decide that the index is written.
@@ -1133,7 +1138,10 @@ fn a_ledger_write_failure_leaves_the_link_exactly_as_it_was() {
     );
     // A failed transaction leaves the claim, the registration and the ledger
     // exactly as they were: nothing is retired before the ledger commits.
-    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert_eq!(
+        registration_consumers(&fixture),
+        std::slice::from_ref(&fixture.repo)
+    );
     assert!(matches!(
         FsBunPlanObserver
             .observe_path(&bun_registration_path(&fixture.home, "underlay"))
@@ -1224,7 +1232,10 @@ fn an_index_commit_failure_restores_a_pre_existing_registration() {
         fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap(),
         index_before
     );
-    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert_eq!(
+        registration_consumers(&fixture),
+        std::slice::from_ref(&fixture.repo)
+    );
     assert!(
         matches!(
             FsBunPlanObserver

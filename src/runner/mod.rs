@@ -58,6 +58,7 @@ mod tasks_command;
 mod test_support;
 mod uninstall_command;
 mod util;
+mod workspace_client;
 mod workspace_command;
 
 pub(in crate::runner) use bundle_command::run_bundle;

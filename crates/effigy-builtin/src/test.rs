@@ -23,7 +23,14 @@ pub(super) fn try_run_builtin_test(
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, BuiltinError> {
     let (flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
-    let mut target_set = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs)?;
+    // A plan runs nothing, so it neither resolves a scoped backing-service
+    // alias nor refuses for one (effigy#431).
+    let planning_ports = match flags.plan_mode {
+        true => None,
+        false => Some(ports),
+    };
+    let mut target_set =
+        planning::resolve_builtin_test_targets(selector, resolved_root, catalogs, planning_ports)?;
     let runnable = planning::collect_builtin_test_runnable_targets(&target_set.targets);
     if runnable.is_empty() {
         return Ok(None);
@@ -59,12 +66,48 @@ pub(super) fn try_run_builtin_test(
         .map(Some);
     }
 
-    let runnable = planning::apply_passthrough_to_runnable(
+    let mut runnable = planning::apply_passthrough_to_runnable(
         suite_selection.runnable,
         &suite_selection.passthrough,
     );
     check_js_hydration(&runnable, resolved_root)?;
     reject_unusable_suite_runtimes(&runnable)?;
+    // Every alias a selected host suite would use is proved before any suite
+    // starts: its own environment, its rendered command and both lifecycle
+    // commands (effigy#431, contract 005). A suite this run does not select is
+    // never proved, and an alias that only appears in prose is never proved
+    // either.
+    for suite in &mut runnable {
+        if !matches!(suite.runtime, planning::BuiltinTargetRuntime::Host) {
+            continue;
+        }
+        let label = format!("test.suites.{}", suite.runner);
+        let mut texts = vec![suite.command.as_str()];
+        texts.extend(suite.env.values().map(String::as_str));
+        if let Some(setup) = suite.setup_command.as_deref() {
+            texts.push(setup);
+        }
+        if let Some(teardown) = suite.teardown_command.as_deref() {
+            texts.push(teardown);
+        }
+        ports.prove_host_suite_aliases(&suite.root, &label, &texts)?;
+        // A value the suite would otherwise inherit unchanged names the
+        // declared alias just as its own `env` does: resolve and prove it, and
+        // deliver what Effigy resolved (effigy#431 review). Only the suite's own
+        // `env` reaches every invocation; a step's `env` and a command's own
+        // assignment apply to that invocation alone, so they never hide an
+        // inherited value from the primary command.
+        let delivered = suite
+            .env
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        for (key, value) in
+            ports.resolve_host_suite_inherited_env(&suite.root, &label, &delivered)?
+        {
+            suite.env.entry(key).or_insert(value);
+        }
+    }
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
     // The TUI spawns its own processes, so it cannot put suites behind the
     // caller's process custody. A caller that owns host suites runs them

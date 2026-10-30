@@ -13,6 +13,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Breaking
 
+- Workspace guest mount targets must be absolute and contain no `..` components.
+  Equivalent spellings using repeated separators or `.` share the same private
+  store, state-mask and duplicate-target checks.
+
+- Workspace declarations sharing one container must have identical effective
+  configuration; give workspaces with different paths, mounts or identities
+  distinct container names. Declared workspaces without a usable `user` and
+  absolute `home` now refuse preparation and entry with configuration guidance.
+
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before
   upgrading.** These entries change what a consumer sees or relies on.
 - **Host ports come from the OS or Compose.** A generated service publishes
@@ -141,6 +150,59 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **A container-mode workspace is prepared for the workspace client.** Host
+  Prepare publishes an immutable guest context and a version-locked Linux
+  Effigy into the container, outside the bind-mounted checkout. Activation
+  publishes it — `effigy container up`, a task's environment apply and the
+  workspace handoff all go through the same Prepare — so the recovery command
+  the entry refusals name really does repair the state. The context carries:
+  `/run/effigy/context/<generation>/context.json` with the exact host and guest
+  versions, the executable digest, the protocol, and the checkout,
+  environment, container and VM-boot generations it belongs to;
+  `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
+  invocations reach through `/usr/local/bin/effigy`; and, when the session
+  supplies one, a 0600 enrolment credential. The artifact family is the image's
+  platform **and** C library — a glibc image takes the `*-gnu` artifact and a
+  musl image the `*-musl` one — and an image whose libc the host cannot prove,
+  or that has no artifact for its family, refuses Prepare instead of running
+  bytes built against another C library. The digest is verified, not
+  declared: the artifact must carry a producer receipt naming its target and
+  SHA-256, a release download must match the checksum the release publishes
+  beside it, and the executable the guest will run is re-hashed in the
+  container. A guest authenticates it with one digest probe, so a
+  multi-megabyte executable never lands in a bounded command's stdout budget. A published generation and an
+  installed executable are never rewritten, so a run that started on one keeps
+  its exact bytes. Hybrid mode publishes none of this. The context document is
+  `effigy.workspace-context.v1` (contract 052 §8.2, §8.9, §8.11).
+- **Local Static and Observe reads run against the pinned snapshot.** Version,
+  the pinned task list and the pinned source identities are read from the
+  context, an immutable rendered snapshot and the mounted checkout alone: no
+  refresh, no enrolment, no host state write. The context pins the root
+  manifest, the source lock, every bundle and catalog source with its digest
+  and each composition fragment. The composed manifest is published once at
+  `/run/effigy/snapshots/<digest>/manifest.toml`, so bundle- and
+  catalog-provided tasks are readable without the guest reading a cache the
+  host did not approve. The pins whose bytes are checkout-visible are
+  digest-checked first, so a checkout that changed since Prepare refuses
+  instead of reading a snapshot the host never approved, and an
+  authority-bearing command refuses as `HostAuthorityRequired` rather than
+  enrolling.
+
+- Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
+
+- **Environment and Colima profile progress shows live state.** A container
+  environment transition is one step whose label moves with the work: while it
+  waits it names `Gate(Env)` and the holder the gate's own body records (run,
+  pid, task and process state), then each reconcile phase and what it observed
+  (the published render, the record it wrote, the live runs attached, the
+  backend effect). A refused transition shows the live holder that refused it,
+  and every frame carries the elapsed wait. `effigy container profile
+  repair|reset-runtime|resize|recreate|purge|prune-health-pid-files` run under
+  the same live step: the profile operation now running, how many Colima calls
+  it has left, and the state `colima list --json` last reported for the profile.
+  Timeouts, gate authority and repair behavior are unchanged; the lint
+  baseline for these sites is reduced to zero.
+
 - **Linux runs the operator gateway from a launch-only systemd user unit.**
   `effigy gateway setup` installs and enables
   `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
@@ -151,9 +213,62 @@ During v0.x, MINOR bumps may include breaking changes.
   opt-in (undo with `disable-linger`). After the administrator step, setup
   re-execs the installed binary as you and binds the configured low ports to
   prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
-  group/world-writable binary. `gateway status --json` reports the observed
+  group/world-writable binary, and refusing an image this account cannot
+  execute (`launcher.unit: "stale"`), because an execute bit alone does not
+  mean the operator can run it: the check follows the account's real access,
+  including POSIX group precedence for a root-owned image. An access refusal
+  names the bit that decided it (owner, matched group or other) and the
+  `chmod` for that bit with the path as a safe POSIX shell word (single-quoted,
+  so `$`, backticks, backslashes and quotes arrive literally), rather than
+  advising an other-execute bit a matching group ignores; an identity refusal (a link, a
+  foreign owner, a writable image) names the install recovery instead, because
+  no permission bit can repair it. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
-  only unit and capability records Effigy wrote.
+  only unit and capability records Effigy wrote. A replaced binary is reported
+  as a missing capability instead of being trusted, a link at the installed path
+  is refused for the unit and the capability, an upgrade rewrites the owned unit
+  to name the image setup ran, and a rollback that leaves the unit naming a
+  deleted, linked or no-longer-owner-only image is reported as
+  `launcher.unit: "stale"` with the restore and `effigy gateway setup` routes.
+  A changed definition disables the login activation first, so a user manager
+  that cannot be reached, refuses or does not answer keeps the unit installed
+  and not enabled and prints the exact `systemctl --user` commands that finish
+  the enable; an `enable` that fails after writing the link is observed as
+  enabled, because the link is the fact, and a repeated setup whose unit is
+  unchanged reports the link it keeps. Effigy never deletes an activation
+  entry: `systemctl --user disable` removes it and Effigy re-observes the
+  result afterwards — even for a disabled unit or a missing activation
+  directory — refusing with the exact command (and deleting nothing) when an
+  entry is there or is not its own link, and a missing unit directory counts as
+  no activation so a fresh or partially removed installation still tears down;
+  an activation directory that is a symlink, is not a directory or is owned by
+  another account is an identity failure refused with the move-aside recovery
+  (never a `chmod` through the link), a directory refusal's `chmod` is one
+  quoted shell word naming the directory that failed rather than the service
+  entry inside it, and only a mode problem is repaired by that command;
+  `gateway status` keeps a foreign or unsafe activation as its own refusal (it
+  is never reported as merely disabled, so its advice cannot hand the manager a
+  path Effigy refuses), and an unsafe unit file is named as that file rather
+  than as an unrelated directory, the unit file must pass the same owner-and-mode
+  trust the kernel applies (a foreign-owned or foreign-writable file is `unsafe`,
+  never `installed`, and removal refuses it before any `systemctl` request), and
+  a post-request activation that is foreign
+  or unsafe is reported as that refusal rather than as a missing link — after
+  `daemon-reload` as well as after `enable`, and in a failed rewrite's recovery,
+  which also re-observes after a failed restore (typed and neutral, so no nested
+  message carries enable advice), names an unreadable, missing or changed unit
+  file as what it is, and describes the activation it observed
+  instead of claiming it is off — with `enable` offered only for a verified
+  absent activation and a unit file to enable; a changed
+  definition disables the activation
+  before it rewrites the unit and refuses if it remains. `setup --remove`
+  completes the filesystem removal and then reports a `daemon-reload` that
+  refuses, cannot be reached or times out, with the exact
+  `systemctl --user daemon-reload` command, instead of a silent teardown. A
+  failed unit rewrite restores the previous file's activation and says the
+  installed route still works, never enables a unit the operator had disabled,
+  and only calls a restore successful when the restored entry verifies as
+  Effigy's own link.
 - The kernel workspace seam recovers keyed admissions across reconnects and
   gives secondary terminals independent lifetimes and bounded run controls.
   Owner EOF stops the supervised run; acknowledged detach leaves it running.
@@ -302,6 +417,56 @@ During v0.x, MINOR bumps may include breaking changes.
   paths encode an accepted entry or scope name injectively, so two distinct
   names (`api-v1` and `api v1`, or the task/profile pairs `a-b`/`c` and
   `a`/`b-c`) never share a record and `status` reports each one.
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Unlock and lock name the machine vault write gate until that
+  acquire returns (up to 60s), then the decrypt or lock sub-step. Secret
+  values and credential paths stay out of those labels. JSON, piped and quiet
+  output stay silent. The feedback-spinner inventory dropped the four owned
+  call sites.
+
+- Workspace guest publication now completes as a journalled obligation under
+  the environment activation gate before publishing active or attaching task
+  holders. Concurrent prepares and stops serialize; interrupted publication
+  keeps immutable generations and cannot report a successful activation.
+
+- Explicitly selected non-default workspace containers receive the same pinned
+  guest preparation and entry identity verification as the default workspace.
+
+- Workspace guest reads and publication target the host-verified full container
+  id; configured hostnames and id prefixes cannot reuse another container's
+  context. Compose mount isolation resolves interpolated long-form named-volume
+  sources before checking their host bind paths, refuses external or unprovable
+  volume sources, and handles `.env` literal comments and quotes without guessing
+  at unsupported dotenv expansion or escape syntax.
+
+- **Workspace entry verifies the prepared guest instead of installing one.**
+  `effigy exec`, `effigy container shell` and a workspace task no longer
+  download, build or copy Effigy into the workspace container. They read the
+  published context and refuse before the command runs when it is missing,
+  pins another version, names an executable that is not installed, or belongs
+  to another container, VM boot or environment generation, naming
+  `effigy container up` to re-prepare. Hybrid mode, which declares no operator
+  workspace, needs none of it. Container-mode Prepare owns acquisition and
+  consumes a produced artifact only: it never builds from a checkout at
+  consumer runtime (contract 052 §8.2, §8.9).
+- **A workspace container no longer sees the checkout's host-only state.** The
+  checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
+  previous generation and key wraps) are masked with empty read-only volumes
+  applied last, so an entry the source Compose file already declared cannot be
+  mounted over them. Every Compose input file is rewritten and validated, not
+  only the first, because an overlay — later or intermediate — replaces an entry
+  at the same guest target: a state root bound at another target in any overlay
+  is refused, and an overlay entry at a masked target is stripped while the
+  masks are appended to the last file that defines the service. The complete effective mount set —
+  short and long form, injected and retained — is validated with Compose
+  interpolation expanded and bind-backed named volumes resolved through their
+  driver options: a host state root, an ancestor of one (such as
+  `<checkout>/.effigy`) mounted anywhere but the masked checkout mount, a second
+  source for one guest path, an entry whose source cannot be proven, or anything
+  overlapping the guest's own `/run/effigy` store is refused by name (contract
+  052 §7.3 families 1 and 10-11, §8.10 R1).
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as
@@ -394,6 +559,47 @@ During v0.x, MINOR bumps may include breaking changes.
   the child is alive the wait has no deadline and reports progress; once the
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
+- **A host run in a linked worktree reaches that worktree's database.** A
+  scoped checkout answers its backing services on its own apex, and everything
+  Effigy delivers to a host run receives the scoped alias where the
+  declaration carries the canonical one - `[tasks.<name>].env`, an env-schema
+  or `.env` value, a declared secret, a sequence step's environment, a managed
+  session's (`mode = "tui"`) process plan and setup steps, and a configured
+  test suite's own environment, command and `setup`/`teardown` steps - so
+  application configuration keeps `postgres.<apex>` and the run still reaches
+  this checkout's own database. Value precedence is unchanged, a primary
+  checkout keeps its declared name, and a `--plan` render refuses nothing (a
+  task plan shows the aliases it would deliver). Only an endpoint is rewritten
+  - the whole value, a URL authority host, or `host:port` - so text that merely
+  names the alias keeps its bytes, and Effigy never rewrites a command body. URL
+  credentials are never the host: a name that appears in `user:password@`, or a
+  URL naming another server, keeps its bytes and proves nothing.
+  Before the run starts - including every alias a selected test suite would
+  use, before any suite runs - Effigy proves the scope's route belongs to this
+  checkout and publishes an upstream port; otherwise it refuses with the
+  alias, the service and `effigy container up <NAME>`, and the command never
+  runs. The proof reads the endpoints Effigy delivered, so text that merely
+  mentions the alias proves nothing, and a suite this run does not select is
+  never proved. It also asks the recorded upstream to accept a connection, so a
+  route a stopped stack left behind refuses instead of authorizing a run that
+  cannot connect, and a managed session proves only the processes it places on
+  the host. A value the child would otherwise inherit unchanged - an exported
+  `DATABASE_URL`, say - is resolved and proved the same way for a host task, a
+  sequence step, a managed host workload and a selected host suite with its
+  lifecycle, so the caller's own environment cannot reach another checkout's
+  service; each child boundary decides its own precedence, so a `setup` step's
+  assignment — and a key that only appears in a command's text — hides nothing
+  from the workload or suite command that inherits the value, and a managed
+  session decides inherited values per host workload. A worktree's first host run records the
+  checkout's scope token before resolving, so a fresh worktree is scoped rather
+  than canonical; a container registry this scoped checkout declares but Effigy
+  cannot read is refused instead of falling back to the canonical names; and a
+  sensitive value the task's or a sequence step's own environment overrides is
+  dropped rather than delivered, so it is neither resolved nor proved. A
+  container-bound run is untouched: its target's own network already answers
+  both names. A checkout that names no default container environment still
+  resolves. See
+  [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
   `${host_process.<name>.internal_url}`, `${apex}`, `${domains}` and
@@ -490,6 +696,28 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Linux workspace artifact builds select the requested Rust architecture/libc
+  target and retain a separate receipt beside each target binary. Missing target
+  libraries or linkers refuse the build before it can attest an artifact.
+
+- Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
+  before handoff and authenticates the bytes launched through that entry.
+
+- `effigy gateway setup` works on a machine where the operator home has never
+  held Effigy state. A gateway directory that is verified absent is no legacy
+  state to migrate, so first-ever setup reaches the platform step instead of
+  failing with `I/O error: No such file or directory`. Absence is never
+  inferred from an error, and it is the operator's own answer rather than the
+  root setup child's: a symlinked, unsafe or unreadable `.effigy` or gateway
+  directory, a `.effigy` owned by root or another account, a home the operator
+  cannot read or search, and a partial existing identity all still refuse and
+  change nothing, naming the path and the repair. The refusal for an executable
+  past setup's 512 MiB staging bound names the bound and points at a release
+  build.
+
+- Let completed machine gateway setup runs close their sentinel promptly,
+  avoiding a setup failure caused by a sentinel-close timeout.
+
 - Managed TUI panes now show nested Effigy progress as plain start and finish
   lines instead of repeated spinner redraws and banners. Shutdown takes over
   the progress display cleanly, and sequence labels name useful work instead of
@@ -497,6 +725,36 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route; a generation that fails that check is
+  settled and its route withdrawn, and a withheld listener's `depends_on`
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
+  (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

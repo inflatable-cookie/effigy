@@ -41,6 +41,11 @@ pub(in crate::runner) struct ClientStart<'a> {
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) front: Front,
     pub(in crate::runner) terminal: Option<(u16, u16)>,
+    /// Values the client resolved for this checkout's scope (an inherited
+    /// alias, say), handed to the supervisor so its workloads inherit the
+    /// resolved value and the supervisor repeats no proof it cannot make
+    /// (effigy#431 review).
+    pub(in crate::runner) resolved_env: &'a [(String, String)],
 }
 
 /// A started run: its owning client, until it detaches or the run closes.
@@ -80,6 +85,12 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         let (key, value) = grant.env_entry();
         env.push((OsString::from(key), OsString::from(value)));
     }
+    env.extend(
+        request
+            .resolved_env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+    );
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let root = task_engine::checkout_effects_root(&request.addressed.target.root)?;

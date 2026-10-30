@@ -674,6 +674,109 @@ fn cli_contracts_check_json_rejects_malformed_payload_schema_with_stable_identit
 }
 
 #[test]
+fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
+    // `human.what_failed` is `HumanError`'s 512-byte bound of `error.message`, so
+    // where that bound cuts moves with the repo root's length. Give the fixture
+    // root a fixed absolute length: the cut then lands on the same bytes on every
+    // machine, so the complete output stays pinned and only the path itself is
+    // normalized.
+    const CONTROLLED_ROOT_LEN: usize = 160;
+    let fixture = temp_workspace("contracts-body-refusal-bytes");
+    let fixture_len = fixture.display().to_string().len();
+    assert!(
+        fixture_len + 2 <= CONTROLLED_ROOT_LEN,
+        "fixture root {fixture_len} bytes leaves no room for a {CONTROLLED_ROOT_LEN}-byte repo root"
+    );
+    let root = fixture.join("r".repeat(CONTROLLED_ROOT_LEN - fixture_len - 1));
+    assert_eq!(root.display().to_string().len(), CONTROLLED_ROOT_LEN);
+    fs::create_dir_all(&root).expect("create repo root");
+    fs::write(
+        root.join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("index.json"),
+        "{\n  \"version\": 1,\n  \"payload_schemas\": { \"effigy.command.v1\": \"missing.json\" },\n  \"schemas\": []\n}\n",
+    )
+    .expect("write index");
+
+    // The refusal is presented identically in both modes: the human line is the
+    // check-json refusal reason, and the JSON envelope carries the check-json
+    // identity as its `error.message` string. Both complete streams are pinned,
+    // including the bounded `human.what_failed` view of that message.
+    let text = run_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!text.status.success());
+    let json = run_json_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!json.status.success());
+
+    // Only values that move with the environment are normalized: the fixture
+    // root (it appears in the refusal) and the release version (it moves on
+    // every version bump), plus the header's border run, whose width follows the
+    // root path.
+    let repo_root = root.display().to_string();
+    let version = env!("CARGO_PKG_VERSION");
+    let normalize = |bytes: &[u8]| -> String {
+        let text = String::from_utf8_lossy(bytes).replace(&repo_root, "<repo>");
+        let text = text.replace(&format!("v{version}"), "<version>");
+        let text = text.replace(version, "<version>");
+        let mut collapsed = String::with_capacity(text.len());
+        let mut previous_border = false;
+        for character in text.chars() {
+            let border = character == '─';
+            if !(border && previous_border) {
+                collapsed.push(character);
+            }
+            previous_border = border;
+        }
+        collapsed
+    };
+
+    assert_eq!(
+        normalize(&text.stdout),
+        "\n╭─╮\n│ EFFIGY  <repo> │\n╰─ <version> ╯\n\n"
+    );
+    assert_eq!(
+        normalize(&text.stderr),
+        "[error] failed to read <repo>/missing.json: No such file or directory (os error 2)\n"
+    );
+
+    assert_eq!(normalize(&json.stderr), "");
+    assert_eq!(
+        normalize(&json.stdout),
+        r#"{
+  "binary": {
+    "active_version": "<version>",
+    "display_version": "<version>",
+    "name": "effigy",
+    "version": "<version>"
+  },
+  "command": {
+    "kind": "contracts",
+    "name": "contracts"
+  },
+  "error": {
+    "details": null,
+    "human": {
+      "evidence": [],
+      "next_action": null,
+      "what_failed": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.… (truncated)"
+    },
+    "kind": "refused",
+    "message": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.v1\"}],\"index\":\"<repo>/index.json\",\"ok\":false,\"schema\":\"effigy.contracts.check-json.v1\",\"schema_version\":1,\"selection\":{\"changed_only_base\":null,\"count\":0,\"selected\":[]},\"selection_artifact\":null,\"selection_contract\":null}",
+    "type": "RunnerError"
+  },
+  "ok": false,
+  "result": null,
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "warnings": []
+}
+"#
+    );
+}
+
+#[test]
 fn cli_contracts_validate_selection_names_its_replacement() {
     let root = temp_workspace("contracts-retired-selection");
     let output = run_cli_command(&root, &["contracts", "validate-selection"]);

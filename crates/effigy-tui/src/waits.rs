@@ -603,11 +603,38 @@ impl EntryWaits {
         self.fail_dependents(entry, Attribution::new(entry, detail), now, Dependents::All);
     }
 
+    /// The plan withheld this entry: its own readiness was withheld, or a
+    /// prerequisite's was. It is terminal and attributed, and nothing that
+    /// depends on it may start; entries the plan still starts are untouched
+    /// (effigy#458).
+    pub fn withheld(&mut self, entry: &str, attribution: Attribution, now: Instant) {
+        if let Some(record) = self.records.get_mut(entry) {
+            // The plan withheld this entry's start, or withdrew the generation
+            // it had just launched: either way it is terminal, not running.
+            if !matches!(record.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
+                record.phase = EntryPhase::NotStarted;
+                record.since = now;
+                record.wait_since = now;
+                record.explicit = None;
+                record.not_started_because = Some(attribution);
+            }
+        }
+        self.end_launch(entry);
+    }
+
     /// The plan aborted. Every entry it never started is terminal and names
     /// what ended the plan — not an invented dependency, and not a wait that
     /// outlives the plan (effigy#458).
     pub fn abandon_unstarted(&mut self, failed: &str, detail: &str, now: Instant) {
-        let cause = Attribution::new("plan", format!("stopped after {failed} {detail}"));
+        self.abandon(
+            Attribution::new("plan", format!("stopped after {failed} {detail}")),
+            now,
+        );
+    }
+
+    /// The plan aborted before reaching every entry: each one it never started
+    /// is terminal with this attribution (effigy#458).
+    pub fn abandon(&mut self, cause: Attribution, now: Instant) {
         let unstarted = self
             .order
             .names()

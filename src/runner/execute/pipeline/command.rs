@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::runner::error::RunnerError;
 use crate::runner::execute::api::{effective_runtime_inputs, resolve_execution_binding_resolution};
+use crate::runner::execute::host_alias::{
+    host_alias_resolver, host_plan_env_aliases, HostAliasResolver,
+};
 use crate::runner::execute::planning::ExecutionPreflight;
 use crate::runner::execute::workspace_seeded::inside_container_handoff;
 use crate::runner::util::render_passthrough_args;
@@ -10,16 +13,26 @@ use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
 use effigy_manifest::{ManifestManagedRun, TaskSelection};
 use std::path::PathBuf;
 
+/// The rendered command one task run dispatches, plus the scoped alias
+/// resolution a host run still owes the secret values it delivers beside it.
+pub(in crate::runner) struct TaskCommand {
+    pub(in crate::runner) command: String,
+    /// Every env key the rendered command delivers itself, so a secret of the
+    /// same name is never delivered — or proved — beside it.
+    pub(in crate::runner) plain_env_keys: std::collections::BTreeSet<String>,
+    pub(in crate::runner) host_aliases: Option<HostAliasResolver>,
+}
+
 pub(in crate::runner) fn build_task_command(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
-) -> Result<String, RunnerError> {
+) -> Result<TaskCommand, RunnerError> {
     let args_rendered = render_passthrough_args(&preflight.runtime_args_exec.passthrough);
 
     // Merge env-schema plain (non-sensitive) values into the task env.
     // Task-level `env = { KEY = "value" }` from effigy.toml takes priority.
-    let merged_env = merge_env_schema_plain(&selection.task.env, env_schema_resolved.as_ref());
+    let mut merged_env = merge_env_schema_plain(&selection.task.env, env_schema_resolved.as_ref());
     let runtime_env_schema_override = preflight.runtime_args_raw.env_schema_override.as_deref();
     let task_execution_root = task_command_root(preflight, selection)?;
 
@@ -32,26 +45,50 @@ pub(in crate::runner) fn build_task_command(
                 task: preflight.selector.task_name.clone(),
                 path: selection.catalog.manifest_path.clone(),
             })?;
-    // A sequence is an executable plan, never a generated shell program.
+    // A sequence is an executable plan, never a generated shell program. Each
+    // step resolves its own environment when it runs.
     if let ManifestManagedRun::Sequence(steps) = run_spec {
-        return Ok(format!(
-            "sequence ({} ordered steps): {}",
-            steps.len(),
-            steps
-                .iter()
-                .map(|step| match step {
-                    effigy_manifest::ManifestManagedRunStep::Command(command) => command.clone(),
-                    effigy_manifest::ManifestManagedRunStep::Step(table) => table
-                        .run
-                        .clone()
-                        .or_else(|| table.task.as_ref().map(|task| format!("task {task}")))
-                        .or_else(|| table.rhai.as_ref().map(|path| format!("rhai {path}")))
-                        .unwrap_or_else(|| "environment directive".to_owned()),
-                })
-                .collect::<Vec<_>>()
-                .join("; ")
-        ));
+        return Ok(TaskCommand {
+            host_aliases: None,
+            plain_env_keys: std::collections::BTreeSet::new(),
+            command: format!(
+                "sequence ({} ordered steps): {}",
+                steps.len(),
+                steps
+                    .iter()
+                    .map(|step| match step {
+                        effigy_manifest::ManifestManagedRunStep::Command(command) =>
+                            command.clone(),
+                        effigy_manifest::ManifestManagedRunStep::Step(table) => table
+                            .run
+                            .clone()
+                            .or_else(|| table.task.as_ref().map(|task| format!("task {task}")))
+                            .or_else(|| table.rhai.as_ref().map(|path| format!("rhai {path}")))
+                            .unwrap_or_else(|| "environment directive".to_owned()),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        });
     }
+    // A host run in a runtime-scoped checkout resolves the canonical declared
+    // backing-service alias in the environment it delivers, so the task
+    // reaches this checkout's own service instead of whoever published the
+    // declared name (effigy#264). A container-bound run keeps the declared
+    // name: the scope's own Compose network answers it, and a plan runs
+    // nothing, so it renders the aliases it would deliver and refuses nothing.
+    let mut host_aliases = match preflight.plan {
+        true => None,
+        false => host_alias_resolver(preflight, selection)?,
+    };
+    if let Some(resolver) = host_aliases.as_mut() {
+        resolver.resolve_plain_env(&mut merged_env)?;
+    }
+    let host_env_aliases = match (&host_aliases, preflight.plan) {
+        (Some(resolver), _) => resolver.hosts(),
+        (None, true) => host_plan_env_aliases(preflight, selection)?,
+        (None, false) => Vec::new(),
+    };
     let command = render_task_run_spec(
         run_spec,
         RunSpecContext {
@@ -67,18 +104,23 @@ pub(in crate::runner) fn build_task_command(
             task_scope_cwd: &selection.catalog.catalog_root,
             invocation_cwd: &preflight.invocation_cwd,
             runtime_env_schema_override,
+            host_env_aliases: &host_env_aliases,
             depth: 0,
             resolver: &effigy_routing::resolve_task_selection,
         },
     )
     .map_err(RunnerError::from)?;
-    Ok(render_skill_placeholder(
-        command,
-        preflight
-            .task_source
-            .as_ref()
-            .map(|source| source.source_root.as_path()),
-    ))
+    Ok(TaskCommand {
+        host_aliases,
+        plain_env_keys: merged_env.keys().cloned().collect(),
+        command: render_skill_placeholder(
+            command,
+            preflight
+                .task_source
+                .as_ref()
+                .map(|source| source.source_root.as_path()),
+        ),
+    })
 }
 
 fn task_command_root(
@@ -214,7 +256,9 @@ env = { ROOT = "{repo}/data", ALIAS = "{project}" }
         else {
             panic!("expected selected fixture task");
         };
-        build_task_command(&preflight, &selection, &None).expect("render task command")
+        build_task_command(&preflight, &selection, &None)
+            .expect("render task command")
+            .command
     }
 
     #[test]

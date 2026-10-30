@@ -19,6 +19,21 @@ writers retain their current locks until endpoint-store adoption. Socket
 inspection belongs to `socket_ownership`. No migration replays or mutates
 historical transition receipts.
 
+A gateway directory that is verified absent is no legacy state: first-ever
+setup has nothing to migrate and proceeds to the platform action (effigy#473,
+2026-10-29). Absence is proven by a no-follow stat of `~/.effigy/gateway`
+and is never inferred from an error. The elevated setup child runs as root and
+root can stat a path its owner cannot read, so that stat is not the whole
+answer: the operator home and an existing `.effigy` must also be the owner's
+own directories with owner read and search, read from their metadata rather
+than from root's access. A symlinked or permissive `.effigy`, a gateway
+directory that is a symlink or otherwise unsafe, a partial identity (a version
+or identity sidecar without its PID), a `.effigy` owned by root or another
+account, and a home or state directory the operator cannot read or search all
+refuse instead, and the refusal names the path and the repair. The v0.14.1
+legacy path is unaffected: it has a gateway directory, so migration reads that
+state rather than classifying absence.
+
 ## Unprovable status and the headless precondition
 
 `gateway status` never upgrades unproven state. When this caller cannot read
@@ -325,15 +340,156 @@ a login-less boot start is the operator's explicit `loginctl enable-linger`
 opt-in (reversed with `disable-linger`) and setup never enables it or needs
 passwordless administration.
 
+The unit's own text is the launch contract. `ExecStart`/`ExecStop` are the
+quoted installed image plus `gateway up`/`gateway down`, and
+`WorkingDirectory=` is the operator home written bare: that value takes one
+literal path and has no quoting rule, so a quoted value would name a directory
+whose name includes the quotes. `Environment=` keeps its `HOME=` assignment
+quoting. The image is one real file: setup and status open the installed path
+with `O_NOFOLLOW`, so a symbolic or hard link is refused for the unit and the
+capability even when its target is a safe image, because a link's target can be
+retargeted after setup. The source regression layer (`linux_operator` fake
+systemd manager and fault fakes) proves clean install, repeated setup, an
+upgrade that rewrites the owned unit, login and reboot starts from the installed
+unit's own `ExecStart`, `stop`/`restart` as ordinary requests,
+`RemainAfterExit` no-ops, a failed `gateway up` leaving nothing running, foreign
+unit and capability refusal, a linked image, a replaced image and exact cleanup,
+without a live user manager. A reversible break probe on those tests is part of
+the change's proof, not a live claim.
+
+Status reports `unit` as `missing`, `installed`, `foreign`, `unsafe` or
+`stale`. `stale` is Effigy's own marker-carrying unit whose declared
+`ExecStart` image this account can no longer run safely — deleted by a rollback
+or no longer one owner-only executable — and it is never reported ready: the
+login activation may still be linked, so recovery names the image, the rollback
+restore, `effigy gateway setup` and a `systemctl --user restart` reconcile
+request. A stale unit is still Effigy's own file, so `setup --remove` disables
+and removes it. A replaced image (an upgrade) carries no file capability, so
+status reports `low_port: missing` until setup restores the exact record and,
+when the path changed, rewrites the unit to name the image setup ran.
+
+After the unit file is written, the user manager is an observation rather than
+a setup precondition, and every outcome is reported as the *observed* state
+rather than as a claim. A `daemon-reload` that cannot be spawned, refuses or
+does not answer within 20 seconds returns the unit as installed with the
+activation link exactly as it is on disk: absent for a fresh install, present
+when a repeated setup kept it, and present when an `enable` created it before
+failing. The manager's own sentence and the exact `systemctl --user
+daemon-reload`, `enable` and `start` commands (and the `loginctl
+enable-linger` opt-in) are named alongside it.
+
+Removal keeps the same shape in the other direction. It disables the unit,
+re-observes the activation with a fresh open — including when the unit started
+out disabled or had no activation directory — and refuses before deleting the
+unit file if any entry is present or uncertain. A `daemon-reload` that refuses,
+cannot be reached or times out after a completed removal is reported as an
+error naming the exact `systemctl --user daemon-reload` command, because the
+manager may still serve the old definition; it is no longer swallowed. A
+refused disable does preserve the unit and names `effigy gateway down` plus the
+two commands.
+
+A changed definition disables the login activation before the new unit file is
+written, because the user manager may keep the definition it already loaded. A
+failed or timed-out `daemon-reload` therefore leaves the unit installed and not
+enabled — never a new file whose surviving link still claims the old definition
+is live — and the link returns only from an `enable` setup asked for. An
+`enable` that reports a failure after writing the link is observed as enabled:
+the link is the fact and the reply is not. A repeated setup whose bytes are
+unchanged touches neither file nor link, so a failed manager request there
+reports the link Effigy kept together with the recovery commands. If the atomic
+write fails after the activation was dropped, the previous file is still on
+disk: its activation is restored through the same bound directory and the error
+says the installed route still works, or names the exact partial state and
+commands when the file did change. Rollback after such a partial upgrade is two
+supported routes: restore the image the unit names (a deleted or widened image
+is `stale`), or run `effigy gateway setup` with the rolled-back binary, which
+rewrites the owned unit and enables it again.
+
+The login activation directory `~<home>/.config/systemd/user/default.target.wants`
+is treated as an identity of its own. It is opened from the verified unit
+directory with `O_NOFOLLOW | O_DIRECTORY` and its owner and mode are checked
+before anything else happens, so a `default.target.wants` symlink to a foreign
+directory cannot redirect Effigy, or the manager on Effigy's behalf. A directory refusal's `chmod` is emitted as one shell word and names the
+directory that failed — the activation directory itself, not the service entry
+inside it. Only a mode problem is repaired that way: a symlink, a non-directory
+or a foreign-owned directory is an identity failure and is refused with the
+move-aside recovery, because a `chmod` through a link follows it to its target
+and cannot repair an owner. A missing
+unit directory is treated as no activation at all — a fresh installation, or one
+whose directory was removed before a retry, has nothing to preserve and still
+tears down cleanly — while a linked, foreign-owned, non-directory or
+group/world-writable one is refused. The entry
+has three states — absent, Effigy's own link (recorded with its inode and target,
+read with `fstatat(AT_SYMLINK_NOFOLLOW)`), or foreign (a link to another target,
+or something that is not a link) — and a foreign entry is refused, never treated
+as absent.
+
+Effigy never deletes an activation entry. `unlinkat` is a name operation with no
+inode condition, so a check followed by an unlink can always delete whatever a
+same-uid writer put at that name in between, and no scheme Effigy can build on
+POSIX closes that interval. The removal therefore belongs to the manager:
+`systemctl --user disable` (and `disable --now` on removal) removes the entry,
+and Effigy verifies the result through the bound directory. A remaining entry is
+refused with the exact `systemctl --user disable effigy-gateway.service` command,
+a foreign one is preserved and named, and nothing is deleted by Effigy in either
+case. The same rule governs an upgrade: a changed definition disables the login
+activation before the rewrite and refuses to rewrite while it remains. The cost
+is explicit and deliberate: on a host where the user manager cannot remove the
+entry, Effigy refuses and prints the command instead of performing the unlink
+itself. Because Effigy performs no such unlink, a replacement that appears at
+the entry is preserved and reported rather than deleted.
+
+A repeated setup whose unit bytes are unchanged keeps the existing link and
+reports the observed `enabled` state together with any manager failure and its
+recovery commands. An `enable` that fails after writing the link is reported as
+enabled *and* as a failed manager request. A post-request activation that is
+foreign or unsafe is reported as that refusal — after `daemon-reload` as well as
+after `enable`, and in a failed rewrite's recovery — and the `enable` recovery is
+offered only for a genuinely absent activation. A failed rewrite re-observes the
+activation after a failed restore (the restore failure is typed and neutral, so
+no nested message can carry enable advice), names an unreadable, missing or changed unit
+file as what it is, and reports the activation it observed rather than asserting
+it is off. Removal keeps the rule in the other
+direction: the unit file and the activation are removed, and a `daemon-reload`
+that refuses, cannot be reached or times out is then reported as a failure
+naming the exact `systemctl --user daemon-reload` command, because a removal is
+not finished while the manager still serves the old definition.
+
+A failed rewrite restores only an activation this run actually disabled, so a
+unit the operator had disabled is never enabled by a recovery path, and the
+restored entry must verify as Effigy's own link: an entry that appeared
+meanwhile is named with its recovery rather than reported as a restore.
+
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A
 changed, linked or group/world-writable image is refused before a capability
-or unit names it. Setup verifies the result instead of assuming it: after the
+or unit names it, and so is an image the operator identity cannot execute. That
+access is resolved the way POSIX resolves it: the owner execute bit when the
+operator owns the image; for an image it does not own, the group class when one
+of the operator's groups is the image's group and the other class only
+otherwise, so a root-owned `0745` whose group the operator is in is readable but
+not executable whatever its other bits say. An unreadable membership list is
+refused conservatively (both the group and other bits must allow execution). An
+execute bit alone is not enough — an owner-owned mode `0410` image has one and
+its owner still cannot run it — so a unit naming such an image is reported
+`stale` rather than healthy. The refusal names the rule that decided it — the
+owner bit, the matched group bit, or the other bit — with the `chmod` for that
+bit, the path emitted as a safe POSIX shell word (single-quoted, `'\''` for an
+embedded quote) so `$`, backticks, backslashes and quotes arrive literally; a
+path that is not valid UTF-8 cannot be printed as a shell word and the refusal
+says so. Identity failures are
+separate: a link, a foreign owner or a writable image cannot be repaired by a
+permission bit, so they name the install recovery (one real file owned by the
+account) and prescribe no `chmod`. Setup verifies the result instead of assuming it: after the
 privileged stage, a fresh exec of the installed binary as the operator binds
 the configured low ports and reports `bound`, `in_use` or `denied`, and a
 denial fails setup rather than leaving a gateway that cannot serve 80/443.
 `gateway status` observes the unit, its login activation, `linger` and the
-capability record without repairing or elevating, omits an unobservable linger
+capability record without repairing or elevating; a foreign or unsafe
+activation keeps its own refusal (never "not enabled", so no `enable` advice
+through a refused path), and an unsafe unit file is named as that file rather
+than as a directory, with the kernel's own owner-and-mode trust applied to that
+file before status claims it or the manager is asked to disable it, omits an unobservable linger
 state, and reports a foreign unit or capability as `foreign` with the exact
 recovery commands. Boot and native user-manager qualification on a Linux host
 remains a separate exact-candidate clean-base proof; guide 063 carries its

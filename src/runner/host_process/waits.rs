@@ -13,14 +13,44 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use effigy_containers::{EffectiveContainerPolicy, EffectiveHostProcess};
+use effigy_containers::EffectiveContainerPolicy;
+#[cfg(test)]
+use effigy_containers::EffectiveHostProcess;
 use effigy_tui::waits::{should_publish, EntryState, EntryWaits, HostOrder, SessionOrder};
 
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 use super::ManagedHostListenerResult;
+#[cfg(test)]
 use crate::runner::error::RunnerError;
-use crate::runner::managed_wait::{self, WaitLedger, WaitOwner};
+use crate::runner::managed_wait::{WaitLedger, WaitOwner};
+
+/// The attribution a withheld entry names: the process or prerequisite and the
+/// first line of why its readiness was never verified, bounded so a diagnostic
+/// never becomes a tab title (effigy#458).
+pub(in crate::runner) fn withheld_attribution(
+    holder: &str,
+    reason: &str,
+) -> effigy_tui::waits::Attribution {
+    let line = reason
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('.')
+        .chars()
+        .take(160)
+        .collect::<String>();
+    effigy_tui::waits::Attribution::new(
+        holder,
+        if line.is_empty() {
+            "did not become ready".to_owned()
+        } else {
+            format!("did not become ready: {line}")
+        },
+    )
+}
 
 /// The run's environment boundary, for every named environment — with or
 /// without host processes: a new session's phase begins settled and count-free
@@ -64,7 +94,9 @@ pub(in crate::runner) fn attributed_environment_failure(
     }
 }
 
-/// What one bring-up performed, once its whole plan ran.
+/// What one bring-up performed, once its whole plan ran. Test-only: the merged
+/// bring-up publishes the same graph from `start_host_processes_inner`.
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(in crate::runner) struct HostPlanOutcome {
     pub(in crate::runner) listeners: Vec<ManagedHostListenerResult>,
@@ -329,6 +361,27 @@ impl HostWaitGraph {
         self.waits.state(entry, now)
     }
 
+    /// The plan withheld this entry — its own readiness, or a prerequisite's,
+    /// never became verified. Only this entry is terminal: the plan still
+    /// starts every entry that does not need it (effigy#458).
+    pub(in crate::runner) fn withheld(
+        &mut self,
+        entry: &str,
+        attribution: effigy_tui::waits::Attribution,
+        now: Instant,
+    ) {
+        self.waits.withheld(entry, attribution, now);
+        self.publish_all(now);
+    }
+
+    /// The plan aborted before it reached every entry: each one it never
+    /// started is terminal and names what ended the plan (effigy#458).
+    pub(in crate::runner) fn abandon_plan(&mut self, detail: &str, now: Instant) {
+        self.waits
+            .abandon(effigy_tui::waits::Attribution::new("plan", detail), now);
+        self.publish_all(now);
+    }
+
     /// The entry failed: it is terminal with what it reported, and every
     /// dependent is `not started` with that attribution. Returns the entries
     /// that may no longer start.
@@ -352,10 +405,14 @@ impl HostWaitGraph {
     }
 }
 
-/// What the plan asks of whoever runs it. The kernel launcher waits for real
-/// listeners and starts real supervisors; a fake records spawns and answers
-/// readiness from a script.
+/// What the fake plan asks of its driver. Production publishes the same
+/// transitions from `start_host_processes_inner`, where the kernel waits and
+/// starts; the fake records spawns and answers readiness from a script.
+#[cfg(test)]
 pub(in crate::runner) trait HostLauncher {
+    /// The diagnostic this process's own readiness was withheld with, when the
+    /// script withholds it (a failed listener, never a spawn failure).
+    fn withheld_reason(&self, process: &str) -> Option<String>;
     /// Waits for `dependency`'s published listener readiness, reporting
     /// progress so the wait it holds can be published while it blocks.
     fn dependency_ready(
@@ -381,12 +438,13 @@ pub(in crate::runner) trait HostLauncher {
     fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)>;
 }
 
-/// Runs the resolved plan in dependency order, publishing the graph as it goes.
+/// Runs the resolved plan in dependency order, publishing the graph as it goes
+/// — the fake twin of `start_host_processes_inner`'s own publication points.
 ///
-/// The whole graph is published before the first process can block, so a
-/// dependent's tab names its prerequisite while that prerequisite is still
-/// becoming ready. A failure stops the plan with the failing entry's report;
-/// every dependent is published `not started` and none is launched.
+/// A withheld entry is terminal and attributed, and the plan still starts every
+/// entry that does not need it, exactly as the merged bring-up does. A spawn
+/// failure aborts the plan and settles every entry it never started.
+#[cfg(test)]
 pub(in crate::runner) fn run_host_plan(
     ordered: &[&EffectiveHostProcess],
     selection: Option<&BTreeSet<String>>,
@@ -396,57 +454,64 @@ pub(in crate::runner) fn run_host_plan(
 ) -> Result<HostPlanOutcome, RunnerError> {
     graph.publish_all(now());
     let mut outcome = HostPlanOutcome::default();
+    // What this plan withheld, so a dependent is withheld without waiting on a
+    // record its prerequisite never published (effigy#455, #458).
+    let mut withheld: BTreeMap<String, String> = BTreeMap::new();
     for process in ordered {
         if selection.is_some_and(|selection| !selection.contains(&process.name)) {
             continue;
         }
-        // The entry whose failure ends the plan: the dependency being awaited,
-        // or the process itself once its own start is what fails.
-        // A blocked entry never starts: its prerequisite failed, so the plan
-        // ends with the attributed result instead of launching a process that
-        // cannot be what the graph promised (effigy#458).
-        if let Some(state) = graph.state(&process.name, now()) {
-            if matches!(
-                state.phase,
-                effigy_tui::waits::EntryPhase::NotStarted | effigy_tui::waits::EntryPhase::Failed
-            ) {
-                return Err(RunnerError::task_invocation(state.status_line()));
-            }
+        // A dependency this plan withheld withholds this entry too, before any
+        // state file its prerequisite never wrote is read.
+        let refused = process.depends_on.iter().find_map(|dependency| {
+            withheld
+                .get(dependency.as_str())
+                .map(|reason| (dependency.clone(), reason.clone()))
+        });
+        if let Some((dependency, reason)) = refused {
+            graph.withheld(
+                &process.name,
+                withheld_attribution(&dependency, &reason),
+                now(),
+            );
+            withheld.insert(process.name.clone(), reason);
+            continue;
         }
-        let mut awaited = process.name.clone();
-        let step = (|| -> Result<(), RunnerError> {
-            for dependency in &process.depends_on {
-                awaited = dependency.clone();
-                // Publish the wait this entry holds before blocking on the
-                // reader's readiness, so a restart of a dependent names the
-                // reader it re-confirms even when another call started it.
-                graph.publish_all(now());
-                launcher.dependency_ready(dependency, &mut |at| graph.publish_all(at))?;
-                graph.dependency_ready(dependency, now());
-            }
-            awaited = process.name.clone();
-            graph.started(&process.name, now());
-            if let Some(listener) = &process.listener {
-                graph.probing(
-                    &process.name,
-                    effigy_tui::waits::listener_probe_label(
-                        &listener.readiness_path,
-                        listener.readiness_status,
-                    ),
-                    now(),
-                );
-            }
-            let listener = launcher.launch(&process.name, &mut |at| graph.publish_all(at))?;
-            graph.ready(&process.name, now());
-            outcome.listeners.extend(listener);
-            Ok(())
-        })();
-        if let Err(error) = step {
-            let attribution = managed_wait::failure_attribution(&awaited, &error);
-            graph.failed(&awaited, &attribution.detail, now());
-            return Err(error);
+        for dependency in &process.depends_on {
+            // Publish the wait this entry holds before blocking on the
+            // reader's readiness, so a restart of a dependent names the reader
+            // it re-confirms even when another call started it.
+            graph.publish_all(now());
+            launcher.dependency_ready(dependency, &mut |at| graph.publish_all(at))?;
+            graph.dependency_ready(dependency, now());
         }
+        graph.started(&process.name, now());
+        if let Some(listener) = &process.listener {
+            graph.probing(
+                &process.name,
+                effigy_tui::waits::listener_probe_label(
+                    &listener.readiness_path,
+                    listener.readiness_status,
+                ),
+                now(),
+            );
+        }
+        let listener = launcher.launch(&process.name, &mut |at| graph.publish_all(at))?;
+        if let Some(reason) = launcher.withheld_reason(&process.name) {
+            // A withheld listener is terminal and attributed, and the plan
+            // still starts everything that does not need it.
+            graph.withheld(
+                &process.name,
+                withheld_attribution(&process.name, &reason),
+                now(),
+            );
+            withheld.insert(process.name.clone(), reason);
+            continue;
+        }
+        graph.ready(&process.name, now());
+        outcome.listeners.extend(listener);
     }
+    graph.settle_all(now());
     Ok(outcome)
 }
 
@@ -571,8 +636,8 @@ mod tests {
     pub(super) struct FakeLauncher<'a> {
         pub(super) ledger: &'a WaitLedger,
         pub(super) clock: &'a Clock,
-        /// Readiness outcomes, by process, consumed in launch order.
-        pub(super) failure: Option<RunnerError>,
+        /// The process whose own readiness the script withholds, and why.
+        pub(super) withheld: Option<(String, String)>,
         pub(super) spawns: Vec<String>,
         /// The published records at each observed moment.
         pub(super) frames: Vec<Vec<EntryState>>,
@@ -585,6 +650,13 @@ mod tests {
     }
 
     impl HostLauncher for FakeLauncher<'_> {
+        fn withheld_reason(&self, process: &str) -> Option<String> {
+            self.withheld
+                .as_ref()
+                .filter(|(name, _)| name == process)
+                .map(|(_, reason)| reason.clone())
+        }
+
         fn dependency_ready(
             &mut self,
             _dependency: &str,
@@ -609,11 +681,6 @@ mod tests {
             self.clock.advance(12_000);
             on_wait(self.clock.at());
             self.observe();
-            if process == "api" {
-                if let Some(error) = self.failure.take() {
-                    return Err(error);
-                }
-            }
             Ok(None)
         }
 
@@ -646,7 +713,7 @@ mod tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: None,
+            withheld: None,
             spawns: Vec::new(),
             frames: Vec::new(),
         };
@@ -711,7 +778,7 @@ mod tests {
     /// A definitive prerequisite failure is terminal and attributed, and no
     /// dependent spawn is recorded.
     #[test]
-    fn a_failed_prerequisite_spawns_no_dependent_and_attributes_each_one() {
+    fn a_withheld_prerequisite_settles_each_dependent_without_spawning_it() {
         let (_dir, checkout) = fixture();
         let policy = four_entry_policy(&checkout);
         let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
@@ -726,26 +793,24 @@ mod tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: Some(RunnerError::ManagedHostReadiness {
-                process: "api".to_owned(),
-                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
-                    .to_owned(),
-            }),
+            withheld: Some((
+                "api".to_owned(),
+                "readiness probe GET / returned 500; the listener never became ready".to_owned(),
+            )),
             spawns: Vec::new(),
             frames: Vec::new(),
         };
-        let error = run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect_err("api never became ready");
-        assert!(matches!(error, RunnerError::ManagedHostReadiness { .. }));
+        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect("a withheld listener does not abort the plan");
         assert_eq!(
             launcher.spawns,
             vec!["api"],
-            "no dependent spawn is recorded after its prerequisite failed"
+            "no dependent spawn is recorded after its prerequisite was withheld"
         );
 
         let published = records(&checkout);
         let api = state_of(&published, "api");
-        assert_eq!(api.phase, EntryPhase::Failed);
+        assert_eq!(api.phase, EntryPhase::NotStarted);
         assert!(
             api.status_line().contains("500"),
             "api's own report names the status: {}",
@@ -758,7 +823,7 @@ mod tests {
                 state.not_started_because,
                 Some(Attribution::new(
                     "api",
-                    "failed: readiness probe GET / returned 500; the listener never became ready"
+                    "did not become ready: readiness probe GET / returned 500; the listener never became ready"
                 )),
                 "{dependent} names the prerequisite and its report"
             );
@@ -766,8 +831,8 @@ mod tests {
                 state.headless_line().as_deref(),
                 Some(
                     format!(
-                        "[managed] {dependent}: not started — api failed: readiness probe GET / \
-                         returned 500; the listener never became ready"
+                        "[managed] {dependent}: not started — api did not become ready: readiness \
+                         probe GET / returned 500; the listener never became ready"
                     )
                     .as_str()
                 )
@@ -863,7 +928,7 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: None,
+            withheld: None,
             spawns: Vec::new(),
             frames: Vec::new(),
         };
@@ -1050,17 +1115,16 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: Some(RunnerError::ManagedHostReadiness {
-                process: "api".to_owned(),
-                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
-                    .to_owned(),
-            }),
+            withheld: Some((
+                "api".to_owned(),
+                "readiness probe GET / returned 500; the listener never became ready".to_owned(),
+            )),
             spawns: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
-        let error = run_host_plan(&ordered, None, &mut planner, &mut launcher, &|| clock.at())
-            .expect_err("api never became ready");
+        run_host_plan(&ordered, None, &mut planner, &mut launcher, &|| clock.at())
+            .expect("a withheld listener does not abort the plan");
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
         // The `up` child exits nonzero and the parent reports its environment
@@ -1070,7 +1134,7 @@ mod environment_tests {
         parent.settle_all(clock.at() + Duration::from_secs(4));
         let published = records(&checkout);
         let api = state_of(&published, "api");
-        assert_eq!(api.phase, EntryPhase::Failed);
+        assert_eq!(api.phase, EntryPhase::NotStarted);
         assert!(
             api.status_line().contains("500"),
             "api's own report survives: {}",
@@ -1100,7 +1164,7 @@ mod environment_tests {
         assert_eq!(
             front_tab.poll().statuses,
             vec![crate::runner::managed_run::HostStatus::NotStarted(
-                "not started — api failed: readiness probe GET / returned 500; the listener never became ready"
+                "not started — api did not become ready: readiness probe GET / returned 500; the listener never became ready"
                     .to_owned()
             )]
         );
@@ -1109,7 +1173,7 @@ mod environment_tests {
             state_of(&published, "front")
                 .headless_line()
                 .unwrap_or_default()
-                .contains("api failed: readiness probe GET / returned 500"),
+                .contains("api did not become ready: readiness probe GET / returned 500"),
             "{:?}",
             state_of(&published, "front").headless_line()
         );
@@ -1129,7 +1193,6 @@ mod environment_tests {
                 .contains("500"),
             "{json}"
         );
-        let _ = error;
     }
 
     /// The acceptance story, frame by frame, from the production handoff: the
@@ -1259,35 +1322,34 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: Some(RunnerError::ManagedHostReadiness {
-                process: "api".to_owned(),
-                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
-                    .to_owned(),
-            }),
+            withheld: Some((
+                "api".to_owned(),
+                "readiness probe GET / returned 500; the listener never became ready".to_owned(),
+            )),
             spawns: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
         run_host_plan(&ordered, None, &mut failing, &mut launcher, &|| clock.at())
-            .expect_err("api never became ready");
+            .expect("a withheld listener does not abort the plan");
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
         let presented = frame(&checkout, &["api", "front", "admin"], "api");
-        assert!(presented.contains("api [failed]"), "{presented}");
+        assert!(presented.contains("api [not started: api failed]"), "{presented}");
         let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [not started: api failed]"),
             "{presented}"
         );
         assert!(
-            presented.contains("not started — api failed: readiness probe GET / returned 500"),
+            presented.contains("not started — api did not become ready: readiness probe GET / returned 500"),
             "{presented}"
         );
         let published = records(&checkout);
         assert!(state_of(&published, "front")
             .headless_line()
             .unwrap_or_default()
-            .contains("api failed: readiness probe GET / returned 500"));
+            .contains("api did not become ready: readiness probe GET / returned 500"));
         let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
         let front = views
             .iter()
@@ -1340,7 +1402,7 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: None,
+            withheld: None,
             spawns: Vec::new(),
             frames: Vec::new(),
         };
@@ -1430,7 +1492,7 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: None,
+            withheld: None,
             spawns: Vec::new(),
             frames: Vec::new(),
         };
@@ -1517,7 +1579,7 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: None,
+            withheld: None,
             spawns: Vec::new(),
             frames: Vec::new(),
         };
@@ -1566,7 +1628,7 @@ mod environment_tests {
     /// and names what ended the plan — including a host with no declared
     /// dependency, which must not be left waiting (effigy#458).
     #[test]
-    fn an_independent_host_is_settled_when_the_plan_aborts() {
+    fn a_withheld_dependency_settles_dependents_while_an_independent_entry_starts() {
         let (_dir, checkout) = fixture();
         let policy = policy_with_an_independent_host(&checkout);
         let clock = Clock::new();
@@ -1592,22 +1654,21 @@ mod environment_tests {
         let mut launcher = FakeLauncher {
             ledger: &ledger,
             clock: &clock,
-            failure: Some(RunnerError::ManagedHostReadiness {
-                process: "api".to_owned(),
-                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
-                    .to_owned(),
-            }),
+            withheld: Some((
+                "api".to_owned(),
+                "readiness probe GET / returned 500; the listener never became ready".to_owned(),
+            )),
             spawns: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
             .expect("the plan order resolves");
         run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect_err("api never became ready");
+            .expect("a withheld listener does not abort the plan");
         assert_eq!(
             launcher.spawns,
-            vec!["api"],
-            "no dependent or queued host spawned"
+            vec!["api", "jobs"],
+            "the dependents were withheld and the independent host still started"
         );
 
         let published = records(&checkout);
@@ -1629,41 +1690,32 @@ mod environment_tests {
         let jobs = state_of(&published, "jobs");
         assert_eq!(
             jobs.phase,
-            EntryPhase::NotStarted,
-            "the queued host is terminal"
+            EntryPhase::Ready,
+            "the independent host started and settled"
         );
-        assert_eq!(
-            jobs.not_started_because,
-            Some(effigy_tui::waits::Attribution::new(
-                "plan",
-                "stopped after api failed: readiness probe GET / returned 500; the listener never became ready"
-            )),
-            "the independent host names the plan, not an invented dependency"
-        );
-        assert_eq!(jobs.waiting_on, None, "no wait outlives the plan");
+        assert_eq!(jobs.waiting_on, None, "it waits for nothing");
+        assert!(jobs.not_started_because.is_none());
         let presented = frame_of(&["api", "front", "admin", "jobs"], "jobs", &published);
         assert!(
-            presented.contains("jobs [not started: plan failed]"),
+            presented.contains("front [not started: api failed]"),
             "{presented}"
         );
         assert!(
-            presented.contains(
-                "not started — plan stopped after api failed: readiness probe GET / returned 500"
-            ),
-            "{presented}"
+            presented.contains("jobs [ready]"),
+            "the independent entry is not settled by another entry's withheld start: {presented}"
         );
-        assert!(jobs
-            .headless_line()
-            .unwrap_or_default()
-            .contains("plan stopped after api failed: readiness probe GET / returned 500"));
         let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
-        let jobs = views
+        assert!(
+            views.iter().all(|view| view.state.entry != "jobs"),
+            "a settled entry is not reported as waiting"
+        );
+        let front = views
             .iter()
-            .find(|view| view.state.entry == "jobs")
-            .expect("jobs is reported");
-        let json = serde_json::to_value(jobs).expect("view json");
+            .find(|view| view.state.entry == "front")
+            .expect("front is reported");
+        let json = serde_json::to_value(front).expect("view json");
         assert_eq!(json["phase"], "not_started");
-        assert_eq!(json["not_started_because"]["name"], "plan");
+        assert_eq!(json["not_started_because"]["name"], "api");
         assert!(
             json["not_started_because"]["detail"]
                 .as_str()
@@ -1821,22 +1873,12 @@ mod environment_tests {
                 state.headless_line()
             );
         }
-        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
-        let mut launcher = FakeLauncher {
-            ledger: &ledger,
-            clock: &clock,
-            failure: None,
-            spawns: Vec::new(),
-            frames: Vec::new(),
-        };
-        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
-        let error = run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect_err("no host process starts after its environment failed");
-        assert!(error.to_string().contains("not started"), "{error}");
+        // The run's owner aborts before it starts the plan: the entries are
+        // already terminal, so nothing spawns.
+        let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
-            launcher.spawns.is_empty(),
-            "no host process spawned: {:?}",
-            launcher.spawns
+            presented.contains("front [not started: environment"),
+            "{presented}"
         );
     }
 }

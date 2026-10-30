@@ -118,7 +118,7 @@ pub fn process_executable(pid: u32) -> std::io::Result<std::path::PathBuf> {
         let value = bytes.strip_suffix(&[0]).unwrap_or(bytes);
         let path = std::str::from_utf8(value)
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
-        return Ok(std::path::PathBuf::from(path));
+        Ok(std::path::PathBuf::from(path))
     }
     #[cfg(target_os = "linux")]
     {
@@ -272,7 +272,7 @@ fn device_of(fd: libc::c_int) -> Option<u64> {
     }
     // SAFETY: a successful fstat initialized the full output structure.
     let stat = unsafe { stat.assume_init() };
-    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then(|| stat.st_rdev as u64)
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(stat.st_rdev as u64)
 }
 
 /// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor

@@ -48,10 +48,8 @@ fn delivered_guest_surface(output: &str) -> (Vec<String>, Vec<String>) {
             "env-begin" => inside = true,
             "env-end" => inside = false,
             line if line.starts_with("argv:") => argv.push(line["argv:".len()..].to_owned()),
-            line if inside => {
-                if !MODEL_BASE_ENV.iter().any(|base| line.starts_with(base)) {
-                    env.push(line.to_owned());
-                }
+            line if inside && !MODEL_BASE_ENV.iter().any(|base| line.starts_with(base)) => {
+                env.push(line.to_owned());
             }
             _ => {}
         }

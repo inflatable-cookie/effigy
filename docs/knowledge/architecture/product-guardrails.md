@@ -79,6 +79,15 @@ when the real cause was two named services failing their health checks.
   `workload`, `host` or `environment`), published before the environment phase
   can block; nothing derives a label from screen or tab order, and no wait
   borrows another entry's clock (effigy#458).
+  The UI's `ProgressSource` supplies the current subject, count, latest event
+  and elapsed wait to `live_step`. When no event is available, it names the
+  exact awaited object or probe with the elapsed time. `lint:feedback` checks
+  compiler-resolved legacy constructor and wrapper uses against the finite
+  inventory in `config/feedback-spinner-baseline.json`; its ceiling prevents
+  additions. The inventory includes references and test uses as well as
+  production calls. Migrations remove their entries as they replace legacy
+  uses. The final v0.15 migration gate removes the inventory before candidate
+  freeze; it is not an exception to the live-state rule.
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

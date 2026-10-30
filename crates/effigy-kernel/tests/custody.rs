@@ -30,11 +30,8 @@ impl Drop for ChildGuard {
     }
 }
 fn home() -> tempfile::TempDir {
-    // Three characters at most: the fixture path plus a run id and `.sock`
-    // must fit `sun_path`, and an Effigy run scratch root spends most of that
-    // budget before the fixture name. A longer prefix fails the harness with
-    // "cannot hold a ... fixture and its control socket".
-    effigy_test_support::short_tempdir("kc-").unwrap()
+    // Keep the fixture inside the run root; kernel socket probes support deep homes.
+    effigy_test_support::short_tempdir("kcustody-").unwrap()
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
@@ -505,8 +502,11 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     .unwrap();
     while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
     let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let socket = root.path().join("sock").join(format!("{}.sock", id(1)));
-    drop(std::os::unix::net::UnixStream::connect(&socket).unwrap());
+    let observe = cx.operation().observe().unwrap();
+    assert_eq!(
+        connect_control_socket(&observe, &root, &inv.spec().owner, id(1)).verified(),
+        Some(&effigy_kernel::probe::ProbeIo::UnixOpen)
+    );
     assert!(matches!(
         fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
         Observed::Verified(RunStatus::Live(_), _)
@@ -2024,6 +2024,61 @@ fn foreground_same_owner_is_busy_and_never_reclaims_a_live_gate() {
     ));
     drop(run);
     assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn custody_completed_machine_store_run_closes_sentinel_and_releases_gate() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut coordinates = invocation().spec().clone();
+    coordinates.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway-setup",
+        None,
+    )
+    .unwrap();
+    coordinates.owner = ResourceId::store(Scope::Machine, "gateway-setup").unwrap();
+    let owner = coordinates.owner.clone();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &ResolvedInvocation::new(coordinates).unwrap(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    let sentinel = metadata(&cx.operation().observe().unwrap(), &root, id(1))
+        .verified()
+        .unwrap()
+        .sentinel
+        .clone()
+        .unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
+    assert!(run.settle(&cleanup, &mut Strict).unwrap().result().is_ok());
+    assert_ne!(
+        effigy_kernel::ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    let reader = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root);
+    assert!(matches!(
+        summary(reader.verified().unwrap(), id(1)),
+        Observed::Absent(_)
+    ));
+    let _gate = effigy_kernel::gate::Gate::acquire(&cx, &root, &[owner], Wait::FailFast).unwrap();
 }
 
 #[test]
