@@ -205,6 +205,22 @@ impl SessionTlsListener {
         address: SocketAddr,
         timeout: Duration,
     ) -> io::Result<(Self, ServingKey, HostChannelAcceptor)> {
+        Self::bind_with_key(address, timeout, |secret, pin, _state| {
+            ServingKey::new(secret, pin)
+        })
+    }
+
+    // Keep the custody constructor injectable so its refusal can exercise the
+    // real bound-socket/key cleanup path without a global fault switch.
+    fn bind_with_key(
+        address: SocketAddr,
+        timeout: Duration,
+        make_key: impl FnOnce(
+            Vec<u8>,
+            Digest,
+            &Arc<ListenerState>,
+        ) -> Result<ServingKey, ServingRefusal>,
+    ) -> io::Result<(Self, ServingKey, HostChannelAcceptor)> {
         if timeout.is_zero() || timeout > Duration::from_secs(5) {
             return Err(invalid("TLS accept budget must be within five seconds"));
         }
@@ -246,6 +262,11 @@ impl SessionTlsListener {
             next: AtomicU64::new(1),
             key: key_slot,
         });
+        // All preparation can still fail under ordinary RAII here. In
+        // particular, a refused custody key must drop the bound socket and
+        // signer before any accept worker can retain them.
+        let key = make_key(secret, pin.clone(), &state)
+            .map_err(|_| invalid("TLS key custody refused"))?;
         let (sender, incoming) = mpsc::sync_channel(1);
         let worker_state = state.clone();
         let worker_pin = pin.clone();
@@ -334,7 +355,6 @@ impl SessionTlsListener {
                 }
                 worker_state.stop();
             })?;
-        let key = ServingKey::new(secret, pin).map_err(|_| invalid("TLS key custody refused"))?;
         let acceptor = HostChannelAcceptor {
             state: Arc::downgrade(&state),
             incoming,
@@ -390,6 +410,57 @@ impl Drop for SessionTlsListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refused_custody_key_releases_bound_socket_signer_and_accept_worker() {
+        let mut observed = None;
+        let result = SessionTlsListener::bind_with_key(
+            "127.0.0.1:0".parse().unwrap(),
+            Duration::from_secs(1),
+            |mut secret, pin, state| {
+                let signer = RevocableKey(Arc::downgrade(&state.key))
+                    .choose_scheme(&[SignatureScheme::ECDSA_NISTP256_SHA256])
+                    .unwrap();
+                observed = Some((
+                    state.endpoint,
+                    Arc::downgrade(state),
+                    Arc::downgrade(&state.key),
+                    signer,
+                ));
+                // Exercise the actual ServingKey constructor's negative path
+                // after a socket and signer exist, without exposing key bytes.
+                secret.fill(0);
+                secret.clear();
+                ServingKey::new(secret, pin)
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        let (endpoint, state, key, signer) = observed.unwrap();
+        // The accept worker's closure retains this state. Record any survivor
+        // and stop it before asserting, so a regression cannot leak a fixture.
+        let worker_survived = state.strong_count() != 0;
+        if let Some(survivor) = state.upgrade() {
+            survivor.stop();
+        }
+        let until = Instant::now() + Duration::from_secs(2);
+        while state.strong_count() != 0 && Instant::now() < until {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            !worker_survived,
+            "a refused key left an accept worker alive"
+        );
+        assert!(state.upgrade().is_none());
+        assert!(
+            key.upgrade().is_none(),
+            "a refused key retained its signer slot"
+        );
+        assert!(signer.sign(b"refused session").is_err());
+        assert!(TcpStream::connect_timeout(&endpoint, Duration::from_millis(100)).is_err());
+        // Connection refusal alone is not a port-release proof.
+        let rebound = TcpListener::bind(endpoint).unwrap();
+        drop(rebound);
+    }
+
     #[test]
     fn close_deadline_does_not_wait_for_an_unresponsive_tls_peer() {
         let (mut listener, key, acceptor) =
