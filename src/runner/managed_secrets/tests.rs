@@ -573,6 +573,26 @@ fn managed_tui_display(stdout: &[u8], stderr: &[u8]) -> String {
         .join("\n")
 }
 
+/// What a `pty` tab shows: the same bytes go through the session's terminal
+/// emulator, which interprets carriage returns and cursor moves rather than
+/// listing lines.
+fn managed_tui_vt_display(stdout: &[u8]) -> String {
+    let mut buffer = effigy_tui::terminal_text::LiveTerminalBuffer::new();
+    buffer.push_chunk(stdout);
+    buffer.finalize();
+    let (lines, _) = buffer.render_lines(200, 40, 0);
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn shell_spec(root: &Path, script: String, secret: Option<&str>) -> ProcessSpec {
     let mut env = BTreeMap::from([(
         "PATH".into(),
@@ -663,6 +683,58 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
         );
         assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
     }
+    // The same value split by a lone carriage return, on a real pseudo-terminal.
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-pty-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\rsecret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value pty".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    let tail_text = String::from_utf8_lossy(&tail).into_owned();
+    // The CR of the line ending stays (a pty row still returns to column 0);
+    // the lone CR inside the value does not, so the halves reached redaction
+    // as one value.
+    assert!(tail_text.contains("\r\n"), "a pty line ending keeps its CR");
+    for (what, bytes) in [
+        ("pty stdout", &stdout),
+        ("pty stderr", &stderr),
+        ("pty merged tail", &tail),
+    ] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            !bytes
+                .iter()
+                .enumerate()
+                .any(|(index, byte)| *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')),
+            "the {what} still carries a lone carriage return"
+        );
+        assert!(!bytes.contains(&0x1b), "the {what} still carries a control");
+    }
+    assert!(
+        tail_text.contains("[REDACTED]"),
+        "the pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(display.contains("[REDACTED]"), "pty display: {display:?}");
+    assert!(
+        !display.contains(SECRET),
+        "the pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
 }
 
 /// The same custody leaves an ordinary process's colour alone.

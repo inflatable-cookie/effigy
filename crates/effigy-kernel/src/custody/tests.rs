@@ -1381,6 +1381,15 @@ fn assert_absent(what: &str, bytes: &[u8], secret: &[u8]) {
         !bytes.contains(&0x1b),
         "{what} still carries a terminal control"
     );
+    // A carriage return survives only as part of a line ending: a lone one
+    // erases what a display covers or joins the runs either side of it.
+    assert!(
+        !bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')),
+        "{what} still carries a lone carriage return"
+    );
 }
 
 /// One scripted child: merged arrival order is the order of these steps.
@@ -1662,5 +1671,118 @@ fn redaction_redacts_a_projection_that_joins_a_secret_across_an_interleaved_stre
             String::from_utf8_lossy(&stdout).contains("[REDACTED]"),
             "the projection must be redacted on its own bytes"
         );
+    }
+}
+
+#[test]
+fn redaction_drops_a_lone_carriage_return_and_keeps_a_line_ending() {
+    // A lone CR is a horizontal control: a display erases what it covers, and
+    // a reader that strips it joins the runs either side, so a value split by
+    // one is hidden from a redactor over the retained bytes. It is dropped
+    // before redaction, which joins the halves in the frame a display could
+    // show. The CR of a line ending stays, so a PTY's rows still return to
+    // column 0.
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let cx = cx();
+    for (name, steps, marker) in [
+        // One read: a CR inside the value, then a CRLF line ending.
+        (
+            "lone-cr-one-read",
+            vec![(STD, &b"custody-split-\rsecret-value\r\n"[..])],
+            true,
+        ),
+        // The CR at a read boundary.
+        (
+            "lone-cr-across-reads",
+            vec![
+                (STD, &b"custody-split-\r"[..]),
+                (STD, &b"secret-value\n"[..]),
+            ],
+            true,
+        ),
+        // The CR at a stream boundary.
+        (
+            "lone-cr-across-streams",
+            vec![
+                (STD, &b"custody-split-\r"[..]),
+                (ERR, &b"secret-value\n"[..]),
+            ],
+            true,
+        ),
+        // A CR followed by a control byte in the next read: the byte after the
+        // CR is still read as text.
+        (
+            "lone-cr-then-control",
+            vec![
+                (STD, &b"custody-split-\r"[..]),
+                (STD, &b"\x1b[1msecret-value\n"[..]),
+            ],
+            true,
+        ),
+        // A CR that never reaches a line ending is dropped at EOF.
+        (
+            "lone-cr-at-eof",
+            vec![(STD, &b"custody-split-\r"[..])],
+            false,
+        ),
+    ] {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in steps {
+            capture.feed(stream, bytes);
+        }
+        capture.close();
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&format!("{name}: {what}"), &bytes, SECRET);
+        }
+        let tail = String::from_utf8_lossy(&capture.tail()).into_owned();
+        assert_eq!(
+            tail.contains("[REDACTED]"),
+            marker,
+            "{name}: marker expectation: {tail:?}"
+        );
+        if name == "lone-cr-at-eof" {
+            assert_eq!(tail, "custody-split-", "{name}");
+        }
+        if name == "lone-cr-one-read" {
+            // The line ending itself is untouched, so a PTY row still returns
+            // to column 0.
+            assert!(tail.ends_with("\r\n"), "{name}: {tail:?}");
+        }
+    }
+    // A CRLF that separates the halves is a line ending, not a hidden split:
+    // it stays, and the two lines never become one value.
+    let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+    capture.feed(Stream::Stdout, b"custody-split-\r\nsecret-value\r\n");
+    capture.close();
+    let tail = capture.tail();
+    for (what, bytes) in capture.sinks(&cx) {
+        assert_absent(&what, &bytes, SECRET);
+    }
+    assert!(
+        tail.windows(2).any(|window| window == b"\r\n"),
+        "a line ending keeps its carriage return"
+    );
+    // The hazard this closes: a reader that strips a lone CR instead of
+    // applying it shows the value, so no sink may hold one.
+    let pre_fix = b"custody-split-\rsecret-value\r\n";
+    let stripped = pre_fix
+        .iter()
+        .copied()
+        .filter(|byte| *byte != b'\r')
+        .collect::<Vec<_>>();
+    assert!(
+        stripped
+            .windows(SECRET.len())
+            .any(|window| window == SECRET),
+        "a CR-stripping reader reassembles the pre-fix shape"
+    );
+    // A secret that itself carries a CR is matched in the form a display
+    // shows, which is the CR-free one.
+    let capture = FakeCapture::new(home(), &cx, vec![b"cr-\rinside".to_vec()]);
+    capture.feed(Stream::Stdout, b"cr-\rinside\n");
+    capture.close();
+    assert_eq!(&capture.tail()[..], b"[REDACTED]\n");
+    for (what, bytes) in capture.sinks(&cx) {
+        assert_absent(&what, &bytes, b"cr-inside");
     }
 }

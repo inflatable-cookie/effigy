@@ -14,15 +14,22 @@
 //! classify is dropped rather than emitted, an unterminated control drops its
 //! bytes at EOF, and no path ever emits a byte it held back.
 //!
-//! Line structure is kept (LF, CR and TAB pass through). A line break ends a
-//! display line in every reader Effigy has, so it can never join two visible
-//! runs, and a secret that itself contains a newline stays matchable.
+//! Line structure is kept, but a carriage return survives only as part of a
+//! line ending: `CR LF` passes, every other CR is dropped. A lone CR is a
+//! horizontal control — a display erases what it covers, and a reader that
+//! strips it instead joins the runs on either side — so a secret split by one
+//! is a split a redactor over the retained bytes never sees. Dropping it joins
+//! the halves before redaction, which is the frame a display could show. The
+//! `LF` of a line ending stays a separator no reader joins across, and a
+//! secret that itself contains a newline stays matchable.
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum State {
     /// Visible text: only bytes a terminal prints pass.
     #[default]
     Ground,
+    /// After a CR: kept only when the next byte is LF.
+    CarriageReturn,
     /// After ESC; the next byte says which sequence follows.
     Escape,
     /// ESC plus a 0x20..=0x2F intermediate (a charset designator, say).
@@ -51,69 +58,87 @@ impl TerminalSanitizer {
 
     /// Emits the visible bytes of `bytes` in order, each with the tag of the
     /// stream that produced it. `eof` finishes the process's merged output: a
-    /// sequence still open is dropped, never completed by later output, and
-    /// the machine starts from ground if the core is fed again.
+    /// sequence or a CR still open is dropped, never completed by later
+    /// output, and the machine starts from ground if the core is fed again.
     pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
         let mut out = Vec::with_capacity(bytes.len());
         for &(tag, byte) in bytes {
-            let state = match self.state {
-                State::Ground => match byte {
-                    0x1b => State::Escape,
-                    // TAB, LF and CR keep the output's line structure.
-                    0x09 | 0x0a | 0x0d => {
-                        out.push((tag, byte));
-                        State::Ground
-                    }
-                    // Every other C0 control and DEL is dropped.
-                    0x00..=0x1f | 0x7f => State::Ground,
-                    _ => {
-                        out.push((tag, byte));
-                        State::Ground
-                    }
-                },
-                State::Escape => match byte {
-                    b'[' => State::Csi,
-                    b']' => State::Osc,
-                    b'P' | b'X' | b'^' | b'_' => State::String,
-                    0x20..=0x2f => State::EscapeIntermediate,
-                    0x1b => State::Escape,
-                    // A complete two-byte escape, a cancel or a malformed
-                    // introducer all end at ground without emitting.
-                    _ => State::Ground,
-                },
-                State::EscapeIntermediate => match byte {
-                    0x20..=0x2f => State::EscapeIntermediate,
-                    _ => State::Ground,
-                },
-                State::Csi => match byte {
-                    // Parameter and intermediate bytes continue the sequence.
-                    0x20..=0x3f => State::Csi,
-                    // One final byte ends it, whether well formed or not.
-                    0x40..=0x7e => State::Ground,
-                    // CAN and SUB abort it; anything else is malformed. The
-                    // byte is dropped either way, so a split secret rejoins.
-                    _ => State::Ground,
-                },
-                State::Osc => match byte {
-                    0x07 | 0x18 | 0x1a => State::Ground,
-                    0x1b => State::OscAfterEsc,
-                    _ => State::Osc,
-                },
-                State::OscAfterEsc => match byte {
-                    b'\\' => State::Ground,
-                    _ => State::Osc,
-                },
-                State::String => match byte {
-                    0x18 | 0x1a => State::Ground,
-                    0x1b => State::StringAfterEsc,
-                    _ => State::String,
-                },
-                State::StringAfterEsc => match byte {
-                    b'\\' => State::Ground,
-                    _ => State::String,
-                },
-            };
-            self.state = state;
+            // A dropped lone CR says nothing about the byte after it, so that
+            // byte is handled as if the CR had never been there.
+            let mut pending = Some(byte);
+            while let Some(byte) = pending.take() {
+                self.state = match self.state {
+                    State::CarriageReturn => match byte {
+                        b'\n' => {
+                            out.push((tag, b'\r'));
+                            out.push((tag, b'\n'));
+                            State::Ground
+                        }
+                        // Fail closed: the CR is gone and the byte is re-read.
+                        _ => {
+                            pending = Some(byte);
+                            State::Ground
+                        }
+                    },
+                    State::Ground => match byte {
+                        0x1b => State::Escape,
+                        0x0d => State::CarriageReturn,
+                        // TAB and LF keep the output's line structure.
+                        0x09 | 0x0a => {
+                            out.push((tag, byte));
+                            State::Ground
+                        }
+                        // Every other C0 control and DEL is dropped.
+                        0x00..=0x1f | 0x7f => State::Ground,
+                        _ => {
+                            out.push((tag, byte));
+                            State::Ground
+                        }
+                    },
+                    State::Escape => match byte {
+                        b'[' => State::Csi,
+                        b']' => State::Osc,
+                        b'P' | b'X' | b'^' | b'_' => State::String,
+                        0x20..=0x2f => State::EscapeIntermediate,
+                        0x1b => State::Escape,
+                        // A complete two-byte escape, a cancel or a malformed
+                        // introducer all end at ground without emitting.
+                        _ => State::Ground,
+                    },
+                    State::EscapeIntermediate => match byte {
+                        0x20..=0x2f => State::EscapeIntermediate,
+                        _ => State::Ground,
+                    },
+                    State::Csi => match byte {
+                        // Parameter and intermediate bytes continue it.
+                        0x20..=0x3f => State::Csi,
+                        // One final byte ends it, whether well formed or not.
+                        0x40..=0x7e => State::Ground,
+                        // CAN and SUB abort it; anything else is malformed.
+                        // The byte is dropped either way, so a split secret
+                        // rejoins in the redactor's frame.
+                        _ => State::Ground,
+                    },
+                    State::Osc => match byte {
+                        0x07 | 0x18 | 0x1a => State::Ground,
+                        0x1b => State::OscAfterEsc,
+                        _ => State::Osc,
+                    },
+                    State::OscAfterEsc => match byte {
+                        b'\\' => State::Ground,
+                        _ => State::Osc,
+                    },
+                    State::String => match byte {
+                        0x18 | 0x1a => State::Ground,
+                        0x1b => State::StringAfterEsc,
+                        _ => State::String,
+                    },
+                    State::StringAfterEsc => match byte {
+                        b'\\' => State::Ground,
+                        _ => State::String,
+                    },
+                };
+            }
         }
         if eof {
             self.state = State::Ground;
