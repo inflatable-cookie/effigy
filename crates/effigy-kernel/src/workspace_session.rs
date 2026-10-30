@@ -57,8 +57,9 @@ pub use selection::{
     CONTEXT_SELECTOR, ENTRY_SELECTOR,
 };
 pub use serving::{
-    ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
-    ServingProbe, ServingRefusal, SessionLaunch, SessionOwner, TargetProbe,
+    ChannelBound, ChannelListener, GuestLocatorChallenge, GuestLocatorEvidence, GuestLocatorTarget,
+    HostChannelListener, ListenerPhase, ServingKey, ServingLease, ServingProbe, ServingRefusal,
+    SessionLaunch, SessionOwner, TargetProbe,
 };
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
