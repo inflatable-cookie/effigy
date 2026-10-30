@@ -1291,7 +1291,7 @@ impl FakeCapture {
             receipt,
             anchor: None,
             logs,
-            merged_log: None,
+            host_output: None,
             styled: VecDeque::new(),
             styled_bytes: 0,
             styled_truncated: false,
@@ -1313,6 +1313,7 @@ impl FakeCapture {
             terminal: None,
             pty: false,
             registration: None,
+            capture_eof_sent: false,
         };
         Self {
             root,
@@ -1327,13 +1328,25 @@ impl FakeCapture {
     }
     /// The merged stream's EOF, which is the only flush the pipeline takes.
     fn close(&self) {
-        lock(&self.core).sink(0, &[], true);
+        let mut core = lock(&self.core);
+        core.sink(0, &[], true);
+        if let Some(output) = &core.host_output {
+            let _ = output.finish();
+        }
     }
     fn tail(&self) -> Vec<u8> {
-        lock(&self.core).tail.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.host_output {
+            return output.tail();
+        }
+        core.tail.iter().copied().collect()
     }
     fn merged(&self) -> Vec<u8> {
-        lock(&self.core).output.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.host_output {
+            return output.take_output();
+        }
+        core.output.iter().copied().collect()
     }
     fn streams(&self) -> (Vec<u8>, Vec<u8>) {
         let core = lock(&self.core);
@@ -1344,7 +1357,10 @@ impl FakeCapture {
     }
     /// The capture state a stop report reads.
     fn capture(&self) -> CaptureState {
-        lock(&self.core).capture.clone()
+        let core = lock(&self.core);
+        core.host_output
+            .as_ref()
+            .map_or_else(|| core.capture.clone(), HostOutput::capture_state)
     }
     /// The bounded stderr excerpt a settle or doctor report quotes.
     fn excerpt(&self) -> String {
@@ -2075,8 +2091,15 @@ fn merged_log_is_plain_redacted_and_committed_before_fanout() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.merged_log = Some(MergedLog::open(&path).unwrap());
-        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
+        core.host_output = Some(
+            HostOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![b"supersecret".to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
     }
     capture.feed(STD, b"\x1b[32mready\x1b[0m\r\nsuper\x1b[");
     capture.feed(ERR, b"31msecret\x1b]title");
@@ -2086,9 +2109,8 @@ fn merged_log_is_plain_redacted_and_committed_before_fanout() {
     assert_eq!(bytes, b"ready\n[REDACTED]\n");
     assert_eq!(capture.merged(), bytes);
     assert_eq!(capture.tail(), bytes);
-    let core = lock(&capture.core);
     assert_eq!(
-        core.merged_log.as_ref().unwrap().committed_offset(),
+        MergedLog::identity(&path).unwrap().length,
         bytes.len() as u64
     );
 }
@@ -2100,8 +2122,10 @@ fn merged_append_failure_withholds_all_capture_fanout() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.merged_log = Some(MergedLog::open(&path).unwrap());
-        core.pipeline = OutputPipeline::for_capture(vec![], true);
+        core.host_output = Some(
+            HostOutput::with_secrets(MergedLog::prepare_test(&path).unwrap(), vec![], 4096, 4096)
+                .unwrap(),
+        );
     }
     crate::fault::arm_point(
         crate::fault::Point::CaptureWrite,
@@ -2119,14 +2143,7 @@ fn merged_append_failure_withholds_all_capture_fanout() {
     let (stdout, stderr) = capture.streams();
     assert!(stdout.is_empty() && stderr.is_empty());
     assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
-    assert_eq!(
-        lock(&capture.core)
-            .merged_log
-            .as_ref()
-            .unwrap()
-            .committed_offset(),
-        0
-    );
+    assert_eq!(MergedLog::identity(&path).unwrap().length, 0);
 }
 
 #[test]
@@ -2137,15 +2154,27 @@ fn writer_styles_are_redacted_and_masked_ranges_lose_style() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.merged_log = Some(MergedLog::open(&path).unwrap());
-        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
+        core.host_output = Some(
+            HostOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![b"supersecret".to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
     }
     for byte in b"\x1b[32mready\x1b[31m super\x1b[1msecret\x1b[0m caf\xc3\xa9\n" {
         capture.feed(STD, &[*byte]);
     }
     capture.close();
     let core = lock(&capture.core);
-    let spans: Vec<_> = core.styled.iter().flat_map(|chunk| &chunk.spans).collect();
+    let styles = core.host_output.as_ref().unwrap().take_styled_output();
+    let spans: Vec<_> = styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .collect();
     let visible: String = spans.iter().map(|span| span.text.as_str()).collect();
     assert_eq!(visible, "ready [REDACTED] café\n");
     assert_eq!(visible.as_bytes(), std::fs::read(&path).unwrap());
@@ -2167,8 +2196,15 @@ fn every_durable_plain_prefix_is_complete_utf8() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.merged_log = Some(MergedLog::open(&path).unwrap());
-        core.pipeline = OutputPipeline::for_capture(vec!["x�".as_bytes().to_vec()], true);
+        core.host_output = Some(
+            HostOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec!["x�".as_bytes().to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
     }
     for byte in "xé is visible and safe\n".as_bytes() {
         capture.feed(STD, &[*byte]);
@@ -2181,4 +2217,59 @@ fn every_durable_plain_prefix_is_complete_utf8() {
         std::fs::read(&path).unwrap(),
         "xé is visible and safe\n".as_bytes()
     );
+}
+
+#[test]
+fn unrelated_live_lines_do_not_wait_for_long_secret_lookahead() {
+    let mut redactor = Redactor::new(vec![vec![b'x'; 4096]]);
+    assert_eq!(redactor.push(b"server ready\n", false), b"server ready\n");
+    assert!(redactor.push(b"xxx", false).is_empty());
+    assert_eq!(redactor.push(b"!\n", false), b"xxx!\n");
+}
+
+#[test]
+fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    {
+        let mut core = lock(&capture.core);
+        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
+        core.logs[0].as_mut().unwrap().enable_plain().unwrap();
+    }
+    capture.feed(STD, b"\x1b[32mready\x1b[0m super");
+    capture.feed(ERR, "secret\nété\n".as_bytes());
+    capture.close();
+    let expected = "ready [REDACTED]\nété\n".as_bytes();
+    assert_eq!(capture.log(&cx, STD), expected);
+    assert!(capture.log(&cx, ERR).is_empty());
+    assert_eq!(capture.merged(), expected);
+    assert_eq!(capture.tail(), expected);
+    assert_eq!(capture.excerpt().as_bytes(), expected);
+    let observe = cx.operation().observe().unwrap();
+    let mut offset = 0;
+    let mut seen = Vec::new();
+    while offset < expected.len() as u64 {
+        let Observed::Verified(read, _) =
+            crate::run::read_log(&observe, &capture.root, id(), 1, STD, offset, 3)
+        else {
+            panic!("plain read failed");
+        };
+        assert!(!read.bytes.is_empty());
+        assert!(std::str::from_utf8(&read.bytes).is_ok());
+        offset = read.from + read.bytes.len() as u64;
+        seen.extend(read.bytes);
+    }
+    assert_eq!(seen, expected);
+    let spans = crate::custody::read_styles(&capture.root, id(), 1, 0, expected);
+    assert_eq!(
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+            .as_bytes(),
+        expected
+    );
+    assert!(spans
+        .iter()
+        .any(|span| span.text.contains("ready") && span.style != Default::default()));
 }

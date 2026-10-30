@@ -13,7 +13,17 @@ During v0.x, MINOR bumps may include breaking changes.
   append to the existing plain follower path; failed appends stop capture
   fanout rather than acknowledge unwritten output. Schema-sensitive and
   unclassified application-specific inherited environment values are passed
-  to custody as secrets.
+  to custody as secrets. At the first proven stopped boundary, an untrusted
+  legacy host log is retained in private quarantine and replaced at the same
+  path with a fresh canonical inode and durable provenance. Stop and reopen
+  pre-upgrade followers after upgrading; already-open descriptors cannot be
+  revoked. The bundled Underlay follower resets on inode change even when the
+  replacement is larger than its previous byte offset.
+- Managed panes consume redacted typed style spans from a bounded tap after
+  successful plain append. Managed Standard output remains merged plain text
+  in its canonical stdout log; plain and JSON readers use those bytes directly.
+  Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
+  explicit colour preferences, NO_COLOR and CI.
 
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
   PM, APC and the other non-printing bytes) *before* redaction, over merged

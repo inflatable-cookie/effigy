@@ -80,7 +80,7 @@ const START_PUBLICATION_DELAY_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_START_PUBLIC
 #[cfg(debug_assertions)]
 const START_PROGRESS_INTERVAL_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_PROGRESS_INTERVAL_MS";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostProcessRuntimeSpec {
     schema: String,
@@ -88,6 +88,8 @@ struct HostProcessRuntimeSpec {
     runtime_generation: String,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
+    #[serde(default)]
+    ansi_front: bool,
     listener: Option<EffectiveManagedHostListener>,
     owner: String,
     dependencies: Vec<HostProcessDependency>,
@@ -119,6 +121,8 @@ struct HostProcessRuntimeSpec {
     /// The state home this run's checkout journal was opened under.
     #[serde(default)]
     state_home: PathBuf,
+    #[serde(skip)]
+    output: Option<effigy_kernel::custody::HostOutput>,
 }
 
 /// The stop report a supervisor writes after it settles its own run: the
@@ -579,14 +583,8 @@ fn wait_for_listener_activation(
 
 /// Bytes of a child's log this wait reads before bounding the tail it names.
 const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
-/// Bytes of context this wait reads backwards to find the start of the line its
-/// window begins inside. Keeping that context means a secret-shaped
-/// `key=value` is whole before the redactor sees it, instead of losing its
-/// marker to the window edge (effigy#455).
-const LISTENER_OUTPUT_LINE_CONTEXT_BYTES: u64 = 4 * 1024;
-/// Characters of child output a progress line or a refusal keeps. The child
-/// may print anything, so the tail is bounded and redacted where it is read,
-/// not only where it is printed.
+/// Maximum UTF-8 bytes retained from already-redacted child output. Readers
+/// select a contiguous suffix and never apply another redactor.
 const LISTENER_OUTPUT_TAIL_BYTES: usize = 320;
 /// Characters of a listener's failure detail a report keeps.
 pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
@@ -599,57 +597,73 @@ pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
 /// child's words. A log that is missing, a symlink, or empty contributes
 /// nothing.
 ///
-/// Redaction happens before anything is dropped for being partial. The window
-/// starts at the beginning of a line whenever that line begins within the
-/// bounded context; a line that begins before the context is dropped whole
-/// rather than emitted with its `key=` marker cut off, which would print a
-/// value the redactor can no longer recognise.
+/// Read only an identity-proven canonical file. Excerpts are a contiguous
+/// bounded suffix of one child block; no ANSI interpreter or second redactor
+/// transforms persisted bytes or joins text across supervisor messages.
 fn listener_output_tail(log_path: &Path) -> Option<String> {
-    let metadata = fs::symlink_metadata(log_path).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    use std::io::{Read as _, Seek, SeekFrom};
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+    let proof = effigy_kernel::custody::MergedLog::identity(log_path).ok()?;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(log_path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file()
+        || metadata.dev() != proof.identity.device
+        || metadata.ino() != proof.identity.inode
+    {
         return None;
     }
     let len = metadata.len();
-    let mut start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
-    let mut file = fs::File::open(log_path).ok()?;
-    use std::io::{Read as _, Seek, SeekFrom};
-    let mut begins_mid_line = start > 0;
-    if start > 0 {
-        let back = start.min(LISTENER_OUTPUT_LINE_CONTEXT_BYTES);
-        file.seek(SeekFrom::Start(start - back)).ok()?;
-        let mut context = Vec::new();
-        (&mut file).take(back).read_to_end(&mut context).ok()?;
-        if let Some(offset) = context.iter().rposition(|byte| *byte == b'\n') {
-            start = start - back + offset as u64 + 1;
-            begins_mid_line = false;
-        }
-    }
-    file.seek(SeekFrom::Start(start)).ok()?;
-    let mut raw = Vec::new();
-    file.take(LISTENER_OUTPUT_TAIL_READ_BYTES + LISTENER_OUTPUT_LINE_CONTEXT_BYTES)
-        .read_to_end(&mut raw)
-        .ok()?;
-    let text = String::from_utf8_lossy(&raw);
-    let mut lines = text.lines().collect::<Vec<_>>();
-    if begins_mid_line && !lines.is_empty() {
-        // The line this window starts inside began before the context read:
-        // its marker may be gone, so it is not evidence this report may print.
-        lines.remove(0);
-    }
-    let lines = lines
-        .into_iter()
-        .map(str::trim_end)
-        .filter(|line| !line.trim().is_empty())
-        .filter(|line| !line.starts_with("[effigy host-process]"))
-        .collect::<Vec<_>>();
-    if lines.is_empty() {
+    let start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
+    let read_from = start.saturating_sub(1);
+    file.seek(SeekFrom::Start(read_from)).ok()?;
+    let mut raw = vec![0; (len - read_from) as usize];
+    file.read_exact(&mut raw).ok()?;
+    if !effigy_kernel::custody::MergedLog::identity(log_path)
+        .is_ok_and(|after| after.identity == proof.identity)
+    {
         return None;
     }
-    let tail = lines.join(" | ");
-    Some(effigy_ui::human::bound_text(
-        &tail,
-        LISTENER_OUTPUT_TAIL_BYTES,
-    ))
+    if start > 0 {
+        let begins_line = raw.first() == Some(&b'\n');
+        raw.remove(0);
+        if !begins_line {
+            let newline = raw.iter().position(|byte| *byte == b'\n')?;
+            raw.drain(..=newline);
+        }
+    }
+    let text = std::str::from_utf8(&raw).ok()?;
+    if text.chars().any(|ch| ch.is_control() && ch != '\n') {
+        return None;
+    }
+    let mut block_start = 0;
+    let mut last_child_block = None;
+    let mut position = 0;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("[effigy host-process]") {
+            if position > block_start {
+                last_child_block = Some(&text[block_start..position]);
+            }
+            block_start = position + line.len();
+        }
+        position += line.len();
+    }
+    let block = if position > block_start {
+        &text[block_start..position]
+    } else {
+        last_child_block?
+    };
+    if block.trim().is_empty() {
+        return None;
+    }
+    let mut begin = block.len().saturating_sub(LISTENER_OUTPUT_TAIL_BYTES);
+    while !block.is_char_boundary(begin) {
+        begin += 1;
+    }
+    Some(block[begin..].to_owned())
 }
 
 /// How often a listener whose port is still closed reports progress. The
@@ -1101,7 +1115,7 @@ fn refuse(session: &EngineSession, category: Category, detail: impl std::fmt::Di
 /// through `Custody` (so the kernel receipt is the group's identity), waits for
 /// declared readiness, honours the restart policy and settles once.
 pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
-    let spec: HostProcessRuntimeSpec = match serde_json::from_slice(session.payload()) {
+    let mut spec: HostProcessRuntimeSpec = match serde_json::from_slice(session.payload()) {
         Ok(spec) => spec,
         Err(_) => {
             return Err(refuse(
@@ -1198,6 +1212,31 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
             return Err(error);
         }
     };
+    // Admission retains Gate(HostProcess) after every predecessor settled.
+    // Publish a fresh canonical inode before the client can follow this run.
+    let log =
+        effigy_kernel::custody::MergedLog::prepare(&mut run, &spec.log_file).map_err(|error| {
+            effigy_kernel::run::RunError::step_failed("host log legacy cutover", error)
+        })?;
+    let environment = classify_child_environment(
+        &spec,
+        child_environment(
+            crate::runner::secret_session::workload_ambient_environment(),
+            &spec,
+            &[],
+            None,
+        ),
+        &[],
+    )
+    .map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host output environment provenance", error)
+    })?;
+    let output =
+        effigy_kernel::custody::HostOutput::new(log, &environment, cx.operation().limits())
+            .map_err(|error| {
+                effigy_kernel::run::RunError::step_failed("host canonical output", error)
+            })?;
+    spec.output = Some(output.clone());
     session.admitted(&mut run)?;
     let supervisor_pid = std::process::id();
     let watch = session.owner_watch().ok();
@@ -1209,13 +1248,14 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         supervisor_pid,
         watch.as_ref(),
     );
-    let (workload, custody) = match started {
+    let (workload, mut custody) = match started {
         Ok(result) => result,
         Err(error) => {
             let _ = run.interrupt(
                 &cleanup_budget(),
                 effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
             );
+            let _ = output.finish();
             let _ = write_stop_report(&spec, &run, None);
             // A store or capability failure inside the supervisor names the
             // step and its cause. It is never reported as an invalid request
@@ -1228,10 +1268,24 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     };
     if write_stop_report(&spec, &run, custody.clone()).is_err() {
         append_log_line(
-            &spec.log_file,
+            spec.output.as_ref(),
             "[effigy host-process] the stop report could not be recorded",
         );
     }
+    let capture_result = output.finish();
+    if capture_result.is_err() {
+        if let Some(custody) = &mut custody {
+            custody.capture_truncated = true;
+        }
+        // A failed final flush must also reach the durable stop projection.
+        // The writer is closed: never try to append another message to it.
+        let _ = write_stop_report(&spec, &run, custody.clone());
+    }
+    let workload = if capture_result.is_err() {
+        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 })
+    } else {
+        workload
+    };
     let outcome = match workload {
         Some(outcome) => {
             run.finish(outcome)?;
@@ -1243,6 +1297,9 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     session.closed(&outcome);
+    capture_result.map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host canonical append", error)
+    })?;
     Ok(())
 }
 
@@ -1310,7 +1367,7 @@ fn supervise_generations(
     // no restart limit is needed to keep it from spinning (effigy#341).
     let mut backoff = Duration::ZERO;
     loop {
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             shutdown.store(true, Ordering::SeqCst);
             break;
         }
@@ -1353,7 +1410,7 @@ fn supervise_generations(
                 wait_or_break(
                     &shutdown,
                     Duration::from_millis(spec.restart_delay_ms),
-                    || stop_requested(run, watch),
+                    || stop_requested(run, watch, spec),
                 );
             }
             GenerationEnd::Exited(code) => {
@@ -1371,7 +1428,7 @@ fn supervise_generations(
                 wait_or_break(
                     &shutdown,
                     restart_backoff(&mut backoff, spec.restart_delay_ms),
-                    || stop_requested(run, watch),
+                    || stop_requested(run, watch, spec),
                 );
             }
         }
@@ -1414,7 +1471,16 @@ fn activate_once(
 fn stop_requested(
     run: &effigy_kernel::run::Run<'_>,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
+    spec: &HostProcessRuntimeSpec,
 ) -> bool {
+    if spec.output.as_ref().is_some_and(|output| {
+        matches!(
+            output.capture_state(),
+            effigy_kernel::custody::CaptureState::Truncated(_)
+        )
+    }) {
+        return true;
+    }
     if !crate::runner::task_engine::routed_signals().is_empty() {
         return true;
     }
@@ -1448,7 +1514,7 @@ fn supervise_plain_host_process(
     last: &mut Option<CustodyStop>,
 ) -> Result<GenerationEnd, RunnerError> {
     let dependencies = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
@@ -1462,7 +1528,7 @@ fn supervise_plain_host_process(
         Ok(child) => child,
         Err(error) => {
             append_log_line(
-                &spec.log_file,
+                spec.output.as_ref(),
                 &format!(
                     "[effigy host-process] failed to spawn `{}`: {error}",
                     spec.run
@@ -1473,7 +1539,7 @@ fn supervise_plain_host_process(
     };
     activate_once(active, run, session)?;
     append_log_line(
-        &spec.log_file,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] started `{}` (pid {})",
             spec.process_name,
@@ -1481,11 +1547,11 @@ fn supervise_plain_host_process(
         ),
     );
     let wait = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_host_child(&mut child, spec, &dependency_generations, &mut stop)?
     };
     let stopping = matches!(wait, HostChildWait::Shutdown)
-        || stop_requested(run, watch)
+        || stop_requested(run, watch, spec)
         || shutdown.load(Ordering::SeqCst);
     if stopping {
         shutdown.store(true, Ordering::SeqCst);
@@ -1493,7 +1559,7 @@ fn supervise_plain_host_process(
     if let Some(report) = stop_generation(run, spec, &mut child, stopping) {
         *last = Some(report.clone());
         append_log_line(
-            &spec.log_file,
+            spec.output.as_ref(),
             &format!(
                 "[effigy host-process] `{}` exited (code {})",
                 spec.process_name,
@@ -1582,7 +1648,7 @@ fn spawn_generation(
         dependency_env,
         listener,
     );
-    let environment = classify_child_environment(spec, environment)?;
+    let environment = classify_child_environment(spec, environment, dependency_env)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1596,8 +1662,10 @@ fn spawn_generation(
         terminal: Terminal::None,
         label: spec.process_name.clone(),
     };
-    let log = effigy_kernel::custody::MergedLog::open(&spec.log_file)?;
-    Custody::spawn_logged_auxiliary(run, process, cx, log)
+    let output = spec.output.clone().ok_or_else(|| {
+        effigy_kernel::custody::SpawnError::Refused("host canonical writer is not installed".into())
+    })?;
+    Custody::spawn_logged_auxiliary(run, process, cx, output)
 }
 
 /// Preserve schema provenance across the detached boundary by loading the
@@ -1607,6 +1675,7 @@ fn spawn_generation(
 fn classify_child_environment(
     spec: &HostProcessRuntimeSpec,
     environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+    generated: &[(String, String)],
 ) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
 {
     let mut declared = BTreeMap::new();
@@ -1624,7 +1693,11 @@ fn classify_child_environment(
             }
         }
     }
-    classify_environment(environment, &spec.env, &declared)
+    let mut literals = spec.env.clone();
+    literals.extend(generated.iter().cloned());
+    let mut classified = classify_environment(environment, &literals, &declared)?;
+    crate::runner::managed_color::apply(&mut classified, spec.ansi_front);
+    Ok(classified)
 }
 
 fn classify_environment(
@@ -1684,7 +1757,13 @@ fn classify_environment(
 fn nonsecret_host_environment(name: &str) -> bool {
     matches!(
         name,
-        "NEXTEST"
+        "EFFIGY_MANAGED_HOST_LISTENER_BIND"
+            | "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE"
+            | "EFFIGY_MANAGED_HOST_LISTENER_GENERATION"
+            | "EFFIGY_ADMITTED"
+            | "EFFIGY_DEFER_DEPTH"
+            | "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE"
+            | "NEXTEST"
             | "NEXTEST_RUN_ID"
             | "NEXTEST_TEST_GROUP"
             | "NEXTEST_TEST_GROUP_SLOT"
@@ -1692,6 +1771,8 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "NEXTEST_PROFILE"
             | "NEXTEST_TEST_NAME"
             | "NEXTEST_BINARY_ID"
+            | "NEXTEST_TOTAL_ATTEMPTS"
+            | "RUST_RECURSION_COUNT"
             | "NEXTEST_ATTEMPT"
             | "NEXTEST_EXECUTION_MODE"
             | "CARGO_INCREMENTAL"
@@ -1711,6 +1792,8 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "CARGO_PKG_LICENSE_FILE"
             | "CARGO_PKG_RUST_VERSION"
             | "MallocNanoZone"
+            | "XPC_SERVICE_NAME"
+            | "XPC_FLAGS"
             | "OSLogRateLimit"
             | "NoDefaultCurrentDirectoryInExePath"
             | "LESS"
@@ -1746,6 +1829,9 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "CLICOLOR"
             | "CLICOLOR_FORCE"
             | "FORCE_COLOR"
+            | "EFFIGY_MANAGED_TUI"
+            | "EFFIGY_MANAGED_HEADLESS"
+            | "EFFIGY_MANAGED_PANE_ANSI"
             | "EFFIGY_COLOR"
             | "ANSI_COLORS_DISABLED"
             | "NODE_DISABLE_COLORS"
@@ -2001,7 +2087,7 @@ fn supervise_managed_host_listener(
     #[cfg(debug_assertions)]
     hold_start_publication();
 
-    if stop_requested(run, watch) || shutdown.load(Ordering::SeqCst) {
+    if stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
         ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")?;
         return Ok(GenerationEnd::Stopped);
@@ -2014,7 +2100,7 @@ fn supervise_managed_host_listener(
     let mut state = ListenerGeneration::new(spec, supervisor_pid, &generation);
     state.write("starting")?;
     let dependencies = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
@@ -2026,12 +2112,7 @@ fn supervise_managed_host_listener(
         .into_iter()
         .collect::<Vec<(String, String)>>();
     if let Err(error) = reserved_port_is_free(&listener.bind) {
-        return finish_failed_generation(
-            &mut state,
-            &log_path,
-            spec.process_name.as_str(),
-            error.to_string(),
-        );
+        return finish_failed_generation(&mut state, spec.process_name.as_str(), error.to_string());
     }
     let mut child = match spawn_generation(
         run,
@@ -2044,7 +2125,6 @@ fn supervise_managed_host_listener(
         Err(error) => {
             return finish_failed_generation(
                 &mut state,
-                &log_path,
                 spec.process_name.as_str(),
                 format!("managed listener could not start: {error}"),
             )
@@ -2064,7 +2144,7 @@ fn supervise_managed_host_listener(
             });
         }
         Err(error) => append_log_line(
-            &log_path,
+            spec.output.as_ref(),
             &format!(
                 "[effigy host-process] managed listener child identity is unavailable: {error}"
             ),
@@ -2072,7 +2152,7 @@ fn supervise_managed_host_listener(
     }
     state.write("starting")?;
     append_log_line(
-        &log_path,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
             spec.process_name
@@ -2080,7 +2160,7 @@ fn supervise_managed_host_listener(
     );
 
     let ready = {
-        let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
+        let mut stop = || stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst);
         wait_for_ready_listener(
             address, listener, &log_path, &mut stop, &mut child, &mut state,
         )
@@ -2093,7 +2173,7 @@ fn supervise_managed_host_listener(
         }
         state.child = None;
         append_log_line(
-            &log_path,
+            spec.output.as_ref(),
             &format!("[effigy host-process] listener failed: {error}"),
         );
         if stopped {
@@ -2115,7 +2195,7 @@ fn supervise_managed_host_listener(
             *last = Some(report);
         }
         state.child = None;
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             write_terminal_listener_state(spec, supervisor_pid)?;
             shutdown.store(true, Ordering::SeqCst);
             return Ok(GenerationEnd::Stopped);
@@ -2127,7 +2207,6 @@ fn supervise_managed_host_listener(
         state.child = None;
         return finish_failed_generation(
             &mut state,
-            &log_path,
             spec.process_name.as_str(),
             format!("listener route preparation failed: {error}"),
         );
@@ -2147,14 +2226,13 @@ fn supervise_managed_host_listener(
         state.route_owner = None;
         return finish_failed_generation(
             &mut state,
-            &log_path,
             spec.process_name.as_str(),
             format!("route publication failed: {error}"),
         );
     }
     state.write("ready")?;
     append_log_line(
-        &log_path,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] listener `{}` is ready at {address}",
             spec.process_name
@@ -2169,7 +2247,7 @@ fn supervise_managed_host_listener(
         if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
             break Some(exit.code);
         }
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             shutdown.store(true, Ordering::SeqCst);
             stopping = true;
             break None;
@@ -2189,7 +2267,7 @@ fn supervise_managed_host_listener(
                         state.route_owner = Some(owner.clone());
                         state.write("ready")?;
                         append_log_line(
-                            &log_path,
+                            spec.output.as_ref(),
                             &format!(
                                 "[effigy host-process] listener `{}` answers again at {address}; route republished",
                                 spec.process_name
@@ -2203,7 +2281,7 @@ fn supervise_managed_host_listener(
                         state.route_owner = None;
                         state.write("unavailable")?;
                         append_log_line(
-                            &log_path,
+                            spec.output.as_ref(),
                             &format!(
                                 "[effigy host-process] listener `{}` answers at {address} but its route could not be republished: {error}",
                                 spec.process_name
@@ -2219,7 +2297,7 @@ fn supervise_managed_host_listener(
                 state.route_owner = None;
                 state.write("unavailable")?;
                 append_log_line(
-                    &log_path,
+                    spec.output.as_ref(),
                     &format!(
                         "[effigy host-process] listener `{}` is not answering at {address}; route withdrawn",
                         spec.process_name
@@ -2276,12 +2354,11 @@ fn supervise_managed_host_listener(
 /// generation as a failed exit so the declared restart policy applies.
 fn finish_failed_generation(
     state: &mut ListenerGeneration<'_>,
-    log_path: &Path,
     process_name: &str,
     message: String,
 ) -> Result<GenerationEnd, RunnerError> {
     append_log_line(
-        log_path,
+        state.spec.output.as_ref(),
         &format!("[effigy host-process] listener `{process_name}` failed: {message}"),
     );
     state.diagnostic = Some(message);
@@ -2376,7 +2453,7 @@ fn wait_for_ready_listener(
         if now >= next_progress {
             next_progress = now + listener_progress_interval();
             append_log_line(
-                log_path,
+                state.spec.output.as_ref(),
                 &format!(
                     "[effigy host-process] listener at {address} is still starting after {}s: {}",
                     started.elapsed().as_secs(),
@@ -2615,16 +2692,14 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Run
         .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
-pub(in crate::runner) fn append_log_line(path: &Path, line: &str) {
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-    {
-        use std::io::Write as _;
-        let _ = writeln!(f, "{line}");
+fn append_log_line(output: Option<&effigy_kernel::custody::HostOutput>, line: &str) {
+    let result = output
+        .ok_or_else(|| std::io::Error::other("host output not installed"))
+        .and_then(|output| output.message(line));
+    if result.is_err() {
+        // No raw message fallback. The shared writer's sticky failure reaches
+        // custody/stop receipts and the supervisor's final failed outcome.
+        eprintln!("host canonical output failed; no message was acknowledged");
     }
 }
 
@@ -2653,6 +2728,11 @@ mod tests {
         let values = [
             ("PATH", "/bin"),
             ("NEXTEST_ATTEMPT", "1"),
+            ("NEXTEST_TOTAL_ATTEMPTS", "1"),
+            ("RUST_RECURSION_COUNT", "1"),
+            ("XPC_SERVICE_NAME", "0"),
+            ("XPC_FLAGS", "0x0"),
+            ("EFFIGY_ADMITTED", "1"),
             ("CARGO_INCREMENTAL", "1"),
             ("CARGO_PKG_VERSION_PATCH", "1"),
             ("TOKEN", "hidden-value"),
@@ -2689,6 +2769,11 @@ mod tests {
             "MODE",
             "PUBLIC",
             "NEXTEST_ATTEMPT",
+            "NEXTEST_TOTAL_ATTEMPTS",
+            "RUST_RECURSION_COUNT",
+            "XPC_SERVICE_NAME",
+            "XPC_FLAGS",
+            "EFFIGY_ADMITTED",
             "CARGO_INCREMENTAL",
             "CARGO_PKG_VERSION_PATCH",
         ] {
@@ -2893,7 +2978,12 @@ mod tests {
         let log = dir.join("app.log");
         let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         assert_eq!(status.len(), 1);
-        assert_eq!(status[0].state, "running", "{status:?}");
+        assert_eq!(
+            status[0].state,
+            "running",
+            "{status:?}; canonical={:?}",
+            fs::read_to_string(&log)
+        );
         let pid = status[0].pid.expect("recorded leader pid");
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
@@ -3049,6 +3139,171 @@ mod tests {
             text.contains("boom from the child"),
             "the process log keeps the child's last lines: {text:?}"
         );
+    }
+
+    /// Real custody cutover, then the bundled direct inode/offset follower.
+    /// Only the follower's pre-cutover stat snapshot is mocked: its new file
+    /// open, fstat, decoder, gap and payload handling run against the real log.
+    #[test]
+    fn canonical_cutover_and_bundled_underlay_follower_use_the_same_new_inode() {
+        use std::os::unix::fs::MetadataExt as _;
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nTOKEN=\n",
+        )
+        .unwrap();
+        let mut producer = host_process(
+            "app",
+            r#"i=0; while [ $i -lt 200 ]; do printf 'safe '; i=$((i+1)); done; printf '\033[32mready\033[0m super\033[31msecret\033[0m\n'"#,
+            HostProcessRestart::Never,
+        );
+        producer.env = vec![("TOKEN".into(), "supersecret".into())];
+        let policy = policy(&fixture.checkout, vec![producer]);
+        let directory = host_process_dir_for_policy(&fixture.checkout, &policy);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("app.log");
+        let legacy = b"\x1b[31mlegacy-457-secret\n";
+        fs::write(&path, legacy).unwrap();
+        let old = fs::metadata(&path).unwrap();
+        assert!(effigy_kernel::custody::MergedLog::read_plain(&path, None, 0, 4096).is_err());
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("custody producer starts");
+        wait_until("new producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let read = effigy_kernel::custody::MergedLog::read_plain(
+            &path,
+            Some(effigy_kernel::custody::FileIdentity {
+                device: old.dev(),
+                inode: old.ino(),
+            }),
+            old.len(),
+            64 * 1024,
+        )
+        .unwrap();
+        assert!(read.cutover);
+        assert_eq!(read.from, 0);
+        assert_ne!(read.log.identity.inode, old.ino());
+        assert!(read.bytes.len() as u64 > old.len());
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        assert!(text.contains("ready [REDACTED]"), "{text}");
+        assert!(
+            !text.contains("supersecret")
+                && !text.contains("legacy-457-secret")
+                && !text.contains('\x1b')
+        );
+        let styles = effigy_kernel::custody::MergedLog::styles(&path, &read);
+        assert_eq!(
+            styles
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            text
+        );
+        assert!(styles
+            .iter()
+            .any(|span| span.text.contains("ready") && span.style != Default::default()));
+        let quarantined = fs::read_dir(directory.join(".legacy-host-logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].metadata().unwrap().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(quarantined[0].path()).unwrap(), legacy);
+        let script = r#"
+import io,json,sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import profile_env
+log=Path(sys.argv[2]); old=json.loads(sys.argv[3]); original=Path.stat; count=0
+assert profile_env.host_process_log(Path(sys.argv[4]),'web','app') == log
+def stat(path,*args,**kwargs):
+    global count
+    if path==log and count<2:
+        count+=1
+        return SimpleNamespace(st_dev=old['device'],st_ino=old['inode'],st_size=old['length'])
+    return original(path,*args,**kwargs)
+out=io.StringIO()
+with patch.object(profile_env,'host_process_log',return_value=log), patch.object(Path,'stat',stat):
+    profile_env.follow_log(log.parent,'web','app',out=out,forever=False)
+print(json.dumps(out.getvalue()))
+"#;
+        let output = std::process::Command::new("python3")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .arg("-c")
+            .arg(script)
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("external/bundles/underlay/scripts/dev"),
+            )
+            .arg(&path)
+            .arg(
+                serde_json::json!({"device":old.dev(),"inode":old.ino(),"length":old.len()})
+                    .to_string(),
+            )
+            .arg(&fixture.checkout)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let followed: String = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(followed, format!("… log restarted …\n{text}"));
+        assert_eq!(followed.matches("… log restarted …").count(), 1);
+    }
+
+    #[test]
+    fn canonical_capture_stops_a_full_pipe_with_an_unconsumed_styled_reader() {
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nTOKEN=\n",
+        )
+        .unwrap();
+        let mut producer = host_process(
+            "app",
+            r#"trap '' TERM; while :; do printf '\033[32msafe\033[0m token=%s\n' "$TOKEN"; printf 'stderr safe\n' >&2; done"#,
+            HostProcessRestart::Never,
+        );
+        producer.env = vec![("TOKEN".into(), "opaque-457-full-pipe-key".into())];
+        let policy = policy(&fixture.checkout, vec![producer]);
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let _cleanup = Stop(&fixture.checkout, &policy);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let directory = host_process_dir_for_policy(&fixture.checkout, &policy);
+        let log = directory.join("app.log");
+        wait_until("capture passes a pipe-sized output burst", || {
+            effigy_kernel::custody::MergedLog::identity(&log)
+                .is_ok_and(|log| log.length > 256 * 1024)
+        });
+        let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let pid = status[0].pid.expect("chatty child stays in custody");
+        // This reader holds an old style snapshot open without consuming it.
+        // It cannot hold the writer's queue, lock or a child pipe.
+        let tap = fs::File::open(directory.join("app.log.styled-tap")).unwrap();
+        assert!(tap.metadata().unwrap().len() <= 1024 * 1024);
+        let started = Instant::now();
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(started.elapsed() < Duration::from_secs(6), "{report:?}");
+        assert!(report.complete(), "{report:?}");
+        assert!(group_members(pid).is_empty());
+        let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        assert!(!text.contains("opaque-457-full-pipe-key") && !text.contains('\x1b'));
+        assert!(text.contains("[REDACTED]"));
     }
 
     /// Client death mid-`up` (the owning pipe closes before any detach) still
@@ -3826,25 +4081,25 @@ while True:
     /// redacted, instead of repeating a silent count (effigy#455).
     #[test]
     fn listener_start_progress_names_the_children_bounded_output_tail() {
-        let dir = tempfile::tempdir().expect("fixture dir");
-        let log = dir.path().join("app.log");
+        let fixture = fixture();
         fs::write(
-            &log,
-            format!(
-                "{}
-vite: internal server error\nDB_PASSWORD=hunter2\n",
-                "compiling ".repeat(400)
-            ),
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nDB_PASSWORD=\n",
         )
-        .expect("write the fixture log");
-        fs::OpenOptions::new()
-            .append(true)
-            .open(&log)
-            .and_then(|mut file| {
-                use std::io::Write as _;
-                writeln!(file, "[effigy host-process] supervisor-only line")
-            })
-            .expect("append the supervisor's own line");
+        .unwrap();
+        let mut child = host_process("app",
+            "i=0; while [ $i -lt 400 ]; do printf 'compiling '; i=$((i+1)); done; printf '\nvite: internal server error\nDB_PASSWORD=%s\n' \"$DB_PASSWORD\"",
+            HostProcessRestart::Never);
+        child.env = vec![("DB_PASSWORD".into(), "hunter2".into())];
+        let policy = policy(&fixture.checkout, vec![child]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("canonical producer starts");
+        wait_until("canonical producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
 
         let progress = listener_start_progress("app", Duration::from_secs(90), &log, None);
         assert!(progress.contains("still starting after 90s"), "{progress}");
@@ -3857,7 +4112,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             "the tail is the child's own last output: {tail}"
         );
         assert!(
-            tail.contains("DB_PASSWORD=<redacted>")
+            tail.contains("DB_PASSWORD=[REDACTED]")
                 && !tail.contains("hunter2")
                 && !tail.contains("supervisor-only line"),
             "the tail is redacted and names only the child's output: {tail}"
@@ -4318,6 +4573,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
 
     fn runtime_spec(env: &[(&str, &str)]) -> HostProcessRuntimeSpec {
         HostProcessRuntimeSpec {
+            ansi_front: false,
             schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
             project_path: "/checkout".to_owned(),
             runtime_generation: "runtime".to_owned(),
@@ -4343,6 +4599,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             shutdown_grace_secs: 1,
             checkout: None,
             state_home: PathBuf::from("/home"),
+            output: None,
         }
     }
 

@@ -174,3 +174,35 @@ fn vt_logs_do_not_rewrap_terminal_rows_to_narrow_panel_width() {
         "expected full terminal row to survive narrow pane rendering: {rendered:?}"
     );
 }
+
+#[test]
+fn typed_writer_spans_keep_text_style_and_partial_chunk_boundaries() {
+    use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+    let green =
+        effigy_core::terminal_text::style::apply_sgr(Default::default(), "32", Default::default());
+    let mut buffer = VecDeque::new();
+    for (offset, text, style) in [
+        (0, "rea", green),
+        (3, "dy\n", green),
+        (6, "[REDACTED]\n", Default::default()),
+    ] {
+        super::ingest_styled_chunk(
+            &mut buffer,
+            StyledChunk {
+                offset,
+                spans: vec![StyledSpan {
+                    text: text.into(),
+                    style,
+                }],
+            },
+        );
+    }
+    assert_eq!(buffer.len(), 2);
+    assert_eq!(buffer[0].line, "ready\n");
+    assert_eq!(buffer[0].styles.as_ref().unwrap()[0].style, green);
+    assert_eq!(buffer[1].line, "[REDACTED]\n");
+    assert_eq!(
+        buffer[1].styles.as_ref().unwrap()[0].style,
+        Default::default()
+    );
+}

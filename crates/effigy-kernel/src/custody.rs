@@ -1,8 +1,11 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 mod anchor;
 pub(crate) mod capture;
+mod host_output;
 mod merged;
-pub use merged::MergedLog;
+mod styled_tap;
+pub use host_output::HostOutput;
+pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
 pub(crate) mod platform;
 mod terminal;
 /// Signal one external process only after the caller's fresh authority check.
@@ -13,7 +16,7 @@ pub fn signal_verified_process(
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(identity, signal, authority)
 }
-pub use capture::Stream;
+pub use capture::{read_styles, Stream};
 pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
@@ -85,6 +88,10 @@ pub enum Terminal {
     /// and the child sees EOF when the owner drops it. Stdout and stderr are
     /// captured as for `None`.
     Pipe,
+    /// Managed pane capture: persist merged plain text and expose redacted style data.
+    Styled {
+        pty: bool,
+    },
     Pty,
     /// The owner's terminal as the child's stdin, with the child's own process
     /// group as the terminal's foreground group while it runs (a passphrase or
@@ -121,17 +128,30 @@ impl ProcessSpec {
                 _ => None,
             })
             .collect();
-        if self.argv.is_empty()
-            || self.argv.iter().any(|arg| {
-                secrets
-                    .iter()
-                    .any(|secret| arg.as_bytes().windows(secret.len()).any(|w| w == secret))
-            })
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "empty argv or secret in argv",
-            ));
+        if self.argv.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
+        }
+        if let Some((name, _)) = self.env.iter().find(|(_, value)| match value {
+            EnvValue::Secret(value) => self.argv.iter().any(|arg| {
+                arg.as_bytes()
+                    .windows(value.bytes().len())
+                    .any(|part| part == value.bytes())
+            }),
+            EnvValue::Plain(_) => false,
+        }) {
+            let name: String = name
+                .to_string_lossy()
+                .chars()
+                .take(128)
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() || ch == '_' {
+                        ch
+                    } else {
+                        '?'
+                    }
+                })
+                .collect();
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("secret in argv from classified environment key `{name}`; pass the value through environment access")));
         }
         Ok(secrets)
     }
@@ -239,7 +259,7 @@ pub(crate) struct ProcessCore {
     anchor: Option<ProcessIdentity>,
     /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
-    merged_log: Option<MergedLog>,
+    host_output: Option<HostOutput>,
     styled: VecDeque<effigy_core::terminal_text::StyledChunk>,
     styled_bytes: usize,
     styled_truncated: bool,
@@ -272,6 +292,7 @@ pub(crate) struct ProcessCore {
     terminal: Option<spawn::TerminalLease>,
     pty: bool,
     registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
+    capture_eof_sent: bool,
 }
 /// A bounded live projection of canonical output, with explicit queue loss.
 #[derive(Debug, Clone, Default)]
@@ -328,7 +349,7 @@ impl OutputPipeline {
         Self {
             sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
             plain,
-            projections: secret_bearing.then(|| {
+            projections: (secret_bearing && !plain).then(|| {
                 [
                     Redactor::new(secrets.clone()),
                     Redactor::new(secrets.clone()),
@@ -340,9 +361,17 @@ impl OutputPipeline {
     /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
     /// each byte's origin tag.
     fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(OutputTag, u8)> {
+        self.push_terminal(bytes, eof, eof)
+    }
+    fn push_terminal(
+        &mut self,
+        bytes: &[(u8, u8)],
+        terminal_eof: bool,
+        eof: bool,
+    ) -> Vec<(OutputTag, u8)> {
         match self.sanitizer.as_mut() {
             Some(sanitizer) => {
-                let mut visible = sanitizer.push_styled(bytes, eof);
+                let mut visible = sanitizer.push_styled(bytes, terminal_eof);
                 if self.plain {
                     visible.retain(|(_, byte)| *byte != b'\r');
                 }
@@ -467,6 +496,15 @@ impl<T: RedactionTag> Redactor<T> {
             final_check: replacement.map(|byte| RedactionPass::new(secrets, vec![byte])),
         }
     }
+    fn has_pending(&self) -> bool {
+        self.display
+            .as_ref()
+            .is_some_and(|pass| !pass.pending.is_empty())
+            || self
+                .final_check
+                .as_ref()
+                .is_some_and(|pass| !pass.pending.is_empty())
+    }
     /// Whether no reader-safe replacement byte exists for this secret set, so
     /// nothing can be emitted at all.
     pub(crate) fn blocked(&self) -> bool {
@@ -528,11 +566,24 @@ impl<T: RedactionTag> RedactionPass<T> {
     }
     fn push(&mut self, bytes: &[(T, u8)], eof: bool) -> Vec<(T, u8)> {
         self.pending.extend_from_slice(bytes);
-        let keep = self.secrets.iter().map(Vec::len).max().unwrap_or(1);
         let mut out = Vec::new();
         let mut pos = 0;
-        while pos < self.pending.len() && (eof || self.pending.len() - pos >= keep) {
+        while pos < self.pending.len() {
             let rest = &self.pending[pos..];
+            // Only a suffix that could still complete a known value needs
+            // lookahead. Long inherited values must not stall unrelated live
+            // lines until max-secret-length bytes or process EOF arrive.
+            if !eof
+                && self.secrets.iter().any(|secret| {
+                    rest.len() < secret.len()
+                        && rest
+                            .iter()
+                            .zip(secret)
+                            .all(|((_, byte), expected)| byte == expected)
+                })
+            {
+                break;
+            }
             if let Some(secret) = self.secrets.iter().find(|s| {
                 rest.len() >= s.len() && rest.iter().zip(s.iter()).all(|((_, b), c)| b == c)
             }) {
@@ -879,7 +930,7 @@ impl Custody {
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
-        log: MergedLog,
+        output: HostOutput,
     ) -> Result<OwnedProcess, SpawnError> {
         if !matches!(spec.terminal, Terminal::None | Terminal::Pipe) {
             return Err(SpawnError::Refused(
@@ -895,6 +946,7 @@ impl Custody {
                 "plain styled capture requires UTF-8 secrets".into(),
             ));
         }
+        output.validate(&spec)?;
         Self::spawn_inner(
             run,
             spec,
@@ -904,7 +956,7 @@ impl Custody {
             false,
             None,
             None,
-            Some(log),
+            Some(output),
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -919,7 +971,7 @@ impl Custody {
         required: bool,
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
-        merged_log: Option<MergedLog>,
+        host_output: Option<HostOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -935,6 +987,27 @@ impl Custody {
         let secrets = spec
             .validated_secrets()
             .map_err(|e| SpawnError::Refused(e.to_string()))?;
+        if matches!(spec.terminal, Terminal::Styled { .. })
+            && secrets
+                .iter()
+                .any(|secret| std::str::from_utf8(secret).is_err())
+        {
+            return Err(SpawnError::Refused(
+                "managed plain capture requires UTF-8 secret provenance".into(),
+            ));
+        }
+        let pipeline = if host_output.is_some() {
+            OutputPipeline::new(Vec::new())
+        } else if matches!(spec.terminal, Terminal::Styled { .. }) {
+            OutputPipeline::for_capture(secrets, true)
+        } else {
+            OutputPipeline::new(secrets)
+        };
+        if pipeline.plain && pipeline.redactor.blocked() {
+            return Err(SpawnError::Refused(
+                "managed output has no reader-safe redaction replacement".into(),
+            ));
+        }
         let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
@@ -1003,18 +1076,23 @@ impl Custody {
             } else {
                 CaptureState::Truncated("log open failed".into())
             };
-            let [stdout_log, stderr_log] = logs;
-            let pipeline = if merged_log.is_some() {
-                OutputPipeline::for_capture(secrets, true)
-            } else {
-                OutputPipeline::new(secrets)
-            };
+            let [mut stdout_log, stderr_log] = logs;
+            if matches!(spec.terminal, Terminal::Styled { .. }) {
+                stdout_log
+                    .as_mut()
+                    .map_err(|_| SpawnError::Refused("managed plain log unavailable".into()))?
+                    .as_mut()
+                    .ok_or_else(|| {
+                        SpawnError::Refused("managed plain capture needs a durable log".into())
+                    })?
+                    .enable_plain()?;
+            }
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
                 anchor,
                 logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
-                styled_offset: merged_log.as_ref().map_or(0, MergedLog::committed_offset),
-                merged_log,
+                styled_offset: 0,
+                host_output,
                 styled: VecDeque::new(),
                 styled_bytes: 0,
                 styled_truncated: false,
@@ -1038,6 +1116,7 @@ impl Custody {
                 terminal,
                 pty: matches!(spec.terminal, Terminal::Pty),
                 registration,
+                capture_eof_sent: false,
             }));
             run.retain_process(ticket.sequence(), core.clone());
             pending.transfer();
@@ -1088,17 +1167,25 @@ impl OwnedProcess {
             .is_some_and(|at| Instant::now() >= at)
     }
     pub fn take_output(&self) -> Vec<u8> {
-        lock(&self.core).output.drain(..).collect()
+        let mut core = lock(&self.core);
+        if let Some(output) = &core.host_output {
+            return output.take_output();
+        }
+        core.output.drain(..).collect()
     }
     /// Drains the separately redacted stdout and stderr queues.
     /// Drain bounded, already-redacted style data. A gap is explicit; a front
     /// may use the canonical plain file to recover it without interpreting ANSI.
     pub fn take_styled_output(&self) -> StyledOutput {
         let mut core = lock(&self.core);
+        if let Some(output) = &core.host_output {
+            return output.take_styled_output();
+        }
         core.styled_bytes = 0;
         StyledOutput {
             chunks: core.styled.drain(..).collect(),
-            truncated: std::mem::take(&mut core.styled_truncated),
+            truncated: std::mem::take(&mut core.styled_truncated)
+                || matches!(core.capture, CaptureState::Truncated(_)),
         }
     }
     pub fn take_stream_output(&self) -> (Vec<u8>, Vec<u8>) {
@@ -1107,7 +1194,11 @@ impl OwnedProcess {
         (stdout.drain(..).collect(), stderr.drain(..).collect())
     }
     pub fn tail(&self) -> Vec<u8> {
-        lock(&self.core).tail.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.host_output {
+            return output.tail();
+        }
+        core.tail.iter().copied().collect()
     }
     pub fn poll(&mut self) -> Observed<Exit> {
         lock(&self.core).poll()
@@ -1181,6 +1272,12 @@ impl ProcessCore {
     /// terminal control inside a known secret could hide it from redaction
     /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
+        if let Some(output) = &self.host_output {
+            if output.feed(index, bytes, eof).is_err() {
+                self.capture = CaptureState::Truncated("canonical host capture failed".into());
+            }
+            return;
+        }
         // Nothing can be redacted into a form a reader cannot join across, so
         // the capture stops instead of emitting a joinable marker (K12). The
         // workload itself is untouched: this is capture state only.
@@ -1215,17 +1312,41 @@ impl ProcessCore {
                 self.plain_pending.clear();
             }
         }
-        if let Some(log) = self.merged_log.as_mut() {
+        if self.pipeline.plain {
             let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
-            if log.append(&bytes).is_err() {
-                self.capture = CaptureState::Truncated("merged log append failed".into());
-                // Never acknowledge an unwritten slice via a queue, tail or
-                // live consumer. A failed destination remains failed.
+            if bytes.is_empty() {
                 return;
             }
-        }
-        if self.pipeline.plain && !clean.is_empty() {
+            let Some(log) = self.logs[0].as_mut() else {
+                self.capture = CaptureState::Truncated("managed plain log unavailable".into());
+                return;
+            };
+            if log.append_durable(&bytes).is_err() {
+                log.mark_truncated();
+                self.logs[0] = None;
+                self.capture = CaptureState::Truncated("managed plain append failed".into());
+                return;
+            }
             self.queue_styles(&clean);
+            self.streams[0].extend(bytes.iter().copied());
+            self.output.extend(bytes.iter().copied());
+            self.tail.extend(bytes);
+            for (queue, max) in [
+                (&mut self.streams[0], self.queue_max),
+                (&mut self.output, self.queue_max),
+                (&mut self.tail, self.tail_max),
+            ] {
+                while queue.len() > max {
+                    queue.pop_front();
+                }
+                while queue
+                    .front()
+                    .is_some_and(|byte| (0x80..=0xbf).contains(byte))
+                {
+                    queue.pop_front();
+                }
+            }
+            return;
         }
         // A stream's own sink is a projection, so it is written from its own
         // redacted projection and never from a filtered merged slice: removing
@@ -1284,7 +1405,14 @@ impl ProcessCore {
         let offset = self.styled_offset;
         self.styled_offset = self.styled_offset.saturating_add(complete as u64);
         self.styled_bytes = self.styled_bytes.saturating_add(complete);
-        self.styled.push_back(StyledChunk { offset, spans });
+        let chunk = StyledChunk { offset, spans };
+        if self.logs[0]
+            .as_mut()
+            .is_some_and(|log| log.publish_styles(chunk.clone()).is_err())
+        {
+            self.styled_truncated = true;
+        }
+        self.styled.push_back(chunk);
         while self.styled_bytes > self.queue_max {
             let Some(expired) = self.styled.pop_front() else {
                 break;
@@ -1325,6 +1453,9 @@ impl ProcessCore {
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) {
                         self.capture = CaptureState::Truncated("capture read failed".into());
+                        if let Some(output) = &self.host_output {
+                            output.fail();
+                        }
                         eof = true;
                     }
                     break;
@@ -1358,7 +1489,8 @@ impl ProcessCore {
         }
         // One stream closing cannot flush a prefix that the other stream may
         // finish. Only the merged stream's EOF flushes the bounded redactor.
-        if self.stdout.is_none() && self.stderr.is_none() {
+        if self.stdout.is_none() && self.stderr.is_none() && !self.capture_eof_sent {
+            self.capture_eof_sent = true;
             self.sink(0, &[], true);
         }
     }
@@ -1586,7 +1718,13 @@ impl ProcessCore {
                 .map(|e| Observed::Verified(e, evidence()))
                 .unwrap_or_else(|| Observed::Unknown(unknown("leader not closed"))),
             group,
-            capture: self.capture.clone(),
+            capture: match &self.capture {
+                CaptureState::Truncated(_) => self.capture.clone(),
+                CaptureState::Complete => self
+                    .host_output
+                    .as_ref()
+                    .map_or(CaptureState::Complete, HostOutput::capture_state),
+            },
             signals,
             residue,
         }
@@ -1625,6 +1763,24 @@ pub(crate) fn verify_foreground_receipt(
 /// log stream or historical record, and does not expose the process core.
 pub(crate) fn diagnostic_tail(core: &Arc<Mutex<ProcessCore>>) -> String {
     let core = lock(core);
+    if let Some(output) = &core.host_output {
+        return String::from_utf8(output.tail()).unwrap_or_default();
+    }
+    if core.pipeline.plain {
+        let bytes: Vec<_> = core
+            .tail
+            .iter()
+            .skip(core.tail.len().saturating_sub(4096))
+            .copied()
+            .collect();
+        let start = bytes
+            .iter()
+            .take_while(|byte| (0x80..=0xbf).contains(*byte))
+            .count();
+        return std::str::from_utf8(&bytes[start..])
+            .map(str::to_owned)
+            .unwrap_or_default();
+    }
     let stderr = &core.streams[1];
     let bytes = stderr
         .iter()

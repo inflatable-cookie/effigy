@@ -6,6 +6,7 @@ pub(super) fn state_with_logs(lines: usize) -> SessionState {
     let buffer = state.logs.get_mut("api").expect("api log buffer");
     for idx in 0..lines {
         buffer.push_back(LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: format!("line-{idx}"),
         });

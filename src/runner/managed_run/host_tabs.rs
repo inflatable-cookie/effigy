@@ -83,6 +83,9 @@ impl HostProcessTab {
 pub(in crate::runner) enum HostStatus {
     /// The supervisor has not reported a generation yet.
     Starting,
+    LogReplaced,
+    LogUnavailable,
+    LogTruncated,
     /// A generation is running; a listener that is not serving yet waits here.
     Running,
     /// A listener reported its route: its live URL.
@@ -98,6 +101,9 @@ impl HostStatus {
     pub(in crate::runner) fn line(&self) -> String {
         match self {
             Self::Starting => "starting".to_owned(),
+            Self::LogUnavailable => "output unavailable: canonical provenance is missing or changed; restart the host owner, then reopen this follower".to_owned(),
+            Self::LogReplaced => "output log replaced; reopened at byte zero (reopen older attached followers)".to_owned(),
+            Self::LogTruncated => "output follow stopped: invalid text or line buffer exceeded; inspect the canonical log before reopening".to_owned(),
             Self::Running => "running".to_owned(),
             Self::Ready(url) => format!("ready on {url}"),
             Self::Restarting => "restarting".to_owned(),
@@ -162,6 +168,7 @@ pub(in crate::runner) struct HostFollower {
     tail: LogTail,
     status: HostStatus,
     announced: bool,
+    log_refused: bool,
     /// Whether the tab has been told this process exists, so its startup
     /// projection stops waiting for it.
     started: bool,
@@ -175,6 +182,7 @@ impl HostFollower {
             tail: LogTail::new(),
             status: HostStatus::Starting,
             announced: false,
+            log_refused: false,
             started: false,
             next_poll: std::time::Instant::now(),
         }
@@ -216,7 +224,37 @@ impl HostFollower {
         if let Some(status) = self.take_status_change(now) {
             poll.statuses.push(status);
         }
-        for line in self.tail.read(&self.tab.log) {
+        // Reject legacy paths before opening payload bytes. Identity is checked
+        // again after the bounded read so a raced replacement publishes none.
+        let Ok(before) = effigy_kernel::custody::MergedLog::identity(&self.tab.log) else {
+            if !self.log_refused {
+                poll.statuses.push(HostStatus::LogUnavailable);
+            }
+            self.log_refused = true;
+            return poll;
+        };
+        if std::mem::take(&mut self.log_refused) {
+            poll.statuses.push(self.status.clone());
+        }
+        let was_failed = self.tail.failed;
+        let lines = self
+            .tail
+            .read_verified(&self.tab.log, Some(before.identity));
+        if !effigy_kernel::custody::MergedLog::identity(&self.tab.log)
+            .is_ok_and(|after| after.identity == before.identity)
+        {
+            self.tail = LogTail::new();
+            poll.statuses.push(HostStatus::LogReplaced);
+            return poll;
+        }
+        poll.styled = std::mem::take(&mut self.tail.styled);
+        if self.tail.replaced {
+            poll.statuses.push(HostStatus::LogReplaced);
+        }
+        if self.tail.failed && !was_failed {
+            poll.statuses.push(HostStatus::LogTruncated);
+        }
+        for line in lines {
             poll.lines.push(line.clone());
             if let Some(status) = status_from_log_line(&self.tab, &line) {
                 if status != self.status {
@@ -234,6 +272,7 @@ impl HostFollower {
 pub(in crate::runner) struct HostPoll {
     pub(in crate::runner) lines: Vec<String>,
     pub(in crate::runner) statuses: Vec<HostStatus>,
+    pub(in crate::runner) styled: Vec<effigy_core::terminal_text::StyledChunk>,
 }
 
 /// A bounded incremental reader for one host process's log file. Lines are
@@ -242,7 +281,11 @@ pub(in crate::runner) struct HostPoll {
 #[derive(Debug, Default)]
 struct LogTail {
     offset: u64,
+    identity: Option<(u64, u64)>,
+    replaced: bool,
+    failed: bool,
     partial: Vec<u8>,
+    styled: Vec<effigy_core::terminal_text::StyledChunk>,
 }
 
 impl LogTail {
@@ -250,19 +293,44 @@ impl LogTail {
         Self::default()
     }
 
+    #[cfg(test)]
     fn read(&mut self, path: &Path) -> Vec<String> {
+        self.read_verified(path, None)
+    }
+
+    fn read_verified(
+        &mut self,
+        path: &Path,
+        expected: Option<effigy_kernel::custody::FileIdentity>,
+    ) -> Vec<String> {
         use std::io::{Read as _, Seek as _, SeekFrom};
 
-        let Ok(mut file) = std::fs::File::open(path) else {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+        else {
             return Vec::new();
         };
         let Ok(metadata) = file.metadata() else {
             return Vec::new();
         };
-        if metadata.len() < self.offset {
-            // A new generation opened the log again from the start.
+        use std::os::unix::fs::MetadataExt as _;
+        let identity = (metadata.dev(), metadata.ino());
+        if !metadata.is_file() || expected.is_some_and(|id| (id.device, id.inode) != identity) {
+            return Vec::new();
+        }
+        self.replaced =
+            self.identity.is_some_and(|prior| prior != identity) || metadata.len() < self.offset;
+        if self.replaced {
             self.offset = 0;
             self.partial.clear();
+            self.failed = false;
+        }
+        self.identity = Some(identity);
+        if self.failed {
+            return Vec::new();
         }
         if metadata.len() == self.offset {
             return Vec::new();
@@ -274,16 +342,47 @@ impl LogTail {
         if file.take(READ_MAX as u64).read_to_end(&mut chunk).is_err() {
             return Vec::new();
         }
+        if let Some(id) = expected {
+            // Re-open through the provenance gate; exact range matching avoids
+            // exposing a raced legacy/replacement descriptor or stale styles.
+            let Ok(read) = effigy_kernel::custody::MergedLog::read_plain(
+                path,
+                Some(id),
+                self.offset,
+                chunk.len(),
+            ) else {
+                return Vec::new();
+            };
+            if read.cutover || !chunk.starts_with(&read.bytes) {
+                return Vec::new();
+            }
+            chunk = read.bytes.clone();
+            let spans = effigy_kernel::custody::MergedLog::styles(path, &read);
+            self.styled.push(effigy_core::terminal_text::StyledChunk {
+                offset: self.offset,
+                spans,
+            });
+        }
         self.offset += chunk.len() as u64;
-        self.partial.extend_from_slice(&chunk);
         let mut lines = Vec::new();
-        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
-            let line = self.partial.drain(..=end).collect::<Vec<u8>>();
-            lines.push(
-                String::from_utf8_lossy(&line)
-                    .trim_end_matches(['\n', '\r'])
-                    .to_owned(),
-            );
+        for byte in chunk {
+            if self.partial.len() == READ_MAX {
+                self.partial.clear();
+                self.failed = true;
+                return Vec::new();
+            }
+            self.partial.push(byte);
+            if byte == b'\n' {
+                let Ok(line) = String::from_utf8(std::mem::take(&mut self.partial)) else {
+                    self.failed = true;
+                    return Vec::new();
+                };
+                if line.chars().any(|ch| ch.is_control() && ch != '\n') {
+                    self.failed = true;
+                    return Vec::new();
+                }
+                lines.push(line.trim_end_matches('\n').to_owned());
+            }
         }
         lines
     }
@@ -384,5 +483,33 @@ mod tests {
 
         std::fs::write(&log, "fresh\n").expect("truncate for a new generation");
         assert_eq!(tail.read(&log), vec!["fresh".to_owned()]);
+    }
+    #[test]
+    fn larger_replacement_resets_partial_text_and_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("api.log");
+        std::fs::write(&log, "old\npartial").unwrap();
+        let mut tail = LogTail::new();
+        assert_eq!(tail.read(&log), ["old"]);
+        let replacement = dir.path().join("new");
+        std::fs::write(&replacement, "safe replacement grows beyond old offset\n").unwrap();
+        std::fs::rename(replacement, &log).unwrap();
+        assert_eq!(
+            tail.read(&log),
+            ["safe replacement grows beyond old offset"]
+        );
+        assert!(tail.replaced);
+        assert!(tail.partial.is_empty());
+    }
+    #[test]
+    fn huge_line_is_a_bounded_explicit_follow_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("api.log");
+        std::fs::write(&log, vec![b'x'; READ_MAX + 1]).unwrap();
+        let mut tail = LogTail::new();
+        assert!(tail.read(&log).is_empty());
+        assert!(tail.read(&log).is_empty());
+        assert!(tail.failed);
+        assert!(tail.partial.len() <= READ_MAX);
     }
 }

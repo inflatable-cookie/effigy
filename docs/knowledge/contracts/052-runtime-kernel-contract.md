@@ -1318,35 +1318,63 @@ normalization path would recreate the split. A consumer that needs both
 streams reads the merged capture, never a concatenation of the projections,
 and a consumer that wants a bounded tail takes the merged tail.
 
-Host producers use `Custody::spawn_logged_auxiliary` with `Terminal::None`
-and an installed `MergedLog` before the child execution barrier opens. That
-capture always sanitizes, even without secrets, and removes CR from CRLF
-before redaction. The append-only destination does not replace or truncate the
-existing follower path. Each successful append syncs its bytes before any
-queue or diagnostic-tail fanout. A failed append poisons the destination and
-reports truncated capture; unwritten bytes are never acknowledged to those
-consumers. A partial failed append may leave an unacknowledged plain suffix on
-disk.
+Host producers use `Custody::spawn_logged_auxiliary` with captured pipes and
+one `HostOutput` shared across child generations and supervisor messages. The
+existing custody sanitizer records style data and feeds the existing two-pass
+redactor in merged observed arrival order. Child EOF resets terminal framing;
+only supervisor completion finishes the shared redactor. CR is removed from
+CRLF before redaction. Complete UTF-8 text is appended and synced before any
+live/tail fanout. A failed append poisons capture; no unwritten output is
+acknowledged. A partial failed append can leave an unacknowledged plain suffix.
+Managed Standard workloads opt into `Terminal::Styled`, which persists their
+merged plain output in the stdout log (the stderr log is empty). Ordinary
+custody callers retain their existing separate-stream contract.
 
-An existing prefix is unchanged, including any controls or unredacted data
-from the earlier inherited-descriptor writer. `MergedLog` establishes no
-provenance for that prefix: successful durable appends qualify the new bytes,
-not historical contents. A fully canonical plain file at a reused path needs
-an explicit legacy-log migration contract with direct path/offset followers;
-writer-side capture cannot remove previously persisted bytes by appending.
+Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
+an untrusted historical prefix safe. Under the newly admitted host owner gate,
+with predecessors settled, an owned regular no-follow legacy log moves to the
+same runtime directory's private `.legacy-host-logs` quarantine. Its name ends
+in `.legacy`, not `.log`; discovery never includes it. A new 0600 canonical
+file is created exclusively at the same public path. Intent, file and parent
+directory syncs precede producer admission. The durable private ready record
+`.<sha256(log basename)>.host-log-ready` is version 1, with an `owner` array of
+32 digest bytes and `canonical: {device, inode}`. A matching ready identity
+allows subsequent generations to append without another cutover. Changed,
+foreign, symlinked or uncertain identities fail closed, preserving operator
+data. Crash retries retain the original intent and quarantined identity.
 
-Style primitives and the existing ANSI line/parser/SGR implementation live
-in `effigy-core::terminal_text`; TUI's ANSI facade reuses them. Custody's
-writer sanitizer records SGR as style data with a bounded parameter buffer.
-The same two-pass redactor carries those tags and clears style on replacement
-bytes. `OwnedProcess::take_styled_output` drains a byte-bounded queue of
-`StyledChunk` values with canonical byte offsets and an explicit truncation
-flag. Plain capture waits for a complete UTF-8 scalar after redaction before
-persisting or fanning out a slice, so a crash cannot turn an incomplete scalar
-into a replacement character in a plain reader. Styled plain producers refuse
-non-UTF-8 secrets. This primitive does not by itself qualify supervisor message appends,
-secret provenance or live styled taps against the
-[managed producer colour boundary](../architecture/product-guardrails.md#human-facing-feedback).
+Effigy readers require matching durable ready provenance before opening
+payload bytes and recheck identity before exposure. Bounded followers reset
+both offset and partial text on inode replacement or shrink, reporting a gap;
+replacement is detected even when the new file grew beyond the old offset.
+The bundled Underlay presentation follower tracks device/inode and offset,
+resets on replacement/shrink and reports one gap. It does not enforce Effigy
+ready provenance. Before cutover its behavior remains the pre-existing owner
+file contract. An already-open pre-upgrade POSIX descriptor cannot be revoked
+by rename/chmod: stop and reopen older attached followers after upgrading.
+Continuity across that transition is not guaranteed, and numeric offsets are
+never preserved by padding or replay of raw bytes.
+
+Style primitives and the existing ANSI line/parser/SGR implementation live in
+`effigy-core::terminal_text`; the TUI facade reuses them. The writer records SGR
+as bounded style data. Redaction clears style on masked ranges. A bounded
+private `.styled-tap` sidecar publishes a window of typed, already-redacted
+spans only after successful plain append. It is optional presentation data,
+not a log checkpoint: it grants no durability acknowledgement, changes no
+canonical offsets and never replays an untrusted prefix. A pane uses styles
+only where identity, byte offset and text exactly match its canonical read;
+missing, stale or expired style data renders plain. TUI typed ingest renders
+those spans directly, without ANSI interpretation or a second redactor.
+
+The initiating TUI capability is non-secret and fixed before detached host
+handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI
+destination in the absence of NO_COLOR, CI, a dumb terminal or an explicit
+colour preference. Text/headless/detached starts do not force colour.
+
+**Known qualification limit:** the migration, complete fault/security matrix,
+combined bundled follower proof and independent exact-head reviews must pass
+before the provisional host-log limit and manual merge hold can be released.
+A writer primitive alone does not qualify the delivered path.
 
 #### Failure model
 

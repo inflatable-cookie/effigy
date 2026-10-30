@@ -800,6 +800,7 @@ fn start_host_processes_inner(
                 continue;
             }
             let spec = HostProcessRuntimeSpec {
+                ansi_front: crate::runner::managed_color::initiating_ansi(),
                 schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
                 project_path: project_path.clone(),
                 runtime_generation: super::random_token()?,
@@ -822,6 +823,7 @@ fn start_host_processes_inner(
                 shutdown_grace_secs: hp.shutdown_grace_secs,
                 checkout: Some(checkout),
                 state_home: state_home.clone(),
+                output: None,
             };
             let payload = serde_json::to_vec(&spec)
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -1263,7 +1265,15 @@ fn listener_failure(
         declared_route_domain: listener.declared_route_domain.clone(),
         route_domain: Some(listener.route_domain.clone()),
         observed_status,
-        detail: effigy_ui::human::bound_text(&detail, super::MAX_LISTENER_FAILURE_DETAIL_BYTES),
+        detail: {
+            let mut detail = detail;
+            let mut end = detail.len().min(super::MAX_LISTENER_FAILURE_DETAIL_BYTES);
+            while !detail.is_char_boundary(end) {
+                end -= 1;
+            }
+            detail.truncate(end);
+            detail
+        },
         output_tail: super::listener_output_tail(log_path),
         log: log_path.display().to_string(),
     }

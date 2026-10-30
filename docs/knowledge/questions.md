@@ -626,7 +626,14 @@ Tom confirmed on 2026-10-30 that managed Cargo/Oxide colour is required for
 v0.15, reversing its earlier deferral. Qualification requires a single
 writer-side custody boundary for plain sanitized/redacted host logs and a
 redacted styled live tap, while preserving direct path/offset followers. See
-[the colour boundary ruling](architecture/product-guardrails.md#human-facing-feedback).
+[the colour boundary ruling](architecture/product-guardrails.md#human-facing-feedback). Tom's same-day cutover ruling permits one
+new-inode quarantine of an untrusted legacy prefix under the settled host
+owner gate, with durable ready provenance for subsequent Effigy reads. The
+Underlay follower remains a presentation reader with inode/offset gap handling;
+it does not enforce ready provenance. Stop/reopen older attached followers:
+POSIX cannot revoke their already-open descriptors. The manual hold remains
+until combined writer, security, style and bundled follower proof and review.
+
 
 ## Q-018: Primary Linux proof environment for v0.15
 

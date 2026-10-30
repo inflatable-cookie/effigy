@@ -350,7 +350,6 @@
       "std.process.Command.spawn": 1
     },
     "src/runner/host_process.rs": {
-      "std.fs.OpenOptions.write": 2,
       "std::fs::remove_file": 1,
       "std::fs::rename": 1,
       "std::fs::write": 1

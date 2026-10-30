@@ -57,7 +57,8 @@ pub(in crate::runner) struct ManagedTab {
 struct Follower {
     sequence: i64,
     offsets: [u64; 2],
-    lines: [Vec<u8>; 2],
+    failed: bool,
+    capture_warned: bool,
 }
 
 struct Shared {
@@ -124,7 +125,8 @@ impl Shared {
                             Follower {
                                 sequence,
                                 offsets: [0, 0],
-                                lines: [Vec::new(), Vec::new()],
+                                failed: false,
+                                capture_warned: false,
                             },
                         );
                         self.exits.remove(&process);
@@ -198,35 +200,23 @@ impl Shared {
                     chunk: None,
                 });
             }
-            for line in poll.lines {
-                self.queue.push_back(ProcessEvent {
-                    process: name.clone(),
-                    kind: ProcessEventKind::Stdout,
-                    payload: line,
-                    chunk: None,
-                });
+            for chunk in poll.styled {
+                self.queue.push_back(event(
+                    &name,
+                    ProcessEventKind::Styled,
+                    &serde_json::to_string(&chunk).expect("typed host style event"),
+                ));
             }
         }
     }
 
     fn read_logs(&mut self) {
         for (name, follower) in &mut self.followers {
-            for (slot, (stream, chunk_kind, line_kind)) in [
-                (
-                    Stream::Stdout,
-                    ProcessEventKind::StdoutChunk,
-                    ProcessEventKind::Stdout,
-                ),
-                (
-                    Stream::Stderr,
-                    ProcessEventKind::StderrChunk,
-                    ProcessEventKind::Stderr,
-                ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let Observed::Verified(read, _) = read_run_log(
+            if follower.failed {
+                continue;
+            }
+            for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
+                let Observed::Verified(mut read, _) = read_run_log(
                     &self.root,
                     self.run,
                     follower.sequence,
@@ -236,25 +226,51 @@ impl Shared {
                 ) else {
                     continue;
                 };
+                if read.truncated && !follower.capture_warned {
+                    follower.capture_warned = true;
+                    self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] capture truncated: log append failed; inspect this run before restarting"));
+                }
+                match std::str::from_utf8(&read.bytes) {
+                    Ok(text) if text.chars().any(|ch| ch.is_control() && ch != '\n') => {
+                        follower.failed = true;
+                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: control bytes in plain capture; restart the producer"));
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.error_len().is_none() => {
+                        read.bytes.truncate(error.valid_up_to())
+                    }
+                    Err(_) => {
+                        follower.failed = true;
+                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: invalid plain UTF-8; restart the producer"));
+                        break;
+                    }
+                }
+                if read.from > follower.offsets[slot] {
+                    self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output gap: older canonical bytes expired; resuming the retained log"));
+                }
                 follower.offsets[slot] = read.from + read.bytes.len() as u64;
                 if read.bytes.is_empty() {
                     continue;
                 }
-                self.queue.push_back(ProcessEvent {
-                    process: name.clone(),
-                    kind: chunk_kind,
-                    payload: String::from_utf8_lossy(&read.bytes).into_owned(),
-                    chunk: Some(read.bytes.clone()),
-                });
-                let buffer = &mut follower.lines[slot];
-                buffer.extend_from_slice(&read.bytes);
-                while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let line = buffer.drain(..=end).collect::<Vec<u8>>();
-                    let text = String::from_utf8_lossy(&line)
-                        .trim_end_matches(['\n', '\r'])
-                        .to_owned();
-                    self.queue.push_back(event(name, line_kind, &text));
-                }
+                // Managed workloads persist merged plain bytes in stdout.
+                // Rendering receives typed spans; no reader interprets ANSI.
+                let spans = effigy_kernel::custody::read_styles(
+                    &self.root,
+                    self.run,
+                    follower.sequence,
+                    read.from,
+                    &read.bytes,
+                );
+                let chunk = effigy_core::terminal_text::StyledChunk {
+                    offset: read.from,
+                    spans,
+                };
+                self.queue.push_back(event(
+                    name,
+                    ProcessEventKind::Styled,
+                    &serde_json::to_string(&chunk).expect("typed style event"),
+                ));
             }
         }
     }
@@ -470,7 +486,8 @@ pub(in crate::runner) fn attach_tui(
                     Follower {
                         sequence: OUTPUT_SEQUENCE,
                         offsets: [0, 0],
-                        lines: [Vec::new(), Vec::new()],
+                        failed: false,
+                        capture_warned: false,
                     },
                 );
                 queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));

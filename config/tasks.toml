@@ -3,10 +3,24 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
-"check:managed:output" = { visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-core -p effigy-kernel -p effigy-tui --all-targets --features effigy-kernel/fault-injection", timeout_ms = 900000 },
-  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-core -p effigy-kernel -p effigy-tui --all-targets --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 900000 },
+"check:managed:output" = { visibility = "internal", group = "Maintenance", run = [{ task = "check:managed:output:compile" }, { task = "check:managed:output:lint" }] }
+"check:managed:output:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-core -p effigy-kernel -p effigy-tui -p effigy-process --all-targets --features effigy-kernel/fault-injection", timeout_ms = 900000 }] }
+"check:managed:output:lint" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-core -p effigy-kernel -p effigy-tui -p effigy-process --all-targets --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 900000 },
+  { task = "fmt:check" },
 ] }
+"test:managed:output" = { durable = true, visibility = "internal", group = "Maintenance", description = "Qualify custody plain output, legacy cutover, redacted styles and bundled inode followers without a live app runtime.", run = [
+  { task = "test:kernel:custody" },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(custody::merged::) | test(custody::host_output::) | test(custody::styled_tap::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib -E 'test(host_process::) | test(host_tabs::) | test(managed_color::) | test(managed_run::engine::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib -E 'test(terminal_text::) | test(transcript::) | test(lifecycle::summary::) | test(render::panes::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-process --test integration -E 'test(supervisor_captures_output_and_exit_events)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { task = "test:managed:output:underlay" },
+  { task = "test:managed:output:tripwire" },
+  { task = "test:feedback:inventory" },
+] }
+"test:managed:output:underlay" = { visibility = "internal", group = "Maintenance", run = [{ run = "PYTHONDONTWRITEBYTECODE=1 python3 external/bundles/underlay/scripts/dev/profile_env_test.py FollowLogTest", timeout_ms = 60000 }] }
+"test:managed:output:tripwire" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test-managed-output-tripwire.py", timeout_ms = 600000 }] }
 # Every selector that runs Cargo goes through `scripts/oxide-selector.sh`, which
 # leases Oxide's shared slot pool and keeps Rust intermediates off the internal
 # SSD. Its one escape is `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, which

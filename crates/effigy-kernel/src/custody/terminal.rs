@@ -205,6 +205,7 @@ impl TerminalSanitizer {
             // no later read can complete it into visible text.
             self.drop_utf8();
             self.state = State::Ground;
+            self.style = Style::default();
         }
         out
     }

@@ -133,6 +133,47 @@ fn read_segments(
         }
         position += read;
     }
+    let mut from = from;
+    let format_name = crate::custody::capture::plain_name(sequence)
+        .map_err(|error| crate::fs::FsError::io("plain format name", dir.path(), &error))?;
+    if let Some((mut file, stat)) =
+        dir.open_file(&format_name, libc::O_RDONLY, None, Trust::Private)?
+    {
+        let mut format = [0; 16];
+        let count = file
+            .read(&mut format)
+            .map_err(|error| crate::fs::FsError::io("plain format read", dir.path(), &error))?;
+        if stat.st_size != 16 || &format[..count] != b"effigy.plain.v1\n" {
+            return Err(crate::fs::FsError::untrusted(
+                dir.path(),
+                "invalid plain capture format",
+            ));
+        }
+        if from > offset {
+            let skip = bytes
+                .iter()
+                .take_while(|byte| (0x80..=0xbf).contains(*byte))
+                .count();
+            bytes.drain(..skip);
+            from += skip as u64;
+        }
+        match std::str::from_utf8(&bytes) {
+            Ok(text) if text.chars().any(|ch| ch.is_control() && ch != '\n') => {
+                return Err(crate::fs::FsError::untrusted(
+                    dir.path(),
+                    "control in plain capture",
+                ))
+            }
+            Ok(_) => {}
+            Err(error) if error.error_len().is_none() => bytes.truncate(error.valid_up_to()),
+            Err(_) => {
+                return Err(crate::fs::FsError::untrusted(
+                    dir.path(),
+                    "invalid plain capture text",
+                ))
+            }
+        }
+    }
     Ok(Some(Some(LogRead {
         from,
         bytes,

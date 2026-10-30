@@ -99,6 +99,7 @@ fn push_log_line(
         push_entry(
             buffer,
             LogEntry {
+                styles: None,
                 kind,
                 line: sanitize_log_text(&line),
             },

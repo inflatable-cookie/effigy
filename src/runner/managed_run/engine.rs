@@ -251,6 +251,8 @@ pub(in crate::runner) fn own<T>(
         mut session,
         payload,
     } = owner;
+    let ansi_front = matches!(payload.front, super::wire::Front::Tui);
+    let _front = crate::runner::managed_color::enter(ansi_front);
     let mut run = match TaskRun::begin_detached(TaskRunRequest {
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
@@ -302,6 +304,7 @@ pub(in crate::runner) fn own<T>(
         container_repo_root: plan.container_repo_root.clone(),
         watch: None,
         terminal: payload.terminal,
+        ansi_front,
         lost_while_blocked: false,
         health: None,
     };
@@ -328,6 +331,7 @@ struct Owner {
     /// owner runs itself (a setup step, a process setup).
     watch: Option<OwnerWatch>,
     terminal: Option<(u16, u16)>,
+    ansi_front: bool,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
     /// `health_wait` routes still to answer once every workload has started.
@@ -384,7 +388,7 @@ impl Owner {
         }
         if let Some(environment) = &plan.environment {
             let mut stop = |run: &mut TaskRun| pending_stop(run, self.watch.as_ref());
-            match environment::bring_up(run, environment, &plan.token, &mut stop) {
+            match environment::bring_up(run, environment, &plan.token, self.ansi_front, &mut stop) {
                 Ok(()) => self.health = Some(RouteHealth::new(environment)),
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
                 Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
@@ -581,6 +585,7 @@ impl Owner {
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
         let mut env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
+        crate::runner::managed_color::apply(&mut env, self.ansi_front);
         let pending_secret = crate::runner::managed_secrets::prepare(
             run,
             &workload.spec.env,
@@ -594,10 +599,8 @@ impl Owner {
             env,
             grace: GRACE,
             lifetime: Lifetime::Open(OpenReason::DevServer),
-            terminal: if workload.spec.pty {
-                Terminal::Pty
-            } else {
-                Terminal::None
+            terminal: Terminal::Styled {
+                pty: workload.spec.pty,
             },
             label: workload.spec.name.clone(),
         };
@@ -811,17 +814,7 @@ impl Owner {
                 (
                     workload.spec.name.clone(),
                     code,
-                    workload
-                        .tail
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .rev()
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join(" | "),
+                    bounded_plain_tail(&workload.tail, 4096),
                 )
             })
             .collect::<Vec<_>>();
@@ -1043,6 +1036,16 @@ pub(in crate::runner) fn workload_env(
                 .map(|(key, value)| (key.clone(), EnvOverride::Secret(value.clone()))),
         )
         .collect()
+}
+
+/// A contiguous suffix, with no whitespace conversion or line regrouping after
+/// custody redaction. The kernel tail already starts at a scalar boundary.
+fn bounded_plain_tail(text: &str, max: usize) -> String {
+    let mut start = text.len().saturating_sub(max);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
 }
 
 #[cfg(test)]

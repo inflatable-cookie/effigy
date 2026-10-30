@@ -298,7 +298,7 @@ impl Blocked {
         // before the fork so the child reads EOF (or its own terminal).
         let mut input_keep = None;
         match spec.terminal {
-            Terminal::None => drop(input_write),
+            Terminal::None | Terminal::Styled { pty: false } => drop(input_write),
             Terminal::Pipe => {
                 // High, so the child's descriptor sweep closes it: a child
                 // holding its own stdin write end would never see EOF.
@@ -322,7 +322,7 @@ impl Blocked {
                 // A foreground child reads the real terminal, not an EOF pipe.
                 input_read = duplicate(libc::STDIN_FILENO)?;
             }
-            Terminal::Pty => {
+            Terminal::Pty | Terminal::Styled { pty: true } => {
                 let (master, slave) = pty()?;
                 input_read = high(slave)?;
                 out_write = duplicate(input_read.as_raw_fd())?;
@@ -330,7 +330,10 @@ impl Blocked {
                 out_read = master;
             }
         }
-        let pty = matches!(spec.terminal, Terminal::Pty);
+        let pty = matches!(
+            spec.terminal,
+            Terminal::Pty | Terminal::Styled { pty: true }
+        );
         let fd_limit = descriptor_limit()?;
         // SAFETY: no Rust code, allocation or locks run in the child. All
         // buffers and pointers are prepared above and remain initialized and

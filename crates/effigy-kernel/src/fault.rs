@@ -50,6 +50,7 @@ points! {
     ProbeObservation,
     SocketBind,
     CaptureWrite,
+    CaptureSync,
     LogRead,
     AnchorSpawn,
     AnchorRecord,

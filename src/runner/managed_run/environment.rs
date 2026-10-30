@@ -64,6 +64,7 @@ pub(in crate::runner) fn bring_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     token: &str,
+    ansi_front: bool,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
 ) -> Result<(), NotReady> {
     let effect = EnvironmentEffect {
@@ -90,7 +91,7 @@ pub(in crate::runner) fn bring_up(
     // after the activation's attachment, so the reverse-order settle (K4)
     // stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
-    let up = run_up(run, plan, stop);
+    let up = run_up(run, plan, ansi_front, stop);
     let ticket = {
         let mut kernel = run
             .run_mut()
@@ -218,6 +219,7 @@ impl RouteHealth {
 fn run_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
+    ansi_front: bool,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
 ) -> Result<i32, NotReady> {
     let mut env = task_engine::spawn_environment(&plan.repo)
@@ -225,6 +227,10 @@ fn run_up(
     for (key, value) in &plan.up_env {
         env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
     }
+    env.insert(
+        crate::runner::managed_color::CAPABILITY.into(),
+        EnvValue::Plain(if ansi_front { "1" } else { "0" }.into()),
+    );
     // The bring-up's activation attaches this run as the environment's
     // holder (contract 053 §4); a named environment's ensure is then held.
     if matches!(plan.binding, Binding::Named { .. }) {

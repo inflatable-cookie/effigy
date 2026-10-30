@@ -31,6 +31,8 @@ pub const EFFIGY_MUTED: Color = Color::Indexed(244);
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
+    /// Writer-parsed, redacted styles. Plain transcript text remains in `line`.
+    pub styles: Option<Vec<effigy_core::terminal_text::StyledSpan>>,
     pub kind: LogEntryKind,
     pub line: String,
 }

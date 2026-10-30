@@ -44,6 +44,8 @@ pub(crate) struct Log {
     written: u64,
     rotate: u64,
     keep: u8,
+    tap: super::styled_tap::Tap,
+    durable: bool,
 }
 impl Log {
     pub fn open(
@@ -62,7 +64,15 @@ impl Log {
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("run directory missing"))?;
         let file = create(&dir, sequence, stream, 0)?;
+        let tap = super::styled_tap::Tap::new(
+            dir.clone(),
+            style_name(sequence)?,
+            [sequence as u64, 0],
+            limits.queue_bytes,
+        );
         Ok(Self {
+            tap,
+            durable: false,
             dir,
             sequence,
             stream,
@@ -73,10 +83,37 @@ impl Log {
             keep: limits.log_keep,
         })
     }
+    pub fn enable_plain(&mut self) -> io::Result<()> {
+        self.durable = true;
+        let name = plain_name(self.sequence)?;
+        let (mut file, _) = self
+            .dir
+            .open_file(
+                &name,
+                libc::O_WRONLY | libc::O_EXCL,
+                Some(0o600),
+                Trust::Private,
+            )
+            .map_err(io::Error::other)?
+            .ok_or_else(|| io::Error::other("plain format record missing"))?;
+        crate::fs::fchmod(&file, 0o600)?;
+        file.write_all(b"effigy.plain.v1\n")?;
+        file.sync_all()?;
+        self.dir.sync().map_err(io::Error::other)
+    }
+    pub fn publish_styles(
+        &mut self,
+        chunk: effigy_core::terminal_text::StyledChunk,
+    ) -> io::Result<()> {
+        self.tap.append(chunk)
+    }
     pub fn append(&mut self, mut bytes: &[u8]) -> io::Result<()> {
         crate::fault_point!(CaptureWrite)?;
         while !bytes.is_empty() {
             if self.written == self.rotate {
+                if self.durable {
+                    self.file.sync_all()?;
+                }
                 let base = self.bases.back().copied().unwrap_or(0) + self.written;
                 self.file = create(&self.dir, self.sequence, self.stream, base)?;
                 self.bases.push_back(base);
@@ -96,6 +133,14 @@ impl Log {
             bytes = &bytes[count..];
         }
         Ok(())
+    }
+    /// Managed plain capture is acknowledged only after its bytes and any
+    /// new segment entry are durable. Other capture modes retain their contract.
+    pub fn append_durable(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.append(bytes)?;
+        crate::fault_point!(CaptureSync)?;
+        self.file.sync_all()?;
+        self.dir.sync().map_err(io::Error::other)
     }
     /// Best effort: a failed write leaves a marker for readers. Failing to
     /// write the marker too loses only that report (K10).
@@ -120,4 +165,38 @@ fn create(dir: &DirFd, sequence: i64, stream: Stream, base: u64) -> io::Result<s
         .map_err(io::Error::other)?
         .ok_or_else(|| io::Error::other("log missing"))?
         .0)
+}
+
+fn style_name(sequence: i64) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.stdout.styled-tap")).map_err(io::Error::other)
+}
+/// Optional presentation styles for an already read contiguous merged log.
+/// A missing/expired tap always yields plain spans matching those exact bytes.
+pub fn read_styles(
+    root: &StateRoot,
+    run: crate::id::RunId,
+    sequence: i64,
+    from: u64,
+    bytes: &[u8],
+) -> Vec<effigy_core::terminal_text::StyledSpan> {
+    let fallback = || {
+        vec![effigy_core::terminal_text::StyledSpan {
+            text: String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+            style: Default::default(),
+        }]
+    };
+    let Ok(Some(parent)) = root.read_family(Family::Runs) else {
+        return fallback();
+    };
+    let Ok(Some(dir)) = parent.child(&run.to_string(), Trust::Private, false) else {
+        return fallback();
+    };
+    let Ok(name) = style_name(sequence) else {
+        return fallback();
+    };
+    super::styled_tap::read(&dir, &name, [sequence as u64, 0], from, bytes)
+}
+
+pub(crate) fn plain_name(sequence: i64) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.stdout.plain")).map_err(io::Error::other)
 }
