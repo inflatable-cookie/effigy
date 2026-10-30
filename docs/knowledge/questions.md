@@ -622,6 +622,16 @@ audit is recorded at
 `/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
 the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.
 
+On 2026-10-30 the Effigy Supervisor deferred the whole managed-pane ANSI
+colour and plain-log projection task (#457, PR #616) to v0.16. Its producer
+writes directly to the canonical host-process log and bypasses the new custody
+sanitizer; colour must remain disabled until that writer has a safe
+secret-handling boundary. PR #616 stays merge-held. This specific colour
+feature is outside the v0.15 pre-QA list and is not a prerequisite of the
+remaining Q-017 live-state progress gate (#467). Queue decision
+`084d2652-2ada-4e28-8bcd-743d7fa85cc3` records the ruling; security lead
+`a52a71e5-8f58-4c9a-a4c7-48c8166fe6aa` owns the later writer design.
+
 ## Q-018: Primary Linux proof environment for v0.15
 
 Status: answered
