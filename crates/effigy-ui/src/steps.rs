@@ -140,6 +140,13 @@ impl ProgressSource {
         }
     }
 
+    /// Publish the latest event without changing the current sub-step: what an
+    /// operation just observed about the object it is waiting on.
+    pub fn event(&self, event: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.event = Some(event.into());
+    }
+
     /// Name a new object or probe after the previous wait ended. Clears
     /// sub-step, count and event so frames name this wait until `update`.
     pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
@@ -596,6 +603,16 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
     sink.write_above_bars(&format!("{line}\n"));
 }
 
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
+}
+
 /// Start a top-level step. The label is short, present tense and names its
 /// subject: `starting web`.
 #[cfg_attr(
@@ -733,6 +750,21 @@ mod tests {
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
         assert!(step.label().ends_with("7s elapsed"));
+    }
+
+    #[test]
+    fn an_event_lands_without_moving_the_sub_step() {
+        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(1)),
+            "waiting for the environment gate for `stack`; 1s elapsed"
+        );
+        source.update("reconciling the backend", Some((1, 3)), None);
+        source.event("run agq holds it (pid 9012, task `dev`)");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(3)),
+            "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+        );
     }
 
     #[test]
