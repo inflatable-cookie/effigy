@@ -1406,6 +1406,14 @@ mod tests {
             platform: None,
             guest: Some(effigy_kernel::workspace_session::GuestContextInputs {
                 version: env!("CARGO_PKG_VERSION").into(),
+                protocol: 1,
+                host_user: "1000".into(),
+                checkout_id: checkout().text(),
+                environment_resource: stack.resource.name().to_string(),
+                profile: "fixture".into(),
+                runtime: None,
+                vm_type: None,
+                routes: vec![],
                 paths: effigy_kernel::workspace_session::GuestPaths {
                     host_checkout: "/host".into(),
                     guest_checkout: "/workspace".into(),
@@ -1633,6 +1641,9 @@ mod tests {
         );
         let document = serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.workspace-context.v2",
+            "protocol": 1, "host_user": "1000", "checkout_id": checkout().text(),
+            "environment_resource": stack.resource.name().to_string(), "profile": "fixture",
+            "runtime": null, "vm_type": null, "routes": [], "platform": "x86_64", "libc": "gnu",
             "version": inputs.guest.as_ref().expect("guest").version,
             "paths": inputs.guest.as_ref().expect("guest").paths,
             "sources": inputs.guest.as_ref().expect("guest").sources,
@@ -1652,7 +1663,7 @@ mod tests {
                 "path": "/run/effigy/objects/enrol/1",
                 "digest": effigy_kernel::id::Digest::of(b"enrol").hex(),
             },
-            "locator": { "endpoint": lease.endpoint(), "pin": lease.pin().hex() },
+            "locator": { "endpoint": lease.endpoint(), "pin": format!("sha256:{}", lease.pin().hex()) },
             "selection_digest": inputs.selection.hex(),
         }))
         .expect("context document");

@@ -69,8 +69,8 @@ pub(in crate::runner) struct WorkspaceUpRequest<'a> {
 pub(in crate::runner) enum WorkspaceUpError {
     Preparation(crate::runner::error::RunnerError),
     Owner {
-        cause: EnvError,
-        cleanup: Option<EnvError>,
+        cause: Box<EnvError>,
+        cleanup: Option<Box<EnvError>>,
     },
 }
 
@@ -94,7 +94,7 @@ pub(in crate::runner) fn up<'a>(
     let ctx = super::context(&policy.repo_root).map_err(WorkspaceUpError::Preparation)?;
     let env = super::env_ref(policy).map_err(WorkspaceUpError::Preparation)?;
     let owner_error = |cause| WorkspaceUpError::Owner {
-        cause,
+        cause: Box::new(cause),
         cleanup: None,
     };
     let mut activation = match WorkspaceActivation::begin(
@@ -146,8 +146,12 @@ pub(in crate::runner) fn up<'a>(
         Err(cause) => {
             let cleanup = activation
                 .abort(&ctx, effigy_kernel::gate::Wait::FailFast)
-                .err();
-            return Err(WorkspaceUpError::Owner { cause, cleanup });
+                .err()
+                .map(Box::new);
+            return Err(WorkspaceUpError::Owner {
+                cause: Box::new(cause),
+                cleanup,
+            });
         }
     };
     let (run, session) = activation.finish_selected().map_err(owner_error)?;

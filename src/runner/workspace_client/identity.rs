@@ -20,10 +20,25 @@ pub(crate) struct GuestSelfObservation {
 pub(crate) enum GuestIdentityRefusal {
     Unavailable,
     Unproven,
+    Mismatch,
     Ambiguous,
     Malformed,
     TooLarge,
 }
+
+impl std::fmt::Display for GuestIdentityRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unavailable => "the guest observation could not be read",
+            Self::Unproven => "the guest observation does not prove placement",
+            Self::Mismatch => "the guest identity differs from the prepared target",
+            Self::Ambiguous => "the guest observation contains conflicting identities",
+            Self::Malformed => "the guest observation has an invalid format",
+            Self::TooLarge => "the guest observation exceeds the read budget",
+        })
+    }
+}
+impl std::error::Error for GuestIdentityRefusal {}
 
 pub(crate) trait GuestIdentity {
     fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal>;
@@ -141,16 +156,17 @@ impl GuestSelfObservation {
         &self,
         expected: &WorkspaceContainerIdentity,
     ) -> Result<(), GuestIdentityRefusal> {
-        if self.platform.is_empty()
-            || self.libc.is_empty()
-            || !expected
-                .container_id
-                .eq_ignore_ascii_case(&self.container_id)
+        if self.platform.is_empty() || self.libc.is_empty() {
+            return Err(GuestIdentityRefusal::Unproven);
+        }
+        if !expected
+            .container_id
+            .eq_ignore_ascii_case(&self.container_id)
             || expected.vm_boot_id != self.vm_boot_id
             || expected.platform != self.platform
             || expected.libc != self.libc
         {
-            return Err(GuestIdentityRefusal::Unproven);
+            return Err(GuestIdentityRefusal::Mismatch);
         }
         Ok(())
     }

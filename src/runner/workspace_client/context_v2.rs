@@ -7,71 +7,22 @@ use super::*;
 use crate::runner::workspace_client::identity::{GuestIdentity, GuestIdentityRefusal};
 use crate::runner::workspace_transport::qualification::QualifiedHostLocator;
 use effigy_kernel::id::{Digest, RunId};
-use effigy_kernel::workspace_session::{ActivationPlan, SelectionObjects, SessionRef};
+use effigy_kernel::workspace_session::{ActivationPlan, SelectionObjects};
 
-pub(crate) const SCHEMA: &str = "effigy.workspace-context.v2";
+pub(crate) use effigy_kernel::workspace_session::{
+    AdvertisedLocator, CredentialSelection, WorkspaceContextDocument, WorkspaceSessionBinding,
+    WORKSPACE_CONTEXT_SCHEMA as SCHEMA,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceSessionBinding {
-    pub(crate) run_id: String,
-    pub(crate) generation: u64,
-}
+#[serde(transparent)]
+pub(crate) struct WorkspaceContextV2(pub(crate) WorkspaceContextDocument);
 
-impl From<&SessionRef> for WorkspaceSessionBinding {
-    fn from(session: &SessionRef) -> Self {
-        Self {
-            run_id: session.run().to_string(),
-            generation: session.generation().get(),
-        }
+impl std::ops::Deref for WorkspaceContextV2 {
+    type Target = WorkspaceContextDocument;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CredentialSelection {
-    pub(crate) generation: u64,
-    pub(crate) path: String,
-    /// Canonical bare hex, as the selection object's Digest; never secret bytes.
-    pub(crate) digest: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AdvertisedLocator {
-    pub(crate) endpoint: String,
-    /// DER-SPKI SHA-256, with an explicit sha256: prefix for the guest opener.
-    pub(crate) pin: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceContextV2 {
-    pub(crate) schema: String,
-    pub(crate) context_generation: u64,
-    pub(crate) environment_generation: u64,
-    pub(crate) session: WorkspaceSessionBinding,
-    pub(crate) artifact_digest: String,
-    pub(crate) binary_path: String,
-    pub(crate) container_id: String,
-    pub(crate) vm_boot_id: String,
-    pub(crate) platform: String,
-    pub(crate) libc: String,
-    pub(crate) credential: CredentialSelection,
-    pub(crate) locator: AdvertisedLocator,
-    pub(crate) selection_digest: String,
-    pub(crate) version: String,
-    pub(crate) protocol: u32,
-    pub(crate) host_user: String,
-    pub(crate) checkout_id: String,
-    pub(crate) environment_resource: String,
-    pub(crate) backend: String,
-    pub(crate) profile: String,
-    pub(crate) runtime: Option<String>,
-    pub(crate) vm_type: Option<String>,
-    pub(crate) paths: WorkspacePathMap,
-    pub(crate) sources: Vec<WorkspacePinnedSource>,
-    pub(crate) routes: Vec<WorkspaceRoute>,
 }
 
 impl WorkspaceContextV2 {
@@ -103,7 +54,7 @@ impl WorkspaceContextV2 {
             return Err(refuse());
         }
         let channel = qualified.channel();
-        Ok(Self {
+        Ok(Self(WorkspaceContextDocument {
             schema: SCHEMA.into(),
             context_generation: objects.context_generation.get(),
             environment_generation: plan.environment_generation().get(),
@@ -128,7 +79,7 @@ impl WorkspaceContextV2 {
             protocol: CHANNEL_PROTOCOL_VERSION,
             host_user: input.activation.host_user,
             checkout_id: input.activation.checkout_id,
-            environment_resource: input.activation.environment.resource_id,
+            environment_resource: plan.environment().name().to_string(),
             backend: input.backend.kind,
             profile: input.backend.profile,
             runtime: input.backend.runtime,
@@ -136,7 +87,7 @@ impl WorkspaceContextV2 {
             paths: input.paths,
             sources: input.sources,
             routes: input.routes,
-        })
+        }))
     }
 
     pub(crate) fn render(&self) -> Result<Vec<u8>, RunnerError> {
@@ -181,9 +132,12 @@ impl WorkspaceContextV2 {
             .observe()
             .and_then(|observed| observed.compare(&container))
             .map_err(|reason: GuestIdentityRefusal| {
-                ContextRefusal::identity_mismatch(format!(
-                    "guest-local identity is unproven ({reason:?}); re-prepare on the host"
-                ))
+                let message =
+                    format!("guest-local identity is unproven ({reason}); re-prepare on the host");
+                match reason {
+                    GuestIdentityRefusal::Mismatch => ContextRefusal::identity_mismatch(message),
+                    _ => ContextRefusal::unavailable(message),
+                }
             })?;
         if self.schema != SCHEMA
             || self.protocol != CHANNEL_PROTOCOL_VERSION
@@ -192,8 +146,12 @@ impl WorkspaceContextV2 {
             || self.session.generation == 0
             || self.session.run_id.parse::<RunId>().is_err()
             || self.credential.generation != self.context_generation
-            || self.credential.path
-                != format!("/run/effigy/enrol/{}/credential", self.context_generation)
+            || !self.credential.path.starts_with("/run/effigy/")
+            || self
+                .credential
+                .path
+                .split('/')
+                .any(|part| part == "." || part == "..")
             || self
                 .artifact_digest
                 .strip_prefix("sha256:")

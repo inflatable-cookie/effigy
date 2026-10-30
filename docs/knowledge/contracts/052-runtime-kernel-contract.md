@@ -2970,6 +2970,13 @@ conflicting loader evidence refuses. Native Colima, Desktop and Linux Docker
 qualification remains required before treating a candidate mount-root source as
 qualified placement evidence.
 
+The canonical full-v2 wire type is the kernel's exported `WorkspaceContextDocument`;
+`workspace_client/context_v2.rs` uses a transparent wrapper around that exact type.
+Host user, checkout/environment resource, protocol, profile/runtime/VM descriptor,
+paths, source pins and routes are compared with frozen `GuestContextInputs`.
+Platform and libc are checked against the applied required binary stage's image
+facts read into `ActivationPlan`; a fresh reservation never guesses them before
+apply, and an absent or uncertain stage cannot validate a context receipt.
 The C full-v2 producer/reader is `workspace_client/context_v2.rs`. Its session block
 comes from `ActivationPlan::session()`, its channel from `QualifiedHostLocator`,
 and it refuses v1 documents and unknown fields. The reserved owner orchestration

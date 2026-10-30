@@ -135,52 +135,71 @@ pub struct SelectionReceipt {
 }
 
 /// Schema of the context document this seam validates (052 §8.11).
-const CONTEXT_SCHEMA_V2: &str = "effigy.workspace-context.v2";
+pub const WORKSPACE_CONTEXT_SCHEMA: &str = "effigy.workspace-context.v2";
 
 /// The guest context document, as far as the kernel must understand it. Every
 /// field is checked against the frozen activation plan and the selection; a
 /// document for another generation, session, artifact, credential or locator is
 /// refused, never hashed and accepted.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContextDocument {
-    schema: String,
-    context_generation: u64,
-    environment_generation: u64,
-    session: DocumentSession,
-    artifact_digest: String,
-    container_id: String,
-    vm_boot_id: String,
-    credential: DocumentCredential,
-    locator: DocumentLocator,
-    selection_digest: String,
-    version: String,
-    paths: GuestPaths,
-    sources: Vec<GuestSourcePin>,
-    binary_path: String,
-    backend: String,
+pub struct WorkspaceContextDocument {
+    pub schema: String,
+    pub context_generation: u64,
+    pub environment_generation: u64,
+    pub session: WorkspaceSessionBinding,
+    pub artifact_digest: String,
+    pub container_id: String,
+    pub vm_boot_id: String,
+    pub credential: CredentialSelection,
+    pub locator: AdvertisedLocator,
+    pub selection_digest: String,
+    pub version: String,
+    pub paths: GuestPaths,
+    pub sources: Vec<GuestSourcePin>,
+    pub binary_path: String,
+    pub backend: String,
+    pub platform: String,
+    pub libc: String,
+    pub protocol: u32,
+    pub host_user: String,
+    pub checkout_id: String,
+    pub environment_resource: String,
+    pub profile: String,
+    pub runtime: Option<String>,
+    pub vm_type: Option<String>,
+    pub routes: Vec<GuestRoute>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DocumentSession {
-    run_id: String,
-    generation: u64,
+pub struct WorkspaceSessionBinding {
+    pub run_id: String,
+    pub generation: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DocumentCredential {
-    generation: u64,
-    path: String,
-    digest: String,
+pub struct CredentialSelection {
+    pub generation: u64,
+    pub path: String,
+    pub digest: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DocumentLocator {
-    endpoint: String,
-    pin: String,
+pub struct AdvertisedLocator {
+    pub endpoint: String,
+    pub pin: String,
+}
+
+impl From<&SessionRef> for WorkspaceSessionBinding {
+    fn from(session: &SessionRef) -> Self {
+        Self {
+            run_id: session.run().to_string(),
+            generation: session.generation().get(),
+        }
+    }
 }
 
 impl SelectionReceipt {
@@ -209,17 +228,38 @@ impl SelectionReceipt {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         let serving = launch.publish(session_run)?.lease().clone();
-        let parsed: ContextDocument = serde_json::from_slice(document)
+        let parsed: WorkspaceContextDocument = serde_json::from_slice(document)
             .map_err(|_| RunError::from(ActivationRefusal::SelectionMismatch))?;
         let mismatch = ActivationRefusal::SelectionMismatch;
         let guest = plan.guest_context()?;
         guest.validate()?;
-        if parsed.version != guest.version
+        let platform = plan.image_platform()?;
+        let machine = match platform.architecture.as_str() {
+            "amd64" => "x86_64",
+            "arm64" => "aarch64",
+            _ => return Err(mismatch.into()),
+        };
+        let libc = match platform.loader {
+            LoaderFamily::Gnu => "gnu",
+            LoaderFamily::Musl => "musl",
+        };
+        if parsed.platform != machine
+            || parsed.libc != libc
+            || parsed.protocol != guest.protocol
+            || parsed.host_user != guest.host_user
+            || parsed.checkout_id != guest.checkout_id
+            || parsed.environment_resource != plan.environment().name().to_string()
+            || parsed.environment_resource != guest.environment_resource
+            || parsed.profile != guest.profile
+            || parsed.runtime != guest.runtime
+            || parsed.vm_type != guest.vm_type
+            || parsed.routes != guest.routes
+            || parsed.version != guest.version
             || parsed.paths != guest.paths
             || parsed.sources != guest.sources
             || parsed.binary_path != selection.objects.binary.path
             || parsed.backend != selection.backend
-            || parsed.schema != CONTEXT_SCHEMA_V2
+            || parsed.schema != WORKSPACE_CONTEXT_SCHEMA
             || parsed.context_generation != selection.objects.context_generation.get()
             || parsed.environment_generation != plan.environment_generation().get()
             || parsed.session.run_id != plan.session_run().to_string()
@@ -232,7 +272,7 @@ impl SelectionReceipt {
             || Digest::parse_hex(&parsed.credential.digest).as_ref()
                 != Some(&selection.objects.credential.digest)
             || parsed.locator.endpoint != serving.endpoint()
-            || Digest::parse_hex(&parsed.locator.pin).as_ref() != Some(serving.pin())
+            || parsed.locator.pin != format!("sha256:{}", serving.pin().hex())
         {
             return Err(mismatch.into());
         }

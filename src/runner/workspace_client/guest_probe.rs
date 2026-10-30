@@ -28,7 +28,7 @@ pub(crate) fn run(args: GuestProbeArgs) -> Result<String, RunnerError> {
     let invalid = |message| RunnerError::task_invocation(message);
     let identity = ProcGuestIdentity::process()
         .observe()
-        .map_err(|reason| invalid(format!("guest-local identity is unproven ({reason:?})")))?;
+        .map_err(|reason| invalid(format!("guest-local identity is unproven ({reason})")))?;
     let mut reply = GuestProbeReply {
         schema: "effigy.guest-probe.v1".into(),
         identity,

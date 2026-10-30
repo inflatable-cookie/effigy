@@ -72,7 +72,7 @@ fn stage_binary_bytes(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let actual = crate::runner::workspace_client::identity::executable_platform(&mut executable)
         .map_err(|reason| {
-            RunnerError::task_invocation(format!("guest ELF is unproven ({reason:?})"))
+            RunnerError::task_invocation(format!("guest ELF is unproven ({reason})"))
         })?;
     if actual != (machine.to_owned(), libc.to_owned())
         || binary.version != binding.artifact_version

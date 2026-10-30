@@ -244,6 +244,14 @@ mod tests {
             platform: None,
             guest: Some(GuestContextInputs {
                 version: "0.15.0".into(),
+                protocol: 1,
+                host_user: "1000".into(),
+                checkout_id: checkout().text(),
+                environment_resource: env("workspace").resource.name().to_string(),
+                profile: "fixture".into(),
+                runtime: None,
+                vm_type: None,
+                routes: vec![],
                 paths: GuestPaths {
                     host_checkout: "/host".into(),
                     guest_checkout: "/workspace".into(),

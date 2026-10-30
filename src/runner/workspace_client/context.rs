@@ -187,15 +187,7 @@ pub(crate) struct WorkspaceActivationIdentity {
 }
 
 /// Host checkout ↔ guest mount, workdir, workspace user and `HOME`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkspacePathMap {
-    pub(crate) host_checkout: String,
-    pub(crate) guest_checkout: String,
-    pub(crate) workdir: String,
-    pub(crate) user: String,
-    pub(crate) home: String,
-}
+pub(crate) use effigy_kernel::workspace_session::GuestPaths as WorkspacePathMap;
 
 /// Backend descriptor: kind, profile or context, runtime and VM type (§8.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,28 +209,10 @@ pub(crate) const COMPOSED_MANIFEST_KIND: &str = "composed-manifest";
 /// One pinned source the context carries. `kind` is `bundle`, `catalog`,
 /// `manifest`, `source-lock` or `composed-manifest`; `snapshot` names the
 /// guest-readable bytes the digest belongs to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkspacePinnedSource {
-    pub(crate) kind: String,
-    pub(crate) name: String,
-    pub(crate) digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) snapshot: Option<String>,
-}
+pub(crate) use effigy_kernel::workspace_session::GuestSourcePin as WorkspacePinnedSource;
 
 /// One declared or effective route the guest may read locally (§8.2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceRoute {
-    pub(crate) declared_domain: String,
-    pub(crate) domain: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) service: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) port: Option<u16>,
-    pub(crate) tls: bool,
-}
+pub(crate) use effigy_kernel::workspace_session::GuestRoute as WorkspaceRoute;
 
 /// Where the host authority channel listens and which server identity the
 /// client pins before it sends a credential (§8.3, §8.11). Neither value is a

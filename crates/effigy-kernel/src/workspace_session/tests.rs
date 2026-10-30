@@ -1360,6 +1360,8 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
         claim,
     )
     .expect("activation run");
+    stage_fake_binary(&reservation, &mut environment_run, fake_artifact())
+        .expect("verified binary before publication proof");
     // The intent alone is not a receipt: no active publication may precede it.
     let ticket =
         Attachments::intend_guest_publication(&mut environment_run).expect("publication intent");
@@ -1400,8 +1402,6 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
             "recording refuses a receipt with the wrong {field}"
         );
     }
-    stage_fake_binary(&reservation, &mut environment_run, fake_artifact())
-        .expect("stage fake binary");
     // The same run can still commit once its publication is complete.
     let receipt = publication_for(&cx, &root, &reservation, &environment_run);
     Attachments::workspace_guest_published(&mut environment_run, &ticket, receipt)
@@ -1439,6 +1439,8 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
         claim,
     )
     .expect("activation run");
+    stage_fake_binary(&reservation, &mut environment_run, fake_artifact())
+        .expect("verified binary before publication proof");
     let first = Attachments::intend_guest_publication(&mut environment_run)
         .expect("first publication intent");
     let _second = Attachments::intend_guest_publication(&mut environment_run)
@@ -3027,7 +3029,12 @@ fn decided_with(
         cx,
         root,
         environment,
-        &decision_inputs(byte),
+        &{
+            let mut inputs = decision_inputs(byte);
+            inputs.guest.as_mut().expect("guest").environment_resource =
+                environment.name().to_string();
+            inputs
+        },
         Wait::FailFast,
     )
     .expect("activation decision")
@@ -3048,9 +3055,23 @@ fn context_document(
     lease: &ServingLease,
     selection_digest: &Digest,
 ) -> Vec<u8> {
+    let image = plan
+        .image_platform()
+        .cloned()
+        .unwrap_or_else(|_| binary_binding(publication.activation_run).platform);
     serde_json::to_vec(&serde_json::json!({
         "schema": "effigy.workspace-context.v2",
         "version": plan.guest_context().expect("guest").version,
+        "protocol": plan.guest_context().expect("guest").protocol,
+        "host_user": plan.guest_context().expect("guest").host_user,
+        "checkout_id": plan.guest_context().expect("guest").checkout_id,
+        "environment_resource": plan.environment().name().to_string(),
+        "profile": plan.guest_context().expect("guest").profile,
+        "runtime": plan.guest_context().expect("guest").runtime,
+        "vm_type": plan.guest_context().expect("guest").vm_type,
+        "routes": plan.guest_context().expect("guest").routes,
+        "platform": match image.architecture.as_str() { "amd64" => "x86_64", "arm64" => "aarch64", _ => "unproven" },
+        "libc": match image.loader { LoaderFamily::Gnu => "gnu", LoaderFamily::Musl => "musl" },
         "paths": plan.guest_context().expect("guest").paths,
         "sources": plan.guest_context().expect("guest").sources,
         "binary_path": selection.objects.binary.path,
@@ -3071,7 +3092,7 @@ fn context_document(
         },
         "locator": {
             "endpoint": lease.endpoint(),
-            "pin": lease.pin().hex(),
+            "pin": format!("sha256:{}", lease.pin().hex()),
         },
         "selection_digest": selection_digest.hex(),
     }))
@@ -3245,7 +3266,7 @@ fn commit_receipt(
         .map(|inputs| inputs.selection.clone())
         .unwrap_or_else(|| Digest::of(b"undecided"));
     let mut launch = launch_for(session_run, &plan.session())?;
-    let receipt = selection_receipt(
+    let receipt = try_selection_receipt(
         &plan,
         publication,
         binary,
@@ -3253,7 +3274,7 @@ fn commit_receipt(
         &selection_digest,
         session_run,
         &mut launch,
-    );
+    )?;
     Ok((receipt, launch))
 }
 
@@ -3290,7 +3311,7 @@ fn commit_and_switch(
 /// The validated selection a workspace activation publishes. The context
 /// document is hashed here exactly as `prepare` would hash it, and no selector
 /// is touched.
-fn selection_receipt(
+fn try_selection_receipt(
     plan: &ActivationPlan,
     publication: WorkspacePublicationReceipt,
     binary: Digest,
@@ -3298,7 +3319,7 @@ fn selection_receipt(
     selection_digest: &Digest,
     session_run: &Run<'_>,
     launch: &mut SessionLaunch,
-) -> SelectionReceipt {
+) -> Result<SelectionReceipt, RunError> {
     // The document never names its own digest, so it is built from a
     // placeholder context object and then hashed: the real digest becomes the
     // context object the selection names, and the bytes are unchanged.
@@ -3377,6 +3398,26 @@ fn selection_receipt(
         session_run,
         launch,
         &mut prior,
+    )
+}
+
+fn selection_receipt(
+    plan: &ActivationPlan,
+    publication: WorkspacePublicationReceipt,
+    binary: Digest,
+    previous: Option<&str>,
+    selection_digest: &Digest,
+    session_run: &Run<'_>,
+    launch: &mut SessionLaunch,
+) -> SelectionReceipt {
+    try_selection_receipt(
+        plan,
+        publication,
+        binary,
+        previous,
+        selection_digest,
+        session_run,
+        launch,
     )
     .expect("selection receipt")
 }
@@ -5646,6 +5687,22 @@ fn a_context_document_for_another_activation_is_refused() {
         ("environment_generation", serde_json::json!(99)),
         ("context_generation", serde_json::json!(42)),
         ("version", serde_json::json!("0.0.0-foreign")),
+        ("platform", serde_json::json!("foreign-platform")),
+        ("libc", serde_json::json!("foreign-loader")),
+        ("protocol", serde_json::json!(2)),
+        ("host_user", serde_json::json!("foreign-user")),
+        ("checkout_id", serde_json::json!("foreign-checkout")),
+        (
+            "environment_resource",
+            serde_json::json!("foreign-environment"),
+        ),
+        ("profile", serde_json::json!("foreign-profile")),
+        ("runtime", serde_json::json!("foreign-runtime")),
+        ("vm_type", serde_json::json!("foreign-vm")),
+        (
+            "routes",
+            serde_json::json!([{"declared_domain":"a.test","domain":"b.test","tls":false}]),
+        ),
         (
             "paths",
             serde_json::json!({"host_checkout":"/host/other","guest_checkout":"/workspace","workdir":"/workspace","user":"1000","home":"/home/worker"}),
@@ -5667,7 +5724,21 @@ fn a_context_document_for_another_activation_is_refused() {
         parsed[field] = value;
         cases.push(serde_json::to_vec(&parsed).expect("document"));
     }
-    for field in ["version", "paths", "sources", "binary_path", "backend"] {
+    for field in [
+        "version",
+        "paths",
+        "sources",
+        "binary_path",
+        "backend",
+        "platform",
+        "libc",
+        "protocol",
+        "host_user",
+        "checkout_id",
+        "environment_resource",
+        "profile",
+        "routes",
+    ] {
         let mut parsed: serde_json::Value =
             serde_json::from_slice(&base_document).expect("document");
         parsed.as_object_mut().expect("object").remove(field);
@@ -7190,6 +7261,14 @@ fn guest_stage_faults_preserve_intent_uncertainty_and_staged_orphans() {
 fn fake_guest_context() -> GuestContextInputs {
     GuestContextInputs {
         version: env!("CARGO_PKG_VERSION").into(),
+        protocol: 1,
+        host_user: "1000".into(),
+        checkout_id: checkout().text(),
+        environment_resource: environment().name().to_string(),
+        profile: "fixture".into(),
+        runtime: None,
+        vm_type: None,
+        routes: vec![],
         paths: GuestPaths {
             host_checkout: "/host/checkout".into(),
             guest_checkout: "/workspace".into(),
