@@ -2902,78 +2902,66 @@ only, and host access needs a terminal opened through Effigy.
 
 ### 8.11 Workspace-client interface v1
 
-This section is the normative production seam (effigy#481). It specifies required
-behavior, not implemented transport or backend qualification. The session and
-publication APIs identified as implemented below are the merged effigy#484 seam.
-Other signatures are proposed implementation handoffs; code-first work must prove
-them. Tom's scope ruling (2026-10-30, decision 8c0ef812) limits this core to 250
-lines. The detailed E-step, fault and retry design is parked in
-[Appendix B](#appendix-b-non-normative-post-v015-sequence-candidates); it is
-unimplemented, non-normative and supplies no acceptance claims. Existing API
-detail is retained as an [informative reference](#appendix-a-existing-workspace-api-reference).
+This is the normative production seam (effigy#481), not implemented transport or
+backend qualification. Only APIs marked implemented below are the merged #484 seam.
+Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
+E-step/fault/retry proposals remain [non-normative, unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates),
+with no acceptance claims; [existing API detail](#appendix-a-existing-workspace-api-reference)
+is informative. Other signatures below are proposed code-first handoffs.
 
-**Authority and wire.** There is one host authority and one session channel,
-separate from remote workload custody. The host re-resolves every request into
-`ResolvedInvocation`, checks current grants and fences, and takes canonical gates
-before effects. The guest has no Docker socket, store writer, host effect context
-or local fallback for a failed host request. Hybrid provisions no guest artifacts,
-listener or credentials. Static/local Observe remains local (§8.6).
+**Authority and wire.** One host authority and session channel, separate from remote
+custody: re-resolve every request into `ResolvedInvocation`, check grants/fences,
+and take canonical gates before effects. Guests have no Docker socket, store
+writer, host effect context or failed-request local fallback. Hybrid provisions
+no guest artifacts/listener/credentials. Static/local Observe stays local (§8.6).
+TLS verifies the pin before any Hello/credential frame. V1 frames: four-byte
+big-endian length, UTF-8 JSON, 1 MiB maximum, decoded stream payload ≤32 KiB.
+Invalid encoding, duplicate keys, unknown versions/fields and excess limits close
+before dispatch. Hello selects protocol 1 and matching host/client/context version
+and pinned artifact digest (§8.9), never downgrade; only `hello_ok` permits auth
+or enrol. Enrolment issues a capability, executes nothing. Credentials never enter
+logs/stdout/JSON envelopes; responses preserve host typed results/safe refusals.
+Invocation: selectors/typed operations, relative cwd/target/args, never executable
+paths/state roots/guest plans; ≤256 args, ≤4096 bytes each, ≤64 KiB body,
+cwd/target ≤4096 bytes within scope. Grants are memory-only, bound to host user,
+checkout, session run/generation, environment generation, full container/boot and
+operations/targets (§8.3). Enrolment credentials: generation/container-bound,
+0600 guest-private, revoked with generation. Observe creates no admission/access
+journal. Mutating requests record `(session generation, request id, canonical digest)`
+before admission: same-intent retry returns the record, conflicts `id_conflict`,
+indeterminate recovery `unknown`, never another admission; `lookup` before `reserve`.
+One connection/attachment; secondary EOF stops nothing; owner EOF without acked
+detach stops its owned workload through custody. Detach preserves a Detached run.
+Controls cannot target another client's run. Streams: one increasing sequence per
+stream id across kinds; retained log/cursor coordinates agree; rotation is `gap`,
+never complete output. ≤16 unacked data frames, ≤512 KiB queued decoded data;
+control remains serviceable. Never replay terminal input; resize latest-wins;
+check attachment lifetime before terminal writes; missing delivery refuses.
+Kernel record tests do not qualify a production terminal writer/serving loop/transport.
+§8.7 governs down and live holders.
 
-TLS authenticates the pinned server before any Hello or credential frame. V1 uses
-four-byte big-endian length-prefixed UTF-8 JSON, at most 1 MiB; invalid encoding,
-duplicate keys, unknown versions/fields and excess limits close before dispatch.
-Decoded stream payloads are at most 32 KiB. Hello negotiates protocol 1 and the
-matching host/client/context version and pinned artifact digest (§8.9), with no
-downgrade. Only `hello_ok` permits `authenticate` or `enrol`; enrolment issues a
-capability and executes nothing. Credentials never enter logs, stdout or JSON
-command envelopes. Responses preserve host typed results and safe refusal codes.
-Invocation bodies contain selectors/typed operations, relative cwd, target and
-arguments, never executable paths, state roots or guest-resolved plans. Bounds:
-256 arguments, 4096 bytes each, 64 KiB body, 4096-byte cwd/target within scope.
-
-Grants are memory-only, bound to host user, checkout, session run and generation,
-environment generation, full container id, boot id, operations and targets (§8.3).
-Enrolment credentials are generation/container-bound, 0600, guest-private and
-revoked with their generation. Observe creates no admission/access journal.
-Mutating requests record `(session generation, request id, canonical digest)`
-before admission; same-intent retry returns the recorded result, conflicting
-content refuses `id_conflict`, and indeterminate recovery returns `unknown`.
-An unknown record never admits another run. `lookup` precedes `reserve`.
-
-One connection owns at most one attachment. Secondary EOF stops nothing;
-owner EOF without acknowledged detach stops its owned workload through custody.
-Detach leaves a Detached run alive. Controls cannot target another client's run.
-Streams share one increasing sequence per stream id across kinds; retained
-positions and reconnect cursors use that stream's log coordinates. Rotation
-reports `gap`, never complete output. Bound the connection to 16 unacknowledged
-data frames and 512 KiB queued decoded data; control remains serviceable.
-Terminal input is never replayed, resize is latest-wins, and attachment lifetime
-is checked immediately before terminal writes. Missing terminal delivery refuses.
-The kernel replay/attachment implementation does not prove a production terminal
-writer, serving loop or transport. §8.7 governs down and live-holder preservation.
-
-**Guest-local identity — #482 (C).** Proposed guest interfaces in
-`src/runner/workspace_client/identity.rs`:
+**Guest-local identity — #482 (C).** Proposed in `src/runner/workspace_client/identity.rs`:
 
 ```rust
 struct ProcGuestIdentity { /* real /proc and image root, fixture roots in tests */ }
-struct GuestSelfObservation {
-    container: WorkspaceContainerIdentity, // full container id, boot, platform, libc
-    evidence: GuestIdentityEvidence,
-}
-trait GuestIdentity {
-    fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal>;
-}
+struct GuestSelfObservation { container: WorkspaceContainerIdentity, evidence: GuestIdentityEvidence }
+trait GuestIdentity { fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal>; }
 impl ProcGuestIdentity { fn process() -> Self; }
 ```
 
 Requests take container/boot claims from that observation. The published context
 is a host claim to compare against it, never independent evidence of the caller.
-Candidate sources are the full 64-hex id in `/proc/self/cgroup` or a qualified
-`/proc/self/mountinfo` root under `containers/`, and the canonical UUID in
-`/proc/sys/kernel/random/boot_id`. Exactly one distinct full id is required;
+The candidate independent source is the full 64-hex id in a backend-qualified
+kernel `/proc/self/mountinfo` root under `containers/`; boot is the canonical UUID
+in `/proc/sys/kernel/random/boot_id`. Exactly one distinct full id is required;
 zero, conflicting, unreadable or malformed facts refuse before credentials.
-A hostname, marker, environment variable or id prefix is not identity evidence.
+Consistent with §8.2, `/proc/self/cgroup` is diagnostic only: reading a full id
+there is still a cgroup claim, never independent placement evidence, even when
+it matches the context. Cgroup-only availability must refuse `Unproven`; neither
+qualification nor context agreement promotes it. Hostnames, markers, environment
+variables and id prefixes also prove nothing. Each backend's fixture and native
+qualification must distinguish a valid mountinfo observation from cgroup-only
+and copied-context cases; the latter refuse without credentials or publication.
 
 The host selects the first artifact from the exact container image's backend
 OS/architecture/variant and one observed image loader family, before executing
@@ -2991,18 +2979,11 @@ smallest contract decision; do not fabricate an identity or invent a fallback.
 ```rust
 // src/runner/workspace_client/context.rs — #482
 struct WorkspaceSessionBinding { run_id: String, generation: u64 } // S
-struct WorkspaceChannelLocator {
-    endpoint: String,
-    server_identity: String, // sha256:<hex> of DER SubjectPublicKeyInfo
-    protocol: u32,
-}
+struct WorkspaceChannelLocator { endpoint: String, server_identity: String, protocol: u32 }
+// server_identity = sha256:<hex> of DER SubjectPublicKeyInfo
 // src/runner/workspace_client/transport.rs — #483
-struct TlsChannelTransport { /* implements workspace_channel::Transport */ }
-struct PinnedChannelOpener { deadline: Deadline }
-impl ChannelOpener for PinnedChannelOpener {
-    fn open(&mut self, context: &VerifiedWorkspaceContext)
-        -> Result<Box<dyn Transport>, ChannelError>;
-}
+struct TlsChannelTransport { /* workspace_channel::Transport */ } struct PinnedChannelOpener { deadline: Deadline }
+impl ChannelOpener for PinnedChannelOpener { fn open(&mut self, context: &VerifiedWorkspaceContext) -> Result<Box<dyn Transport>, ChannelError>; }
 ```
 
 A session owns one memory-only ECDSA P-256 key/leaf and listener. The TLS verifier
@@ -3015,9 +2996,47 @@ A dead listener/key is never recreated under an old locator; the next activation
 uses a new session, generation, endpoint and pin. Superseded live sessions keep
 their own listener and holders until their own settlement.
 
-`crates/effigy-containers/src/workspace_channel.rs` owns backend alias/bind
-observation; `src/runner/workspace_command/channel.rs` owns the host TLS listener.
-Both modules are proposed. Required qualification routes are:
+Proposed #483 host handoff: `BackendSelection` names the backend/profile;
+`ContainerIdentity` the host-bound container/boot. Modules own the following types:
+
+```rust
+// crates/effigy-containers/src/workspace_channel.rs
+pub enum BindRoute { Proxy { host_bind: IpAddr }, Direct }
+pub struct ChannelAliasPlan { pub alias: String, pub render_value: String, pub route: BindRoute }
+pub struct ResolvedAlias { pub target: ContainerIdentity, pub address: IpAddr }
+pub struct ChannelBind { pub listen: SocketAddr, pub alias: String, pub expected_peer: IpAddr }
+pub fn channel_alias_plan(cx: &ObserveContext, selected: &BackendSelection) -> Observed<ChannelAliasPlan>;
+pub fn channel_bind(plan: &ChannelAliasPlan, resolved: &ResolvedAlias) -> Observed<ChannelBind>;
+// src/runner/workspace_command/channel.rs
+struct HostChannelIdentity { session: SessionBinding, /* memory-only key/leaf */ }
+struct BoundHostChannel { session: SessionBinding, bind: ChannelBind, listener: HostChannelListener, locator: WorkspaceChannelLocator }
+struct QualifiedHostLocator { session: SessionBinding, target: ContainerIdentity, locator: WorkspaceChannelLocator }
+struct GuestDialEvidence { target: ContainerIdentity, peer: SocketAddr, pin: Digest }
+trait GuestChannelProbe {
+    fn resolve(&mut self, target: &ContainerIdentity, plan: &ChannelAliasPlan, deadline: Deadline) -> Observed<ResolvedAlias>;
+    fn dial(&mut self, target: &ContainerIdentity, locator: &WorkspaceChannelLocator, deadline: Deadline) -> Observed<GuestDialEvidence>;
+}
+impl HostChannelIdentity {
+    fn generate(session: &SessionBinding) -> Result<Self, ChannelError>;
+    fn bind(self, bind: ChannelBind) -> Result<BoundHostChannel, ChannelError>;
+}
+impl BoundHostChannel {
+    fn qualify(&mut self, target: &ContainerIdentity, guest: &mut dyn GuestChannelProbe, deadline: Deadline) -> Observed<QualifiedHostLocator>;
+}
+```
+
+`GuestChannelProbe::dial` is TLS-only: verify pin/signature, send no frames.
+Order: observe alias plan → render/apply → `guest.resolve` in exact staged guest →
+`channel_bind` → generate/bind → `qualify` → #482 immutable context/receipt.
+The plan contains observed proxy bind/gateway facts, not guessed loopback; Direct
+uses the guest-resolved IP. `channel_bind` sets port 0 and expected guest peer;
+`bind` builds the locator from its OS-assigned port, alias, SPKI digest and protocol 1.
+`qualify` checks target/boot, peer IP against `bind.expected_peer`, assigned port
+and listener pin. Proxy peer may differ from listen IP; Direct must match it.
+Only its verified result supplies the context locator, never an unqualified bind.
+Unknown/ambiguous backend facts, wrong target/peer/pin, timeout, key/bind/dial
+failure publish nothing (`unavailable`/`identity_mismatch`), before credentials.
+Required qualification routes:
 
 | Backend | Candidate reachability, always proved from the guest | Bounded local test proposal / native qualification |
 | --- | --- | --- |
@@ -3040,11 +3059,7 @@ in `crates/effigy-kernel/src/workspace_session.rs`:
 
 ```rust
 pub struct SessionBinding { pub owner: ResourceId, pub run: RunId, pub generation: Generation }
-pub struct WorkspacePublicationReceipt {
-    pub publication: run::GuestPublicationReceipt,
-    pub activation_run: RunId,
-    pub session: SessionBinding,
-}
+pub struct WorkspacePublicationReceipt { pub publication: run::GuestPublicationReceipt, pub activation_run: RunId, pub session: SessionBinding }
 // Existing ActivationPlan accessors/validation:
 fn environment_generation(&self) -> Generation; // E
 fn session(&self) -> SessionRef; // the frozen owner, run and S
@@ -3070,13 +3085,12 @@ workspace Task fence to S and writes active(E), session mapping and Borrow.
 Generic publication cannot bypass an uncommitted reservation. E and S are
 separate resources' generations; never derive either from the other.
 
-The context's proposed `effigy.workspace-context.v2` publishes the complete
-`session: {run_id, generation}` from `ActivationPlan::session()` together with the
-locator, immutable context/artifact identity and generation-bound credential
-selection. This replaces bare `session_run_id`; incompatible schemas refuse with
-re-prepare guidance. An absent/incomplete session or locator grants local reads
-only and reports host access `unavailable`. Immutable objects are never silently
-overwritten; staging must not retarget a live predecessor's selected bytes.
+Proposed `effigy.workspace-context.v2` publishes `session: {run_id, generation}`
+from `ActivationPlan::session()`, qualified locator, immutable context/artifact
+identity and generation-bound credential selection. It replaces bare
+`session_run_id`; incompatible schemas refuse with re-prepare guidance.
+Absent/incomplete session or locator permits local reads only, host `unavailable`.
+Never overwrite immutable objects or retarget a live predecessor's selected bytes.
 
 One post-#484 correction remains required, not implemented by this document:
 attach-or-activate must re-read the live session and matching publication inputs
@@ -3105,9 +3119,21 @@ Appendix B does not add them to #484 or establish their correctness.
 read context → observe guest → verify context/artifact/session → open qualified
 TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity
 and context failures precede credential access; no credential frame precedes
-pin verification and negotiation. Reconnect repeats verification from a fresh
-context/observation/transport, then looks up the same intent id/digest; an
-indeterminate outcome remains Unknown and never authorizes duplicate execution.
+pin verification and negotiation. Proposed reconnect seam in that same glue:
+
+```rust
+struct PendingIntent { id: RequestId, digest: Digest, session: WorkspaceSessionBinding, context_generation: u64 }
+impl WorkspaceClient<Box<dyn Transport>> {
+    fn reconnect(&mut self, context: &mut dyn ContextReader, identity: &mut dyn GuestIdentity, opener: &mut dyn ChannelOpener, pending: &PendingIntent) -> Result<ReconnectOutcome, ChannelError>;
+}
+trait ContextReader { fn read_current(&mut self) -> Result<WorkspaceContext, ChannelError>; }
+enum ReconnectOutcome { Recorded(run::Recovered), Unknown, StaleContext }
+```
+
+Reconnect reads current → observes/verifies → opens/checks pin → Hello/hello_ok →
+authenticates → looks up the same intent id/digest. A changed session/context
+returns `StaleContext` without replay; invalid identity/pin refuses before auth.
+An indeterminate outcome returns `Unknown`; no reconnect outcome admits anew.
 
 #482 owns identity, context and publication in `workspace_client/{identity,context}.rs`,
 `workspace_command/provisioning.rs`, kernel `workspace_session.rs` and

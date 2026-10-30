@@ -767,14 +767,19 @@ Three production facts remain to implement and prove:
 
 - **Guest-local identity.** Observe the full container id, boot, platform and
   libc independently of the context, using qualified guest-local sources.
+  Cgroup is diagnostic only under §8.2: even a matching full cgroup id cannot
+  prove placement. Cgroup-only availability refuses; backend fixture/native
+  qualification must distinguish it from a qualified mountinfo observation.
   The host selects the first artifact from the bound image; executing it verifies
   that selection. Prepare compares the staged binary's own observation with the
   host-bound target before publication. Unknown/conflicting facts refuse before
   credential access; no Docker socket, fabricated identity or context-as-proof.
 - **Qualified TLS locator.** One session-owned key/listener; verify SPKI pin and
   key possession before Hello or any credential frame. Colima, Docker Desktop
-  and Linux Docker each need bounded local and native qualification. A fresh
-  Linux project renders its alias before creation, applies to create the network
+  and Linux Docker each need bounded local and native qualification. §8.11 pins
+  the typed alias/bind → session key/listener → qualified locator handoff and
+  reconnect interface; only the verified locator reaches context publication.
+  A fresh Linux project renders its alias before creation, applies to create the network
   and guest, then resolves/probes from that guest; it never needs the missing
   network first or guesses its IPAM gateway as the daemon's host-gateway address.
 - **Actual session publication.** Use #484's reservation, frozen
