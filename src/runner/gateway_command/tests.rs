@@ -425,18 +425,13 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
     let unknown = inspect_existing_gateway(
         &config,
         Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
-        false,
     );
     assert!(
         unknown.is_err(),
         "up must not start a replacement when the probe is unknown"
     );
 
-    let stopped = inspect_existing_gateway(
-        &config,
-        Err(effigy_gateway::GatewayError::NotRunning),
-        false,
-    );
+    let stopped = inspect_existing_gateway(&config, Err(effigy_gateway::GatewayError::NotRunning));
     assert!(matches!(stopped, Ok(ExistingGateway::Absent)));
 }
 
@@ -687,12 +682,9 @@ fn gateway_up_preflight_does_not_mutate_before_lock() {
     let before_identity = std::fs::read(&identity_path).expect("read identity");
     let config = gateway_config().expect("config");
 
-    let classified = inspect_existing_gateway(
-        &config,
-        verified_gateway_status_for_up(&config).status,
-        false,
-    )
-    .expect("unlocked classify");
+    let classified =
+        inspect_existing_gateway(&config, verified_gateway_status_for_up(&config).status)
+            .expect("unlocked classify");
     assert!(
         matches!(classified, ExistingGateway::Running(_)),
         "mismatched generation must be classified running"
@@ -718,12 +710,8 @@ fn gateway_up_preflight_does_not_mutate_before_lock() {
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .expect("transition lock");
-    match inspect_existing_gateway(
-        &config,
-        verified_gateway_status_for_up(&config).status,
-        false,
-    )
-    .expect("locked recheck")
+    match inspect_existing_gateway(&config, verified_gateway_status_for_up(&config).status)
+        .expect("locked recheck")
     {
         ExistingGateway::Running(status) => {
             stop_existing_gateway(&status).expect("locked stop");
@@ -899,7 +887,7 @@ fn gateway_status_preflight_preserves_stale_records() {
     let before_version = std::fs::read(&version_path).expect("version");
     let before_identity = std::fs::read(&identity_path).expect("identity");
 
-    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config))
         .expect("unlocked classify");
     assert!(
         matches!(classified, ExistingGateway::Absent),
@@ -1858,6 +1846,68 @@ fn gateway_down_names_each_step_it_takes() {
         vec!["✓ the gateway is already stopped".to_owned()],
         "{lines:?}"
     );
+}
+
+/// Reusing a running private gateway still reads what it serves as its own
+/// observable step: the per-route progress is not skipped just because nothing
+/// needs starting, and the render still reports the gateway as already running.
+#[test]
+fn reusing_a_running_private_gateway_reads_the_route_table_as_its_own_step() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("private gateway directory");
+
+    // An empty table still ends the step with what it read.
+    let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+        report_reused_private_gateway(&config, started_status(8080), false)
+    });
+    let text = rendered.expect("an already-running private gateway renders");
+    assert!(text.contains("gateway already running"), "{text}");
+    assert_eq!(
+        lines,
+        vec!["✓ the route table has no routes registered yet".to_owned()],
+        "{lines:?}"
+    );
+
+    // Two routes already in the table are read as that same step, and the reuse
+    // reports them without starting or replacing anything.
+    effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
+        .routes::<_, effigy_gateway::GatewayError>(|table| {
+            for domain in ["api.test", "web.test"] {
+                table.upsert(Route {
+                    domain: domain.to_owned(),
+                    target: Some("127.0.0.1:8080".to_owned()),
+                    dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
+                    source: RouteSource::Manual,
+                    project: root.display().to_string(),
+                    tls: false,
+                    managed_listener: None,
+                    registered: Utc::now(),
+                });
+            }
+            Ok(())
+        })
+        .expect("the existing routes are on record");
+    let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+        report_reused_private_gateway(&config, started_status(8080), false)
+    });
+    rendered.expect("the reuse renders with the existing routes");
+    assert_eq!(
+        lines,
+        vec!["✓ read 2 existing routes from the route table".to_owned()],
+        "{lines:?}"
+    );
+
+    // The same reuse renders the JSON action without starting anything.
+    let json = report_reused_private_gateway(&config, started_status(8080), true)
+        .expect("the JSON render");
+    assert!(json.contains("\"result\":\"already_running\""), "{json}");
 }
 
 /// An `up` from a command line records exactly one event, at the boundary, and

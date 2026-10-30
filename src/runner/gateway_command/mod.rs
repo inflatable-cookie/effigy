@@ -568,33 +568,26 @@ fn resolve_gateway_status_for_config(
 
 #[derive(Debug)]
 enum ExistingGateway {
-    Rendered(String),
+    /// This build is the one running: reuse it and report it as it is.
+    Reuse(Box<VerifiedGatewayStatus>),
+    /// A gateway this command must replace before it can start its own.
     Running(Box<VerifiedGatewayStatus>),
     Absent,
 }
 
 /// Classify an existing gateway without signalling, deleting records, or
-/// staging elevated state. Mutation happens only after the transition lock.
+/// staging elevated state. Mutation happens only after the transition lock, and
+/// the render for a reused gateway is the caller's own step so the route read it
+/// needs stays observable.
 fn inspect_existing_gateway(
     config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    output_json: bool,
 ) -> Result<ExistingGateway, RunnerError> {
     let Some(status) = resolve_gateway_status_for_config(config, status)? else {
         return Ok(ExistingGateway::Absent);
     };
     if gateway_status_matches_current_binary(&status) {
-        let route_table = RouteTable::load(&config.route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let tls = gateway_tls_summary(config, route_certificate_summary(config, &route_table));
-        return render_gateway_up_result(
-            config,
-            GatewayUpState::AlreadyRunning(status.status),
-            &tls,
-            &[],
-            output_json,
-        )
-        .map(ExistingGateway::Rendered);
+        return Ok(ExistingGateway::Reuse(Box::new(status)));
     }
     Ok(ExistingGateway::Running(Box::new(status)))
 }
@@ -688,11 +681,13 @@ fn run_private_gateway_up(
                 )));
             }
             progress.update("checking whether a gateway is already running", None, None);
-            inspect_existing_gateway(config, probe.status, output_json)
+            inspect_existing_gateway(config, probe.status)
         },
     )?;
     match existing {
-        ExistingGateway::Rendered(rendered) => return Ok(rendered),
+        ExistingGateway::Reuse(status) => {
+            return report_reused_private_gateway(config, status.status, output_json)
+        }
         ExistingGateway::Running(status) => {
             live_progress(
                 &format!("stopping the gateway on pid {}", status.pid),
@@ -718,18 +713,7 @@ fn run_private_gateway_up(
     )?;
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    // The step reads the table and each certificate, and nothing else: the
-    // mkcert and trust-store probes belong to the render below, not to a wait
-    // whose label says it is reading routes.
-    let routes = live_progress(
-        "reading the route table",
-        &format!("the route table at {}", config.route_table_path.display()),
-        |progress| {
-            let route_table = RouteTable::load(&config.route_table_path)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            Ok(summarize_published_routes(config, &route_table, progress))
-        },
-    )?;
+    let routes = read_private_route_facts(config)?;
     let tls = gateway_tls_summary(config, routes);
     render_gateway_up_result(
         config,
@@ -738,6 +722,57 @@ fn run_private_gateway_up(
         &[],
         output_json,
     )
+}
+
+/// Report a private gateway this command found already running as this build.
+/// The table it serves is read in its own live step first, the same step the
+/// started path uses, so reusing a gateway never skips the per-route progress.
+fn report_reused_private_gateway(
+    config: &GatewayConfig,
+    status: GatewayStatus,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let routes = read_private_route_facts(config)?;
+    let tls = gateway_tls_summary(config, routes);
+    render_gateway_up_result(
+        config,
+        GatewayUpState::AlreadyRunning(status),
+        &tls,
+        &[],
+        output_json,
+    )
+}
+
+/// Read the private gateway's route table as its own live step: every route
+/// becomes the current object with its position and certificate state, whether
+/// this command is reusing a running gateway or reporting the one it started.
+/// Only the table snapshot and certificate files are read — never a mkcert or
+/// trust-store probe — and an unreadable table fails this command, as it always
+/// has on this path. The table is read, never published.
+fn read_private_route_facts(
+    config: &GatewayConfig,
+) -> Result<RouteCertificateSummary, RunnerError> {
+    live_progress(
+        "reading the route table",
+        &format!("the route table at {}", config.route_table_path.display()),
+        |progress| {
+            let route_table = RouteTable::load(&config.route_table_path)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let count = route_table.len();
+            let routes = summarize_published_routes(config, &route_table, progress);
+            progress.update(route_read_summary(count), None, None);
+            Ok(routes)
+        },
+    )
+}
+
+/// What a route read ends with: how many routes the existing table held.
+fn route_read_summary(count: usize) -> String {
+    match count {
+        0 => "the route table has no routes registered yet".to_owned(),
+        1 => "read 1 existing route from the route table".to_owned(),
+        count => format!("read {count} existing routes from the route table"),
+    }
 }
 
 fn run_gateway_down_with_config(
@@ -2138,15 +2173,7 @@ fn read_existing_routes(
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let count = route_table.len();
     summarize_published_routes(config, &route_table, progress);
-    progress.update(
-        match count {
-            0 => "the route table has no routes registered yet".to_owned(),
-            1 => "read 1 existing route from the route table".to_owned(),
-            count => format!("read {count} existing routes from the route table"),
-        },
-        None,
-        None,
-    );
+    progress.update(route_read_summary(count), None, None);
     Ok(count)
 }
 
