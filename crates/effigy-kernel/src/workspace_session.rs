@@ -376,52 +376,11 @@ impl SessionRef {
     /// answer names the same session the first attempt admitted.
     pub fn of_run(reader: &StoreReader, run: RunId) -> Observed<Option<SessionRef>> {
         let result = (|| -> Result<Option<SessionRef>, RunError> {
-            let owner = reader
-                .conn()
-                .query_row(
-                    "SELECT r.generation, res.canonical FROM runs r \
-                     JOIN resources res ON res.name=r.owner WHERE r.run_id=?1",
-                    [run.to_string()],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-                )
-                .optional()?;
-            let Some((generation, canonical)) = owner else {
+            let open: bool = reader.conn().query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND phase NOT IN ('closed','stopping'))", [run.to_string()], |row| row.get(0))?;
+            if !open {
                 return Ok(None);
-            };
-            let owner = decode_owner(&canonical)?;
-            let environment = reader
-                .conn()
-                .query_row(
-                    "SELECT a.environment, a.env_generation FROM attachments a \
-                     WHERE a.run_id=?1 AND a.state<>'released' \
-                     ORDER BY a.environment LIMIT 1",
-                    [run.to_string()],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-                )
-                .optional()?;
-            let Some((environment, environment_generation)) = environment else {
-                return Ok(None);
-            };
-            let environment = reader
-                .conn()
-                .query_row(
-                    "SELECT canonical FROM resources WHERE name=?1",
-                    [&environment],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional()?;
-            let Some(environment) = environment else {
-                return Ok(None);
-            };
-            Ok(Some(SessionRef::new(
-                run,
-                Fence {
-                    resource: owner,
-                    generation: Generation::new(generation as u64),
-                },
-                decode_owner(&environment)?,
-                Generation::new(environment_generation as u64),
-            )))
+            }
+            session_of_run(reader.conn(), run)
         })();
         match result {
             Ok(Some(session)) => Observed::Verified(Some(session), session_evidence()),
@@ -1275,11 +1234,17 @@ pub(crate) fn session_of_run(
         )
         .optional()?;
     if let Some((session, environment_generation, environment)) = mapped {
+        let owner: String = conn.query_row(
+            "SELECT owner FROM runs WHERE run_id=?1",
+            [run.to_string()],
+            |row| row.get(0),
+        )?;
+        let owner = owner_identity(conn, &owner)?;
         let environment = owner_identity(conn, &environment)?;
         return Ok(Some(SessionRef::new(
             run,
             Fence {
-                resource: environment.clone(),
+                resource: owner,
                 generation: Generation::new(session as u64),
             },
             environment,
@@ -1725,6 +1690,9 @@ impl WorkspaceActivationReservation {
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let record = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            if selection::pending_obligation(txn.conn(), environment)?.is_some() {
+                return Err(ActivationRefusal::SelectionPending.into());
+            }
             Self::reserve_under(txn, environment, None)
         })?;
         Ok(Self { record })
@@ -2354,6 +2322,7 @@ impl WorkspaceActivationReservation {
             (plan, stored.inputs)
         };
         let receipt = plan.validate_publication(environment_run)?;
+        selection.require_validated_document()?;
         selection.validate(&plan)?;
         // The commit holds the session's live custody: the launch that published
         // this lease, for this session, with the key and listener still in hand.

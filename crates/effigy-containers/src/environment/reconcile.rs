@@ -1498,6 +1498,24 @@ mod tests {
         }))
         .expect("context document");
         let context = effigy_kernel::id::Digest::of(&document);
+        struct EmptyGuest;
+        impl effigy_kernel::workspace_session::SelectorReader for EmptyGuest {
+            fn target(&self) -> effigy_kernel::workspace_session::ContainerIdentity {
+                effigy_kernel::workspace_session::ContainerIdentity {
+                    container_id: "a1".repeat(32),
+                    vm_boot_id: "boot-0001".into(),
+                    backend: "colima".into(),
+                }
+            }
+            fn read_selector(&mut self, _: &str) -> Observed<String> {
+                Observed::Absent(effigy_kernel::observe::AbsenceProof::NoRow {
+                    table: "selector".into(),
+                })
+            }
+            fn read_object(&mut self, _: &str) -> Observed<effigy_kernel::id::Digest> {
+                panic!("prior snapshot reads no objects")
+            }
+        }
         let selection = SelectionReceipt::new(
             &plan,
             publication,
@@ -1540,6 +1558,7 @@ mod tests {
             &document,
             &session_run,
             &mut launch,
+            &mut EmptyGuest,
         )
         .expect("selection receipt");
         let committed = run

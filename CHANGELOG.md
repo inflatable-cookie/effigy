@@ -203,7 +203,9 @@ until the host-log writer has a safe secret-handling boundary.
   (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
   lifetime, and refuses to publish an unbound, unqualified or stopped listener.
   Cached locators are revalidated, and a selection stays Pending if its
-  successor loses owner or listener custody before switch completion.
+  successor loses owner or listener custody before live or recovery completion.
+  Selector reads are bound to the committed container/boot, prior values are
+  observed before receipt construction, and deserialized receipts cannot publish.
   Transport, TLS qualification and the runner/container adapters remain with
   #482/#483/#452.
 - **A container-mode workspace is prepared for the workspace client.** Host

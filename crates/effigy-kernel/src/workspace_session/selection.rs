@@ -53,7 +53,8 @@ pub struct SelectionObjects {
 }
 
 /// One compare-and-swap the switch has to perform, with the value the exact
-/// target held before it. `expected` is read under `Gate(Env)`, never guessed:
+/// target held before it. `SelectionReceipt::new` reads and freezes `expected`
+/// from its exact-target reader before commit; it is never taken on trust:
 /// `None` is "the target said there was nothing there".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectorChange {
@@ -112,6 +113,8 @@ impl GuestSelection {
 /// run acknowledged and the bytes and endpoints that generation selects.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionReceipt {
+    #[serde(skip)]
+    validated_document: bool,
     publication: WorkspacePublicationReceipt,
     selection: GuestSelection,
     /// The locator the session's own launch published. It is taken from a bound,
@@ -183,6 +186,7 @@ impl SelectionReceipt {
         document: &[u8],
         session_run: &Run<'_>,
         launch: &mut super::SessionLaunch,
+        prior: &mut dyn SelectorReader,
     ) -> Result<Self, RunError> {
         if Digest::of(document) != selection.objects.context.digest {
             return Err(ActivationRefusal::SelectionMismatch.into());
@@ -213,12 +217,28 @@ impl SelectionReceipt {
         }
         let selection_digest = Digest::parse_hex(&parsed.selection_digest).ok_or(mismatch)?;
         let receipt = Self {
+            validated_document: true,
             publication,
             selection,
             serving,
             selection_digest,
         };
         receipt.validate(plan)?;
+        receipt.require_reader_target(prior)?;
+        for change in &receipt.selection.switches {
+            match prior.read_selector(&change.path) {
+                Observed::Verified(value, _) if change.expected.as_ref() == Some(&value) => {}
+                Observed::Absent(_) if change.expected.is_none() => {}
+                Observed::Unknown(reason) => {
+                    return Err(RunError::unavailable(format!(
+                        "prior selector unknown: {reason}"
+                    )))
+                }
+                _ => return Err(ActivationRefusal::SelectionMismatch.into()),
+            }
+        }
+        // Reader identity must remain stable throughout the observation.
+        receipt.require_reader_target(prior)?;
         Ok(receipt)
     }
 
@@ -242,6 +262,24 @@ impl SelectionReceipt {
                 != self.selection.objects.context_generation.get()
         {
             return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_validated_document(&self) -> Result<(), RunError> {
+        if !self.validated_document {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        Ok(())
+    }
+
+    fn require_reader_target(&self, reader: &dyn SelectorReader) -> Result<(), RunError> {
+        let target = reader.target();
+        if target.container_id != self.publication.publication.container_id
+            || target.vm_boot_id != self.publication.publication.vm_boot_id
+            || target.backend != self.selection.backend
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
         }
         Ok(())
     }
@@ -276,6 +314,8 @@ pub struct SelectorReadback {
 /// adapter (#482/#483); the kernel supplies the paths and judges the values, so
 /// no caller can hand in a receipt it did not observe.
 pub trait SelectorReader {
+    /// Identity of the exact container and boot this reader observes.
+    fn target(&self) -> super::ContainerIdentity;
     /// The value a selector currently holds, read from the exact target.
     fn read_selector(&mut self, path: &str) -> Observed<String>;
     /// The digest of an immutable object, read back from the exact target.
@@ -445,6 +485,7 @@ impl SelectionObligation {
         &self,
         reader: &mut dyn SelectorReader,
     ) -> Result<SelectionSwitchReceipt, RunError> {
+        self.receipt.require_reader_target(reader)?;
         let expected = SelectionSwitchReceipt::expected(&self.receipt);
         let selection = &self.receipt.selection;
         let mut selectors = Vec::with_capacity(3);
@@ -485,6 +526,7 @@ impl SelectionObligation {
                 }
             }
         }
+        self.receipt.require_reader_target(reader)?;
         let mut receipt = expected;
         receipt.selectors = [
             selectors[0].clone(),
@@ -529,9 +571,11 @@ impl SelectionLiveness {
     }
     /// A fact positively disproves the selection: nothing can complete it.
     pub fn disproven(&self) -> bool {
-        [&self.session, &self.target, &self.listener]
-            .into_iter()
-            .any(|fact| matches!(fact, Observed::Absent(_)))
+        let facts = [&self.session, &self.target, &self.listener];
+        !facts
+            .iter()
+            .any(|fact| matches!(fact, Observed::Unknown(_)))
+            && facts.iter().any(|fact| matches!(fact, Observed::Absent(_)))
     }
 }
 
@@ -644,7 +688,7 @@ pub(super) fn pending_obligation(
     environment: &ResourceId,
 ) -> Result<Option<SelectionObligation>, RunError> {
     let sql = format!(
-        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 \
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 AND state='pending' \
          ORDER BY environment_generation DESC LIMIT 1"
     );
     let row = conn
@@ -667,7 +711,7 @@ pub fn unfinished_selection(
     environment: &ResourceId,
 ) -> Observed<Option<SelectionObligation>> {
     let sql = format!(
-        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 \
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 AND state='pending' \
          ORDER BY environment_generation DESC LIMIT 1"
     );
     let row = match reader
@@ -790,7 +834,7 @@ impl SelectionObligation {
     /// The committed generation must still be the one this obligation published
     /// and the environment must still be serving it. A recovery never
     /// re-targets a generation another activation replaced.
-    pub(crate) fn require_serving(&self, txn: &Txn<'_>) -> Result<(), RunError> {
+    fn require_publication(&self, txn: &Txn<'_>) -> Result<(), RunError> {
         let active = txn
             .conn()
             .query_row(
@@ -819,6 +863,11 @@ impl SelectionObligation {
                     && generation as u64 == self.environment_generation.get() => {}
             _ => return Err(ActivationRefusal::ServingLost.into()),
         }
+        Ok(())
+    }
+
+    pub(crate) fn require_serving(&self, txn: &Txn<'_>) -> Result<(), RunError> {
+        self.require_publication(txn)?;
         // The session run itself must be open at its own generation: a settled
         // session serves nothing, whatever the mapping still says.
         let open: Option<(String, i64)> = txn
@@ -903,11 +952,16 @@ impl CommittedActivation {
 /// session is live, the target it names still verifies and the listener holding
 /// its key answered a bounded pinned handshake. Anything less is refused with
 /// [`ActivationRefusal::ServingLost`] for the caller to abandon; unknown
-/// liveness completes nothing.
+/// liveness completes nothing. Recovery executes at the retained supervisor:
+/// its exact launch pins owner/listener custody through final completion after
+/// readback. A remote recovery driver must ask that owner to perform this step,
+/// not manufacture a launch from a persisted lease.
+#[allow(clippy::too_many_arguments)]
 pub fn selection_recovered(
     cx: &EffectContext,
     root: &StateRoot,
     obligation: &SelectionObligation,
+    launch: &super::SessionLaunch,
     target: &mut dyn super::TargetProbe,
     probe: &mut dyn super::ServingProbe,
     reader: &mut dyn SelectorReader,
@@ -954,8 +1008,11 @@ pub fn selection_recovered(
         deadline,
     ) {
         Observed::Verified(..) => {}
-        Observed::Absent(_) | Observed::Unknown(_) => {
-            return Err(ActivationRefusal::ServingLost.into())
+        Observed::Absent(_) => return Err(ActivationRefusal::ServingLost.into()),
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "selection liveness unknown: {reason}"
+            )))
         }
     }
     let serving = obligation.receipt().serving();
@@ -964,8 +1021,11 @@ pub fn selection_recovered(
     };
     match probe.pinned_handshake(endpoint, serving.pin(), deadline) {
         Observed::Verified(..) => {}
-        Observed::Absent(_) | Observed::Unknown(_) => {
-            return Err(ActivationRefusal::ServingLost.into())
+        Observed::Absent(_) => return Err(ActivationRefusal::ServingLost.into()),
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "selection liveness unknown: {reason}"
+            )))
         }
     }
     // The readback is completion, not assumption: the kernel reads every
@@ -973,9 +1033,11 @@ pub fn selection_recovered(
     // target.
     let receipt = obligation.observe(reader)?;
     obligation.validate_switch(&receipt)?;
+    let custody = launch.hold_lease(obligation.receipt().serving())?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         obligation.require_serving(txn)?;
+        custody.revalidate(obligation.receipt().serving())?;
         obligation.finish(txn, SelectionState::Switched, None)
     })
 }
@@ -1022,6 +1084,20 @@ pub fn selection_abandoned(
         if !obligation.successor_settled(txn)? {
             return Err(ActivationRefusal::SuccessorRunning.into());
         }
+        let stored = read_obligation(
+            txn.conn(),
+            obligation.environment(),
+            obligation.environment_generation(),
+        )?
+        .ok_or(ActivationRefusal::SelectionMismatch)?;
+        if stored.state != SelectionState::Pending
+            || stored.id != obligation.id
+            || serde_json::to_string(stored.receipt())?
+                != serde_json::to_string(obligation.receipt())?
+        {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        obligation.require_publication(txn)?;
         revoke(txn, obligation)?;
         obligation.finish(txn, SelectionState::Abandoned, Some(reason))?;
         Ok::<_, RunError>(())

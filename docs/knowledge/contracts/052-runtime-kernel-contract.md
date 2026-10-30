@@ -3068,28 +3068,29 @@ pub struct SelectionReceipt { /* publication + selection + the lease its own lau
 pub struct SelectorReadback { pub path: String, pub value: String }
 pub struct SelectionSwitchReceipt { /* private: digests, generation, serving pin, [SelectorReadback; 3] */ }
 pub trait SelectorReader {
+    fn target(&self) -> ContainerIdentity;
     fn read_selector(&mut self, path: &str) -> Observed<String>;
     fn read_object(&mut self, path: &str) -> Observed<Digest>;
 }
 pub enum SelectionState { Pending, Switched, Abandoned }
 pub struct SelectionObligation { /* id, reservation, E, activation run, session run, receipt, state */ }
 impl SelectionReceipt {
-    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8], launch: &mut SessionLaunch) -> Result<Self, RunError>;
+    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8], session_run: &Run<'_>, launch: &mut SessionLaunch, prior: &mut dyn SelectorReader) -> Result<Self, RunError>;
     pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError>;
 }
 impl SessionLaunch {
-    pub fn launch(session: &SessionRef, owner: SessionOwner, supervisor_id: impl Into<String>, key: ServingKey, listener: Box<dyn ChannelListener>) -> Result<Self, ServingRefusal>;
+    pub fn launch(session_run: &mut Run<'_>, session: &SessionRef, supervisor_id: impl Into<String>, key: ServingKey, listener: Box<dyn ChannelListener>) -> Result<Self, ServingRefusal>;
 }
 impl WorkspaceActivationReservation {
     pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt, launch: &SessionLaunch) -> Result<CommittedActivation, RunError>;
 }
 impl CommittedActivation { pub fn selection_obligation(&self) -> Option<&SelectionObligation>; }
 impl Attachments {
-    pub fn selection_switched(run: &mut Run<'_>, obligation: &SelectionObligation, receipt: &SelectionSwitchReceipt) -> Result<(), RunError>;
+    pub fn selection_switched(run: &mut Run<'_>, obligation: &SelectionObligation, launch: &SessionLaunch, reader: &mut dyn SelectorReader) -> Result<(), RunError>;
 }
 pub struct SelectionLiveness { pub session: Observed<()>, pub target: Observed<()>, pub listener: Observed<()> }
 pub fn unfinished_selection(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SelectionObligation>>;
-pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reader: &mut dyn SelectorReader, wait: Wait) -> Result<(), RunError>;
+pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, launch: &SessionLaunch, target: &mut dyn TargetProbe, probe: &mut dyn ServingProbe, reader: &mut dyn SelectorReader, wait: Wait) -> Result<(), RunError>;
 pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reason: &str, wait: Wait) -> Result<(), RunError>;
 ```
 
@@ -3118,12 +3119,22 @@ that same gate (a read taken before it could describe a target another activatio
 target, and only then builds the `SelectionSwitchReceipt` it records — its fields are private and nothing else constructs one. A
 third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
 never a completed selection. The same reader drives `Attachments::selection_switched` on the live path, so both complete exactly
-what was observed. Custody is rooted in the detached session owner: `SessionLaunch::launch` takes the session's `SessionRef` and a
-`SessionOwner` that only `Run::session_owner` builds, from a *detached* run (its recorded custody placement) whose private session
-slot (staged or mapped) the journal records, so a listener and key are never launched for a binding, an inline run or an
-environment run a caller assembled. The proof carries the session's own gate custody (a duplicate of the private slot), so a
-dropped run handle cannot leave a served locator whose session nobody owns, and `SessionLaunch::abandon_owner` drops that custody
-and makes every later publish/serve refuse. Qualification is this launch's own attested pinned handshake —
+what was observed. Reader identity (backend, container and boot) must match the publication before and after readback;
+a reader for target B cannot satisfy target A's observation. Construction also reads the exact prior selector values from
+that target and refuses missing, unknown or different evidence rather than accepting caller-guessed expected values.
+Only constructor-validated receipts can commit; deserialization restores journal data, not document-validation authority.
+Custody is rooted in the detached session owner: `SessionSupervisor::adopt` consumes the admitted Run, and
+`SessionLaunch::launch` borrows that Run mutably plus the exact `SessionRef`. `Run::session_owner` yields an identity
+proof only after custody registration; `SessionOwner` contains no duplicate gate and holds no independent custody.
+The Run's gate guard owns listener/key release actions. Settlement, unsettled drop and `abandon_owner` close the
+listener and wipe the key. Both live-path and recovery completion require the retained launch and pin its custody
+through the final journal transaction, revalidating the exact bound lease before marking Switched. Cross-process
+recovery must request this completion at the retaining supervisor; a persisted lease or an earlier Held/handshake
+observation cannot replace that typed custody. Unknown target/listener results leave Pending and grant no abandonment.
+`reserve` as well as `decide` refuses a Pending obligation; abandonment revalidates the exact Pending receipt and active
+publication under Gate(Env) before revoking it. `SessionRef::of_run` resolves only an open recorded workspace session,
+not an arbitrary borrower or closed run.
+Qualification is this launch's own attested pinned handshake —
 `SessionLaunch::qualify(probe, deadline)` dials the bound endpoint with the key the launch holds — and only a verified answer sets
 the launch's qualified flag, so a listener that merely advertises a serving phase mints no locator. Serving is a fact about the live
 session, not a latch: `SessionLaunch::serve`/`serving`/`liveness` take the session `Run` and refuse once it is stopping or closed, so a

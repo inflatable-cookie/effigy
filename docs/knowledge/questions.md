@@ -805,7 +805,13 @@ Three production facts remain to implement and prove:
   observed) and the settled-successor abandonment are implemented and
   fault-proven against the real journal, including concurrent decision callers.
   Listener/key custody is rooted in the detached session owner: a launch needs
-  the session's `SessionRef` and a `SessionOwner` only its owning `Run` yields. What remains for #482 is the container/runner typed wrapper and
+  a mutable admitted session `Run` and its exact `SessionRef`; `SessionOwner` is
+  identity evidence, not duplicate gate custody. Both `selection_switched` and
+  `selection_recovered` require the retained `SessionLaunch`; recovery also takes
+  target and serving probes. `SelectionReceipt::new` takes the session Run and
+  an exact-target prior-selector reader, while `SelectorReader::target` binds
+  readback to the committed backend/container/boot. Deserialized receipts carry
+  no constructor-validation authority. What remains for #482 is the container/runner typed wrapper and
   guest selector switching, for #483 the transport, server-key generation and
   TLS qualification, and for #452 the glue and supervisor ownership transfer. The
   detailed appendix is still non-normative.

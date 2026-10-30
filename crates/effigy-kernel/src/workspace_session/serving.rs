@@ -659,10 +659,7 @@ impl SessionLaunch {
     /// Release the owning run's custody while the launch lives: the session is
     /// no longer owned here, so nothing this launch published may be served.
     pub fn abandon_owner(&mut self) {
-        let mut state = self.lock();
-        state.owned = false;
-        state.bound = None;
-        state.served = false;
+        release_state(&self.state);
     }
 
     /// Whether this launch still holds the session's owner custody.
