@@ -41,8 +41,8 @@ use effigy_kernel::supervise::EngineSession;
 mod kernel_run;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
-    owns_supervise_payload, restart_host_processes_for_container,
-    start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
+    owns_supervise_payload, restart_host_processes_for_container_with_front,
+    start_host_processes_for_container_with_front, stop_host_processes_for_container, CustodyStop,
     HostProcessStopReport,
 };
 
@@ -88,6 +88,8 @@ struct HostProcessRuntimeSpec {
     runtime_generation: String,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
+    #[serde(default)]
+    ansi_front: bool,
     listener: Option<EffectiveManagedHostListener>,
     owner: String,
     dependencies: Vec<HostProcessDependency>,
@@ -599,11 +601,9 @@ pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
 /// child's words. A log that is missing, a symlink, or empty contributes
 /// nothing.
 ///
-/// Redaction happens before anything is dropped for being partial. The window
-/// starts at the beginning of a line whenever that line begins within the
-/// bounded context; a line that begins before the context is dropped whole
-/// rather than emitted with its `key=` marker cut off, which would print a
-/// value the redactor can no longer recognise.
+/// Redaction applies after a safe terminal boundary and subsequent newline.
+/// If bounded context cannot establish both, the whole window becomes a gap;
+/// this avoids exposing a value whose `key=` marker was cut off.
 fn listener_output_tail(log_path: &Path) -> Option<String> {
     let metadata = fs::symlink_metadata(log_path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -613,7 +613,6 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     let mut start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
     let mut file = fs::File::open(log_path).ok()?;
     use std::io::{Read as _, Seek, SeekFrom};
-    let mut begins_mid_line = start > 0;
     if start > 0 {
         let back = start.min(LISTENER_OUTPUT_LINE_CONTEXT_BYTES);
         file.seek(SeekFrom::Start(start - back)).ok()?;
@@ -621,7 +620,6 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
         (&mut file).take(back).read_to_end(&mut context).ok()?;
         if let Some(offset) = context.iter().rposition(|byte| *byte == b'\n') {
             start = start - back + offset as u64 + 1;
-            begins_mid_line = false;
         }
     }
     file.seek(SeekFrom::Start(start)).ok()?;
@@ -629,27 +627,51 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     file.take(LISTENER_OUTPUT_TAIL_READ_BYTES + LISTENER_OUTPUT_LINE_CONTEXT_BYTES)
         .read_to_end(&mut raw)
         .ok()?;
-    let text = String::from_utf8_lossy(&raw);
-    let mut lines = text.lines().collect::<Vec<_>>();
-    if begins_mid_line && !lines.is_empty() {
-        // The line this window starts inside began before the context read:
-        // its marker may be gone, so it is not evidence this report may print.
-        lines.remove(0);
-    }
-    let lines = lines
-        .into_iter()
+    // A bounded suffix can start inside an OSC or after a secret's key.
+    // Resume only after an unambiguous terminal-string terminator and the
+    // following newline; otherwise no part of this window is safe to show.
+    let (gap, safe) = if start == 0 {
+        (0, raw.as_slice())
+    } else {
+        safe_tail_suffix(&raw)
+    };
+    let plain = effigy_core::terminal_projection::PlainStream::default().push(safe);
+    let text = String::from_utf8_lossy(&plain);
+    let lines = text
+        .lines()
         .map(str::trim_end)
         .filter(|line| !line.trim().is_empty())
         .filter(|line| !line.starts_with("[effigy host-process]"))
         .collect::<Vec<_>>();
     if lines.is_empty() {
-        return None;
+        return (gap != 0).then(|| format!("[plain output gap: {gap} bytes elided]"));
     }
-    let tail = lines.join(" | ");
+    let tail = if gap == 0 {
+        lines.join(" | ")
+    } else {
+        format!(
+            "[plain output gap: {gap} bytes elided] | {}",
+            lines.join(" | ")
+        )
+    };
     Some(effigy_ui::human::bound_text(
         &tail,
         LISTENER_OUTPUT_TAIL_BYTES,
     ))
+}
+
+fn safe_tail_suffix(raw: &[u8]) -> (usize, &[u8]) {
+    let mut saw_newline = false;
+    for index in 0..raw.len().saturating_sub(1) {
+        saw_newline |= raw[index] == b'\n';
+        if raw[index] == 0x1b && raw[index + 1] == b'\\' && (saw_newline || index >= 4096) {
+            if let Some(end) = raw[index + 2..].iter().position(|byte| *byte == b'\n') {
+                let start = index + 2 + end + 1;
+                return (start, &raw[start..]);
+            }
+        }
+    }
+    (raw.len(), &[])
 }
 
 /// How often a listener whose port is still closed reports progress. The
@@ -1689,6 +1711,8 @@ fn child_environment(
             }
         }
     }
+    environment.remove(std::ffi::OsStr::new("EFFIGY_INTERNAL_ANSI_FRONT"));
+    crate::runner::managed_color::apply(&mut environment, spec.ansi_front);
     environment
 }
 
@@ -3642,6 +3666,16 @@ while True:
         );
     }
 
+    #[test]
+    fn listener_tail_recovers_only_after_safe_boundary_and_whole_line() {
+        let input = b"unknown\n\x1b\\partial-secret\nclear error\n";
+        let (gap, suffix) = safe_tail_suffix(input);
+        assert_eq!(gap, b"unknown\n\x1b\\partial-secret\n".len());
+        assert_eq!(suffix, b"clear error\n");
+        let flood = vec![b'x'; 8192];
+        assert_eq!(safe_tail_suffix(&flood), (flood.len(), &[][..]));
+    }
+
     /// A wait on a closed port names the child's own output, bounded and
     /// redacted, instead of repeating a silent count (effigy#455).
     #[test]
@@ -4138,6 +4172,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
 
     fn runtime_spec(env: &[(&str, &str)]) -> HostProcessRuntimeSpec {
         HostProcessRuntimeSpec {
+            ansi_front: false,
             schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
             project_path: "/checkout".to_owned(),
             runtime_generation: "runtime".to_owned(),
@@ -4176,6 +4211,38 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             }
             _ => None,
         }
+    }
+
+    #[test]
+    fn producer_spec_carries_front_capability_and_respects_preferences() {
+        let mut spec = runtime_spec(&[]);
+        spec.ansi_front = true;
+        let bytes = serde_json::to_vec(&spec).expect("encode");
+        let spec: HostProcessRuntimeSpec = serde_json::from_slice(&bytes).expect("decode");
+        let env = child_environment(std::iter::empty(), &spec, &[], None);
+        assert_eq!(
+            plain_env(env.clone(), "CARGO_TERM_COLOR").as_deref(),
+            Some("always")
+        );
+        assert_eq!(plain_env(env, "CLICOLOR_FORCE").as_deref(), Some("1"));
+        let mut plain = spec.clone();
+        plain.ansi_front = false;
+        assert_eq!(
+            plain_env(
+                child_environment(std::iter::empty(), &plain, &[], None),
+                "CARGO_TERM_COLOR"
+            ),
+            None
+        );
+        let mut disabled = spec;
+        disabled.env.insert("NO_COLOR".into(), "1".into());
+        assert_eq!(
+            plain_env(
+                child_environment(std::iter::empty(), &disabled, &[], None),
+                "CARGO_TERM_COLOR"
+            ),
+            None
+        );
     }
 
     /// A generation that never answers names the reserved address, the path it

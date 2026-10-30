@@ -8,7 +8,7 @@
 //! still reports the settled outcome from the journal; only an unobservable
 //! journal reads `unknown` (R3).
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ use super::task_engine::{
     list_runs, lookup_checkout, request_stop, resolve_in, signal_owner, Lookup, RunRecord,
     StopStarted, RUN_POLL,
 };
+use effigy_core::terminal_projection::PlainStream;
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
 const RUNS_SCHEMA: &str = "effigy.runs.v1";
@@ -330,6 +331,7 @@ pub(in crate::runner) enum Event<'a> {
         stream: Stream,
         offset: u64,
         bytes: &'a [u8],
+        retained_from: u64,
     },
     /// Bytes `from..to` were rotated or retained away before they were read.
     Expired { stream: Stream, from: u64, to: u64 },
@@ -447,6 +449,7 @@ pub(in crate::runner) fn follow(
                         stream,
                         offset: read.from,
                         bytes: &read.bytes,
+                        retained_from: read.retained_from,
                     })
                     .map_err(FollowError::Lost)?;
                     offsets.set(stream, read.from + read.bytes.len() as u64);
@@ -515,15 +518,36 @@ fn logs(
     }
     let id = record.id;
     let mut offsets = from;
+    // A fresh offset does not carry the parser state of its previous reader.
+    // It may lie inside an escape or past a rotated prefix, so it starts
+    // fail-closed until a safe terminal-string boundary is observed.
+    let mut projections = [
+        resume_projection(&record, Stream::Stdout, from.stdout),
+        resume_projection(&record, Stream::Stderr, from.stderr),
+    ];
+    let mut generations = [None, None];
     let ending = if json {
         let mut streams = [StreamJson::new(from.stdout), StreamJson::new(from.stderr)];
         let mut logs_gone = false;
         let ending = follow(checkout, id, &mut offsets, keep_following, &mut |event| {
             match event {
-                Event::Bytes { stream, bytes, .. } => {
-                    streams[stream as usize].bytes.extend_from_slice(bytes)
+                Event::Bytes {
+                    stream,
+                    bytes,
+                    retained_from,
+                    ..
+                } => {
+                    let slot = stream as usize;
+                    if generations[slot].is_some_and(|previous| previous != retained_from) {
+                        projections[slot] = PlainStream::unknown();
+                    }
+                    generations[slot] = Some(retained_from);
+                    streams[slot]
+                        .bytes
+                        .extend_from_slice(&projections[slot].project(bytes));
                 }
                 Event::Expired { stream, from, to } => {
+                    projections[stream as usize] = PlainStream::unknown();
                     streams[stream as usize].expired.push((from, to))
                 }
                 Event::Truncated { stream, at } => streams[stream as usize].truncated_at = Some(at),
@@ -562,13 +586,31 @@ fn logs(
     } else {
         let mut stdout = std::io::stdout();
         let mut stderr = std::io::stderr();
+        let terminal = [stdout.is_terminal(), stderr.is_terminal()];
         follow(
             checkout,
             id,
             &mut offsets,
             keep_following,
             &mut |event| match event {
-                Event::Bytes { stream, bytes, .. } => {
+                Event::Bytes {
+                    stream,
+                    bytes,
+                    retained_from,
+                    ..
+                } => {
+                    let slot = stream as usize;
+                    if generations[slot].is_some_and(|previous| previous != retained_from) {
+                        projections[slot] = PlainStream::unknown();
+                    }
+                    generations[slot] = Some(retained_from);
+                    let projected;
+                    let bytes = if terminal[stream as usize] {
+                        bytes
+                    } else {
+                        projected = projections[stream as usize].project(bytes);
+                        projected.as_slice()
+                    };
                     let out: &mut dyn Write = match stream {
                         Stream::Stdout => &mut stdout,
                         Stream::Stderr => &mut stderr,
@@ -576,6 +618,7 @@ fn logs(
                     out.write_all(bytes).and_then(|()| out.flush())
                 }
                 Event::Expired { stream, from, to } => {
+                    projections[stream as usize] = PlainStream::unknown();
                     eprintln!(
                         "effigy: run {id} {} bytes {from}..{to} expired before they were read",
                         stream.name()
@@ -614,6 +657,48 @@ fn logs(
         }
         _ => Ok(String::new()),
     }
+}
+
+/// Replay at most 4 KiB preceding a raw cursor. If the beginning is not
+/// retained, the parser remains fail-closed unless replay establishes a safe
+/// boundary; the lookback itself is not part of the requested output.
+fn resume_projection(record: &RunRecord, stream: Stream, offset: u64) -> PlainStream {
+    if offset == 0 {
+        return PlainStream::default();
+    }
+    let Observed::Verified(Some(sequence), _) = record.workload_process() else {
+        return PlainStream::unknown();
+    };
+    resume_with(offset, |start, length| {
+        match record.read_log(sequence, stream, start, length) {
+            Observed::Verified(read, _) => Some(read),
+            _ => None,
+        }
+    })
+}
+
+fn resume_with(
+    offset: u64,
+    read: impl FnOnce(u64, usize) -> Option<effigy_kernel::run::LogRead>,
+) -> PlainStream {
+    if offset == 0 {
+        return PlainStream::default();
+    }
+    let start = offset.saturating_sub(4096);
+    let Some(read) = read(start, (offset - start) as usize) else {
+        return PlainStream::unknown();
+    };
+    if read.from != start || read.from + read.bytes.len() as u64 != offset {
+        return PlainStream::unknown();
+    }
+    let mut projection = if start == 0 {
+        PlainStream::default()
+    } else {
+        PlainStream::unknown()
+    };
+    projection.push(&read.bytes);
+    projection.take_gap();
+    projection
 }
 
 struct StreamJson {

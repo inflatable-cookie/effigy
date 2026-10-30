@@ -40,6 +40,8 @@ pub(in crate::runner) struct ClientStart<'a> {
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) front: Front,
     pub(in crate::runner) terminal: Option<(u16, u16)>,
+    pub(in crate::runner) ansi_workloads: Vec<String>,
+    pub(in crate::runner) ansi_environment: bool,
     /// Values the client resolved for this checkout's scope (an inherited
     /// alias, say), handed to the supervisor so its workloads inherit the
     /// resolved value and the supervisor repeats no proof it cannot make
@@ -71,6 +73,8 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,
+        ansi_workloads: request.ansi_workloads.clone(),
+        ansi_environment: request.ansi_environment,
     };
     // The supervisor is Effigy's own process, and it is never a workload's
     // environment: it starts without session access, then reads the one-shot
@@ -128,6 +132,8 @@ pub(in crate::runner) struct OutputFollower {
     root: effigy_kernel::root::StateRoot,
     run: RunId,
     offsets: [u64; 2],
+    projections: [effigy_core::terminal_projection::PlainStream; 2],
+    gaps: [bool; 2],
 }
 
 impl OutputFollower {
@@ -136,6 +142,8 @@ impl OutputFollower {
             root,
             run,
             offsets: [0, 0],
+            projections: Default::default(),
+            gaps: [false; 2],
         }
     }
 
@@ -151,6 +159,7 @@ impl OutputFollower {
                 self.offsets[slot],
                 READ_MAX,
             ) {
+                self.gaps[slot] |= read.from > self.offsets[slot];
                 self.offsets[slot] = read.from + read.bytes.len() as u64;
                 if slot == 0 {
                     out.0 = read.bytes;
@@ -174,6 +183,7 @@ struct TextFollower {
     /// The environment's host processes: `[name] [host] status` and
     /// `[name] line`, from the logs their own supervisors write.
     hosts: Vec<HostFollower>,
+    host_projections: Vec<effigy_core::terminal_projection::PlainStream>,
 }
 
 struct FollowedWorkload {
@@ -181,6 +191,7 @@ struct FollowedWorkload {
     sequence: i64,
     offsets: [u64; 2],
     partial: [Vec<u8>; 2],
+    projections: [effigy_core::terminal_projection::PlainStream; 2],
 }
 
 impl TextFollower {
@@ -190,6 +201,7 @@ impl TextFollower {
             root,
             run,
             workloads: Vec::new(),
+            host_projections: (0..hosts.len()).map(|_| Default::default()).collect(),
             hosts: hosts.into_iter().map(HostFollower::new).collect(),
         }
     }
@@ -197,14 +209,21 @@ impl TextFollower {
     fn relay(&mut self, finish: bool) {
         relay(&mut self.output);
         let mut host_lines = String::new();
-        for host in &mut self.hosts {
+        for (host, projection) in self.hosts.iter_mut().zip(&mut self.host_projections) {
             let name = host.tab.name.clone();
             let poll = host.poll();
+            if poll.generation_changed {
+                *projection = Default::default();
+            }
             for status in poll.statuses {
                 host_lines.push_str(&format!("[{name}] [host] {}\n", status.line()));
             }
-            for line in poll.lines {
-                host_lines.push_str(&format!("[{name}] {line}\n"));
+            for mut line in poll.lines {
+                line.push(b'\n');
+                let projected = projection.project(&line);
+                for line in String::from_utf8_lossy(&projected).lines() {
+                    host_lines.push_str(&format!("[{name}] {line}\n"));
+                }
             }
         }
         if !host_lines.is_empty() {
@@ -225,6 +244,7 @@ impl TextFollower {
                         sequence: view.sequence,
                         offsets: [0, 0],
                         partial: [Vec::new(), Vec::new()],
+                        projections: Default::default(),
                     });
                 }
             }
@@ -240,8 +260,13 @@ impl TextFollower {
                     workload.offsets[slot],
                     READ_MAX,
                 ) {
+                    if read.from > workload.offsets[slot] {
+                        workload.projections[slot] =
+                            effigy_core::terminal_projection::PlainStream::unknown();
+                    }
                     workload.offsets[slot] = read.from + read.bytes.len() as u64;
-                    workload.partial[slot].extend_from_slice(&read.bytes);
+                    workload.partial[slot]
+                        .extend_from_slice(&workload.projections[slot].project(&read.bytes));
                 }
                 let pending = &mut workload.partial[slot];
                 let whole = if finish {
@@ -482,7 +507,14 @@ fn wait_closed(client: &mut SupervisorClient) {
 }
 
 fn relay(output: &mut OutputFollower) {
-    let (out, err) = output.read();
+    let (mut out, mut err) = output.read();
+    for (slot, bytes) in [(0, &mut out), (1, &mut err)] {
+        if output.gaps[slot] {
+            output.projections[slot] = effigy_core::terminal_projection::PlainStream::unknown();
+            output.gaps[slot] = false;
+        }
+        *bytes = output.projections[slot].project(bytes);
+    }
     if !out.is_empty() {
         let mut stdout = std::io::stdout().lock();
         let _ = stdout.write_all(&out);

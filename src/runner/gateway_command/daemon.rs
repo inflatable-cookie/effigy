@@ -408,6 +408,9 @@ fn gateway_process_state_unknown(pid: u32) -> RunnerError {
 }
 
 pub(super) fn normalize_gateway_daemon_output(text: &str) -> String {
+    let projected =
+        effigy_core::terminal_projection::PlainStream::default().project(text.as_bytes());
+    let text = String::from_utf8_lossy(&projected);
     let lines = text
         .lines()
         .filter_map(|line| {

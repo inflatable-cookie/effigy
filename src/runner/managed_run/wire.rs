@@ -25,6 +25,10 @@ pub(in crate::runner) struct Payload {
     pub(in crate::runner) state_home: PathBuf,
     /// The TUI's terminal size, for workload terminals.
     pub(in crate::runner) terminal: Option<(u16, u16)>,
+    /// Workloads backed by output panes which actually render ANSI.
+    pub(in crate::runner) ansi_workloads: Vec<String>,
+    /// The initiating client has an ANSI-rendering TUI.
+    pub(in crate::runner) ansi_environment: bool,
 }
 
 /// A supervisor event for its owning client. Delivery is best effort; every
@@ -91,5 +95,21 @@ mod tests {
         };
         assert_eq!(decode::<ClientFrame>(&encode(&frame)), Some(frame));
         assert_eq!(decode::<ClientFrame>(b"not json"), None);
+    }
+
+    #[test]
+    fn capability_round_trips_from_initiating_client() {
+        let payload = Payload {
+            task: "dev".into(),
+            args: Vec::new(),
+            front: Front::Tui,
+            state_home: "/state".into(),
+            terminal: None,
+            ansi_workloads: vec!["api".into()],
+            ansi_environment: true,
+        };
+        let decoded = decode::<Payload>(&encode(&payload)).expect("payload");
+        assert_eq!(decoded.ansi_workloads, ["api"]);
+        assert!(decoded.ansi_environment);
     }
 }

@@ -351,7 +351,12 @@ fn command_outcome(
     };
     child.complete(run, exit).map_err(error)?;
     let output = child.tail();
-    Ok((exit.code, output))
+    let mut projection = if output.len() >= cx.operation().limits().capture_tail {
+        effigy_core::terminal_projection::PlainStream::unknown()
+    } else {
+        effigy_core::terminal_projection::PlainStream::default()
+    };
+    Ok((exit.code, projection.project(&output)))
 }
 
 #[derive(Debug)]

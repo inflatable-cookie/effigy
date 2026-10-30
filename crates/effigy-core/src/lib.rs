@@ -27,5 +27,6 @@ pub mod shell;
 pub mod task_args;
 pub mod task_lock;
 pub mod task_selection;
+pub mod terminal_projection;
 pub mod widgets;
 pub mod worktree_scope;

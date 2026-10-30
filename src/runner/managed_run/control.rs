@@ -319,6 +319,7 @@ pub(in crate::runner) fn logs(
     addressed: &Addressed<'_>,
     process: Option<&str>,
     follow: bool,
+    json: bool,
 ) -> Result<String, RunnerError> {
     let status = status_view(addressed);
     let Some(run) = &status.run else {
@@ -367,6 +368,15 @@ pub(in crate::runner) fn logs(
     }
     let prefix = sources.len() > 1;
     let mut offsets = vec![[0u64; 2]; sources.len()];
+    let mut projections = (0..sources.len())
+        .map(|_| {
+            [
+                effigy_core::terminal_projection::PlainStream::default(),
+                effigy_core::terminal_projection::PlainStream::default(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let terminal = !json && std::io::IsTerminal::is_terminal(&std::io::stdout());
     let mut text = String::new();
     loop {
         let mut moved = false;
@@ -377,12 +387,23 @@ pub(in crate::runner) fn logs(
                 else {
                     continue;
                 };
+                if read.from > offsets[index][slot] {
+                    projections[index][slot] =
+                        effigy_core::terminal_projection::PlainStream::unknown();
+                }
                 offsets[index][slot] = read.from + read.bytes.len() as u64;
                 if read.bytes.is_empty() {
                     continue;
                 }
                 moved = true;
-                let chunk = String::from_utf8_lossy(&read.bytes);
+                let plain;
+                let bytes = if terminal {
+                    &read.bytes
+                } else {
+                    plain = projections[index][slot].project(&read.bytes);
+                    &plain
+                };
+                let chunk = String::from_utf8_lossy(bytes);
                 let rendered = if prefix {
                     chunk
                         .lines()

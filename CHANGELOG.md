@@ -718,6 +718,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Preserve Cargo and Oxide colour in interactive managed panes while plain
+  log readers remove terminal controls and report any unsafe omitted prefix.
+
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
   libraries or linkers refuse the build before it can attest an artifact.

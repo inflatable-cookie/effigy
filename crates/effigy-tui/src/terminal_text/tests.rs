@@ -64,6 +64,7 @@ fn sanitize_log_text_removes_control_bytes_but_keeps_ansi() {
     let raw = "a\u{0008}b\r\u{001b}[31merr\u{001b}[0m";
     let sanitized = sanitize_log_text(raw);
     assert_eq!(sanitized, "ab\u{001b}[31merr\u{001b}[0m");
+    assert_eq!(sanitize_log_text("\u{009d}text\u{009c}"), "text");
 }
 
 #[test]
@@ -96,6 +97,21 @@ fn ingest_log_payload_cursor_up_replaces_prior_line() {
 }
 
 #[test]
+fn pane_keeps_colour_when_a_progress_line_is_redrawn() {
+    let mut buffer = VecDeque::new();
+    ingest_log_payload(&mut buffer, LogEntryKind::Stderr, "building");
+    ingest_log_payload(
+        &mut buffer,
+        LogEntryKind::Stderr,
+        "\u{1b}[1A\u{1b}[2K\r\u{1b}[31merror\u{1b}[0m",
+    );
+    assert_eq!(buffer.len(), 1);
+    let line = ansi_line(&buffer[0].line, Style::default());
+    assert_eq!(line.spans[0].content.as_ref(), "error");
+    assert_eq!(line.spans[0].style.fg, Some(Color::Red));
+}
+
+#[test]
 fn ingest_log_payload_cursor_up_without_replacement_does_not_drop_lines() {
     let mut buffer = VecDeque::new();
     ingest_log_payload(&mut buffer, LogEntryKind::Stdout, "line 1");
@@ -118,6 +134,17 @@ fn ansi_line_ignores_non_sgr_escape_sequences() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
     assert_eq!(rendered, "hello red");
+}
+
+#[test]
+fn incomplete_escape_is_never_sent_to_the_terminal() {
+    let line = ansi_line("text\u{1b}[31", Style::default());
+    let rendered = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(!rendered.chars().any(char::is_control));
 }
 
 #[test]

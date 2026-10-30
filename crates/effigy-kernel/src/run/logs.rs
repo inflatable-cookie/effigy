@@ -17,6 +17,8 @@ const SEGMENTS_MAX: usize = 4096;
 /// One read of a stream log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogRead {
+    /// Raw offset of the oldest retained segment, identifying its rotation generation.
+    pub retained_from: u64,
     /// Offset of the first returned byte. Greater than the requested offset
     /// when the bytes in between expired with rotation or retention.
     pub from: u64,
@@ -134,6 +136,7 @@ fn read_segments(
         position += read;
     }
     Ok(Some(Some(LogRead {
+        retained_from: bases[0],
         from,
         bytes,
         end: end.max(position),

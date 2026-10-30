@@ -34,7 +34,9 @@ pub fn ansi_line(raw: &str, base: Style) -> Line<'static> {
                 }
             }
         }
-        buf.push(chars[i]);
+        if !chars[i].is_control() {
+            buf.push(chars[i]);
+        }
         i += 1;
     }
     if !buf.is_empty() {

@@ -108,6 +108,7 @@ pub(in crate::runner) struct WorkloadSpec {
     pub(in crate::runner) setup: Option<String>,
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) env: Vec<(String, EnvOverride)>,
+    pub(in crate::runner) ansi_pane: bool,
     pub(in crate::runner) pty: bool,
     pub(in crate::runner) start_after_ms: u64,
     pub(in crate::runner) shutdown_on_exit: bool,
@@ -581,6 +582,7 @@ impl Owner {
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
         let mut env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
+        crate::runner::managed_color::apply(&mut env, workload.spec.ansi_pane);
         let pending_secret = crate::runner::managed_secrets::prepare(
             run,
             &workload.spec.env,
@@ -716,7 +718,13 @@ impl Owner {
             return None;
         };
         let _ = run.complete(process, exit);
-        workload.tail = String::from_utf8_lossy(&process.tail()).into_owned();
+        let tail = process.tail();
+        let mut projection = if tail.len() >= 64 * 1024 {
+            effigy_core::terminal_projection::PlainStream::unknown()
+        } else {
+            effigy_core::terminal_projection::PlainStream::default()
+        };
+        workload.tail = String::from_utf8_lossy(&projection.project(&tail)).into_owned();
         let name = workload.spec.name.clone();
         let shutdown = workload.spec.shutdown_on_exit;
         workload.process = None;
