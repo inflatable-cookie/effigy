@@ -885,23 +885,55 @@ pub fn selection_recovered(
     cx: &EffectContext,
     root: &StateRoot,
     obligation: &SelectionObligation,
-    liveness: &SelectionLiveness,
+    probe: &mut dyn super::ServingProbe,
     reader: &mut dyn SelectorReader,
     wait: Wait,
 ) -> Result<(), RunError> {
-    if !liveness.complete() {
-        return Err(ActivationRefusal::ServingLost.into());
-    }
-    // The readback happens *under* `Gate(Env)`: a read taken before the gate
-    // could describe a target another activation replaced in between, and a
-    // recovery that records that read would complete a generation it never
-    // observed. Recovery re-reads the obligation under the gate too.
+    // Nothing a caller observed earlier is trusted here, and neither is the
+    // journal's own `Serving` row: recovery takes `Gate(Env)` first and then
+    // revalidates, under that gate, that the committed successor session is
+    // still the live owner and that the listener holding the lease's key still
+    // answers a bounded pinned handshake.
     let _gate = Gate::acquire(
         cx,
         root,
         std::slice::from_ref(obligation.environment()),
         wait,
     )?;
+    let observe = cx
+        .operation()
+        .observe()
+        .map_err(|_| RunError::broken("recovery needs an observing context"))?;
+    let journal = activation_reader(&observe, root)?;
+    match journal.run_owner_state(&observe, root, &obligation.session_run()) {
+        Observed::Verified(crate::gate::OwnerState::Held, _) => {}
+        Observed::Verified(_, _) | Observed::Absent(_) => {
+            return Err(ActivationRefusal::ServingLost.into())
+        }
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "the successor session's owner liveness is unknown: {reason}"
+            )))
+        }
+    }
+    let serving = obligation.receipt().serving();
+    let Some(endpoint) = serving.socket() else {
+        return Err(ActivationRefusal::ServingLost.into());
+    };
+    let deadline = cx
+        .operation()
+        .remaining()
+        .map(|left| left.min(std::time::Duration::from_secs(5)))
+        .unwrap_or_else(|| std::time::Duration::from_secs(5));
+    match probe.pinned_handshake(endpoint, serving.pin(), deadline) {
+        Observed::Verified(..) => {}
+        Observed::Absent(_) | Observed::Unknown(_) => {
+            return Err(ActivationRefusal::ServingLost.into())
+        }
+    }
+    // The readback is completion, not assumption: the kernel reads every
+    // selector and object itself and compares each answer with the committed
+    // target.
     let receipt = obligation.observe(reader)?;
     obligation.validate_switch(&receipt)?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;

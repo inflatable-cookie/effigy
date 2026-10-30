@@ -169,15 +169,35 @@ impl ServingLease {
 /// A listener and key can therefore only be launched for a session whose run
 /// the caller actually owns; a copied binding, a made-up run or an environment
 /// run cannot hold custody.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct SessionOwner {
     run: RunId,
     fence: Fence,
+    /// The session's private slot, held by this proof. Dropping it releases the
+    /// slot, and a launch that holds it keeps the session owned for as long as
+    /// the listener lives.
+    custody: Vec<std::os::fd::OwnedFd>,
+    held: bool,
 }
 
 impl SessionOwner {
-    pub(crate) fn of(run: RunId, fence: Fence) -> Self {
-        Self { run, fence }
+    pub(crate) fn of(run: RunId, fence: Fence, custody: Vec<std::os::fd::OwnedFd>) -> Self {
+        Self {
+            run,
+            fence,
+            custody,
+            held: true,
+        }
+    }
+    /// Whether this proof still holds the session's owner custody.
+    pub fn held(&self) -> bool {
+        self.held
+    }
+    /// Release the owner custody early: the session is no longer owned by this
+    /// proof, so nothing it published may keep serving.
+    fn abandon(&mut self) {
+        self.custody.clear();
+        self.held = false;
     }
     pub fn run(&self) -> RunId {
         self.run
@@ -358,9 +378,14 @@ impl ChannelBound {
 #[derive(Debug)]
 pub struct SessionLaunch {
     session: SessionRef,
+    owner: SessionOwner,
     supervisor_id: String,
     key: ServingKey,
     listener: Box<dyn ChannelListener>,
+    /// Set only by [`SessionLaunch::qualify`] after a verified pinned handshake
+    /// through this launch. A listener that arrives already in a serving phase
+    /// is still unqualified until then, so no phase flag can mint a locator.
+    qualified: bool,
     bound: Option<ChannelBound>,
     served: bool,
 }
@@ -396,9 +421,11 @@ impl SessionLaunch {
         }
         Ok(Self {
             session,
+            owner,
             supervisor_id,
             key,
             listener,
+            qualified: false,
             bound: None,
             served: false,
         })
@@ -432,7 +459,11 @@ impl SessionLaunch {
         }
         let endpoint = self.listener.endpoint().ok_or(ServingRefusal::Unbound)?;
         match probe.pinned_handshake(endpoint, &self.key.pin(), deadline) {
-            Observed::Verified(..) => self.listener.qualify(),
+            Observed::Verified(..) => {
+                self.listener.qualify()?;
+                self.qualified = true;
+                Ok(())
+            }
             Observed::Absent(_) | Observed::Unknown(_) => Err(ServingRefusal::Unqualified),
         }
     }
@@ -452,6 +483,10 @@ impl SessionLaunch {
     /// listener, a qualification answer and the key still in custody, and it
     /// answers the same [`ChannelBound`] to a retry.
     pub fn publish(&mut self) -> Result<&ChannelBound, ServingRefusal> {
+        self.require_custody()?;
+        if !self.qualified {
+            return Err(ServingRefusal::Unqualified);
+        }
         if self.bound.is_none() {
             return self.publish_once();
         }
@@ -493,9 +528,11 @@ impl SessionLaunch {
     }
 
     /// The serving supervisor adopted the session run: only now may the channel
-    /// serve. A lease that was never published cannot serve.
+    /// serve. A lease that was never published cannot serve, and neither can one
+    /// whose owner custody this launch no longer holds.
     pub fn serve(&mut self) -> Result<(), ServingRefusal> {
-        if self.bound.is_none() {
+        self.require_custody()?;
+        if !self.qualified || self.bound.is_none() {
             return Err(ServingRefusal::Unqualified);
         }
         match self.listener.phase() {
@@ -510,7 +547,28 @@ impl SessionLaunch {
 
     /// Whether the v1 channel may dispatch on this launch's listener.
     pub fn serving(&self) -> bool {
-        self.served && self.listener.phase().accepts()
+        self.served && self.qualified && self.owner.held() && self.listener.phase().accepts()
+    }
+
+    /// Release the owning run's custody while the launch lives: the session is
+    /// no longer owned here, so nothing this launch published may be served.
+    pub fn abandon_owner(&mut self) {
+        self.owner.abandon();
+        self.bound = None;
+        self.served = false;
+    }
+
+    /// Whether this launch still holds the session's owner custody.
+    pub fn owned(&self) -> bool {
+        self.owner.held()
+    }
+
+    fn require_custody(&self) -> Result<(), ServingRefusal> {
+        if self.owner.held() {
+            Ok(())
+        } else {
+            Err(ServingRefusal::WrongSession)
+        }
     }
 
     /// One bounded pinned liveness probe, for recovery to judge a selection

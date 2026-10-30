@@ -771,7 +771,7 @@ impl<'a> Run<'a> {
     /// workspace session yields one, so a listener and key are always launched
     /// for the detached session owner itself, never for a binding a caller
     /// assembled or for an environment run.
-    pub fn session_owner(&self) -> Result<crate::workspace_session::SessionOwner, RunError> {
+    pub fn session_owner(&mut self) -> Result<crate::workspace_session::SessionOwner, RunError> {
         self.can_effect()?;
         if self.owner.resource.kind() != crate::id::ResourceKind::Task {
             return Err(RunError::refused(
@@ -799,9 +799,18 @@ impl<'a> Run<'a> {
                 "only an admitted workspace session owns a channel listener",
             ));
         }
+        // The owner proof carries the session's own gate custody: a duplicate of
+        // the private slot this run holds. Whoever holds the proof — the
+        // listener launch — keeps the session owned, so dropping the run handle
+        // cannot leave a served locator whose session nobody owns.
+        let custody = self
+            .guard
+            .share_custody()
+            .map_err(|error| RunError::unavailable(format!("session custody: {error}")))?;
         Ok(crate::workspace_session::SessionOwner::of(
             self.id,
             self.owner.clone(),
+            custody,
         ))
     }
 

@@ -332,7 +332,7 @@ fn every_front_end_reports_one_session_identity() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (_, fence) = active_environment(&cx, &root);
-    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut _session_run, session) = admit_session(&cx, &root, &fence);
 
     // A TUI, a text client and a headless entry all hold this identity; the
     // runner's front-end test renders the same label for each of them.
@@ -377,7 +377,7 @@ fn down_refuses_a_foreign_holder_and_settles_nothing_else() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, fence) = active_environment(&cx, &root);
-    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut _session_run, session) = admit_session(&cx, &root, &fence);
     let mut foreign = Run::begin(
         &cx,
         &root,
@@ -428,7 +428,7 @@ fn down_refuses_an_unknown_holder() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (_, fence) = active_environment(&cx, &root);
-    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut _session_run, session) = admit_session(&cx, &root, &fence);
     let mut foreign = Run::begin(
         &cx,
         &root,
@@ -629,7 +629,7 @@ fn a_borrowing_root_run_is_not_the_session() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, fence) = active_environment(&cx, &root);
-    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut _session_run, session) = admit_session(&cx, &root, &fence);
 
     // A host `dev` run on a persistent environment: root (no parent), Task
     // owned, borrowing. Only the recorded mapping can tell it apart.
@@ -863,10 +863,11 @@ fn activate<'a>(
     activation_id: RunId,
 ) -> (WorkspaceActivationReservation, Run<'a>, SessionRef, Run<'a>) {
     let reservation = decided(cx, root, environment);
-    let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
+    let (mut session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let mut environment_run = admit_activation(cx, root, &reservation, activation_id);
-    let (receipt, launch) = commit_receipt(cx, root, &reservation, &environment_run, &session_run)
-        .expect("activation receipt");
+    let (receipt, launch) =
+        commit_receipt(cx, root, &reservation, &environment_run, &mut session_run)
+            .expect("activation receipt");
     let committed = reservation
         .commit_selection(cx, root, &environment_run, &session_run, &receipt, &launch)
         .expect("activation commit");
@@ -997,7 +998,7 @@ fn the_first_activation_commits_mapping_active_and_borrow_together() {
     );
 
     // The frozen identity is the one that admits.
-    let (session_run, session) = admit_frozen(&cx, &root, &reservation, run_id(10));
+    let (mut session_run, session) = admit_frozen(&cx, &root, &reservation, run_id(10));
     assert_eq!(
         session.generation(),
         Generation::new(1),
@@ -1023,7 +1024,7 @@ fn the_first_activation_commits_mapping_active_and_borrow_together() {
 
     let environment_run = admit_activation(&cx, &root, &reservation, run_id(11));
     assert_eq!(environment_run.fence().generation, Generation::new(2));
-    let committed = commit_activation(&cx, &root, &reservation, &environment_run, &session_run)
+    let committed = commit_activation(&cx, &root, &reservation, &environment_run, &mut session_run)
         .expect("commit");
     assert_eq!(committed.session(), session);
 
@@ -1244,7 +1245,7 @@ fn a_frozen_staging_is_never_replaced_after_publication() {
     let (environment, _predecessor) = active_environment(&cx, &root);
     let reservation = decided(&cx, &root, &environment);
     let binding = stage_successor(&cx, &root, &reservation, run_id(50));
-    let (session_run, _session) = admit_frozen(&cx, &root, &reservation, binding.run);
+    let (mut session_run, _session) = admit_frozen(&cx, &root, &reservation, binding.run);
     // The activation run claims E and publishes the guest pointer.
     let environment_run = admit_activation(&cx, &root, &reservation, run_id(51));
     let reader = read_journal(&cx, &root);
@@ -1267,8 +1268,14 @@ fn a_frozen_staging_is_never_replaced_after_publication() {
     }
     // The frozen identity still commits.
     let mut environment_run = environment_run;
-    let committed = commit_and_switch(&cx, &root, &reservation, &mut environment_run, &session_run)
-        .expect("the frozen activation commits");
+    let committed = commit_and_switch(
+        &cx,
+        &root,
+        &reservation,
+        &mut environment_run,
+        &mut session_run,
+    )
+    .expect("the frozen activation commits");
     assert_eq!(committed.session().run(), binding.run);
 }
 
@@ -1279,7 +1286,7 @@ fn a_receipt_is_validated_against_the_frozen_plan_before_the_commit() {
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
     let reservation = decided(&cx, &root, &environment);
-    let (session_run, session) = admit_staged(&cx, &root, &reservation, run_id(53));
+    let (mut session_run, session) = admit_staged(&cx, &root, &reservation, run_id(53));
     let environment_run = admit_activation(&cx, &root, &reservation, run_id(54));
     let reader = read_journal(&cx, &root);
     let plan = plan_of(&reservation, &reader).expect("ready plan");
@@ -1314,8 +1321,14 @@ fn a_receipt_is_validated_against_the_frozen_plan_before_the_commit() {
     }
     // And a frozen plan is what the commit validates the recorded receipt with.
     let mut environment_run = environment_run;
-    let committed = commit_and_switch(&cx, &root, &reservation, &mut environment_run, &session_run)
-        .expect("the activation commits at E");
+    let committed = commit_and_switch(
+        &cx,
+        &root,
+        &reservation,
+        &mut environment_run,
+        &mut session_run,
+    )
+    .expect("the activation commits at E");
     assert_eq!(committed.session(), session);
 }
 
@@ -1326,7 +1339,7 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
     let reservation = decided(&cx, &root, &environment);
-    let (session_run, session) = admit_staged(&cx, &root, &reservation, run_id(55));
+    let (mut session_run, session) = admit_staged(&cx, &root, &reservation, run_id(55));
     let claim = reservation.claim().expect("claim");
     let mut environment_run = Run::begin_claimed(
         &cx,
@@ -1341,7 +1354,7 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
     // The intent alone is not a receipt: no active publication may precede it.
     let ticket =
         Attachments::intend_guest_publication(&mut environment_run).expect("publication intent");
-    let error = commit_activation(&cx, &root, &reservation, &environment_run, &session_run)
+    let error = commit_activation(&cx, &root, &reservation, &environment_run, &mut session_run)
         .expect_err("an intended publication is not a receipt");
     assert!(matches!(error, RunError::Refused(_)));
     let reader = read_journal(&cx, &root);
@@ -1383,8 +1396,14 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
     Attachments::workspace_guest_published(&mut environment_run, &ticket, receipt)
         .expect("publication receipt");
     let mut environment_run = environment_run;
-    let committed = commit_and_switch(&cx, &root, &reservation, &mut environment_run, &session_run)
-        .expect("commit after the receipt");
+    let committed = commit_and_switch(
+        &cx,
+        &root,
+        &reservation,
+        &mut environment_run,
+        &mut session_run,
+    )
+    .expect("commit after the receipt");
     assert_eq!(committed.session(), session);
 }
 
@@ -1397,7 +1416,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
     // A required effect that never completed refuses the commit.
     let environment = pending_environment(&cx, &root);
     let reservation = decided(&cx, &root, &environment);
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(57));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(57));
     let claim = reservation.claim().expect("claim");
     let mut environment_run = Run::begin_claimed(
         &cx,
@@ -1416,7 +1435,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
     let receipt = publication_for(&cx, &root, &reservation, &environment_run);
     Attachments::workspace_guest_published(&mut environment_run, &first, receipt)
         .expect("publication receipt");
-    let error = commit_activation(&cx, &root, &reservation, &environment_run, &session_run)
+    let error = commit_activation(&cx, &root, &reservation, &environment_run, &mut session_run)
         .expect_err("a required effect is still unresolved");
     match &error {
         RunError::Refused(text) => assert!(
@@ -1440,7 +1459,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
             },
         )
         .expect("interrupt the activation");
-    let error = commit_activation(&cx, &root, &reservation, &environment_run, &session_run)
+    let error = commit_activation(&cx, &root, &reservation, &environment_run, &mut session_run)
         .expect_err("a settling run publishes nothing");
     assert!(matches!(error, RunError::Refused(_)));
     let reader = read_journal(&cx, &root);
@@ -1453,7 +1472,7 @@ fn a_commit_is_idempotent_for_the_run_that_made_it() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (reservation, session_run, session, environment_run) =
+    let (reservation, mut session_run, session, environment_run) =
         activate(&cx, &root, &environment, run_id(60), run_id(61));
     let reader = read_journal(&cx, &root);
     let recovered = WorkspaceActivationReservation::recover(&reader, &environment)
@@ -1461,7 +1480,7 @@ fn a_commit_is_idempotent_for_the_run_that_made_it() {
         .cloned()
         .flatten()
         .expect("the committed reservation");
-    let again = commit_activation(&cx, &root, &recovered, &environment_run, &session_run)
+    let again = commit_activation(&cx, &root, &recovered, &environment_run, &mut session_run)
         .expect("a retried commit answers with the same session");
     assert_eq!(again.session(), session);
     assert_eq!(
@@ -1694,14 +1713,15 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     let next_reservation = decided(&cx, &root, &environment);
     assert_eq!(next_reservation.generation(), Generation::new(3));
     let next_binding = stage_successor(&cx, &root, &next_reservation, run_id(74));
-    let (successor_run, successor) = admit_frozen(&cx, &root, &next_reservation, next_binding.run);
+    let (mut successor_run, successor) =
+        admit_frozen(&cx, &root, &next_reservation, next_binding.run);
     let mut environment_run = admit_activation(&cx, &root, &next_reservation, run_id(75));
     let committed = commit_and_switch(
         &cx,
         &root,
         &next_reservation,
         &mut environment_run,
-        &successor_run,
+        &mut successor_run,
     )
     .expect("the successor commits");
     assert_eq!(committed.session(), successor);
@@ -1771,7 +1791,7 @@ fn a_successor_preserves_a_live_holder_and_the_predecessor_session_contract() {
     assert!(is_live(&predecessor));
 
     // The admitted successor commits while the predecessor remains live.
-    let (successor_session_run, successor_session) =
+    let (mut successor_session_run, successor_session) =
         admit_frozen(&cx, &root, &successor_reservation, binding.run);
     let mut environment_run = admit_activation(&cx, &root, &successor_reservation, run_id(84));
     commit_and_switch(
@@ -1779,7 +1799,7 @@ fn a_successor_preserves_a_live_holder_and_the_predecessor_session_contract() {
         &root,
         &successor_reservation,
         &mut environment_run,
-        &successor_session_run,
+        &mut successor_session_run,
     )
     .expect("successor commit");
 
@@ -1942,7 +1962,7 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
                 &root,
                 &reservation,
                 run,
-                staged_run.as_ref().expect("owning successor"),
+                staged_run.as_mut().expect("owning successor"),
             )?;
             Ok(())
         })();
@@ -2376,7 +2396,7 @@ fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot()
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let environment = pending_environment(&cx, &root);
-    let (_, predecessor, first, activation) =
+    let (_, mut predecessor, first, activation) =
         activate(&cx, &root, &environment, run_id(140), run_id(141));
     end_run(
         &cx,
@@ -2394,7 +2414,7 @@ fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot()
             .expect("custody fixture"),
         placement: Placement::Detached,
     });
-    let (session_run, session) = SessionRef::admit_reserved(
+    let (mut session_run, session) = SessionRef::admit_reserved(
         &cx,
         &root,
         &inv(workspace_entry(), "workspace"),
@@ -2417,10 +2437,10 @@ fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot()
     );
     let mut activation = admit_activation(&cx, &root, &reservation, run_id(143));
     assert!(
-        commit_activation(&cx, &root, &reservation, &activation, &predecessor).is_err(),
+        commit_activation(&cx, &root, &reservation, &activation, &mut predecessor).is_err(),
         "a different owning Run cannot stand in for the frozen successor"
     );
-    commit_and_switch(&cx, &root, &reservation, &mut activation, &session_run)
+    commit_and_switch(&cx, &root, &reservation, &mut activation, &mut session_run)
         .expect("commit with owned slot");
     assert_eq!(
         resolved(&read_journal(&cx, &root), &environment),
@@ -2682,13 +2702,13 @@ fn successor_death_at_the_commit_boundary_cannot_publish_a_dead_session() {
         // Inputs no other process decided: this child must reserve a successor,
         // never attach to the predecessor the parent left behind.
         let reservation = decided_with(&cx, &root, &environment(), 200);
-        let (session_run, _) = admit_staged(&cx, &root, &reservation, run_id(162));
+        let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(162));
         let activation = admit_activation(&cx, &root, &reservation, run_id(163));
         crate::fault::arm_point(
             crate::fault::Point::ActivationCommitBefore,
             crate::fault::Fault::Kill,
         );
-        let _ = commit_activation(&cx, &root, &reservation, &activation, &session_run);
+        let _ = commit_activation(&cx, &root, &reservation, &activation, &mut session_run);
         panic!("the owner must die before committing");
     }
     let fixture = home();
@@ -3090,6 +3110,14 @@ impl SelectorReader for FakeSelectors {
 
 /// One session's own listener and key custody, bound and qualified, launched on
 /// behalf of the run that owns the session.
+/// A probe that answers the pinned handshake, for recovery tests.
+fn verifying_probe() -> FakeProbe {
+    FakeProbe {
+        answer: Some(Observed::Verified((), evidence())),
+        calls: 0,
+    }
+}
+
 /// The resolved selection digest a reservation's decision froze.
 fn receipt_selection(reservation: &WorkspaceActivationReservation) -> Digest {
     reservation
@@ -3098,7 +3126,7 @@ fn receipt_selection(reservation: &WorkspaceActivationReservation) -> Digest {
         .unwrap_or_else(|| Digest::of(b"undecided"))
 }
 
-fn launch_for(session_run: &Run<'_>, session: &SessionRef) -> Result<SessionLaunch, RunError> {
+fn launch_for(session_run: &mut Run<'_>, session: &SessionRef) -> Result<SessionLaunch, RunError> {
     let owner = session_run.session_owner()?;
     let (mut listener, _stops) = FakeListener::bound();
     ChannelListener::qualify(&mut listener).expect("qualified");
@@ -3119,7 +3147,7 @@ fn commit_receipt(
     root: &StateRoot,
     reservation: &WorkspaceActivationReservation,
     environment_run: &Run<'_>,
-    session_run: &Run<'_>,
+    session_run: &mut Run<'_>,
 ) -> Result<(SelectionReceipt, SessionLaunch), RunError> {
     let plan = plan_of(reservation, &read_journal(cx, root))
         .ok_or_else(|| RunError::refused("no staged plan to commit"))?;
@@ -3147,7 +3175,7 @@ fn commit_activation(
     root: &StateRoot,
     reservation: &WorkspaceActivationReservation,
     environment_run: &Run<'_>,
-    session_run: &Run<'_>,
+    session_run: &mut Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
     let (receipt, launch) = commit_receipt(cx, root, reservation, environment_run, session_run)?;
     reservation.commit_selection(cx, root, environment_run, session_run, &receipt, &launch)
@@ -3160,7 +3188,7 @@ fn commit_and_switch(
     root: &StateRoot,
     reservation: &WorkspaceActivationReservation,
     environment_run: &mut Run<'_>,
-    session_run: &Run<'_>,
+    session_run: &mut Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
     let (receipt, launch) = commit_receipt(cx, root, reservation, environment_run, session_run)?;
     let committed =
@@ -3226,6 +3254,9 @@ fn selection_receipt(
             },
         ],
     };
+    launch
+        .qualify(&mut verifying_probe(), Duration::from_secs(1))
+        .expect("qualified");
     let lease = launch.publish().expect("published").lease().clone();
     let document = context_document(plan, &publication, &selection, &lease, selection_digest);
     let context = Digest::of(&document);
@@ -3278,13 +3309,13 @@ fn activate_with_selection<'a>(
         .selected()
         .cloned()
         .expect("a selected artifact");
-    let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
+    let (mut session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let (environment_run, publication) =
         admit_activation_publishing(cx, root, &reservation, activation_id, &binary);
     // The plan is read once the activation run claimed E, so the publication
     // receipt is validated against the run that actually recorded it.
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication,
@@ -3559,11 +3590,11 @@ fn a_pending_selection_refuses_attach_and_reservation() {
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
     let binary = artifact(31);
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(206));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(206));
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(207), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication,
@@ -3609,17 +3640,10 @@ fn a_pending_selection_refuses_attach_and_reservation() {
             "{error:?}"
         );
     }
+    // The committed successor is left Pending by design; its launch custody is
+    // released when the fixture goes away, which is what a crashed activation
+    // leaves behind.
     drop(session_run);
-    run::settle_interrupted(
-        &cx,
-        &root,
-        &workspace_entry(),
-        run_id(206),
-        next(),
-        &cleanup(&cx),
-        &mut adapter(),
-    )
-    .expect("settle the abandoned successor");
 }
 
 // ---- 052 §8.11: the durable selection, its switch and its recovery ---------
@@ -3725,11 +3749,11 @@ fn commit_pending_selection<'a>(
             ActivationDecision::Attach(_) => panic!("fresh environment"),
         };
     let binary = inputs.artifact.selected().cloned().expect("selected");
-    let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
+    let (mut session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let (environment_run, publication) =
         admit_activation_publishing(cx, root, &reservation, activation_id, &binary);
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication,
@@ -3858,17 +3882,16 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         target: Observed::Verified((), evidence()),
         listener: Observed::Verified((), evidence()),
     };
-    let dead_listener = SelectionLiveness {
-        listener: Observed::Absent(crate::observe::AbsenceProof::NoRow {
-            table: "workspace-session-listener".into(),
-        }),
-        ..live.clone()
-    };
     let error = selection_recovered(
         &cx,
         &root,
         &pending,
-        &dead_listener,
+        &mut FakeProbe {
+            answer: Some(Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                table: "workspace-session-listener".into(),
+            })),
+            calls: 0,
+        },
         &mut FakeSelectors::exact(&receipt),
         Wait::FailFast,
     )
@@ -3881,7 +3904,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         &cx,
         &root,
         &pending,
-        &live,
+        &mut verifying_probe(),
         &mut FakeSelectors::third(&receipt),
         Wait::FailFast,
     )
@@ -3892,7 +3915,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
             &cx,
             &root,
             &pending,
-            &live,
+            &mut verifying_probe(),
             &mut FakeSelectors::missing_object(&receipt),
             Wait::FailFast,
         )
@@ -3918,7 +3941,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         &cx,
         &root,
         &pending,
-        &live,
+        &mut verifying_probe(),
         &mut FakeSelectors::exact(&receipt),
         Wait::FailFast,
     )
@@ -4153,13 +4176,13 @@ fn a_selection_never_names_another_session_s_listener() {
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
     let binary = artifact(64);
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(224));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(224));
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(225), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     // A session ref another run claims has no owner proof for this run, so no
     // launch exists to publish its locator at all.
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let selection = selection_receipt(
         &plan,
         publication.clone(),
@@ -4200,9 +4223,11 @@ fn a_selection_never_names_another_session_s_listener() {
         Box::new(listener),
     )
     .expect("launch");
-    let lease = launch_for(&session_run, &plan.session()).expect("custody");
+    let mut published = launch_for(&mut session_run, &plan.session()).expect("custody");
     let document = {
-        let mut published = lease;
+        published
+            .qualify(&mut verifying_probe(), Duration::from_secs(1))
+            .expect("qualified");
         let lease = published.publish().expect("published").lease().clone();
         context_document(
             &plan,
@@ -4256,11 +4281,11 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
     let binary = artifact(61);
-    let (session_run, session) = admit_staged(&cx, &root, &reservation, run_id(218));
+    let (mut session_run, session) = admit_staged(&cx, &root, &reservation, run_id(218));
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(219), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication.clone(),
@@ -4346,12 +4371,12 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     let reservation =
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reservation");
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(220));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(220));
     let binary = artifact(63);
     let (_, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(221), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let good = selection_receipt(
         &plan,
         publication.clone(),
@@ -4364,7 +4389,7 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     // A selection whose context object names other bytes is not the receipt.
     let mut wrong = good.selection().clone();
     wrong.objects.context.digest = Digest::of(b"not the document");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     assert!(
         SelectionReceipt::new(&plan, publication, wrong, b"the document", &mut launch).is_err(),
         "the document digest is hashed, never taken on trust"
@@ -4492,15 +4517,19 @@ impl ServingFixture {
 #[test]
 fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     let fixture = ServingFixture::new();
-    let (session_run, session) = fixture.admit(70);
+    let (mut session_run, session) = fixture.admit(70);
     let (listener, stops) = FakeListener::bound();
     let key = ServingKey::new(vec![7u8; 32], Digest::of(b"session pin")).expect("key");
-    let owner = session_run
-        .session_owner()
-        .expect("the session's owning run");
-    let mut launch =
-        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
-            .expect("launch");
+    let mut launch = SessionLaunch::launch(
+        &session,
+        session_run
+            .session_owner()
+            .expect("the session's owning run"),
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
     // The caller that asked for the session goes away; the launch is what the
     // detached supervisor holds, and nothing about it changed.
     drop(session_run);
@@ -4562,8 +4591,8 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
 #[test]
 fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
     let fixture = ServingFixture::new();
-    let (session_run, session) = fixture.admit(75);
-    let owner = session_run
+    let (mut session_run, session) = fixture.admit(75);
+    let _owner = session_run
         .session_owner()
         .expect("the session's owning run");
     // A session ref another run claims is not the one this owner holds.
@@ -4578,7 +4607,7 @@ fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
     assert!(matches!(
         SessionLaunch::launch(
             &elsewhere,
-            owner.clone(),
+            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(listener)
@@ -4587,7 +4616,8 @@ fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
     ));
     assert_eq!(stops.get(), 0, "a refused launch stops nothing");
     // An environment run holds no session custody at all.
-    let environment_run = admit_activation_stub(&fixture.cx, &fixture.root, &fixture.environment);
+    let mut environment_run =
+        admit_activation_stub(&fixture.cx, &fixture.root, &fixture.environment);
     assert!(environment_run.session_owner().is_err());
 }
 
@@ -4612,7 +4642,7 @@ fn admit_activation_stub<'a>(
 #[test]
 fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let fixture = ServingFixture::new();
-    let (session_run, session) = fixture.admit(71);
+    let (mut session_run, session) = fixture.admit(71);
     let owner = session_run.session_owner().expect("owner");
     // No endpoint at all is not a listener.
     let stops = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -4625,7 +4655,7 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     assert!(matches!(
         SessionLaunch::launch(
             &session,
-            owner.clone(),
+            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(unbound)
@@ -4643,7 +4673,7 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     assert!(matches!(
         SessionLaunch::launch(
             &session,
-            owner.clone(),
+            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(stopped)
@@ -4685,17 +4715,18 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
 #[test]
 fn a_real_bound_socket_is_the_endpoint_the_lease_names() {
     let fixture = ServingFixture::new();
-    let (session_run, session) = fixture.admit(74);
+    let (mut session_run, session) = fixture.admit(74);
     let owner = session_run.session_owner().expect("owner");
     let listener =
         HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind");
     let endpoint = listener.endpoint().expect("bound endpoint");
-    let mut listener = listener;
-    listener.qualify().expect("qualify");
     let key = ServingKey::new(vec![3u8; 32], Digest::of(b"real pin")).expect("key");
     let mut launch =
         SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
             .expect("launch");
+    launch
+        .qualify(&mut verifying_probe(), Duration::from_secs(1))
+        .expect("qualified");
     let lease = launch.publish().expect("publish").lease().clone();
     assert_eq!(lease.endpoint(), endpoint.to_string());
     // The published locator is reachable while the launch holds it.
@@ -4767,7 +4798,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             activation_run = Some(activating);
             let activating = activation_run.as_ref().expect("activation run");
             let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-            let staged = session_run.as_ref().expect("owning successor");
+            let staged = session_run.as_mut().expect("owning successor");
             let mut launch = launch_for(staged, &plan.session()).expect("session custody");
             let receipt = selection_receipt(
                 &plan,
@@ -4847,25 +4878,25 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             );
         }
         if state == Some("pending") {
+            // Both runs died, so the committed successor has no live owner:
+            // recovery refuses to complete a selection nothing is serving, and
+            // the obligation stays exactly where it was (recoverable, not lost).
             let pending = una_finished(&reader, &environment).expect("unfinished selection");
-            let live = SelectionLiveness {
-                session: Observed::Verified((), evidence()),
-                target: Observed::Verified((), evidence()),
-                listener: Observed::Verified((), evidence()),
-            };
-            selection_recovered(
+            let error = selection_recovered(
                 &cx,
                 &root,
                 &pending,
-                &live,
+                &mut verifying_probe(),
                 &mut FakeSelectors::exact(pending.receipt()),
                 Wait::FailFast,
             )
-            .expect("recovery completes the exact committed selection");
+            .expect_err("a dead successor is never completed");
+            assert!(matches!(error, RunError::Refused(_)), "{error:?}");
             let reader = read_journal(&cx, &root);
             assert_eq!(
                 obligation_row(&reader, &environment).map(|row| row.0),
-                Some("switched".to_owned())
+                Some("pending".to_owned()),
+                "{point:?}: the obligation is preserved for a live recovery"
             );
         }
         // No replay: settle the exact dead runs, then release an uncommitted
@@ -5076,13 +5107,13 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
         ActivationDecision::Activate(reservation) => *reservation,
         ActivationDecision::Attach(_) => panic!("fresh generation"),
     };
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(244));
     // The activation publishes an artifact the decision never froze.
     let published = artifact(94);
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(245), &published);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication,
@@ -5113,6 +5144,9 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
             signal: None,
         },
     );
+    // The failed launch held the session's custody; release it before the dead
+    // successor is settled under its own slot.
+    drop(launch);
     drop(session_run);
     run::settle_interrupted(
         &cx,
@@ -5146,12 +5180,13 @@ fn a_commit_without_live_session_custody_publishes_nothing() {
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
     let binary = artifact(95);
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(246));
     let (environment_run, _publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(247), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     let (receipt, mut launch) =
-        commit_receipt(&cx, &root, &reservation, &environment_run, &session_run).expect("receipt");
+        commit_receipt(&cx, &root, &reservation, &environment_run, &mut session_run)
+            .expect("receipt");
     // The supervisor loses its listener between publishing the context and
     // committing: the lease a stopped launch held is not custody any more.
     launch.stop();
@@ -5178,6 +5213,8 @@ fn a_commit_without_live_session_custody_publishes_nothing() {
             signal: None,
         },
     );
+    // The failed launch still held the session's custody.
+    drop(launch);
     drop(session_run);
     run::settle_interrupted(
         &cx,
@@ -5211,7 +5248,7 @@ fn a_context_document_for_another_activation_is_refused() {
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
     let binary = artifact(96);
-    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(248));
+    let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(248));
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(249), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
@@ -5222,49 +5259,49 @@ fn a_context_document_for_another_activation_is_refused() {
         binary,
         None,
         &selection_digest,
-        &mut launch_for(&session_run, &plan.session()).expect("custody"),
+        &mut launch_for(&mut session_run, &plan.session()).expect("custody"),
     );
     // The document a prepare would write for this activation, byte for byte.
-    let document = || {
-        let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
-        let lease = launch.publish().expect("published").lease().clone();
-        context_document(
-            &plan,
-            &publication,
-            good.selection(),
-            &lease,
-            &selection_digest,
-        )
-    };
-    let mutate = |field: &str, value: serde_json::Value| {
-        let mut parsed: serde_json::Value = serde_json::from_slice(&document()).expect("document");
-        parsed[field] = value;
-        serde_json::to_vec(&parsed).expect("document")
-    };
-    // Each of these would publish a context for another environment, session,
-    // artifact or locator, so none of them is accepted.
-    let cases = [
-        mutate("schema", serde_json::json!("effigy.workspace-context.v1")),
-        mutate("environment_generation", serde_json::json!(99)),
-        mutate("context_generation", serde_json::json!(42)),
-        mutate(
+    let base_document = context_document(
+        &plan,
+        &publication,
+        good.selection(),
+        &{
+            let mut launch = launch_for(&mut session_run, &plan.session()).expect("custody");
+            launch
+                .qualify(&mut verifying_probe(), Duration::from_secs(1))
+                .expect("qualified");
+            launch.publish().expect("published").lease().clone()
+        },
+        &selection_digest,
+    );
+    let mut cases = Vec::new();
+    for (field, value) in [
+        ("schema", serde_json::json!("effigy.workspace-context.v1")),
+        ("environment_generation", serde_json::json!(99)),
+        ("context_generation", serde_json::json!(42)),
+        (
             "artifact_digest",
             serde_json::json!(format!("sha256:{}", "ff".repeat(32))),
         ),
-        mutate(
+        (
             "locator",
             serde_json::json!({"endpoint": "127.0.0.1:1", "pin": "00".repeat(32)}),
         ),
-    ];
+    ] {
+        let mut parsed: serde_json::Value =
+            serde_json::from_slice(&base_document).expect("document");
+        parsed[field] = value;
+        cases.push(serde_json::to_vec(&parsed).expect("document"));
+    }
     let mut session_mutated: serde_json::Value =
-        serde_json::from_slice(&document()).expect("document");
+        serde_json::from_slice(&base_document).expect("document");
     session_mutated["session"]["run_id"] = serde_json::json!(run_id(250).to_string());
-    let mut cases = cases.to_vec();
     cases.push(serde_json::to_vec(&session_mutated).expect("document"));
     for bytes in cases {
         let mut selection = good.selection().clone();
         selection.objects.context.digest = Digest::of(&bytes);
-        let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
+        let mut launch = launch_for(&mut session_run, &plan.session()).expect("custody");
         let error =
             SelectionReceipt::new(&plan, publication.clone(), selection, &bytes, &mut launch)
                 .expect_err("a context for another activation is never published");
@@ -5299,7 +5336,7 @@ fn recovery_observes_under_the_environment_gate() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (_, _, _, environment_run, receipt, obligation) = commit_pending_selection(
+    let (_, _session_run, _, environment_run, receipt, obligation) = commit_pending_selection(
         &cx,
         &root,
         &environment,
@@ -5319,16 +5356,11 @@ fn recovery_observes_under_the_environment_gate() {
             panic!("recovery read an object outside the environment gate")
         }
     }
-    let live = SelectionLiveness {
-        session: Observed::Verified((), evidence()),
-        target: Observed::Verified((), evidence()),
-        listener: Observed::Verified((), evidence()),
-    };
     let error = selection_recovered(
         &cx,
         &root,
         &obligation,
-        &live,
+        &mut verifying_probe(),
         &mut UnreadableReaders,
         Wait::FailFast,
     )
@@ -5348,7 +5380,7 @@ fn recovery_observes_under_the_environment_gate() {
         &cx,
         &root,
         &obligation,
-        &live,
+        &mut verifying_probe(),
         &mut FakeSelectors::exact(&receipt),
         Wait::FailFast,
     )
@@ -5387,11 +5419,11 @@ fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
         ActivationDecision::Activate(reservation) => *reservation,
         ActivationDecision::Attach(_) => panic!("fresh environment"),
     };
-    let (session_run, session) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let (mut session_run, session) = admit_staged(&cx, &root, &reservation, run_id(253));
     let (mut environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(254), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
+    let mut launch = launch_for(&mut session_run, &plan.session()).expect("custody");
     let receipt = selection_receipt(
         &plan,
         publication,
@@ -5511,4 +5543,64 @@ fn a_dead_session_is_never_attached_to() {
         .cancel(&cx, &root, Wait::FailFast)
         .expect("release the unused successor");
     assert_ne!(reservation.id().to_string(), String::new());
+}
+
+#[test]
+fn an_unprobed_listener_and_a_released_owner_never_serve() {
+    let fixture = ServingFixture::new();
+    let (mut session_run, session) = fixture.admit(78);
+    // A listener that arrives already advertising a serving phase still cannot
+    // mint a locator: only this launch's own verified handshake qualifies it.
+    let (mut listener, stops) = FakeListener::bound();
+    listener.phase = ListenerPhase::Holding;
+    let key = ServingKey::new(vec![8u8; 32], Digest::of(b"unprobed pin")).expect("key");
+    let owner = session_run.session_owner().expect("owner");
+    let mut launch =
+        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
+            .expect("launch");
+    assert!(
+        matches!(launch.publish(), Err(ServingRefusal::Unqualified)),
+        "a phase flag is not a qualification"
+    );
+    // An unanswered probe qualifies nothing either.
+    assert!(matches!(
+        launch.qualify(
+            &mut FakeProbe {
+                answer: Some(Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                    table: "workspace-session-listener".into(),
+                })),
+                calls: 0,
+            },
+            Duration::from_secs(1)
+        ),
+        Err(ServingRefusal::Unqualified)
+    ));
+    assert!(matches!(launch.publish(), Err(ServingRefusal::Unqualified)));
+    launch
+        .qualify(&mut verifying_probe(), Duration::from_secs(1))
+        .expect("qualified");
+    let lease = launch.publish().expect("published").lease().clone();
+    launch.serve().expect("adopted");
+    assert!(launch.serving());
+    // Releasing the owning run's custody leaves nothing to serve, even though
+    // the listener and key are still here.
+    launch.abandon_owner();
+    assert!(!launch.owned());
+    assert!(!launch.serving());
+    assert!(matches!(launch.serve(), Err(ServingRefusal::WrongSession)));
+    assert!(matches!(
+        launch.publish(),
+        Err(ServingRefusal::WrongSession)
+    ));
+    let probed = launch.liveness(&mut verifying_probe(), Duration::from_secs(1));
+    assert!(
+        matches!(probed, Observed::Absent(_)),
+        "a released owner has no served locator"
+    );
+    assert_eq!(launch.lease(), None);
+    assert_eq!(stops.get(), 0, "abandonment leaves the listener to settle");
+    launch.release();
+    assert_eq!(stops.get(), 1);
+    drop(session_run);
+    let _ = lease;
 }
