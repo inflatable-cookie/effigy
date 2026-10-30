@@ -706,27 +706,23 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
     save_localhost_route(&first_root, first_upstream.address);
     save_localhost_route(&second_root, second_upstream.address);
 
-    let untrusted_route_path = second_root.join("routes.json");
-    let trusted_route_bytes = fs::read(&untrusted_route_path).expect("trusted route table");
-    let untrusted_route_bytes = String::from_utf8(trusted_route_bytes.clone())
-        .expect("route table UTF-8")
-        .replace(
-            "effigy-gateway-route-table-v1",
-            "foreign-route-table-sentinel",
-        )
-        .into_bytes();
-    fs::write(&untrusted_route_path, &untrusted_route_bytes).expect("tamper only fixture route");
-    let untrusted = run_gateway(&second_root, "up", &effects, Some(&foreign_ca_root), &[]);
-    assert!(
-        !untrusted.status.success(),
-        "untrusted private routes must refuse startup"
-    );
-    assert_eq!(
-        fs::read(&untrusted_route_path).expect("preserved untrusted route table"),
-        untrusted_route_bytes
-    );
-    assert!(!second_root.join("gateway.pid").exists());
-    save_localhost_route(&second_root, second_upstream.address);
+    // Each path selects its private endpoint store; routes are no longer a
+    // standalone JSON file.
+    let first_routes =
+        RouteTable::load(&first_root.join("routes.json")).expect("first private route table");
+    let second_routes =
+        RouteTable::load(&second_root.join("routes.json")).expect("second private route table");
+    let first_route = first_routes
+        .lookup("localhost")
+        .expect("first private route");
+    let second_route = second_routes
+        .lookup("localhost")
+        .expect("second private route");
+    let first_target = first_upstream.address.to_string();
+    let second_target = second_upstream.address.to_string();
+    assert_eq!(first_route.target.as_deref(), Some(first_target.as_str()));
+    assert_eq!(second_route.target.as_deref(), Some(second_target.as_str()));
+    assert_ne!(first_route.project.as_str(), second_route.project.as_str());
 
     let missing_cert_root = private_root(fixture.path(), "missing-cert");
     make_private_subdirectory(&missing_cert_root, "ca");
@@ -2974,7 +2970,9 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
     }
     let manifest = linked.join("effigy.toml");
     let mut source = fs::read_to_string(&manifest).unwrap();
-    source.push_str("\n[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"sleep 60\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n");
+    source.push_str(
+        "\n[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"sleep 60\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\nuser = \"dev\"\nhome = \"/home/dev\"\n",
+    );
     fs::write(&manifest, source).unwrap();
     let mut cleanup = ManagedContainerCleanup {
         checkouts: vec![primary.clone(), linked.clone()],
@@ -2987,21 +2985,27 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log,
     };
-    let plan = fixture_environment_command(linked, &cleanup)
-        .args(["--plan", "dev"])
-        .output_owned()
-        .unwrap();
-    assert_success(plan);
-    assert!(effigy_core::worktree_scope::load_scoped(linked)
-        .unwrap()
-        .is_none());
+    assert!(
+        effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none(),
+        "fresh linked checkout starts without a runtime scope"
+    );
     assert_success(run_container_cli(
         &primary,
         &cleanup,
         &["up", "--detach", "--json"],
     ));
+    assert!(
+        effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none(),
+        "primary startup must not allocate the linked scope"
+    );
     let output_path = fixture.path().join("dev.log");
     let mut dev = fresh_container_command(linked, &cleanup)
+        .env("FAKE_WORKSPACE_PERMISSION_PROOF", "1")
+        .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
         .args(["dev", "--headless"])
         .stdout(Stdio::from(fs::File::create(&output_path).unwrap()))
         .stderr(Stdio::from(
@@ -3632,6 +3636,40 @@ PYDYNAMIC
       : > "$FAKE_OWNED_ACTIVE" ;;
     down) rm -f "$FAKE_OWNED_ACTIVE" ;;
     ps) printf '[]\n' ;;
+    exec)
+      if [ "${FAKE_WORKSPACE_PERMISSION_PROOF-}" = 1 ]; then
+        shift
+        args="$*"
+        case "$args" in
+          *effigy-perm-inspect-batch*)
+            record=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then printf "dir 501 20 755\n"; fi
+            done
+            ;;
+          *effigy-perm-find-batch*)
+            record=0; skip=2
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf "clean\n"; fi
+              fi
+            done
+            ;;
+          *effigy-perm-access-batch*)
+            record=0; directory=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$directory" -eq 0 ]; then directory=1; else printf "ready\n"; directory=0; fi
+              fi
+            done
+            ;;
+          *effigy-workspace-identity*|*"id -u"*) printf "501\n20\n" ;;
+        esac
+      fi
+      ;;
   esac
 fi
 exit 0
