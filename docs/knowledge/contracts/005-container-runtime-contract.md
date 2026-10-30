@@ -175,7 +175,10 @@ runtime's own row reports for the primary service, so a declared Compose
 `container_name` is read and reported as it is rather than assumed from the
 project and service names; when the runtime cannot name one, the diagnostic
 describes the environment and its primary service instead of calling the
-environment a container. The restart-policy apply after Compose names its own
+environment a container. The identity is carried from the readiness probe that
+already observed that service, so naming it costs no second runtime read; only
+when the readiness wait observed no services is one inventory read made, under
+its own live step naming that row and its elapsed wait. The restart-policy apply after Compose names its own
 stages as they start: the Compose declaration read, the runtime inventory read,
 then the update, which may not be sent at all when no service qualifies. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none

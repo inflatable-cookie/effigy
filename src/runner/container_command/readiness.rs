@@ -57,6 +57,16 @@ pub(super) enum ReadinessEnd {
     Interrupted,
 }
 
+/// The wait's end and the last complete per-service observation it made.
+///
+/// `observed` is what the runtime last reported, empty when no probe returned
+/// a service list. A caller that needs a service's container identity reads it
+/// from here instead of asking the runtime a second time (effigy#460).
+pub(super) struct ReadinessReport {
+    pub(super) end: ReadinessEnd,
+    pub(super) observed: Vec<ServiceHealth>,
+}
+
 /// One service's own step while it is not yet healthy.
 struct ServiceStep {
     progress: ProgressSource,
@@ -75,7 +85,7 @@ pub(super) fn await_services_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
     deadline: Option<Instant>,
-) -> Result<ReadinessEnd, RunnerError> {
+) -> Result<ReadinessReport, RunnerError> {
     let started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
     let progress = ProgressSource::waiting_for("the environment's services to report healthy");
@@ -95,7 +105,10 @@ pub(super) fn await_services_ready(
                 waiting.step.finish_clear();
             }
             parent.finish_clear();
-            return Ok(ReadinessEnd::Interrupted);
+            return Ok(ReadinessReport {
+                end: ReadinessEnd::Interrupted,
+                observed: last_services,
+            });
         }
         let probe_deadline = probe_budget_deadline(Instant::now(), deadline);
         probes += 1;
@@ -115,7 +128,10 @@ pub(super) fn await_services_ready(
                 return Ok(if observed && last_probe_error.is_some() {
                     readiness_failure(policy, &last_services, last_probe_error, &steps)?
                 } else {
-                    ReadinessEnd::NothingToAwait
+                    ReadinessReport {
+                        end: ReadinessEnd::NothingToAwait,
+                        observed: last_services,
+                    }
                 });
             }
             Ok(services) => {
@@ -137,7 +153,10 @@ pub(super) fn await_services_ready(
                         services.len(),
                         if services.len() == 1 { "" } else { "s" }
                     ));
-                    return Ok(ReadinessEnd::Ready);
+                    return Ok(ReadinessReport {
+                        end: ReadinessEnd::Ready,
+                        observed: services.clone(),
+                    });
                 }
                 // A stack whose unready services all fail the same way will
                 // not fix itself: stop the wait with that diagnosis.
@@ -182,7 +201,10 @@ pub(super) fn await_services_ready(
             waiting.step.finish_clear();
         }
         parent.finish_clear();
-        return Ok(ReadinessEnd::NothingToAwait);
+        return Ok(ReadinessReport {
+            end: ReadinessEnd::NothingToAwait,
+            observed: last_services,
+        });
     }
     readiness_failure(policy, &last_services, last_probe_error, &steps)
 }
@@ -320,13 +342,14 @@ pub(super) fn observation_deadline(policy: &EffectiveContainerPolicy) -> Instant
     Instant::now() + Duration::from_secs(policy.health_timeout_secs.max(1))
 }
 
-/// Build the failure for a wait that ran out of time.
+/// Build the failure for a wait that ran out of time. It always ends the wait
+/// with an error, so its report type only satisfies the caller's signature.
 fn readiness_failure(
     policy: &EffectiveContainerPolicy,
     services: &[ServiceHealth],
     probe_error: Option<String>,
     steps: &BTreeMap<String, ServiceStep>,
-) -> Result<ReadinessEnd, RunnerError> {
+) -> Result<ReadinessReport, RunnerError> {
     let logs = exited_logs(&policy.repo_root, policy, services);
     let diagnostic = readiness_diagnostic(
         &policy.name,

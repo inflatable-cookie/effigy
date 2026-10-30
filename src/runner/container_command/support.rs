@@ -73,23 +73,30 @@ pub(super) fn wait_for_container_ready(
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<&'static str>, RunnerError> {
-    match super::readiness::await_services_ready(
+    let readiness = super::readiness::await_services_ready(
         &policy.repo_root,
         policy,
         stop_requested,
         deadline,
-    )? {
+    )?;
+    match readiness.end {
         super::readiness::ReadinessEnd::Interrupted => return Ok(Some("interrupted")),
         super::readiness::ReadinessEnd::Ready | super::readiness::ReadinessEnd::NothingToAwait => {}
     }
     let Some(check) = policy.health_check.as_deref() else {
         return Ok(None);
     };
-    // The declared check probes one service's endpoint. The runtime's own row
-    // names the container that serves it, so the frames and the refusal name a
-    // container — or, when the runtime cannot name one, the environment and
-    // service honestly (effigy#460).
-    let container = primary_service_container(policy, deadline);
+    // The declared check probes one service's endpoint, and the container that
+    // serves it is the identity the runtime reported for that service: the
+    // readiness probe already observed it, so it is carried from there. When it
+    // was never observed, one live step covers the runtime read that names it,
+    // so a stalled read is never an idle command (effigy#460, Q-017).
+    let container = readiness
+        .observed
+        .iter()
+        .find(|service| service.service == policy.primary_service)
+        .map(|service| service.container.clone())
+        .or_else(|| primary_service_container_observed(policy, deadline));
     let subject = match &container {
         Some(container) => format!("container `{container}`"),
         None => format!(
@@ -112,8 +119,48 @@ pub(super) fn wait_for_container_ready(
 /// `<project>-<service>-1` default for an identity it can read (effigy#460).
 ///
 /// `deadline` is the bring-up's one observation budget, so this read never
-/// grants the runtime a fresh one.
-fn primary_service_container(
+/// grants the runtime a fresh one. The read runs under its own live step: the
+/// readiness wait has already finished, and a runtime that stops answering here
+/// must still say what it is waiting for (Q-017).
+fn primary_service_container_observed(
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+) -> Option<String> {
+    let progress = primary_container_progress(policy);
+    let step = super::steps::TimedStep::live(progress);
+    let container = read_primary_service_container(policy, deadline);
+    match &container {
+        Some(container) => step.succeed(format!(
+            "primary service `{}` runs as `{container}`",
+            policy.primary_service
+        )),
+        // The declared wait names the environment and service instead; this
+        // read's own failure is not the reason the check failed.
+        None => step.finish_clear(),
+    }
+    container
+}
+
+/// The exact wait the identity read is in: the runtime's row for the primary
+/// service, with elapsed time (effigy#460, Q-017).
+fn primary_container_progress(policy: &EffectiveContainerPolicy) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!(
+        "the runtime to name the primary container of `{}`",
+        policy.project_name
+    ));
+    progress.update(
+        format!(
+            "reading the runtime's row for primary service `{}` of `{}`",
+            policy.primary_service, policy.project_name
+        ),
+        None,
+        None,
+    );
+    progress
+}
+
+/// One runtime inventory read, selecting the primary service's own row.
+fn read_primary_service_container(
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
 ) -> Option<String> {
@@ -1661,8 +1708,10 @@ mod tests {
         let inspect = format!(
             "[{{\"Name\":\"/{container}\",\"State\":{{\"Status\":\"running\"}},\"Config\":{{\"Labels\":{{\"com.docker.compose.service\":\"app\"}}}}}}]"
         );
+        let log = root.join("calls");
         let script = format!(
-            "#!/bin/sh\ncase \"$*\" in\n  logs*) printf 'app: GET /health answered 500\\n' ;;\n  inspect*) printf '%s' '{inspect}' ;;\n  *) {listing} ;;\nesac\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  logs*) printf 'app: GET /health answered 500\\n' ;;\n  inspect*) printf '%s' '{inspect}' ;;\n  *) {listing} ;;\nesac\n",
+            log = log.display(),
         );
         for name in ["docker", "colima"] {
             let executable = bin.join(name);
@@ -1693,6 +1742,15 @@ mod tests {
         port
     }
 
+    /// The runtime calls this fixture's fake runtime recorded.
+    fn runtime_calls(root: &Path) -> Vec<String> {
+        std::fs::read_to_string(root.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     #[test]
     fn a_definite_health_refusal_names_the_container_the_runtime_reports() {
         let (_fixture, root) = runtime_fixture(
@@ -1708,13 +1766,19 @@ mod tests {
         policy.repo_root = root.clone();
         policy.health_check = Some(check.clone());
         policy.health_timeout_secs = 60;
-        assert_eq!(
-            super::primary_service_container(&policy, None).as_deref(),
-            Some("ui-custom"),
-            "the runtime's own row names the container, not the Compose default"
-        );
         let error = super::wait_for_container_ready(&policy, None, None)
             .expect_err("a definite 500 is a terminal refusal");
+        // The readiness probe already reported the primary service's container,
+        // so the declared wait carries that identity instead of asking the
+        // runtime a second time: no bare `ps` (the readiness read is `ps
+        // --all`) was issued for it.
+        let calls = runtime_calls(&root);
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("ps ") && !call.contains("--all")),
+            "the identity is carried from the readiness observation: {calls:?}"
+        );
         let message = error.to_string();
         assert!(message.contains("answered HTTP 500"), "{message}");
         assert!(
@@ -1740,6 +1804,28 @@ mod tests {
             details["waiting_on"][0]["last_output"],
             "app: GET /health answered 500"
         );
+        // Without a readiness observation the same identity still comes from
+        // the runtime's row, read under its own live step.
+        assert_eq!(
+            super::primary_service_container_observed(&policy, None).as_deref(),
+            Some("ui-custom"),
+            "the runtime's own row names the container, not the Compose default"
+        );
+    }
+
+    #[test]
+    fn the_primary_container_read_names_the_runtime_row_it_waits_on() {
+        use std::time::Duration;
+
+        // The readiness wait has finished by the time this read starts, so the
+        // frame must name the read itself: a runtime that stalls here is never
+        // an idle command (effigy#460, Q-017).
+        let policy = test_policy();
+        let progress = super::primary_container_progress(&policy);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "reading the runtime's row for primary service `app` of `demo-web-renamed`; waiting for the runtime to name the primary container of `demo-web-renamed`; 12s elapsed"
+        );
     }
 
     #[test]
@@ -1757,7 +1843,10 @@ mod tests {
         policy.repo_root = root.clone();
         policy.health_check = Some(check.clone());
         policy.health_timeout_secs = 60;
-        assert_eq!(super::primary_service_container(&policy, None), None);
+        assert_eq!(
+            super::primary_service_container_observed(&policy, None),
+            None
+        );
         let error = super::wait_for_container_ready(&policy, None, None)
             .expect_err("a definite 500 is a terminal refusal");
         let message = error.to_string();

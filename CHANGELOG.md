@@ -704,9 +704,12 @@ During v0.x, MINOR bumps may include breaking changes.
   container is the identity the
   runtime's own row reports for the service, so an explicit Compose
   `container_name` reads its own logs and is the one the diagnostic and
-  `waiting_on` name; when the runtime cannot name a container, the diagnostic
-  describes the environment and its primary service instead of calling the
-  environment a container. The restart-policy apply that follows Compose names
+  `waiting_on` name. That identity is carried from the readiness probe's own
+  observation, so naming it costs no extra runtime read; a wait that observed
+  no services reads it once, under a live step naming the runtime row it waits
+  on. When the runtime cannot name a container, the diagnostic describes the
+  environment and its primary service instead of calling the environment a
+  container. The restart-policy apply that follows Compose names
   its own stages — the Compose declaration read, the runtime inventory read,
   then the update — for the whole stack and for each shared service, so a
   stalled read never claims an update was sent.

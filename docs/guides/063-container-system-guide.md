@@ -1039,8 +1039,10 @@ the primary container's last output, because waiting cannot change an answer
 the service already gave; a check that closes after a partial status line keeps
 waiting, because it has not answered. The container is the one the runtime's own row names
 for that service, so a declared Compose `container_name` is never guessed from
-the project and service names; when no container can be read, the message names
-the environment and its primary service instead. The restart policy that
+the project and service names; that identity comes from the readiness probe's
+own observation, and only a wait that observed no services reads it again,
+under its own named step. When no container can be read, the message names the
+environment and its primary service instead. The restart policy that
 follows Compose reports its own stages — the Compose declaration read, the
 runtime inventory read, then the update.
 A stopped Compose service is reported with its exit status.
