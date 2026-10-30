@@ -1018,7 +1018,12 @@ SSH clients are never directly signalled by Effigy.
 
 These waits are bounded. A readiness wait polls every service's own health
 check and names it while it waits:
-`waiting for web to report healthy (attempt 4, last: GET / 404)`. A timeout
+`waiting for web to report healthy (attempt 4, last: GET / 404)`. The
+preparation before Compose names the stage it is in — recording the checkout
+identity, resolving the declaration with its ports and loopback, preparing
+render inputs, rendering the stack, preparing mount sources — and Compose's own
+step moves to the `restart: unless-stopped` read as soon as Compose returns, so
+a stalled read never shows a finished call. A timeout
 lists each service that is not ready with its health status, failing streak and
 bounded last check output, plus each exited service's exit code and last log
 line, and then the next commands (`effigy container logs --service <service>`,
@@ -1026,7 +1031,11 @@ line, and then the next commands (`effigy container logs --service <service>`,
 way — every check reporting `command not found`, for example — is diagnosed
 after a few observations rather than waited out. `container status` shows an
 unhealthy service's last check output next to its status. An environment that
-declares `[containers.<name>.health]` keeps that check as its final gate.
+declares `[containers.<name>.health]` keeps that check as its final gate: the
+wait names that probe and its attempt, and a check that answers a definite
+status outside `2xx`/`3xx` is refused at once with the status it observed and
+the container's last output, because waiting cannot change an answer the
+service already gave.
 A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
 Effigy never hand-starts a stopped service and never stops or mutates

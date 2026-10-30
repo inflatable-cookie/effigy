@@ -162,7 +162,11 @@ and `effigy container render` shows it.
 
 Readiness is Running plus the service's own health check. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
-one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
+a definite status line outside `2xx`/`3xx` is refused at once, naming the status
+it observed and the container's own last output, instead of spending the
+declared budget on an answer waiting cannot change (effigy#455); a check that
+does not answer at all keeps the budgeted wait. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays

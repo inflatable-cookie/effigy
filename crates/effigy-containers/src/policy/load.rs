@@ -113,21 +113,68 @@ pub fn load_container_policy_with_workspace(
     .map(|(policy, _)| policy)
 }
 
+/// One preparation stage of a creation-time policy load, in the order the load
+/// performs it. A caller that shows progress names the stage now running, so a
+/// slow mount preparation or a blocked checkout read says what it is doing
+/// instead of holding one fixed label (effigy#460, Q-017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreationPolicyStage {
+    /// Recording this checkout's identity before any scope-dependent policy.
+    CheckoutIdentity,
+    /// Resolving the declaration, its services, published ports and loopback
+    /// allocation.
+    Declaration,
+    /// Preparing render inputs and the owned mount directories they name.
+    RenderInputs,
+    /// Rendering the Compose stack for the resolved generation.
+    Render,
+    /// Preparing the mount sources the stack binds.
+    MountSources,
+}
+
+impl CreationPolicyStage {
+    /// The stage in the operator's words.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::CheckoutIdentity => "recording the checkout identity",
+            Self::Declaration => "resolving the container declaration, ports and loopback",
+            Self::RenderInputs => "preparing render inputs and owned mount directories",
+            Self::Render => "rendering the Compose stack",
+            Self::MountSources => "preparing the mount sources the stack binds",
+        }
+    }
+}
+
 /// Resolve a fresh policy and optional extra-mount decisions for container up.
 /// Prepare the checkout identity before resolving any scope-dependent policy.
 pub fn load_container_policy_for_creation(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    load_container_policy_for_creation_observed(repo_root, requested_name, &mut |_| {})
+}
+
+/// The same load, reporting each preparation stage as it starts.
+pub fn load_container_policy_for_creation_observed(
+    repo_root: &Path,
+    requested_name: Option<&str>,
+    stage: &mut dyn FnMut(CreationPolicyStage),
+) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    stage(CreationPolicyStage::CheckoutIdentity);
     effigy_core::worktree_scope::prepare_checkout_token(repo_root).map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
             "cannot record the checkout identity: {error}"
         ))
     })?;
-    super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
+    stage(CreationPolicyStage::Declaration);
+    let declared = load_container_policy(repo_root, requested_name)?;
+    stage(CreationPolicyStage::RenderInputs);
+    super::render::prepare_inputs(&declared)?;
     let resolved =
         load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;
+    stage(CreationPolicyStage::Render);
     super::render::prepare(&resolved.0)?;
+    stage(CreationPolicyStage::MountSources);
     super::mounts::prepare_container_mount_sources(&resolved.0)?;
     Ok(resolved)
 }

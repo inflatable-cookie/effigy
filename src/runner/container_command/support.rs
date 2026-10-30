@@ -8,9 +8,10 @@ use effigy_catalog::volumes::{
 use effigy_containers::backend::endpoint_backend;
 use effigy_containers::{
     exec::{
-        list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
+        container_last_log_line_for_policy, list_running_compose_containers_for_policy,
+        ContainerExecError, RunningComposeContainer,
     },
-    health::wait_for_ready,
+    health::{wait_for_ready, HealthWaitError},
     EffectiveContainerPolicy,
 };
 use effigy_containers::{
@@ -86,25 +87,69 @@ pub(super) fn wait_for_container_ready(
         policy.health_timeout_secs,
         stop_requested,
     )
-    .map_err(|message| declared_health_refusal(policy, message))
+    .map_err(|error| declared_health_refusal(policy, error))
 }
 
-/// A declared health check that did not turn ready in time, as the wait it
-/// was in: the container, the check and its budget (effigy#460, Q-017).
-fn declared_health_refusal(policy: &EffectiveContainerPolicy, message: String) -> RunnerError {
+/// The container a declared environment health check belongs to: the Compose
+/// project's one primary service container.
+fn declared_health_container(policy: &EffectiveContainerPolicy) -> String {
+    format!("{}-{}-1", policy.project_name, policy.primary_service)
+}
+
+/// The last line the container itself printed, read only when a declared check
+/// did not come ready: the evidence its health check cannot give (effigy#455).
+fn declared_health_tail(policy: &EffectiveContainerPolicy) -> Option<String> {
+    let container = declared_health_container(policy);
+    let line =
+        container_last_log_line_for_policy(&policy.repo_root, policy, &container, 20).ok()?;
+    (!line.is_empty()).then_some(line)
+}
+
+/// A declared health check that did not turn ready, as the wait it was in: the
+/// container, the check, the answer it gave and the container's own last
+/// output (effigy#460, Q-017). A definite answer is terminal, so the refusal
+/// names the status it observed instead of a spent budget (effigy#455).
+fn declared_health_refusal(
+    policy: &EffectiveContainerPolicy,
+    error: HealthWaitError,
+) -> RunnerError {
+    declared_health_refusal_with_tail(policy, error, declared_health_tail(policy))
+}
+
+/// The same refusal with the container's last output already read, so the
+/// message and its machine-readable waits are testable without a runtime.
+fn declared_health_refusal_with_tail(
+    policy: &EffectiveContainerPolicy,
+    error: HealthWaitError,
+    tail: Option<String>,
+) -> RunnerError {
+    let mut message = error.to_string();
+    if let Some(tail) = &tail {
+        message.push_str(&format!("; last container output: {tail}"));
+    }
+    let mut wait = json!({
+        "kind": "health_check",
+        "environment": policy.name,
+        "service": policy.primary_service,
+        "container": declared_health_container(policy),
+        "check": error.check(),
+        "timeout_secs": error.timeout_secs(),
+        "probe": "declared health check",
+        "answer": error.outcome(),
+    });
+    if let Some(status) = error.observed_status() {
+        wait["status"] = json!(status);
+    }
+    if let Some(tail) = &tail {
+        wait["last_output"] = json!(tail);
+    }
     RunnerError::container_wait_refused(
         &policy.name,
         message,
-        serde_json::json!({
+        json!({
             "failure_kind": "container_readiness",
             "readiness": "unverified",
-            "waiting_on": [{
-                "kind": "health_check",
-                "container": policy.name,
-                "check": policy.health_check,
-                "timeout_secs": policy.health_timeout_secs,
-                "probe": "declared health check",
-            }],
+            "waiting_on": [wait],
         }),
     )
 }
@@ -1444,6 +1489,77 @@ mod tests {
         let mut policy = test_policy();
         policy.shared_services = shared_services;
         policy
+    }
+
+    #[test]
+    fn a_definite_health_refusal_names_the_status_the_container_and_its_tail() {
+        let mut policy = test_policy();
+        let check = "http://127.0.0.1:3000/health".to_owned();
+        policy.health_check = Some(check.clone());
+        policy.health_timeout_secs = 60;
+        let error = super::declared_health_refusal_with_tail(
+            &policy,
+            effigy_containers::health::HealthWaitError::StatusMismatch {
+                container: policy.name.clone(),
+                check: check.clone(),
+                status: 500,
+                timeout_secs: 60,
+            },
+            Some("app: GET /health answered 500".to_owned()),
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("answered HTTP 500") && message.contains("status_mismatch"),
+            "{message}"
+        );
+        assert!(
+            message.contains("last container output: app: GET /health answered 500"),
+            "{message}"
+        );
+        let details: serde_json::Value = serde_json::from_str(
+            error
+                .json_error_details()
+                .expect("a declared check refusal carries its wait"),
+        )
+        .expect("the wait details are JSON");
+        assert_eq!(details["failure_kind"], "container_readiness");
+        assert_eq!(details["waiting_on"][0]["kind"], "health_check");
+        assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
+        assert_eq!(details["waiting_on"][0]["status"], 500);
+        assert_eq!(details["waiting_on"][0]["check"], check);
+        assert_eq!(
+            details["waiting_on"][0]["container"],
+            "demo-web-renamed-app-1"
+        );
+        assert_eq!(
+            details["waiting_on"][0]["last_output"],
+            "app: GET /health answered 500"
+        );
+    }
+
+    #[test]
+    fn a_spent_health_budget_keeps_the_old_refusal_without_a_status() {
+        let policy = test_policy();
+        let error = super::declared_health_refusal_with_tail(
+            &policy,
+            effigy_containers::health::HealthWaitError::NotReady {
+                container: policy.name.clone(),
+                check: "tcp://127.0.0.1:9".to_owned(),
+                timeout_secs: 60,
+            },
+            None,
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("did not become ready within 60s"),
+            "{error}"
+        );
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["waiting_on"][0]["answer"], "not_ready");
+        assert!(details["waiting_on"][0].get("status").is_none());
     }
 
     #[test]

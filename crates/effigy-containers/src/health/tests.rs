@@ -60,9 +60,73 @@ fn a_failed_health_wait_returns_its_error_and_draws_no_step_output() {
     // error a caller reports, and that a non-terminal run draws no step text.
     let error = wait_for_ready("web", Some("tcp://127.0.0.1:9"), 0, None)
         .expect_err("an unreachable health check must fail the wait");
+    assert_eq!(error.outcome(), "not_ready");
+    assert!(error.to_string().contains(
+        "container `web` health check `tcp://127.0.0.1:9` did not become ready within 0s"
+    ));
+    assert_eq!(effigy_ui::steps::mode(), effigy_ui::StepMode::Silent);
+}
+
+/// One in-process HTTP answer on a loopback port, so the probe's own reading of
+/// a status line is exercised without a container runtime.
+fn answer_once(status_line: &str) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().expect("local addr").port();
+    let answer = status_line.to_owned();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut request = [0u8; 256];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                format!("{answer}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes(),
+            );
+        }
+    });
+    port
+}
+
+#[test]
+fn a_definite_status_mismatch_ends_the_health_wait_at_once() {
+    let port = answer_once("HTTP/1.1 500 Internal Server Error");
+    let check = format!("http://127.0.0.1:{port}/health");
+    let started = std::time::Instant::now();
+    // A long declared budget: a definite answer must not spend it.
+    let error = wait_for_ready("web", Some(&check), 300, None)
+        .expect_err("a 500 is a definite refusal, not a slow start");
+    assert_eq!(error.observed_status(), Some(500));
+    assert_eq!(error.outcome(), "status_mismatch");
     assert!(
-        error.contains("container `web` health check `tcp://127.0.0.1:9` did not become ready"),
+        error.to_string().contains("answered HTTP 500")
+            && error.to_string().contains("status_mismatch"),
         "{error}"
     );
-    assert_eq!(effigy_ui::steps::mode(), effigy_ui::StepMode::Silent);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a definite status is terminal, not a 300s wait: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn an_http_health_check_keeps_the_status_it_read() {
+    assert_eq!(http_status("HTTP/1.1 200 OK"), Some(200));
+    assert_eq!(http_status("HTTP/1.0 302 Found"), Some(302));
+    assert_eq!(http_status("HTTP/1.1 404 Not Found"), Some(404));
+    assert_eq!(http_status("HTTP/1.1 500 Internal Server Error"), Some(500));
+    // No definite status line: an incomplete or foreign answer stays in the
+    // budgeted wait instead of becoming a refusal.
+    assert_eq!(http_status("HTTP/1.1"), None);
+    assert_eq!(http_status("HTTP/1.1 50"), None);
+    assert_eq!(http_status("HTTP/1.1 abc nope"), None);
+    assert_eq!(http_status("SSH-2.0-OpenSSH_9.0"), None);
+}
+
+#[test]
+fn a_probe_with_no_answer_is_unanswered_not_a_mismatch() {
+    assert_eq!(
+        probe_health_detail("tcp://127.0.0.1:9"),
+        HealthProbe::Unanswered
+    );
+    assert!(!probe_health("tcp://127.0.0.1:9"));
 }

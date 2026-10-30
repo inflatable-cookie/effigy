@@ -5,7 +5,7 @@
 //! runner-specific phase helper: a step around one piece of work that ends
 //! with its own failure sentence.
 
-pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};
+pub(super) use effigy_containers::exec::{ComposeSteps, TimedStep};
 pub(super) use effigy_ui::steps::ProgressSource;
 
 /// Run one phase under a live step driven by `progress`, ending it with

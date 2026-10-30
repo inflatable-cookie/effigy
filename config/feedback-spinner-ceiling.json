@@ -114,24 +114,6 @@
     44
   ],
   [
-    "src/runner/container_command/lifecycle.rs",
-    420,
-    "let settling = steps::phase(\"settling the environment\");",
-    27
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    487,
-    "let ports_step = steps::phase(\"preparing ports and loopback\");",
-    29
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    8,
-    "pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};",
-    42
-  ],
-  [
     "src/runner/execute/sequence_run.rs",
     471,
     "let step = effigy_ui::steps::step(&progress);",

@@ -47,7 +47,7 @@ use effigy_containers::{
         parse_compose_step_event, run_compose_invocation_streaming_with_env,
         shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
     },
-    load_container_policy, load_container_policy_for_creation, up_detached_report,
+    load_container_policy, load_container_policy_for_creation_observed, up_detached_report,
     validate_compose_backend_runtime, validate_container_policy,
     workspace_extra_mount_decision_lines, EffectiveAttachMode, EffectiveContainerPolicy,
     WorkspaceExtraMountDecision,
@@ -417,14 +417,11 @@ fn run_container_up_inner(
     // Activation promotes the generation and attaches any requesting runs.
     // The stage keeps its documented name (closed JSON vocabulary).
     operation.stage = Some("persistent_owner");
-    let settling = steps::phase("settling the environment");
-    match environment::activate(&bring_up, &plan.policy, holders) {
-        Ok(()) => settling.succeed("environment settled"),
-        Err(error) => {
-            settling.fail(error.to_string());
-            return Err(error);
-        }
-    }
+    // The environment transition already owns a live step (`EnvRun`, #461): it
+    // names the owner gate it waits behind, the record it reads and the holders
+    // it attaches, and ends with the settle. A second fixed label here would
+    // only repeat that wait with no state of its own (effigy#460, Q-017).
+    environment::activate(&bring_up, &plan.policy, holders)?;
 
     if !integrations.managed_host_listener_failures.is_empty() {
         // The environment is settled and every verified route is published;
@@ -484,14 +481,20 @@ fn prepare_container_up(
                 }));
     operation.active = declared_detached;
     operation.preparation_step = Some("policy");
-    let ports_step = steps::phase("preparing ports and loopback");
-    // One render per `up`: the creation load allocates ports, prepares every
-    // mount source, renders the generation once and reports the extra-mount
-    // decisions it recorded. Every later stage uses this policy.
+    // One render per `up`: the creation load records the checkout identity,
+    // resolves the declaration and its ports and loopback, prepares render
+    // inputs, renders the generation once and prepares every mount source it
+    // binds. Each of those can take time, so the step follows the stage the
+    // load is in rather than holding one fixed label (effigy#460, Q-017).
+    let preparation =
+        ProgressSource::waiting_for("the container policy, its ports and mount sources");
+    let ports_step = TimedStep::live(preparation.clone());
     let (policy, workspace_mount_decisions) =
-        match load_container_policy_for_creation(repo_root, name) {
+        match load_container_policy_for_creation_observed(repo_root, name, &mut |stage| {
+            preparation.update(stage.description(), None, None)
+        }) {
             Ok(prepared) => {
-                ports_step.succeed("ports and loopback prepared");
+                ports_step.succeed("policy, ports and mount sources prepared");
                 prepared
             }
             Err(error) => {
@@ -602,10 +605,16 @@ fn run_container_up_compose(
     );
     match output {
         Ok(_) => {
-            // The stack is started, so the runtime can be told to keep it up
-            // without racing Compose's create/start (effigy#383). This read is
-            // the first of the bring-up's observations, so it starts the one
-            // budget they all share (effigy#411).
+            // Compose has returned, but the runtime work is not over: the stack
+            // is told to keep its services running. Advance the step to that
+            // operation and the read it waits on before entering it, so a
+            // stalled read never shows the finished Compose call
+            // (effigy#460, Q-017).
+            restart_policy_source(&progress, &plan.policy.name);
+            // The runtime can be told to keep it up without racing Compose's
+            // create/start (effigy#383). This read is the first of the
+            // bring-up's observations, so it starts the one budget they all
+            // share (effigy#411).
             let deadline = super::readiness::observation_deadline(&plan.policy);
             observation.set(Some(deadline));
             effigy_containers::policy::restart::apply_after_start(
@@ -642,6 +651,15 @@ fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
     let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
     progress.update(format!("starting the `{stack}` stack"), None, None);
     progress
+}
+
+/// The same step once Compose has returned and the runtime is asked to keep
+/// the stack's services running: the operation now in flight and the exact
+/// read it waits on, with elapsed time (effigy#460, Q-017).
+fn restart_policy_source(progress: &ProgressSource, stack: &str) {
+    progress.now_waiting_for(format!(
+        "the runtime to apply `restart: unless-stopped` to the services of `{stack}` that declare none"
+    ));
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
@@ -1603,7 +1621,8 @@ mod tests {
         annotate_workspace_extra_mount_decisions, detached_activation_failure,
         detached_activation_identity, ensure_up_workspace_permissions,
         gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
-        run_container_down_command, sanitized_failure_cause, DetachedOperationState, RunnerError,
+        run_container_down_command, sanitized_failure_cause, DetachedOperationState,
+        ProgressSource, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -1613,7 +1632,8 @@ mod tests {
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
-        ContainerAction, EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
+        ContainerAction, CreationPolicyStage, EffectiveComposeSource, EffectiveContainerPolicy,
+        SharedServiceBinding,
     };
     use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
     use effigy_manifest::{
@@ -1761,6 +1781,53 @@ mod tests {
             progress.frame_at(Duration::from_secs(20)),
             "starting the `web` stack; last: starting web; 20s elapsed"
         );
+        // Compose has returned and the runtime is now applying the restart
+        // policy: the frame names that operation and its wait, never the
+        // finished Compose call or its last event (effigy#460, Q-017).
+        super::restart_policy_source(&progress, "web");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(30)),
+            "waiting for the runtime to apply `restart: unless-stopped` to the services of `web` that declare none; 30s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_policy_load_frame_names_the_preparation_stage_now_running() {
+        use std::time::Duration;
+
+        let progress =
+            ProgressSource::waiting_for("the container policy, its ports and mount sources");
+        // The first frame names the exact wait before any stage is reported.
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(1)),
+            "waiting for the container policy, its ports and mount sources; 1s elapsed"
+        );
+        // Each preparation stage names itself as the load reaches it.
+        for (stage, expected) in [
+            (
+                CreationPolicyStage::CheckoutIdentity,
+                "recording the checkout identity",
+            ),
+            (
+                CreationPolicyStage::Declaration,
+                "resolving the container declaration, ports and loopback",
+            ),
+            (
+                CreationPolicyStage::RenderInputs,
+                "preparing render inputs and owned mount directories",
+            ),
+            (CreationPolicyStage::Render, "rendering the Compose stack"),
+            (
+                CreationPolicyStage::MountSources,
+                "preparing the mount sources the stack binds",
+            ),
+        ] {
+            progress.update(stage.description(), None, None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(9)),
+                format!("{expected}; waiting for the container policy, its ports and mount sources; 9s elapsed")
+            );
+        }
     }
 
     #[test]
