@@ -9,7 +9,7 @@
 //! state separated by container profile. Shutdown withdraws the route before
 //! stopping the recorded child process group.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;

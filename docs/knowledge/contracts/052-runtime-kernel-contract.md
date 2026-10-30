@@ -1326,7 +1326,16 @@ existing follower path. Each successful append syncs its bytes before any
 queue or diagnostic-tail fanout. A failed append poisons the destination and
 reports truncated capture; unwritten bytes are never acknowledged to those
 consumers. A partial failed append may leave an unacknowledged plain suffix on
-disk. This primitive does not by itself qualify supervisor message appends,
+disk. Style primitives and the existing ANSI line/parser/SGR implementation live
+in `effigy-core::terminal_text`; TUI's ANSI facade reuses them. Custody's
+writer sanitizer records SGR as style data with a bounded parameter buffer.
+The same two-pass redactor carries those tags and clears style on replacement
+bytes. `OwnedProcess::take_styled_output` drains a byte-bounded queue of
+`StyledChunk` values with canonical byte offsets and an explicit truncation
+flag. Plain capture waits for a complete UTF-8 scalar after redaction before
+persisting or fanning out a slice, so a crash cannot turn an incomplete scalar
+into a replacement character in a plain reader. Styled plain producers refuse
+non-UTF-8 secrets. This primitive does not by itself qualify supervisor message appends,
 secret provenance or live styled taps against the
 [managed producer colour boundary](../architecture/product-guardrails.md#human-facing-feedback).
 

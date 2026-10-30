@@ -240,6 +240,10 @@ pub(crate) struct ProcessCore {
     /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
     merged_log: Option<MergedLog>,
+    styled: VecDeque<effigy_core::terminal_text::StyledChunk>,
+    styled_bytes: usize,
+    styled_truncated: bool,
+    styled_offset: u64,
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
     /// Each is the redacted projection of its own stream over the merged,
@@ -255,6 +259,7 @@ pub(crate) struct ProcessCore {
     /// Sanitize then redact, once, over merged arrival order: every sink below
     /// (per-stream logs, queues, merged output, tail) is a projection of it.
     pipeline: OutputPipeline,
+    plain_pending: Vec<(OutputTag, u8)>,
     /// The canonical captured tail: the last bytes of that same merged,
     /// sanitized and redacted arrival order. A reader never re-groups streams
     /// to rebuild it.
@@ -268,6 +273,12 @@ pub(crate) struct ProcessCore {
     pty: bool,
     registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
 }
+/// A bounded live projection of canonical output, with explicit queue loss.
+#[derive(Debug, Clone, Default)]
+pub struct StyledOutput {
+    pub chunks: Vec<effigy_core::terminal_text::StyledChunk>,
+    pub truncated: bool,
+}
 /// The one path from a secret-bearing process's merged raw output to every
 /// sink (K12): terminal controls are removed first, so the redactor sees
 /// exactly the visible bytes a front end would show, then redaction runs.
@@ -279,7 +290,7 @@ struct OutputPipeline {
     /// `Some` only for a secret-bearing process. An ordinary process keeps its
     /// terminal colour, exactly as before this seam existed.
     sanitizer: Option<terminal::TerminalSanitizer>,
-    redactor: Redactor,
+    redactor: Redactor<OutputTag>,
     plain: bool,
     /// One redactor per stream, present only for a secret-bearing process.
     ///
@@ -323,30 +334,44 @@ impl OutputPipeline {
                     Redactor::new(secrets.clone()),
                 ]
             }),
-            redactor: Redactor::new(secrets),
+            redactor: Redactor::with_tags(secrets),
         }
     }
     /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
     /// each byte's origin tag.
-    fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+    fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(OutputTag, u8)> {
         match self.sanitizer.as_mut() {
             Some(sanitizer) => {
-                let mut visible = sanitizer.push_tagged(bytes, eof);
+                let mut visible = sanitizer.push_styled(bytes, eof);
                 if self.plain {
                     visible.retain(|(_, byte)| *byte != b'\r');
                 }
                 // Empty is not a no-op: EOF still flushes the redactor.
                 self.redactor.push_tagged(&visible, eof)
             }
-            None => self.redactor.push_tagged(bytes, eof),
+            None => {
+                let tagged: Vec<_> = bytes
+                    .iter()
+                    .map(|(stream, byte)| {
+                        (
+                            OutputTag {
+                                stream: *stream,
+                                ..OutputTag::default()
+                            },
+                            *byte,
+                        )
+                    })
+                    .collect();
+                self.redactor.push_tagged(&tagged, eof)
+            }
         }
     }
     /// Each stream's own safe projection of one merged result. A stream sink
     /// is only ever written from this, never from a filtered merged slice.
-    fn project(&mut self, merged: &[(u8, u8)], eof: bool) -> [Vec<u8>; 2] {
+    fn project(&mut self, merged: &[(OutputTag, u8)], eof: bool) -> [Vec<u8>; 2] {
         let mut raw: [Vec<u8>; 2] = Default::default();
         for &(tag, byte) in merged {
-            if let Some(part) = raw.get_mut(usize::from(tag)) {
+            if let Some(part) = raw.get_mut(usize::from(tag.stream)) {
                 part.push(byte);
             }
         }
@@ -362,20 +387,41 @@ impl OutputPipeline {
         raw
     }
 }
-pub(crate) struct Redactor {
+pub(crate) trait RedactionTag: Copy {
+    fn masked(self) -> Self;
+}
+impl RedactionTag for u8 {
+    fn masked(self) -> Self {
+        self
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct OutputTag {
+    stream: u8,
+    style: effigy_core::terminal_text::Style,
+}
+impl RedactionTag for OutputTag {
+    fn masked(self) -> Self {
+        Self {
+            stream: self.stream,
+            ..Self::default()
+        }
+    }
+}
+pub(crate) struct Redactor<T: RedactionTag = u8> {
     /// `None` when no reader-safe byte is absent from every secret, so no
     /// replacement can be emitted that a reader cannot join across: nothing is
     /// redacted and the capture stops (`blocked`) rather than leak.
-    display: Option<RedactionPass>,
-    final_check: Option<RedactionPass>,
+    display: Option<RedactionPass<T>>,
+    final_check: Option<RedactionPass<T>>,
 }
-impl std::fmt::Debug for Redactor {
+impl<T: RedactionTag> std::fmt::Debug for Redactor<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Redactor([REDACTED])")
     }
 }
-impl Redactor {
-    pub(crate) fn new(mut secrets: Vec<Vec<u8>>) -> Self {
+impl<T: RedactionTag> Redactor<T> {
+    fn with_tags(mut secrets: Vec<Vec<u8>>) -> Self {
         // A PTY's output processing expands LF to CRLF. Match that display
         // representation too, before it reaches logs, tails or a front end.
         let terminal = secrets
@@ -426,23 +472,29 @@ impl Redactor {
     pub(crate) fn blocked(&self) -> bool {
         self.display.is_none()
     }
-    pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
-        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
-        self.push_tagged(&tagged, eof)
-            .into_iter()
-            .map(|(_, byte)| byte)
-            .collect()
-    }
     /// Redacts `(stream, byte)` pairs in arrival order. A replacement takes
     /// the stream of the secret's first byte, so a secret split across
     /// stdout and stderr is redacted whole and attributed to one stream.
-    pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+    pub(crate) fn push_tagged(&mut self, bytes: &[(T, u8)], eof: bool) -> Vec<(T, u8)> {
         let (Some(display), Some(final_check)) = (self.display.as_mut(), self.final_check.as_mut())
         else {
             return Vec::new();
         };
         let shown = display.push(bytes, eof);
         final_check.push(&shown, eof)
+    }
+}
+
+impl Redactor<u8> {
+    pub(crate) fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self::with_tags(secrets)
+    }
+    pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
+        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
+        self.push_tagged(&tagged, eof)
+            .into_iter()
+            .map(|(_, byte)| byte)
+            .collect()
     }
 }
 
@@ -460,12 +512,12 @@ fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
         .chain((0x20..=0x7e).filter(|byte| !PREFERRED.contains(byte)))
         .find(|byte| absent(*byte))
 }
-struct RedactionPass {
+struct RedactionPass<T: RedactionTag> {
     secrets: Vec<Vec<u8>>,
-    pending: Vec<(u8, u8)>,
+    pending: Vec<(T, u8)>,
     replacement: Vec<u8>,
 }
-impl RedactionPass {
+impl<T: RedactionTag> RedactionPass<T> {
     fn new(mut secrets: Vec<Vec<u8>>, replacement: Vec<u8>) -> Self {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         Self {
@@ -474,7 +526,7 @@ impl RedactionPass {
             replacement,
         }
     }
-    fn push(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+    fn push(&mut self, bytes: &[(T, u8)], eof: bool) -> Vec<(T, u8)> {
         self.pending.extend_from_slice(bytes);
         let keep = self.secrets.iter().map(Vec::len).max().unwrap_or(1);
         let mut out = Vec::new();
@@ -484,7 +536,7 @@ impl RedactionPass {
             if let Some(secret) = self.secrets.iter().find(|s| {
                 rest.len() >= s.len() && rest.iter().zip(s.iter()).all(|((_, b), c)| b == c)
             }) {
-                let stream = rest[0].0;
+                let stream = rest[0].0.masked();
                 out.extend(self.replacement.iter().map(|byte| (stream, *byte)));
                 pos += secret.len();
             } else {
@@ -834,6 +886,15 @@ impl Custody {
                 "merged logs require captured pipes".into(),
             ));
         }
+        if spec
+            .validated_secrets()?
+            .iter()
+            .any(|secret| std::str::from_utf8(secret).is_err())
+        {
+            return Err(SpawnError::Refused(
+                "plain styled capture requires UTF-8 secrets".into(),
+            ));
+        }
         Self::spawn_inner(
             run,
             spec,
@@ -952,7 +1013,11 @@ impl Custody {
                 receipt: receipt.clone(),
                 anchor,
                 logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
+                styled_offset: merged_log.as_ref().map_or(0, MergedLog::committed_offset),
                 merged_log,
+                styled: VecDeque::new(),
+                styled_bytes: 0,
+                styled_truncated: false,
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
@@ -960,6 +1025,7 @@ impl Custody {
                 stderr: Some(stderr),
                 stdin,
                 pipeline,
+                plain_pending: Vec::new(),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -1025,6 +1091,16 @@ impl OwnedProcess {
         lock(&self.core).output.drain(..).collect()
     }
     /// Drains the separately redacted stdout and stderr queues.
+    /// Drain bounded, already-redacted style data. A gap is explicit; a front
+    /// may use the canonical plain file to recover it without interpreting ANSI.
+    pub fn take_styled_output(&self) -> StyledOutput {
+        let mut core = lock(&self.core);
+        core.styled_bytes = 0;
+        StyledOutput {
+            chunks: core.styled.drain(..).collect(),
+            truncated: std::mem::take(&mut core.styled_truncated),
+        }
+    }
     pub fn take_stream_output(&self) -> (Vec<u8>, Vec<u8>) {
         let mut core = lock(&self.core);
         let [stdout, stderr] = &mut core.streams;
@@ -1116,7 +1192,29 @@ impl ProcessCore {
             return;
         }
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
-        let clean = self.pipeline.push_tagged(&tagged, eof);
+        let mut clean = self.pipeline.push_tagged(&tagged, eof);
+        if self.pipeline.plain {
+            // Redaction's bounded lookahead can split a validated scalar at a
+            // chunk boundary. A crash must not leave an invalid UTF-8 suffix
+            // that a plain reader could replace into a known secret.
+            self.plain_pending.append(&mut clean);
+            let bytes: Vec<_> = self.plain_pending.iter().map(|(_, byte)| *byte).collect();
+            let complete = match std::str::from_utf8(&bytes) {
+                Ok(_) => bytes.len(),
+                Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                Err(_) => {
+                    self.capture = CaptureState::Truncated("invalid plain capture text".into());
+                    self.plain_pending.clear();
+                    return;
+                }
+            };
+            let remainder = self.plain_pending.split_off(complete);
+            clean = std::mem::replace(&mut self.plain_pending, remainder);
+            if eof && !self.plain_pending.is_empty() {
+                self.capture = CaptureState::Truncated("incomplete plain capture text".into());
+                self.plain_pending.clear();
+            }
+        }
         if let Some(log) = self.merged_log.as_mut() {
             let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
             if log.append(&bytes).is_err() {
@@ -1125,6 +1223,9 @@ impl ProcessCore {
                 // live consumer. A failed destination remains failed.
                 return;
             }
+        }
+        if self.pipeline.plain && !clean.is_empty() {
+            self.queue_styles(&clean);
         }
         // A stream's own sink is a projection, so it is written from its own
         // redacted projection and never from a filtered merged slice: removing
@@ -1158,6 +1259,40 @@ impl ProcessCore {
         self.tail.extend(clean.into_iter().map(|(_, byte)| byte));
         while self.tail.len() > self.tail_max {
             self.tail.pop_front();
+        }
+    }
+    fn queue_styles(&mut self, clean: &[(OutputTag, u8)]) {
+        use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+        let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
+        let complete = clean.len();
+        let mut spans = Vec::new();
+        let mut begin = 0;
+        while begin < clean.len() {
+            let style = clean[begin].0.style;
+            let mut end = begin + 1;
+            while end < clean.len() && clean[end].0.style == style {
+                end += 1;
+            }
+            // The writer parser gives every byte of one scalar the same style.
+            let text = std::str::from_utf8(&bytes[begin..end]).expect("validated scalar styles");
+            spans.push(StyledSpan {
+                text: text.to_owned(),
+                style,
+            });
+            begin = end;
+        }
+        let offset = self.styled_offset;
+        self.styled_offset = self.styled_offset.saturating_add(complete as u64);
+        self.styled_bytes = self.styled_bytes.saturating_add(complete);
+        self.styled.push_back(StyledChunk { offset, spans });
+        while self.styled_bytes > self.queue_max {
+            let Some(expired) = self.styled.pop_front() else {
+                break;
+            };
+            self.styled_bytes = self
+                .styled_bytes
+                .saturating_sub(expired.spans.iter().map(|span| span.text.len()).sum());
+            self.styled_truncated = true;
         }
     }
     fn drain(&mut self) {

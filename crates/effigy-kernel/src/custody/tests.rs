@@ -1292,6 +1292,10 @@ impl FakeCapture {
             anchor: None,
             logs,
             merged_log: None,
+            styled: VecDeque::new(),
+            styled_bytes: 0,
+            styled_truncated: false,
+            styled_offset: 0,
             output: VecDeque::new(),
             streams: [VecDeque::new(), VecDeque::new()],
             queue_max: 4096,
@@ -1299,6 +1303,7 @@ impl FakeCapture {
             stderr: None,
             stdin: None,
             pipeline: OutputPipeline::new(secrets),
+            plain_pending: Vec::new(),
             tail: VecDeque::new(),
             tail_max: 4096,
             capture: CaptureState::Complete,
@@ -2121,5 +2126,59 @@ fn merged_append_failure_withholds_all_capture_fanout() {
             .unwrap()
             .committed_offset(),
         0
+    );
+}
+
+#[test]
+fn writer_styles_are_redacted_and_masked_ranges_lose_style() {
+    use effigy_core::terminal_text::Style;
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.merged_log = Some(MergedLog::open(&path).unwrap());
+        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
+    }
+    for byte in b"\x1b[32mready\x1b[31m super\x1b[1msecret\x1b[0m caf\xc3\xa9\n" {
+        capture.feed(STD, &[*byte]);
+    }
+    capture.close();
+    let core = lock(&capture.core);
+    let spans: Vec<_> = core.styled.iter().flat_map(|chunk| &chunk.spans).collect();
+    let visible: String = spans.iter().map(|span| span.text.as_str()).collect();
+    assert_eq!(visible, "ready [REDACTED] café\n");
+    assert_eq!(visible.as_bytes(), std::fs::read(&path).unwrap());
+    assert!(spans
+        .iter()
+        .any(|span| span.text.contains('r') && span.style != Style::default()));
+    let masked: String = spans
+        .iter()
+        .filter(|span| span.style == Style::default())
+        .map(|span| span.text.as_str())
+        .collect();
+    assert!(masked.contains("[REDACTED]"));
+}
+
+#[test]
+fn every_durable_plain_prefix_is_complete_utf8() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.merged_log = Some(MergedLog::open(&path).unwrap());
+        core.pipeline = OutputPipeline::for_capture(vec!["x�".as_bytes().to_vec()], true);
+    }
+    for byte in "xé is visible and safe\n".as_bytes() {
+        capture.feed(STD, &[*byte]);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(std::str::from_utf8(&bytes).is_ok());
+        assert!(!String::from_utf8_lossy(&bytes).contains("x�"));
+    }
+    capture.close();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        "xé is visible and safe\n".as_bytes()
     );
 }

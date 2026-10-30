@@ -3,6 +3,10 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+"check:managed:output" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-core -p effigy-kernel -p effigy-tui --all-targets --features effigy-kernel/fault-injection", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-core -p effigy-kernel -p effigy-tui --all-targets --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 900000 },
+] }
 # Every selector that runs Cargo goes through `scripts/oxide-selector.sh`, which
 # leases Oxide's shared slot pool and keeps Rust intermediates off the internal
 # SSD. Its one escape is `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, which

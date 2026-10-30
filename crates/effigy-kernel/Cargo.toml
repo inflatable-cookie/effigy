@@ -11,6 +11,7 @@ description = "Synchronous runtime foundation for Effigy engines"
 fault-injection = []
 
 [dependencies]
+effigy-core = { path = "../effigy-core" }
 effigy-ui = { path = "../effigy-ui" }
 libc = "0.2"
 rusqlite = { version = "0.40", features = ["bundled"] }
