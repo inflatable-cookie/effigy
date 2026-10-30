@@ -175,11 +175,65 @@ fn read_primary_service_container(
         .map(|row| row.container_name)
 }
 
+/// How many trailing log lines the failed container is read for.
+const DECLARED_HEALTH_LOG_TAIL: u32 = 20;
+
 /// The last line the container itself printed, read only when a declared check
 /// did not come ready: the evidence its health check cannot give (effigy#455).
+///
+/// The read is a bounded runtime call of its own (up to 30s), and the declared
+/// check's step has already ended, so it runs under a live step that names the
+/// container it reads and reports when the runtime does not answer
+/// (effigy#460, Q-017).
 fn declared_health_tail(policy: &EffectiveContainerPolicy, container: &str) -> Option<String> {
-    let line = container_last_log_line_for_policy(&policy.repo_root, policy, container, 20).ok()?;
-    (!line.is_empty()).then_some(line)
+    let step = super::steps::TimedStep::live(declared_health_tail_progress(container));
+    match container_last_log_line_for_policy(
+        &policy.repo_root,
+        policy,
+        container,
+        DECLARED_HEALTH_LOG_TAIL,
+    ) {
+        Ok(line) if !line.is_empty() => {
+            step.succeed(format!("read the last line `{container}` printed"));
+            Some(line)
+        }
+        // The container printed nothing this read kept; the refusal still
+        // carries the status it observed.
+        Ok(_) => {
+            step.finish_clear();
+            None
+        }
+        Err(error) => {
+            step.fail(format!(
+                "the runtime did not answer the log read for `{container}`: {}",
+                first_line(&error.to_string())
+            ));
+            None
+        }
+    }
+}
+
+/// The exact wait the log tail is in: the runtime's own log read for the
+/// container that failed, with elapsed time (effigy#460, Q-017).
+fn declared_health_tail_progress(container: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("the runtime's log tail of `{container}`"));
+    progress.update(
+        format!("reading the last line `{container}` printed"),
+        None,
+        None,
+    );
+    progress
+}
+
+/// The first line of a runtime error, bounded so one frame stays one line.
+fn first_line(text: &str) -> String {
+    const LIMIT: usize = 160;
+    let line = text.lines().next().unwrap_or_default();
+    if line.chars().count() <= LIMIT {
+        return line.to_owned();
+    }
+    let cut: String = line.chars().take(LIMIT).collect();
+    format!("{cut}…")
 }
 
 /// A declared health check that did not turn ready, as the wait it was in: the
@@ -1686,6 +1740,7 @@ mod tests {
     fn runtime_fixture(
         name: &str,
         rows: bool,
+        logs: bool,
         container: &str,
         project: &str,
     ) -> (effigy_test_support::Fixture, PathBuf) {
@@ -1709,8 +1764,13 @@ mod tests {
             "[{{\"Name\":\"/{container}\",\"State\":{{\"Status\":\"running\"}},\"Config\":{{\"Labels\":{{\"com.docker.compose.service\":\"app\"}}}}}}]"
         );
         let log = root.join("calls");
+        let logs_answer = if logs {
+            "printf 'app: GET /health answered 500\\n'".to_owned()
+        } else {
+            "echo 'runtime logs unavailable' >&2; exit 1".to_owned()
+        };
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  logs*) printf 'app: GET /health answered 500\\n' ;;\n  inspect*) printf '%s' '{inspect}' ;;\n  *) {listing} ;;\nesac\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  logs*) {logs_answer} ;;\n  inspect*) printf '%s' '{inspect}' ;;\n  *) {listing} ;;\nesac\n",
             log = log.display(),
         );
         for name in ["docker", "colima"] {
@@ -1755,6 +1815,7 @@ mod tests {
     fn a_definite_health_refusal_names_the_container_the_runtime_reports() {
         let (_fixture, root) = runtime_fixture(
             "effigy-declared-health-container-",
+            true,
             true,
             "ui-custom",
             "demo-web-renamed",
@@ -1829,10 +1890,68 @@ mod tests {
     }
 
     #[test]
+    fn the_declared_health_log_read_names_the_container_and_its_elapsed_wait() {
+        use std::time::Duration;
+
+        // The declared check's own step has ended by the time the log tail is
+        // read, so the tail names the container it reads: a runtime that stalls
+        // here is never an idle command (effigy#460, Q-017).
+        let progress = super::declared_health_tail_progress("ui-custom");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "reading the last line `ui-custom` printed; waiting for the runtime's log tail of `ui-custom`; 12s elapsed"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_log_read_leaves_the_refusal_without_a_tail() {
+        let (_fixture, root) = runtime_fixture(
+            "effigy-declared-health-no-logs-",
+            true,
+            false,
+            "ui-custom",
+            "demo-web-renamed",
+        );
+        let _env = runtime_env_for(&root);
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        policy.health_check = Some("http://127.0.0.1:3000/health".to_owned());
+        policy.health_timeout_secs = 60;
+        assert_eq!(
+            super::declared_health_tail(&policy, "ui-custom"),
+            None,
+            "a log read the runtime does not answer yields no tail"
+        );
+        let error = super::declared_health_refusal(
+            &policy,
+            effigy_containers::health::HealthWaitError::StatusMismatch {
+                subject: "container `ui-custom`".to_owned(),
+                check: "http://127.0.0.1:3000/health".to_owned(),
+                status: 500,
+                timeout_secs: 60,
+            },
+            Some("ui-custom".to_owned()),
+        );
+        let message = error.to_string();
+        assert!(message.contains("answered HTTP 500"), "{message}");
+        assert!(!message.contains("last container output"), "{message}");
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
+        assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
+        assert!(
+            details["waiting_on"][0].get("last_output").is_none(),
+            "the wait claims no tail it did not read: {details}"
+        );
+    }
+
+    #[test]
     fn a_health_refusal_without_a_container_names_the_environment_and_service() {
         let (_fixture, root) = runtime_fixture(
             "effigy-declared-health-no-container-",
             false,
+            true,
             "ui-custom",
             "demo-web-renamed",
         );

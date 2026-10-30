@@ -178,7 +178,10 @@ describes the environment and its primary service instead of calling the
 environment a container. The identity is carried from the readiness probe that
 already observed that service, so naming it costs no second runtime read; only
 when the readiness wait observed no services is one inventory read made, under
-its own live step naming that row and its elapsed wait. The restart-policy apply after Compose names its own
+its own live step naming that row and its elapsed wait. The failed container's
+log tail is the same kind of bounded runtime read, so it too runs under its own
+live step, naming the container it reads and reporting when the runtime does
+not answer it; the refusal then carries no tail rather than an unread one. The restart-policy apply after Compose names its own
 stages as they start: the Compose declaration read, the runtime inventory read,
 then the update, which may not be sent at all when no service qualifies. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none

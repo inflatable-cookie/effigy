@@ -707,7 +707,8 @@ During v0.x, MINOR bumps may include breaking changes.
   `waiting_on` name. That identity is carried from the readiness probe's own
   observation, so naming it costs no extra runtime read; a wait that observed
   no services reads it once, under a live step naming the runtime row it waits
-  on. When the runtime cannot name a container, the diagnostic describes the
+  on; the failed container's log tail is read under its own named step too, and
+  a log read the runtime does not answer is reported as unavailable. When the runtime cannot name a container, the diagnostic describes the
   environment and its primary service instead of calling the environment a
   container. The restart-policy apply that follows Compose names
   its own stages — the Compose declaration read, the runtime inventory read,

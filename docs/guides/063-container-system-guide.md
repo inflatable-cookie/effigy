@@ -1041,7 +1041,9 @@ waiting, because it has not answered. The container is the one the runtime's own
 for that service, so a declared Compose `container_name` is never guessed from
 the project and service names; that identity comes from the readiness probe's
 own observation, and only a wait that observed no services reads it again,
-under its own named step. When no container can be read, the message names the
+under its own named step. The failed container's log tail is read under a step
+that names that container, and a log read the runtime does not answer is
+reported as unavailable. When no container can be read, the message names the
 environment and its primary service instead. The restart policy that
 follows Compose reports its own stages — the Compose declaration read, the
 runtime inventory read, then the update.
