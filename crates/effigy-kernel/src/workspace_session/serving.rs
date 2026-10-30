@@ -114,6 +114,8 @@ pub struct ServingLease {
     supervisor_id: String,
     endpoint: String,
     pin: Digest,
+    #[serde(default)]
+    guest: Option<GuestLocator>,
 }
 
 impl ServingLease {
@@ -131,6 +133,7 @@ impl ServingLease {
             supervisor_id,
             endpoint: endpoint.to_string(),
             pin,
+            guest: None,
         }
     }
     /// The session whose launch must hold this listener and key.
@@ -146,7 +149,25 @@ impl ServingLease {
     pub fn pin(&self) -> &Digest {
         &self.pin
     }
+    pub(super) fn require_target(&self, container: &str, boot: &str) -> Result<(), RunError> {
+        let guest = self
+            .guest
+            .as_ref()
+            .ok_or(ActivationRefusal::SelectionMismatch)?;
+        if guest.target.container_id != container || guest.target.vm_boot_id != boot {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<(), RunError> {
+        if let Some(guest) = &self.guest {
+            if self.endpoint != format!("effigy-host:{}", guest.host_bind.port())
+                || guest.peer.port() != guest.host_bind.port()
+                || guest.host_bind.port() == 0
+            {
+                return Err(ActivationRefusal::SelectionMismatch.into());
+            }
+        }
         if self.supervisor_id.trim().is_empty() || self.endpoint.trim().is_empty() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
@@ -155,10 +176,87 @@ impl ServingLease {
         }
         Ok(())
     }
-    /// Address the probe dials. A locator that is not a socket address is a
-    /// locator nothing can reach, so it validates but never probes.
+    /// Numeric host endpoint for recovery probes, separate from the guest alias.
     pub fn socket(&self) -> Option<SocketAddr> {
-        self.endpoint.parse().ok()
+        self.guest
+            .as_ref()
+            .map(|guest| guest.host_bind)
+            .or_else(|| self.endpoint.parse().ok())
+    }
+}
+
+/// Exact container and boot observed by the staged guest transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestLocatorTarget {
+    pub container_id: String,
+    pub vm_boot_id: String,
+}
+
+/// Durable non-secret facts from one guest handshake. The numeric bind remains
+/// separate from the alias the guest must dial.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuestLocator {
+    target: GuestLocatorTarget,
+    peer: SocketAddr,
+    host_bind: SocketAddr,
+}
+
+/// Launch-issued challenge. Only the callback of `qualify_guest` receives one;
+/// its private identity prevents evidence from another launch being replayed.
+#[derive(Debug)]
+pub struct GuestLocatorChallenge {
+    identity: std::sync::Arc<()>,
+    session: SessionBinding,
+    target: GuestLocatorTarget,
+    host_bind: SocketAddr,
+    peer: SocketAddr,
+    pin: Digest,
+}
+
+/// A verified response to a launch-issued challenge. It cannot be deserialized
+/// or built from a locator string. Transport remains responsible for TLS proof.
+#[derive(Debug)]
+pub struct GuestLocatorEvidence {
+    challenge: GuestLocatorChallenge,
+}
+
+impl GuestLocatorChallenge {
+    pub fn host_bind(&self) -> SocketAddr {
+        self.host_bind
+    }
+    pub fn pin(&self) -> &Digest {
+        &self.pin
+    }
+    pub fn endpoint(&self) -> String {
+        format!("effigy-host:{}", self.host_bind.port())
+    }
+    /// Called by the transport only after its exact guest's pinned handshake.
+    pub fn verified(
+        &self,
+        target: &GuestLocatorTarget,
+        peer: SocketAddr,
+        endpoint: &str,
+        pin: &Digest,
+    ) -> Result<GuestLocatorEvidence, ServingRefusal> {
+        if target != &self.target
+            || peer != self.peer
+            || endpoint != self.endpoint()
+            || pin != &self.pin
+        {
+            return Err(ServingRefusal::Unqualified);
+        }
+        Ok(GuestLocatorEvidence {
+            challenge: Self {
+                identity: self.identity.clone(),
+                session: self.session.clone(),
+                target: target.clone(),
+                host_bind: self.host_bind,
+                peer,
+                pin: pin.clone(),
+            },
+        })
     }
 }
 
@@ -388,6 +486,7 @@ struct LaunchState {
     /// is still unqualified until then, so no phase flag can mint a locator.
     qualified: bool,
     bound: Option<ChannelBound>,
+    guest: Option<GuestLocator>,
     served: bool,
 }
 
@@ -484,6 +583,7 @@ impl SessionLaunch {
             owned: true,
             qualified: false,
             bound: None,
+            guest: None,
             served: false,
         }));
         // The session run is the custody: settling it takes the listener and the
@@ -578,6 +678,73 @@ impl SessionLaunch {
         }
     }
 
+    /// Qualify the guest alias against this live launch. No lock spans guest
+    /// I/O; custody and endpoint/key identity are rechecked before retention.
+    pub fn qualify_guest(
+        &mut self,
+        session_run: &Run<'_>,
+        target: GuestLocatorTarget,
+        peer: std::net::IpAddr,
+        handshake: impl FnOnce(&GuestLocatorChallenge) -> Result<GuestLocatorEvidence, ServingRefusal>,
+    ) -> Result<(), ServingRefusal> {
+        self.require_live_owner(session_run)?;
+        let (endpoint, pin) = {
+            let state = self.lock();
+            let held = state.held.as_ref().ok_or(ServingRefusal::Stopped)?;
+            let listener = held.listener.as_ref().ok_or(ServingRefusal::Stopped)?;
+            if listener.phase() == ListenerPhase::Stopped {
+                return Err(ServingRefusal::Stopped);
+            }
+            (
+                listener.endpoint().ok_or(ServingRefusal::Unbound)?,
+                held.key.as_ref().ok_or(ServingRefusal::Stopped)?.pin(),
+            )
+        };
+        if peer.is_unspecified()
+            || peer.is_multicast()
+            || endpoint.port() == 0
+            || target.container_id.trim().is_empty()
+            || target.vm_boot_id.trim().is_empty()
+        {
+            return Err(ServingRefusal::Unqualified);
+        }
+        let challenge = GuestLocatorChallenge {
+            identity: std::sync::Arc::new(()),
+            session: self.binding(),
+            target,
+            host_bind: endpoint,
+            peer: SocketAddr::new(peer, endpoint.port()),
+            pin: pin.clone(),
+        };
+        let answer = handshake(&challenge)?.challenge;
+        if !std::sync::Arc::ptr_eq(&challenge.identity, &answer.identity)
+            || answer.session != self.binding()
+        {
+            return Err(ServingRefusal::WrongSession);
+        }
+        self.require_live_owner(session_run)?;
+        let mut state = self.lock();
+        let guest = GuestLocator {
+            target: answer.target,
+            peer: answer.peer,
+            host_bind: endpoint,
+        };
+        if state.bound.is_some() && state.guest.as_ref() != Some(&guest) {
+            return Err(ServingRefusal::AlreadyPublished);
+        }
+        let held = state.held.as_mut().ok_or(ServingRefusal::Stopped)?;
+        let listener = held.listener.as_mut().ok_or(ServingRefusal::Stopped)?;
+        if listener.endpoint() != Some(endpoint)
+            || held.key.as_ref().map(ServingKey::pin) != Some(pin)
+        {
+            return Err(ServingRefusal::Unqualified);
+        }
+        listener.qualify()?;
+        state.qualified = true;
+        state.guest = Some(guest);
+        Ok(())
+    }
+
     /// Stop the listener the launch holds. Idempotent; the lease is dropped
     /// with it, so a stopped launch reports no locator, while the launch still
     /// belongs to its run until it is released or the run settles.
@@ -604,8 +771,12 @@ impl SessionLaunch {
             return Ok(state.live_bound()?.clone());
         }
         let binding = self.binding();
-        let lease =
+        let mut lease =
             ServingLease::published(binding.clone(), self.supervisor_id.clone(), endpoint, pin);
+        if let Some(guest) = &state.guest {
+            lease.endpoint = format!("effigy-host:{}", endpoint.port());
+            lease.guest = Some(guest.clone());
+        }
         if lease.validate().is_err() {
             return Err(ServingRefusal::Unqualified);
         }

@@ -3342,9 +3342,21 @@ fn selection_receipt(
             },
         ],
     };
+    let target = GuestLocatorTarget {
+        container_id: publication.publication.container_id.clone(),
+        vm_boot_id: publication.publication.vm_boot_id.clone(),
+    };
+    let peer = "192.0.2.2".parse().unwrap();
     launch
-        .qualify(&mut verifying_probe(), Duration::from_secs(1))
-        .expect("qualified");
+        .qualify_guest(session_run, target.clone(), peer, |challenge| {
+            challenge.verified(
+                &target,
+                std::net::SocketAddr::new(peer, challenge.host_bind().port()),
+                &challenge.endpoint(),
+                challenge.pin(),
+            )
+        })
+        .expect("guest qualified");
     let lease = launch
         .publish(session_run)
         .expect("published")
@@ -4362,6 +4374,8 @@ fn a_selection_never_names_another_session_s_listener() {
             &receipt_selection(&reservation),
         )
     };
+    let mut selection = selection;
+    selection.objects.context.digest = Digest::of(&document);
     let error = SelectionReceipt::new(
         &plan,
         publication,
@@ -4531,6 +4545,30 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
         &mut launch,
     );
     assert!(good.validate(&plan).is_ok());
+    // Even a correctly hashed document naming a live numeric host bind cannot
+    // substitute for the guest-advertised alias of this launch.
+    let mut numeric = good.selection().clone();
+    let mut parsed: serde_json::Value = serde_json::from_slice(&context_document(
+        &plan,
+        &publication,
+        good.selection(),
+        good.serving(),
+        &receipt_selection(&reservation),
+    ))
+    .unwrap();
+    parsed["locator"]["endpoint"] = serde_json::json!(launch.endpoint().unwrap().to_string());
+    let numeric_document = serde_json::to_vec(&parsed).unwrap();
+    numeric.objects.context.digest = Digest::of(&numeric_document);
+    assert!(SelectionReceipt::new(
+        &plan,
+        publication.clone(),
+        numeric,
+        &numeric_document,
+        &session_run,
+        &mut launch,
+        &mut FakeSelectors::default()
+    )
+    .is_err());
     // A selection whose context object names other bytes is not the receipt.
     let mut wrong = good.selection().clone();
     wrong.objects.context.digest = Digest::of(b"not the document");
@@ -7483,4 +7521,84 @@ fn guest_inputs_refuse_before_reserving_and_optional_snapshot_decodes() {
         .expect("optional snapshot")
         .snapshot
         .is_none());
+}
+
+#[test]
+fn guest_locator_challenge_binds_alias_target_peer_pin_session_and_lifetime() {
+    let fixture = ServingFixture::new();
+    let (mut run, session) = fixture.admit(97);
+    let (listener, _) = FakeListener::bound();
+    let pin = Digest::of(b"guest pin");
+    let key = ServingKey::new(vec![7; 32], pin.clone()).unwrap();
+    let mut launch =
+        SessionLaunch::launch(&mut run, &session, "supervisor-1", key, Box::new(listener)).unwrap();
+    let target = GuestLocatorTarget {
+        container_id: "a".repeat(64),
+        vm_boot_id: "boot".into(),
+    };
+    let peer: std::net::IpAddr = "192.0.2.2".parse().unwrap();
+    let mut replay = None;
+    launch
+        .qualify_guest(&run, target.clone(), peer, |challenge| {
+            let socket = std::net::SocketAddr::new(peer, challenge.host_bind().port());
+            let mut wrong_target = target.clone();
+            wrong_target.vm_boot_id = "other".into();
+            for alias in [
+                challenge.host_bind().to_string(),
+                "arbitrary:4000".into(),
+                "effigy-host:0".into(),
+            ] {
+                assert!(challenge.verified(&target, socket, &alias, &pin).is_err());
+            }
+            assert!(challenge
+                .verified(&wrong_target, socket, &challenge.endpoint(), &pin)
+                .is_err());
+            assert!(challenge
+                .verified(&target, challenge.host_bind(), &challenge.endpoint(), &pin)
+                .is_err());
+            assert!(challenge
+                .verified(
+                    &target,
+                    socket,
+                    &challenge.endpoint(),
+                    &Digest::of(b"other")
+                )
+                .is_err());
+            replay = Some(
+                challenge
+                    .verified(&target, socket, &challenge.endpoint(), &pin)
+                    .unwrap(),
+            );
+            challenge.verified(&target, socket, &challenge.endpoint(), &pin)
+        })
+        .unwrap();
+    let lease = launch.publish(&run).unwrap().lease().clone();
+    assert!(lease.endpoint().starts_with("effigy-host:"));
+    assert_eq!(lease.socket(), launch.endpoint());
+    assert_eq!(launch.publish(&run).unwrap().lease(), &lease);
+    assert!(launch
+        .qualify_guest(&run, target.clone(), peer, |_| Ok(replay.take().unwrap()))
+        .is_err());
+    assert!(lease
+        .require_target(&target.container_id, "other-boot")
+        .is_err());
+    launch
+        .qualify_guest(&run, target.clone(), peer, |c| {
+            c.verified(
+                &target,
+                std::net::SocketAddr::new(peer, c.host_bind().port()),
+                &c.endpoint(),
+                c.pin(),
+            )
+        })
+        .unwrap();
+    assert_eq!(launch.publish(&run).unwrap().lease(), &lease);
+    launch.stop();
+    assert!(launch.lease().is_none());
+    assert!(launch
+        .qualify_guest(&run, target, peer, |_| panic!(
+            "stopped listener cannot probe"
+        ))
+        .is_err());
+    assert!(launch.publish(&run).is_err());
 }

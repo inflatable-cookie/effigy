@@ -351,6 +351,15 @@ fn backend_qualification(backend: Backend) {
             .unwrap();
         assert_eq!(locator.session().run, session.run());
         assert_eq!(locator.bound().lease().pin(), &pin);
+        assert_eq!(locator.bound().lease().socket(), Some(endpoint));
+        assert_eq!(
+            locator.channel().endpoint.as_deref(),
+            Some(locator.bound().lease().endpoint())
+        );
+        assert_eq!(
+            locator.bound().lease().endpoint(),
+            format!("effigy-host:{}", endpoint.port())
+        );
         assert_eq!(locator.target(), &target);
         assert_eq!(
             locator.channel().server_identity,
@@ -360,12 +369,25 @@ fn backend_qualification(backend: Backend) {
             launch.publish(run).unwrap().lease(),
             locator.bound().lease()
         );
+        let mut numeric = locator.channel().clone();
+        numeric.endpoint = Some(endpoint.to_string());
+        assert!(super::opener::open_pinned_channel(
+            Duration::from_secs(1),
+            1,
+            &numeric,
+            || panic!("numeric locator must refuse before resolution")
+        )
+        .is_err());
         launch.serve(run).unwrap();
         assert!(acceptor.accept(&launch, run).unwrap().is_none());
         // Transport is accepted only after the actual session allows serving.
-        let mut client =
-            TlsChannelTransport::connect(guest_endpoint, pin.clone(), Duration::from_secs(2))
-                .unwrap();
+        let mut client = super::opener::open_pinned_channel(
+            Duration::from_secs(2),
+            1,
+            locator.channel(),
+            || Ok(format!("{guest_ip} effigy-host\n").into_bytes()),
+        )
+        .unwrap();
         let until = Instant::now() + Duration::from_secs(2);
         let mut retained = loop {
             if let Some(transport) = acceptor.accept(&launch, run).unwrap() {

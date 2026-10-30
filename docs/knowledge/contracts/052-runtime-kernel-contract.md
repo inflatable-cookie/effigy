@@ -2902,6 +2902,17 @@ only, and host access needs a terminal opened through Effigy.
 
 ### 8.11 Workspace-client interface v1
 
+The guest locator lease retains two addresses: the numeric host bind socket for
+host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
+guest for selection. `SessionLaunch::qualify_guest` issues a launch-local
+challenge binding session, target container/boot, listener, pin and resolved
+guest peer. Only its verified response permits alias publication; evidence from
+another challenge refuses. Qualification rechecks custody after guest I/O.
+Selection requires guest evidence, exact target equality and exact document
+endpoint/pin equality. A numeric host socket is never a guest selection locator.
+Retries retain the same lease; stop, owner loss and settlement revoke publication.
+
+
 This is the normative production seam (effigy#481), not implemented transport or backend qualification. Only APIs marked
 implemented below are the merged #484 seam. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
 E-step/fault/retry proposals remain [non-normative,

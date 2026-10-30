@@ -13,6 +13,10 @@ v0.15; the new custody output sanitizer does not cover this path. ANSI colour
 forcing and plain-log projection for managed TUI panes are deferred to v0.16
 until the host-log writer has a safe secret-handling boundary.
 
+### Fixed
+
+- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
+
 ### Security
 
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
