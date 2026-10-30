@@ -1312,7 +1312,10 @@ fn key_run_exists(key: &RunKey, checkout: &std::path::Path) -> bool {
 }
 
 /// A fresh random run id, for requests and runs no key names.
-pub(super) fn fresh_run_id() -> Result<RunId, RunnerError> {
+/// A fresh kernel run id from the engine's own entropy. A workspace
+/// dispatcher's `RunIds` asks for one exactly as an ordinary admission does;
+/// it never derives an id itself.
+pub(in crate::runner) fn fresh_run_id() -> Result<RunId, RunnerError> {
     new_run_id()
 }
 

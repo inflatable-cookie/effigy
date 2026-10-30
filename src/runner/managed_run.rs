@@ -21,7 +21,9 @@ mod settlement;
 mod tui;
 mod wire;
 
-pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
+pub(in crate::runner) use client::{
+    attach_text, detach, start, start_reserved, ClientStart, Started,
+};
 #[cfg(test)]
 pub(in crate::runner) use control::wait_views;
 pub(in crate::runner) use control::OUTPUT_LOG;

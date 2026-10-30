@@ -53,6 +53,7 @@ pub(crate) mod context;
 // #482's producer side: the staged guest probe and the guest's own identity
 // observation, which the v2 context verification takes.
 pub(crate) mod guest_probe;
+pub(crate) mod host_dispatch;
 pub(crate) mod identity;
 pub(crate) mod serving;
 pub(crate) mod serving_facts;
@@ -821,7 +822,17 @@ impl<T: Transport> WorkspaceClient<T> {
                 vm_boot_id: self.live.container.vm_boot_id.clone(),
             }),
         };
-        channel::write_frame(&mut self.transport, &frame).map_err(ChannelError::from_refusal)
+        match channel::write_frame(&mut self.transport, &frame) {
+            Ok(()) => Ok(()),
+            // The host may have refused during authentication and closed
+            // before this frame landed. Its sentence is the answer; a
+            // connection that simply failed is `unknown`, never a silent
+            // success and never a fabricated refusal.
+            Err(write) => match read_frame(&mut self.transport) {
+                Ok(Frame::Refuse(refusal)) => Err(ChannelError::from_refusal(refusal)),
+                _ => Err(ChannelError::from_refusal(write)),
+            },
+        }
     }
 
     fn request_for(&self, intent: &Intent) -> Request {

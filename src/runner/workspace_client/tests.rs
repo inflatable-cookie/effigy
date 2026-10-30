@@ -2279,3 +2279,58 @@ fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
         assert!(custody_rows(root, session_run_id).is_empty());
     });
 }
+
+#[test]
+fn the_production_owner_builds_its_server_only_from_matching_validated_facts() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        // A pin the publication did not validate refuses before serving.
+        let mut wrong = super::ServingFacts::fixture(
+            &prepared.locator,
+            Path::new(GUEST_CHECKOUT).to_path_buf(),
+        );
+        wrong.pin = Digest([1; 32]);
+        let refused = ServingOwner::adopt_production(OwnedWorkspaceChannel {
+            supervisor,
+            session,
+            serving: wrong,
+            channel: prepared,
+            effect: Arc::new(cx.clone()),
+            observe: Arc::new(observe.clone()),
+            root,
+        });
+        assert!(
+            matches!(refused, Err(AdoptError::Facts)),
+            "a pin the publication did not validate is refused"
+        );
+    });
+
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let facts = super::ServingFacts::fixture(
+            &prepared.locator,
+            Path::new(GUEST_CHECKOUT).to_path_buf(),
+        );
+        let mut owner = ServingOwner::adopt_production(OwnedWorkspaceChannel {
+            supervisor,
+            session,
+            serving: facts,
+            channel: prepared,
+            effect: Arc::new(cx.clone()),
+            observe: Arc::new(observe.clone()),
+            root,
+        })
+        .expect("the validated facts and prepared channel agree");
+        assert!(
+            owner.launch().is_some(),
+            "the production owner retains the listener"
+        );
+        assert!(owner.key_held(), "the production owner retains the key");
+        assert!(
+            !owner.serving(),
+            "a channel is served only after the adopted session run serves"
+        );
+        owner.stop();
+        assert!(!owner.key_held(), "stopping the owner wipes the key");
+    });
+}

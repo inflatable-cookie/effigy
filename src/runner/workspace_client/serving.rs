@@ -180,6 +180,10 @@ pub(crate) enum AdoptError {
     /// The prepared channel was published for another session. A listener is
     /// only ever served for the session it was qualified and published for.
     WrongSession,
+    /// The publication's validated serving facts disagree with the prepared
+    /// channel this owner was handed (pin or session). Serving under either
+    /// would serve authority the publication never validated.
+    Facts,
 }
 
 impl std::fmt::Display for AdoptError {
@@ -188,6 +192,9 @@ impl std::fmt::Display for AdoptError {
             Self::Custody(error) => write!(formatter, "{error}"),
             Self::WrongSession => formatter.write_str(
                 "the prepared workspace channel belongs to another session; it is not served",
+            ),
+            Self::Facts => formatter.write_str(
+                "the validated serving facts disagree with the prepared channel; it is not served",
             ),
         }
     }
@@ -275,6 +282,56 @@ where
     }
 }
 
+impl<'a>
+    ServingOwner<
+        'a,
+        ServerTlsTransport,
+        HostChannelAcceptor,
+        super::host_dispatch::HostDispatch,
+        super::host_dispatch::HostDispatch,
+        super::host_dispatch::HostDispatch,
+        super::host_dispatch::HostDispatch,
+    >
+{
+    /// Adopt the activation's owned channel with the production dispatcher.
+    ///
+    /// The server is built only from the publication's validated facts: the
+    /// host negotiation and fence it froze, the pinned server identity, the
+    /// session grant book seeded with the enrolment credential, and the
+    /// engine-owned resolver/admission/observer/id seams. A locator that does
+    /// not name the same session and pin refuses before anything is served.
+    pub(crate) fn adopt_production(owned: OwnedWorkspaceChannel<'a>) -> Result<Self, AdoptError> {
+        let OwnedWorkspaceChannel {
+            supervisor,
+            session,
+            channel: prepared,
+            serving,
+            effect,
+            observe,
+            root,
+        } = owned;
+        let PreparedHostChannel {
+            launch,
+            acceptor,
+            locator,
+        } = prepared;
+        if locator.session().run != session.run()
+            || locator.session().generation != session.generation()
+            || locator.bound().lease().pin() != &serving.pin
+            || locator.session().run != serving.fence.session.run
+            || locator.session().generation != serving.fence.session.generation
+        {
+            return Err(AdoptError::Facts);
+        }
+        let (server, admitted) = super::host_dispatch::production_server(&serving, root.clone());
+        let mut owner = Self::new(supervisor, launch, acceptor, server, effect, observe, root);
+        owner.custody.locator = Some(locator);
+        owner.serving = Some(serving);
+        owner.admitted = Some(admitted);
+        Ok(owner)
+    }
+}
+
 /// One detached session's serving owner.
 ///
 /// The adopted supervisor is the session's custody. The launch is the listener
@@ -302,6 +359,10 @@ where
     /// for the owner's whole life so the session's server, grants and
     /// enrolment secret die with it.
     serving: Option<super::ServingFacts>,
+    /// The owning clients of the runs this session admitted over its channel.
+    /// Dropping them is owner loss: their runs stop instead of outliving the
+    /// session that served them.
+    admitted: Option<super::host_dispatch::RetainedRuns>,
     served: usize,
     _transport: PhantomData<fn() -> T>,
 }
@@ -358,6 +419,7 @@ where
             observe,
             root,
             serving: None,
+            admitted: None,
             served: 0,
             _transport: PhantomData,
         }

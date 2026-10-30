@@ -11,7 +11,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{Deadline, OpenReason};
@@ -78,6 +78,71 @@ pub(in crate::runner) fn start_admitted(
     ticket: effigy_kernel::run::AdmissionTicket,
 ) -> Result<Started, RunnerError> {
     start_with(request, Some(ticket))
+}
+
+/// [`start`] for a task the workspace channel re-resolved and reserved.
+///
+/// The reservation travels unchanged into the supervisor's private config
+/// frame, so the engine admits exactly `ticket.run()` with `Run::begin_admitted`
+/// under the canonical Task gate. Nothing here mints an id or admits a second
+/// run, and the caller keeps the returned owning client for the run's life: a
+/// serving owner that drops it stops the run as an owner loss, never as
+/// detached success.
+#[allow(dead_code)] // The workspace dispatcher's `Admission` is its only caller.
+pub(in crate::runner) fn start_reserved(
+    host_checkout: &Path,
+    invocation: &effigy_cli::TaskInvocation,
+    cwd: PathBuf,
+    admission: effigy_kernel::run::AdmissionTicket,
+) -> Result<Started, RunnerError> {
+    let home = task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
+        )
+    })?;
+    let payload = Payload {
+        task: invocation.name.clone(),
+        args: invocation.args.clone(),
+        front: Front::Detached,
+        state_home: home,
+        terminal: None,
+    };
+    let mut env: Vec<(OsString, OsString)> =
+        crate::runner::secret_session::workload_ambient_environment()
+            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+            .collect();
+    if let Some(grant) = crate::runner::secret_session::take_child_grant() {
+        let (key, value) = grant.env_entry();
+        env.push((OsString::from(key), OsString::from(value)));
+    }
+    let executable = task_engine::startup_executable()?;
+    let cx = task_engine::effect_context(OpenReason::DevServer);
+    let root = task_engine::checkout_effects_root(host_checkout)?;
+    let run = admission.run();
+    let client = start_engine_at(
+        &cx,
+        root,
+        EngineLaunch {
+            payload: wire::encode(&payload),
+            cwd,
+            env,
+            handoff: None,
+            admission: Some(admission),
+        },
+        &executable,
+        ClientMode::Owning,
+    )
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the reserved workspace task `{}` did not start its engine: {error}",
+            invocation.name
+        ))
+    })?;
+    Ok(Started {
+        client,
+        run,
+        root: root.clone(),
+    })
 }
 
 fn start_with(
