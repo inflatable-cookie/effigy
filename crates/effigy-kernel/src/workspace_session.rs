@@ -1007,18 +1007,27 @@ fn next_generation(
         .ok_or_else(|| RunError::refused("the workspace owner generation cannot advance"))
 }
 
-/// Whether a recorded run row is still open. The gate is not read: an
-/// interrupted run is not live, and a successor settles it (K5) before it
-/// stages a session of its own.
-fn run_is_open(conn: &rusqlite::Connection, run: RunId) -> Result<bool, RunError> {
-    let phase: Option<String> = conn
+/// Cancellation releases no admitted run before its complete settlement.
+/// A staged session may not have admitted yet; a bound Env run necessarily did.
+fn run_needs_settlement(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    admitted: bool,
+) -> Result<bool, RunError> {
+    let row: Option<(String, Option<String>)> = conn
         .query_row(
-            "SELECT phase FROM runs WHERE run_id=?1",
+            "SELECT phase,cleanup_outcome FROM runs WHERE run_id=?1",
             [run.to_string()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    Ok(matches!(phase.as_deref(), Some(phase) if !matches!(phase, "stopping" | "closed")))
+    match row {
+        Some((phase, cleanup)) => Ok(phase != "closed" || cleanup.as_deref() != Some("complete")),
+        None if admitted => Err(RunError::broken(
+            "a bound activation run is missing its settlement record",
+        )),
+        None => Ok(false),
+    }
 }
 
 /// Whether a staged binding names a session run that is *live*: open at its
@@ -1871,12 +1880,12 @@ impl WorkspaceActivationReservation {
                 ActivationReservationState::Reserved => {}
             }
             if let Some(run) = stored.environment_run {
-                if run_is_open(txn.conn(), run)? {
+                if run_needs_settlement(txn.conn(), run, true)? {
                     return Err(RunError::from(ActivationRefusal::RunStillLive));
                 }
             }
             if let Some(session) = &stored.session {
-                if run_is_open(txn.conn(), session.run)? {
+                if run_needs_settlement(txn.conn(), session.run, false)? {
                     return Err(RunError::from(ActivationRefusal::RunStillLive));
                 }
             }

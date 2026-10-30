@@ -2260,3 +2260,87 @@ fn checkout_aliases_and_other_runs_cannot_consume_a_frozen_workspace_identity() 
         .verified()
         .is_none());
 }
+
+#[test]
+fn cancellation_waits_for_stopping_and_incomplete_runs_to_settle() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = pending_environment(&cx, &root);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reserve");
+    let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(150));
+    let mut activation = admit_activation(&cx, &root, &reservation, run_id(151));
+    let cancelled = || WorkloadOutcome::Cancelled {
+        cause: StopCause::Requested,
+        signal: None,
+    };
+    activation
+        .interrupt(&cleanup(&cx), cancelled())
+        .expect("activation stopping");
+    drop(activation);
+    assert!(
+        reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
+        "a dropped Stopping activation still needs settlement"
+    );
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(151),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("settle activation");
+    session_run
+        .interrupt(&cleanup(&cx), cancelled())
+        .expect("session stopping");
+    assert!(
+        reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
+        "a live Stopping session still needs settlement"
+    );
+    drop(session_run);
+    assert!(
+        reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
+        "a dropped Stopping session still needs settlement"
+    );
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        run_id(150),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("settle session");
+    Store::open(&cx, &root)
+        .expect("store")
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='incomplete' WHERE run_id=?1",
+                [run_id(150).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .expect("closed but incomplete cleanup");
+    assert!(
+        reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
+        "Closed with Incomplete cleanup is not complete settlement"
+    );
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        run_id(150),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("retry incomplete settlement");
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("cancel after complete settlement");
+}
