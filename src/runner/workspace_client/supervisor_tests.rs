@@ -525,10 +525,9 @@ fn the_session_is_discovered_from_durable_identity_alone() {
         // Settlement removes the environment's session mapping (or leaves its
         // closed run); either way nothing is served or resurrected from it.
         match discover(observe, root, session.environment()) {
-            Observed::Verified(Some(facility), _) => assert!(
-                !facility.live(),
-                "a settled session is not the live one"
-            ),
+            Observed::Verified(Some(facility), _) => {
+                assert!(!facility.live(), "a settled session is not the live one")
+            }
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => panic!("settlement leaves a readable journal: {reason}"),
         }
@@ -648,26 +647,29 @@ fn a_first_terminal_keeps_the_capability_the_entry_handed_it() {
     use crate::runner::workspace_client::guest_fake::FakeGuest;
     use crate::runner::workspace_client::supervisor::stage_first_terminal_capability;
 
-    let context = super::super::tests::workspace_document(Some(super::super::tests::session_run()), None);
+    let context =
+        super::super::tests::workspace_document(Some(super::super::tests::session_run()), None);
     let mut guest = FakeGuest::new();
     super::super::tests::publish(&mut guest, &context, None);
     let secret = host::Secret::new([0x5a; 32]);
     let generation = Generation::new(context.session.generation);
 
-    let handed = stage_first_terminal_capability(
-        &mut guest,
-        "terminal-1",
-        generation,
-        &secret,
-        "app",
-    )
-    .expect("the entry hands the terminal its capability");
+    let handed =
+        stage_first_terminal_capability(&mut guest, "terminal-1", generation, &secret, "app")
+            .expect("the entry hands the terminal its capability");
     assert_eq!(
         handed.path,
-        format!("{}/capabilities/terminal-1", super::super::context::CLIENT_ROOT)
+        format!(
+            "{}/capabilities/terminal-1",
+            super::super::context::CLIENT_ROOT
+        )
     );
-    assert_eq!(guest.mode(&handed.path), Some(0o600), "the record is owner-only");
-    assert_eq!(guest.owner(&handed.path).as_deref(), Some("app"));
+    assert_eq!(
+        guest.mode(&handed.path),
+        Some(0o600),
+        "the record is owner-only"
+    );
+    assert_eq!(guest.owner(&handed.path), Some("app"));
 
     // The terminal's later command presents it, with no enrolment credential
     // anywhere: the handoff is the terminal's own authority.
@@ -675,7 +677,10 @@ fn a_first_terminal_keeps_the_capability_the_entry_handed_it() {
         .expect("the handed-over capability is presented")
     {
         super::super::GuestAuth::Capability(presented) => {
-            assert!(presented.matches(&secret), "the capability the entry handed over")
+            assert!(
+                presented.matches(&secret),
+                "the capability the entry handed over"
+            )
         }
         _ => panic!("a handed-over capability is presented, not re-enrolled"),
     }

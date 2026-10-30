@@ -211,9 +211,7 @@ impl std::fmt::Display for HandoffRefusal {
                 "the committed selection belongs to another workspace session than this custody"
             }
             Self::KeyReleased => "the workspace session no longer holds its serving key",
-            Self::Unswitched(_) => {
-                "the workspace selection has not switched and been read back"
-            }
+            Self::Unswitched(_) => "the workspace selection has not switched and been read back",
         })
     }
 }
