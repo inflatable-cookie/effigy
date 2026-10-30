@@ -9,7 +9,10 @@ use effigy_containers::colima::{
     managed_colima_profile_resources, managed_colima_profile_resources_with_disk,
     prepare_managed_colima_profile_name, prepare_managed_colima_profile_name_with_disk,
 };
-use effigy_containers::exec::{recover_colima_runtime, reset_colima_runtime, ColimaRecoveryReport};
+use effigy_containers::exec::{
+    recover_colima_runtime_with_progress, reset_colima_runtime_with_progress, ColimaRecoveryPhase,
+    ColimaRecoveryReport,
+};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -176,36 +179,34 @@ fn run_container_profile_runtime_recovery(
     )?;
     let policy =
         super::policy::load_resolved_container_policy(&repo_root, container_name.as_deref())?;
-    // The recovery's own stop, pidfile, start and health steps run inside
-    // `effigy-containers` and report nothing while they run, so this frame
-    // carries the profile operation, the state Colima last reported for the
-    // profile and the elapsed wait, and falls back to naming the exact probe
-    // (effigy#461).
+    // The frame names the probe actually in flight: `colima list --json` while
+    // the state is read, then each phase the recovery itself reports —
+    // `colima stop`, the pidfile termination, `colima status`, the managed
+    // configuration and `colima start` (effigy#461, Q-017).
     let progress = ProfileProgress::new(
         output_json,
         &policy.profile,
+        profile_probe(&policy.profile),
         format!(
-            "the Colima runtime {} of profile `{}` to finish",
-            if repair { "recovery" } else { "stop" },
-            policy.profile
-        ),
-        format!(
-            "{} the Colima runtime of profile `{}`",
-            if repair { "recovering" } else { "stopping" },
+            "reading the state Colima reports for profile `{}`",
             policy.profile
         ),
     );
     if let Ok(status) = inspect_profile(&policy.profile) {
         progress.observe(&status);
     }
+    let observer = &progress;
+    let mut on_phase = |phase: ColimaRecoveryPhase| observer.recovery_phase(phase);
     let result = if repair {
         render_profile_runtime_recovery(
-            recover_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+            recover_colima_runtime_with_progress(&policy, &repo_root, &mut on_phase)
+                .map_err(Into::<RunnerError>::into),
             output_json,
         )
     } else {
         render_profile_runtime_recovery(
-            reset_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+            reset_colima_runtime_with_progress(&policy, &repo_root, &mut on_phase)
+                .map_err(Into::<RunnerError>::into),
             output_json,
         )
     };
@@ -303,6 +304,14 @@ impl ProfileProgress {
         self.awaiting(operation, profile_probe(&self.profile), None);
     }
 
+    /// One phase the recovery/reset reports while it runs. The frame names the
+    /// command whose completion that phase waits on, never a finished probe or
+    /// a generic recovery.
+    fn recovery_phase(&self, phase: ColimaRecoveryPhase) {
+        let (operation, awaiting) = recovery_phase_labels(&self.profile, phase);
+        self.awaiting(operation, awaiting, None);
+    }
+
     /// What `colima list --json` last reported for this profile.
     fn observe(&self, status: &ProfileStatus) {
         if let Some(source) = &self.source {
@@ -340,6 +349,34 @@ impl ProfileProgress {
             .as_ref()
             .expect("a drawn progress has a source")
             .frame_at(elapsed)
+    }
+}
+
+/// The operation and the exact completion each recovery phase waits on. Shared
+/// by the progress callback and its fake-clock proof, so the proof covers the
+/// production mapping rather than a hand-made sequence.
+fn recovery_phase_labels(profile: &str, phase: ColimaRecoveryPhase) -> (String, String) {
+    match phase {
+        ColimaRecoveryPhase::Stopping => (
+            format!("stopping Colima profile `{profile}`"),
+            format!("`colima stop` to finish for profile `{profile}`"),
+        ),
+        ColimaRecoveryPhase::TerminatingProcesses => (
+            format!("terminating Colima profile `{profile}`'s leftover processes"),
+            format!("the pidfile processes of profile `{profile}` to stop"),
+        ),
+        ColimaRecoveryPhase::VerifyingStopped => (
+            format!("verifying Colima profile `{profile}` is stopped"),
+            format!("`colima status` to report profile `{profile}` stopped"),
+        ),
+        ColimaRecoveryPhase::Restarting => (
+            format!("starting Colima profile `{profile}`"),
+            format!("`colima start` to finish for profile `{profile}`"),
+        ),
+        ColimaRecoveryPhase::VerifyingHealth => (
+            format!("verifying Colima profile `{profile}`'s runtime health"),
+            format!("`colima status` to report profile `{profile}` healthy"),
+        ),
     }
 }
 
@@ -445,13 +482,18 @@ fn run_container_profile_recreate(
                 "colima delete",
             )?;
         }
+        progress.awaiting(
+            format!("preparing the managed configuration for Colima profile `{profile}`"),
+            format!("the managed Colima configuration for profile `{profile}` to be written"),
+            None,
+        );
+        prepare_managed_colima_profile_name_with_disk(&profile, disk_gib)
+            .map_err(RunnerError::task_invocation)?;
         progress.colima_command(
             "colima start",
             format!("starting Colima profile `{profile}` with the managed sizing"),
             Some(if existed { (3, 3) } else { (1, 1) }),
         );
-        prepare_managed_colima_profile_name_with_disk(&profile, disk_gib)
-            .map_err(RunnerError::task_invocation)?;
         let start = colima_start_command_for_profile_with_disk(&profile, disk_gib);
         let start_args = start.args.iter().map(String::as_str).collect::<Vec<_>>();
         run_command(&start.program, &start_args, &start.label, false)?;
@@ -1282,29 +1324,23 @@ mod progress_tests {
         let progress = ProfileProgress::new(
             false,
             "effigy",
-            "the Colima runtime recovery of profile `effigy` to finish",
-            "repairing the Colima runtime of profile `effigy`",
+            profile_probe("effigy"),
+            "reading the state Colima reports for profile `effigy`",
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(3)),
-            "repairing the Colima runtime of profile `effigy`; waiting for the Colima runtime recovery of profile `effigy` to finish; 3s elapsed"
+            "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; 3s elapsed"
         );
 
         progress.observe(&running_profile(100));
         let frame = progress.frame_at(Duration::from_secs(42));
         assert_eq!(
             frame,
-            "repairing the Colima runtime of profile `effigy`; waiting for the Colima runtime recovery of profile `effigy` to finish; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
+            "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
         );
 
-        // The list probe has answered and a recreate's own calls begin: the
-        // frame awaits `colima stop`, never the finished list read.
-        progress.reading_state("reading the state Colima reports for profile `effigy`");
-        let frame = progress.frame_at(Duration::from_secs(50));
-        assert!(
-            frame.contains("waiting for `colima list --json` to answer for profile `effigy`"),
-            "{frame}"
-        );
+        // The recreate's own calls begin: the frame awaits `colima stop`,
+        // never the list read that already answered.
         progress.colima_command(
             "colima stop",
             "stopping Colima profile `effigy`",
@@ -1341,14 +1377,121 @@ mod progress_tests {
             frame.contains("waiting for `colima start` to finish for profile `effigy`"),
             "{frame}"
         );
-        assert!(
-            !frame.contains("`colima list --json`"),
-            "a stale probe must not name the wait: {frame}"
-        );
         progress.observe(&running_profile(300));
         let frame = progress.frame_at(Duration::from_secs(70));
         assert!(frame.contains("300GiB disk (target=300GiB)"), "{frame}");
         progress.succeed("recovered the Colima runtime of profile `effigy`");
+    }
+
+    /// The production phase mapping: every phase a recovery or reset reports
+    /// names the command it puts in flight, and never the list probe that ran
+    /// before it. Two fake-clock reads per phase prove the frame moves.
+    #[test]
+    fn recovery_phases_name_the_command_in_flight_on_the_fake_clock() {
+        let progress = ProfileProgress::new(
+            false,
+            "effigy",
+            profile_probe("effigy"),
+            "reading the state Colima reports for profile `effigy`",
+        );
+        progress.observe(&running_profile(100));
+
+        let phases = [
+            (
+                ColimaRecoveryPhase::Stopping,
+                "stopping Colima profile `effigy`",
+                "`colima stop` to finish for profile `effigy`",
+            ),
+            (
+                ColimaRecoveryPhase::TerminatingProcesses,
+                "terminating Colima profile `effigy`'s leftover processes",
+                "the pidfile processes of profile `effigy` to stop",
+            ),
+            (
+                ColimaRecoveryPhase::VerifyingStopped,
+                "verifying Colima profile `effigy` is stopped",
+                "`colima status` to report profile `effigy` stopped",
+            ),
+            (
+                ColimaRecoveryPhase::Restarting,
+                "starting Colima profile `effigy`",
+                "`colima start` to finish for profile `effigy`",
+            ),
+            (
+                ColimaRecoveryPhase::VerifyingHealth,
+                "verifying Colima profile `effigy`'s runtime health",
+                "`colima status` to report profile `effigy` healthy",
+            ),
+        ];
+
+        for (index, (phase, operation, awaiting)) in phases.into_iter().enumerate() {
+            progress.recovery_phase(phase);
+            let early = progress.frame_at(Duration::from_secs(index as u64 * 10));
+            assert!(
+                early.starts_with(operation),
+                "{phase:?}: expected `{operation}` first, got {early}"
+            );
+            assert!(
+                early.contains(&format!("waiting for {awaiting}")),
+                "{phase:?}: expected `{awaiting}`, got {early}"
+            );
+            assert!(
+                !early.contains("`colima list --json`"),
+                "{phase:?}: a finished probe must not name the wait: {early}"
+            );
+            assert!(
+                early.contains("last: profile `effigy` reported Running"),
+                "{phase:?}: the last profile state stays as the event: {early}"
+            );
+            let later = progress.frame_at(Duration::from_secs(index as u64 * 10 + 25));
+            assert_ne!(early, later, "{phase:?}: the frame must move with time");
+            assert!(
+                later.ends_with(&format!("; {}s elapsed", index as u64 * 10 + 25)),
+                "{phase:?}: {later}"
+            );
+        }
+    }
+
+    /// A recreate names the managed-configuration write while it runs and only
+    /// then the start it launches, so a stalled config is never reported as a
+    /// running `colima start`.
+    #[test]
+    fn a_recreate_names_the_configuration_before_the_start_it_launches() {
+        let progress = ProfileProgress::new(
+            false,
+            "effigy",
+            profile_probe("effigy"),
+            "reading the state Colima reports for profile `effigy`",
+        );
+        progress.observe(&running_profile(100));
+        progress.awaiting(
+            "preparing the managed configuration for Colima profile `effigy`",
+            "the managed Colima configuration for profile `effigy` to be written",
+            None,
+        );
+        let configuring = progress.frame_at(Duration::from_secs(5));
+        assert!(
+            configuring.contains(
+                "waiting for the managed Colima configuration for profile `effigy` to be written"
+            ),
+            "{configuring}"
+        );
+        assert!(!configuring.contains("`colima start`"), "{configuring}");
+
+        progress.colima_command(
+            "colima start",
+            "starting Colima profile `effigy` with the managed sizing",
+            Some((3, 3)),
+        );
+        let starting = progress.frame_at(Duration::from_secs(9));
+        assert!(
+            starting.contains("waiting for `colima start` to finish for profile `effigy`"),
+            "{starting}"
+        );
+        assert!(
+            !starting.contains("managed Colima configuration"),
+            "the finished configuration write is not the wait: {starting}"
+        );
     }
 
     /// A profile the probe does not list says so, and a JSON run draws nothing.

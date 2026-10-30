@@ -716,15 +716,45 @@ fn start_colima_runtime_units(
     .map_err(|error| error.to_string())
 }
 
+/// One phase of a Colima runtime recovery or reset, reported while the work
+/// runs so the owning command plane names the command actually in flight
+/// (Q-017). The recovery used to report nothing, so a plane could only guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColimaRecoveryPhase {
+    /// `colima stop` for the profile.
+    Stopping,
+    /// Terminating the profile's leftover processes from its pidfiles.
+    TerminatingProcesses,
+    /// `colima status` proving the profile is stopped.
+    VerifyingStopped,
+    /// Writing the managed configuration and `colima start`.
+    Restarting,
+    /// `colima status` proving the restarted profile is healthy.
+    VerifyingHealth,
+}
+
+/// Reports each recovery phase as it starts.
+pub type ColimaRecoveryProgress<'a> = &'a mut dyn FnMut(ColimaRecoveryPhase);
+
 pub fn recover_colima_runtime(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
+) -> Result<ColimaRecoveryReport, ContainerExecError> {
+    recover_colima_runtime_with_progress(policy, repo_root, &mut |_| {})
+}
+
+/// Recover the profile, reporting the phase now in flight to `progress`.
+pub fn recover_colima_runtime_with_progress(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    progress: ColimaRecoveryProgress<'_>,
 ) -> Result<ColimaRecoveryReport, ContainerExecError> {
     let mut steps = vec![format!(
         "[check] recovering Colima profile `{}`",
         policy.profile
     )];
 
+    progress(ColimaRecoveryPhase::Stopping);
     let graceful_ok = match stop_colima_profile_for_repair(policy, repo_root) {
         Ok(_) => {
             steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile));
@@ -739,11 +769,13 @@ pub fn recover_colima_runtime(
         }
     };
 
+    progress(ColimaRecoveryPhase::TerminatingProcesses);
     force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
 
+    progress(ColimaRecoveryPhase::VerifyingStopped);
     verify_profile_stopped(policy, repo_root, &steps, true)?;
 
-    if let Err(error) = restart_and_verify_colima_profile(policy, repo_root, &mut steps) {
+    if let Err(error) = restart_and_verify_colima_profile(policy, repo_root, &mut steps, progress) {
         let runtime_state_loss = match &error {
             ContainerExecError::Failure { stdout, stderr, .. } => {
                 docker_failure_looks_like_colima_runtime_state_loss(stdout, stderr)
@@ -758,6 +790,7 @@ pub fn recover_colima_runtime(
             "[warning] profile `{}` still reported an empty runtime after restart; retrying one deeper repair pass",
             policy.profile
         ));
+        progress(ColimaRecoveryPhase::Stopping);
         let stopped = match stop_colima_profile_for_repair(policy, repo_root) {
             Ok(()) => true,
             Err(error) => {
@@ -765,9 +798,11 @@ pub fn recover_colima_runtime(
                 false
             }
         };
+        progress(ColimaRecoveryPhase::TerminatingProcesses);
         force_terminate_colima_profile_processes(policy, stopped, &mut steps)?;
+        progress(ColimaRecoveryPhase::VerifyingStopped);
         verify_profile_stopped(policy, repo_root, &steps, true)?;
-        restart_and_verify_colima_profile(policy, repo_root, &mut steps)?;
+        restart_and_verify_colima_profile(policy, repo_root, &mut steps, progress)?;
     }
 
     Ok(ColimaRecoveryReport {
@@ -780,11 +815,21 @@ pub fn reset_colima_runtime(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaRecoveryReport, ContainerExecError> {
+    reset_colima_runtime_with_progress(policy, repo_root, &mut |_| {})
+}
+
+/// Reset the profile to a fully stopped state, reporting each phase in flight.
+pub fn reset_colima_runtime_with_progress(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    progress: ColimaRecoveryProgress<'_>,
+) -> Result<ColimaRecoveryReport, ContainerExecError> {
     let mut steps = vec![format!(
         "[check] resetting Colima profile `{}` to a fully stopped state",
         policy.profile
     )];
 
+    progress(ColimaRecoveryPhase::Stopping);
     let graceful_ok = match stop_colima_profile_for_repair(policy, repo_root) {
         Ok(_) => {
             steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile));
@@ -799,7 +844,9 @@ pub fn reset_colima_runtime(
         }
     };
 
+    progress(ColimaRecoveryPhase::TerminatingProcesses);
     force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
+    progress(ColimaRecoveryPhase::VerifyingStopped);
     verify_profile_stopped(policy, repo_root, &steps, false)?;
     steps.push(format!(
         "[ok] verified Colima profile `{}` is fully stopped",
@@ -917,7 +964,9 @@ fn restart_and_verify_colima_profile(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     steps: &mut Vec<String>,
+    progress: ColimaRecoveryProgress<'_>,
 ) -> Result<(), ContainerExecError> {
+    progress(ColimaRecoveryPhase::Restarting);
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
         command: "colima profile config".to_owned(),
         code: None,
@@ -935,6 +984,7 @@ fn restart_and_verify_colima_profile(
     )?;
     steps.push(format!("[ok] started Colima profile `{}`", policy.profile));
 
+    progress(ColimaRecoveryPhase::VerifyingHealth);
     let status = colima_status_command(policy);
     let status_args: Vec<&str> = status.args.iter().map(|value| value.as_str()).collect();
     let output = run_command_capture_with_timeout(
@@ -1557,6 +1607,48 @@ esac
             "{calls:#?}"
         );
         assert!(!fixture.has_state("running"));
+    }
+
+    /// The recovery reports each phase it puts in flight, in order, so the
+    /// owning command plane can name the command actually running instead of a
+    /// generic recovery wait (Q-017). The fixture's fake `colima` is the only
+    /// executable on the path, so nothing here touches a real runtime.
+    #[test]
+    fn a_recovery_and_a_reset_report_each_phase_they_put_in_flight() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let policy = fixture.policy();
+
+        let mut recovered = Vec::new();
+        recover_colima_runtime_with_progress(&policy, &fixture.root, &mut |phase| {
+            recovered.push(phase)
+        })
+        .expect("repair profile");
+        assert_eq!(
+            recovered,
+            vec![
+                ColimaRecoveryPhase::Stopping,
+                ColimaRecoveryPhase::TerminatingProcesses,
+                ColimaRecoveryPhase::VerifyingStopped,
+                ColimaRecoveryPhase::Restarting,
+                ColimaRecoveryPhase::VerifyingHealth,
+            ]
+        );
+
+        fixture.state("running");
+        let mut reset = Vec::new();
+        reset_colima_runtime_with_progress(&policy, &fixture.root, &mut |phase| reset.push(phase))
+            .expect("reset profile");
+        assert_eq!(
+            reset,
+            vec![
+                ColimaRecoveryPhase::Stopping,
+                ColimaRecoveryPhase::TerminatingProcesses,
+                ColimaRecoveryPhase::VerifyingStopped,
+            ]
+        );
     }
 
     #[test]

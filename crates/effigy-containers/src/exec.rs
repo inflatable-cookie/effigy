@@ -21,9 +21,10 @@ mod ssh_agent_preflight;
 pub use colima_runtime::{
     colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,
     ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
-    ensure_runtime_backend_running_report, recover_colima_runtime, reset_colima_runtime,
+    ensure_runtime_backend_running_report, recover_colima_runtime,
+    recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
     running_colima_profiles, runtime_backend_is_running, selected_backend_label,
-    ColimaEnsureReport, ColimaRecoveryReport,
+    ColimaEnsureReport, ColimaRecoveryPhase, ColimaRecoveryReport,
 };
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,

@@ -93,7 +93,7 @@ of its own.
 
 | Audited site | What it was | Now | Disposition |
 | --- | --- | --- | --- |
-| `src/runner/container_command/profile.rs:218` | `steps::step(label)` held for the recovery/reset | `profile.rs:246-311` — `ProfileProgress` builds a `ProgressSource` from its first exact wait and a `live_step`; `awaiting` (272) moves the wait with the operation, `colima_command` (288) names `colima stop`/`delete`/`start` while that command runs, `reading_state` (302) names the list probe, and `observe` (307) records the last reported profile state as the event | live |
+| `src/runner/container_command/profile.rs:218` | `steps::step(label)` held for the recovery/reset | `profile.rs:240-330` — `ProfileProgress` names the list probe (`profile_probe`, 240) before the state read, then moves the wait with the operation: `awaiting` (273), `colima_command` (289) for `colima stop`/`delete`/`start`, `reading_state` (303) for a later state read, `recovery_phase` (310) for the recovery's own phases, and `observe` (316) for the last reported profile state. The recovery and reset report their phases through `ColimaRecoveryPhase` (`crates/effigy-containers/src/exec/colima_runtime.rs:723`) via `recover_colima_runtime_with_progress`/`reset_colima_runtime_with_progress` (747/822), mapped to frames by `recovery_phase_labels` (`profile.rs:358`); a recreate names the managed-configuration write before the `colima start` it launches (490) | live |
 
 ### Environment gate and settle
 
@@ -239,7 +239,7 @@ test reads the wall clock.
 | Container readiness | `container_command::readiness::tests::the_probe_frame_names_the_runtime_read_in_flight_and_its_subjects` |
 | Primary container, health-log reads, shared services | `container_command::support::tests::the_primary_container_read_names_the_runtime_row_it_waits_on`, `the_declared_health_log_read_names_the_container_and_its_elapsed_wait`, `each_shared_service_names_its_own_wait` |
 | Health wait (`effigy-containers`) | `health::tests::a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer` |
-| Colima profile | `container_command::profile::tests::fake_clock_frames_name_the_profile_operation_and_its_state` |
+| Colima profile | `container_command::profile::progress_tests::fake_clock_frames_name_the_profile_operation_and_its_state`, `recovery_phases_name_the_command_in_flight_on_the_fake_clock` (every `ColimaRecoveryPhase` through the production mapping) and `a_recreate_names_the_configuration_before_the_start_it_launches`; the phase sequence itself is proven on the fixture's fake `colima` in `exec::colima_runtime::tests::a_recovery_and_a_reset_report_each_phase_they_put_in_flight` |
 | Environment gate and settle | `environment::reconcile::tests::fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal` |
 | Doctor | `effigy-doctor progress::tests::live_frames_name_the_probe_count_elapsed_and_check_transitions` |
 | Bootstrap | `bootstrap_command::tests::a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes` (one phase read at two times) |
