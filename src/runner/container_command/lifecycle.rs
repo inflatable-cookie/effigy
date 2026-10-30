@@ -657,9 +657,11 @@ fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
 /// the stack's services running: the operation now in flight and the exact
 /// read it waits on, with elapsed time (effigy#460, Q-017).
 fn restart_policy_source(progress: &ProgressSource, stack: &str) {
-    progress.now_waiting_for(format!(
-        "the runtime to apply `restart: unless-stopped` to the services of `{stack}` that declare none"
-    ));
+    steps::restart_policy_wait(
+        progress,
+        format!("the services of `{stack}` that declare none"),
+        None,
+    );
 }
 
 /// The machine-readable details of a container wait that ended unfinished.

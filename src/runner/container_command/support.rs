@@ -90,18 +90,21 @@ pub(super) fn wait_for_container_ready(
     .map_err(|error| declared_health_refusal(policy, error))
 }
 
-/// The container a declared environment health check belongs to: the Compose
-/// project's one primary service container.
-fn declared_health_container(policy: &EffectiveContainerPolicy) -> String {
-    format!("{}-{}-1", policy.project_name, policy.primary_service)
+/// The container the primary service actually runs as: the runtime's own row
+/// for that Compose service. Compose may declare an explicit `container_name`
+/// and a runtime may name it differently, so Effigy never assumes the
+/// `<project>-<service>-1` default for an identity it can read (effigy#460).
+fn primary_service_container(policy: &EffectiveContainerPolicy) -> Option<String> {
+    let rows = list_running_compose_containers_for_policy(&policy.repo_root, policy).ok()?;
+    rows.into_iter()
+        .find(|row| row.service.as_deref() == Some(policy.primary_service.as_str()))
+        .map(|row| row.container_name)
 }
 
 /// The last line the container itself printed, read only when a declared check
 /// did not come ready: the evidence its health check cannot give (effigy#455).
-fn declared_health_tail(policy: &EffectiveContainerPolicy) -> Option<String> {
-    let container = declared_health_container(policy);
-    let line =
-        container_last_log_line_for_policy(&policy.repo_root, policy, &container, 20).ok()?;
+fn declared_health_tail(policy: &EffectiveContainerPolicy, container: &str) -> Option<String> {
+    let line = container_last_log_line_for_policy(&policy.repo_root, policy, container, 20).ok()?;
     (!line.is_empty()).then_some(line)
 }
 
@@ -113,14 +116,19 @@ fn declared_health_refusal(
     policy: &EffectiveContainerPolicy,
     error: HealthWaitError,
 ) -> RunnerError {
-    declared_health_refusal_with_tail(policy, error, declared_health_tail(policy))
+    let container = primary_service_container(policy);
+    let tail = container
+        .as_deref()
+        .and_then(|container| declared_health_tail(policy, container));
+    declared_health_refusal_with_evidence(policy, error, container, tail)
 }
 
-/// The same refusal with the container's last output already read, so the
+/// The same refusal with the container and its last output already read, so the
 /// message and its machine-readable waits are testable without a runtime.
-fn declared_health_refusal_with_tail(
+fn declared_health_refusal_with_evidence(
     policy: &EffectiveContainerPolicy,
     error: HealthWaitError,
+    container: Option<String>,
     tail: Option<String>,
 ) -> RunnerError {
     let mut message = error.to_string();
@@ -131,7 +139,7 @@ fn declared_health_refusal_with_tail(
         "kind": "health_check",
         "environment": policy.name,
         "service": policy.primary_service,
-        "container": declared_health_container(policy),
+        "container": container,
         "check": error.check(),
         "timeout_secs": error.timeout_secs(),
         "probe": "declared health check",
@@ -568,6 +576,15 @@ fn ensure_shared_services_with_renders_observed(
             &format!("docker compose up (shared {})", service.service_name),
         )
         .map_err(|error| shared_service_refusal(policy, service, "docker compose up", error))?;
+        // Compose has returned for this shared stack, so the frame moves to the
+        // operation the runtime is now asked for: the restart policy. A stalled
+        // read then names that read, never the finished Compose call
+        // (effigy#460, Q-017).
+        super::steps::restart_policy_wait(
+            progress,
+            format!("shared `{}`", service.service_name),
+            Some((done, total)),
+        );
         // The shared stack is started, so it gets the restart policy here too
         // (effigy#383).
         effigy_containers::policy::restart::apply_after_start(
@@ -1314,6 +1331,7 @@ mod tests {
     use effigy_containers::{
         exec::RunningComposeContainer, EffectiveComposeSource, EffectiveContainerPolicy,
     };
+    use effigy_ui::steps::ProgressSource;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -1497,7 +1515,9 @@ mod tests {
         let check = "http://127.0.0.1:3000/health".to_owned();
         policy.health_check = Some(check.clone());
         policy.health_timeout_secs = 60;
-        let error = super::declared_health_refusal_with_tail(
+        // A Compose `container_name` is not the `<project>-<service>-1`
+        // default, so the refusal reports the identity the runtime gave.
+        let error = super::declared_health_refusal_with_evidence(
             &policy,
             effigy_containers::health::HealthWaitError::StatusMismatch {
                 container: policy.name.clone(),
@@ -1505,6 +1525,7 @@ mod tests {
                 status: 500,
                 timeout_secs: 60,
             },
+            Some("ui-custom".to_owned()),
             Some("app: GET /health answered 500".to_owned()),
         );
         let message = error.to_string();
@@ -1527,10 +1548,7 @@ mod tests {
         assert_eq!(details["waiting_on"][0]["answer"], "status_mismatch");
         assert_eq!(details["waiting_on"][0]["status"], 500);
         assert_eq!(details["waiting_on"][0]["check"], check);
-        assert_eq!(
-            details["waiting_on"][0]["container"],
-            "demo-web-renamed-app-1"
-        );
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
         assert_eq!(
             details["waiting_on"][0]["last_output"],
             "app: GET /health answered 500"
@@ -1540,13 +1558,14 @@ mod tests {
     #[test]
     fn a_spent_health_budget_keeps_the_old_refusal_without_a_status() {
         let policy = test_policy();
-        let error = super::declared_health_refusal_with_tail(
+        let error = super::declared_health_refusal_with_evidence(
             &policy,
             effigy_containers::health::HealthWaitError::NotReady {
                 container: policy.name.clone(),
                 check: "tcp://127.0.0.1:9".to_owned(),
                 timeout_secs: 60,
             },
+            None,
             None,
         );
         assert!(
@@ -1560,6 +1579,76 @@ mod tests {
                 .expect("JSON details");
         assert_eq!(details["waiting_on"][0]["answer"], "not_ready");
         assert!(details["waiting_on"][0].get("status").is_none());
+        // No container could be read, so the wait claims none instead of
+        // guessing one.
+        assert!(details["waiting_on"][0]["container"].is_null());
+    }
+
+    /// A checkout whose runtime names the primary container explicitly, as a
+    /// Compose `container_name` does, and answers a log tail for it.
+    fn runtime_naming_primary_container(
+        name: &str,
+        container: &str,
+        project: &str,
+    ) -> (effigy_test_support::Fixture, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = effigy_test_support::Fixture::workspace(name).expect("fixture workspace");
+        let root = fixture.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let script = format!(
+            "#!/bin/sh\ncase \"$*\" in\n  logs*) printf 'app: GET /health answered 500\\n' ;;\n  *) printf '{container}\\tUp 2 minutes\\t\\t{project}\\t{root}\\tapp\\t\\n' ;;\nesac\n",
+            root = root.display(),
+        );
+        for name in ["docker", "colima"] {
+            let executable = bin.join(name);
+            std::fs::write(&executable, &script).unwrap();
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::fs::write(root.join("effigy.toml"), "[tasks]\nbuild = \"true\"\n").unwrap();
+        (fixture, root)
+    }
+
+    #[test]
+    fn the_primary_container_is_read_from_the_runtime_not_assumed() {
+        let (_fixture, root) = runtime_naming_primary_container(
+            "effigy-declared-health-container-",
+            "ui-custom",
+            "demo-web-renamed",
+        );
+        let _env = runtime_env_for(&root);
+        let mut policy = test_policy();
+        policy.repo_root = root.clone();
+        policy.health_check = Some("http://127.0.0.1:3000/health".to_owned());
+        policy.health_timeout_secs = 60;
+        assert_eq!(
+            super::primary_service_container(&policy).as_deref(),
+            Some("ui-custom"),
+            "the runtime's own row names the container, not the Compose default"
+        );
+        let error = super::declared_health_refusal(
+            &policy,
+            effigy_containers::health::HealthWaitError::StatusMismatch {
+                container: policy.name.clone(),
+                check: "http://127.0.0.1:3000/health".to_owned(),
+                status: 500,
+                timeout_secs: 60,
+            },
+        );
+        let message = error.to_string();
+        assert!(message.contains("answered HTTP 500"), "{message}");
+        assert!(
+            message.contains("last container output: app: GET /health answered 500"),
+            "{message}"
+        );
+        let details: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("wait details"))
+                .expect("JSON details");
+        assert_eq!(details["waiting_on"][0]["container"], "ui-custom");
+        assert_eq!(
+            details["waiting_on"][0]["last_output"],
+            "app: GET /health answered 500"
+        );
     }
 
     #[test]
@@ -1817,6 +1906,40 @@ mod tests {
             ("HOME", Some(root.display().to_string())),
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
         ])
+    }
+
+    /// The shared service's step moves from the Compose call it waits on to the
+    /// restart-policy operation the runtime is now asked for, so a stalled read
+    /// never names a finished call (effigy#460, Q-017).
+    #[test]
+    fn a_shared_service_step_moves_to_the_restart_policy_wait() {
+        use std::time::Duration;
+
+        let project = "effigy-shared-restart-frame";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-restart-frame-",
+            project,
+            &container,
+            "this-render",
+        );
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+        let progress = ProgressSource::waiting_for("shared services");
+        let renders = vec![fixture.render("this-render")];
+        super::ensure_shared_services_with_renders_observed(&policy, &renders, &progress)
+            .expect("a healthy shared service starts");
+        // The ensure ends on the restart-policy wait, not the Compose call it
+        // already returned from, and keeps the per-service count.
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(9)),
+            "waiting for the runtime to apply `restart: unless-stopped` to shared `legacy_mysql` (0/1); 9s elapsed"
+        );
+        // The Compose call it already returned from is not what the frame
+        // names any more.
+        assert!(!progress
+            .frame_at(Duration::from_secs(9))
+            .contains("docker compose up"));
     }
 
     /// A shared service whose render is unchanged is never touched, so a second

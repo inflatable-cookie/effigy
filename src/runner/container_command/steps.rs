@@ -8,6 +8,25 @@
 pub(super) use effigy_containers::exec::{ComposeSteps, TimedStep};
 pub(super) use effigy_ui::steps::ProgressSource;
 
+/// The wait now in flight once Compose has returned for one stack: the runtime
+/// is being asked to keep that stack's services running, so a stalled read
+/// names that operation instead of the Compose call that already finished
+/// (effigy#460, Q-017).
+pub(super) fn restart_policy_wait(
+    progress: &ProgressSource,
+    subject: impl AsRef<str>,
+    count: Option<(u64, u64)>,
+) {
+    let mut awaiting = format!(
+        "the runtime to apply `restart: unless-stopped` to {}",
+        subject.as_ref()
+    );
+    if let Some((done, total)) = count {
+        awaiting.push_str(&format!(" ({done}/{total})"));
+    }
+    progress.now_waiting_for(awaiting);
+}
+
 /// Run one phase under a live step driven by `progress`, ending it with
 /// `summary` or the phase's own failure. The phase moves `progress` as its
 /// sub-steps start, so the frame names the one now running (effigy#460).

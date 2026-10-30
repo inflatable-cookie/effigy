@@ -1034,8 +1034,10 @@ unhealthy service's last check output next to its status. An environment that
 declares `[containers.<name>.health]` keeps that check as its final gate: the
 wait names that probe and its attempt, and a check that answers a definite
 status outside `2xx`/`3xx` is refused at once with the status it observed and
-the container's last output, because waiting cannot change an answer the
-service already gave.
+the primary container's last output, because waiting cannot change an answer
+the service already gave. The container is the one the runtime's own row names
+for that service, so a declared Compose `container_name` is never guessed from
+the project and service names.
 A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
 Effigy never hand-starts a stopped service and never stops or mutates

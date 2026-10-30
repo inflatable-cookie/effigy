@@ -688,15 +688,18 @@ During v0.x, MINOR bumps may include breaking changes.
   the same `waiting_on` list in `--json` and keep their text unchanged.
 - `container up` activation and preparation report their own state instead of a
   fixed label. Compose's whole-stack step moves to the restart-policy read once
-  Compose returns, so a stalled `restart: unless-stopped` update never shows a
-  finished Compose call. The creation-time policy load names the preparation
-  stage now running (checkout identity, declaration with ports and loopback,
-  render inputs, render, mount sources), and environment activation draws only
-  the transition's own live step instead of a second fixed one. A declared
+  Compose returns, and a shared service's step does the same, so a stalled
+  `restart: unless-stopped` read never shows a finished Compose call. The
+  creation-time policy load names the preparation stage now running (checkout
+  identity, declaration with ports and loopback, render inputs, render, mount
+  sources), and environment activation draws only the transition's own live
+  step instead of a second fixed one. A declared
   `[containers.<NAME>.health]` check that answers a definite status outside
-  `2xx`/`3xx` is refused at once with the status it observed and the
+  `2xx`/`3xx` is refused at once with the status it observed and the primary
   container's last output, instead of spending the whole health budget on an
-  answer waiting cannot change (effigy#455).
+  answer waiting cannot change (effigy#455). That container is the identity the
+  runtime's own row reports for the service, so an explicit Compose
+  `container_name` reads its own logs and is the one `waiting_on` names.
 
 ### Removed
 
