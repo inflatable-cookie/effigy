@@ -2635,7 +2635,9 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   including checkout-equivalent owner spellings. A failed or crashed pre-commit
   activation leaves the predecessor authoritative. Immutable orphan publication
   is retained without replay; recovery settles the failed successor and cancels
-  its reservation, then rolls forward. Reservation rules expose `ActivationRefusal`
+  its reservation, then rolls forward. Both reserve and recover prefer the oldest
+  unfinished reservation, including a claimed fence after a crash; a later empty
+  fence never hides its bound runs. Reservation rules expose `ActivationRefusal`
   and its stable `as_str()` names through `RunError::Refused`; admission also uses
   the existing RunError refusal/gate types. Unreadable or unknown state stays
   Broken/Unknown, and does not grant admission.

@@ -744,7 +744,7 @@ pub enum ActivationReservationState {
     Reserved,
     /// The mapping, `active(E)` and the session's attachment committed.
     Committed,
-    /// The caller abandoned it before commit. Its generation is never reused.
+    /// The caller abandoned it before commit. An admitted generation is never reused.
     Cancelled,
 }
 impl ActivationReservationState {
@@ -933,6 +933,27 @@ fn latest_reservation(
         )
         .optional()?;
     decode_reservation(conn, environment, row)
+}
+
+/// Never hide an unfinished fence behind a later empty reservation. This also
+/// recovers journals written before retries preferred their pending predecessor.
+fn recoverable_reservation(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+) -> Result<Option<ActivationReservationRecord>, RunError> {
+    let pending: Option<i64> = conn
+        .query_row(
+            "SELECT environment_generation FROM workspace_activation_reservations \
+         WHERE environment=?1 AND state NOT IN ('committed','cancelled') \
+         ORDER BY environment_generation LIMIT 1",
+            [environment.name().to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match pending {
+        Some(generation) => read_reservation(conn, environment, Generation::new(generation as u64)),
+        None => latest_reservation(conn, environment),
+    }
 }
 
 fn activation_observe(cx: &EffectContext) -> Result<ObserveContext, RunError> {
@@ -1300,8 +1321,10 @@ impl WorkspaceActivationReservation {
             let generation = Generation::new(current as u64)
                 .next()
                 .ok_or_else(|| RunError::refused("the environment generation cannot advance"))?;
-            let existing = latest_reservation(txn.conn(), environment)?;
+            let existing = recoverable_reservation(txn.conn(), environment)?;
             match existing {
+                Some(existing) if existing.state == ActivationReservationState::Reserved
+                    && existing.generation <= generation => Ok(existing),
                 Some(existing) if existing.generation > generation => Err(RunError::broken(
                     "a stored activation reservation is ahead of the environment generation",
                 )),
@@ -1365,8 +1388,8 @@ impl WorkspaceActivationReservation {
         })
     }
 
-    /// The most recent reservation `environment` recorded, whatever state it
-    /// reached, so a caller that lost its handle recovers the same id and E.
+    /// The oldest unfinished reservation, or the most recent terminal one.
+    /// A later empty fence never hides the bound runs recovery must settle.
     pub fn recover(
         reader: &StoreReader,
         environment: &ResourceId,
@@ -1814,8 +1837,8 @@ impl WorkspaceActivationReservation {
 
     /// Abandon this reservation before its commit. A live activation run at E is
     /// refused: its admission is durable and only its own settle ends it. A
-    /// cancelled generation is never reused, so no later activation inherits
-    /// the fence.
+    /// generation already admitted is never reused. An unclaimed generation
+    /// may be reserved again, with its prior staging explicitly cleared.
     pub fn cancel(
         &self,
         cx: &EffectContext,

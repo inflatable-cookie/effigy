@@ -1633,6 +1633,25 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     authoritative(&reader);
     assert_eq!(mapping(&reader, &environment).map(|row| row.2), Some(1));
 
+    // Direct reserve-after-crash must recover E, not hide it behind E+1.
+    let retry = WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+        .expect("direct retry recovers the unfinished fence");
+    assert_eq!(retry.id(), reservation.id());
+    assert_eq!(retry.record().environment_run, Some(run_id(73)));
+    // A journal from the earlier implementation may already contain a later
+    // empty fence. Both entry points still expose the older bound reservation.
+    Store::open(&cx, &root)
+        .expect("store")
+        .transaction(&cx, |txn| {
+            WorkspaceActivationReservation::insert(txn, &environment, Generation::new(3))
+        })
+        .expect("legacy later empty reservation");
+    assert_eq!(
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("older pending fence remains visible")
+            .id(),
+        reservation.id()
+    );
     // The reservation is recoverable and releasable: its interrupted activation
     // run settles, then its fence is cancelled without touching the predecessor.
     let recovered = WorkspaceActivationReservation::recover(&reader, &environment)
