@@ -46,7 +46,7 @@ license = "MIT"
 [workspace.lints]
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)", "cfg(effigy_feedback_lint)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
 # Custody fingerprints the real CLI in development proofs. Keep the cryptographic
 # compressor optimized, as in release builds, even for large debug executables.

@@ -433,6 +433,41 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Changed
 
+- **No command plane shows a canned progress label.** The Q-017 live-state
+  rule is now a required lint gate rather than a migration list. A task-run
+  step names its ordinal, the exact child step it waits on and the elapsed
+  wait; every frame keeps the awaited object next to the last event, so
+  publishing a Compose progress line no longer hides the `docker compose up`
+  still running (a state capture's push frame likewise keeps its destination
+  while the finished capture task stays as its last event), and a Colima
+  profile command waits on the command now in flight — the list probe, then
+  `colima stop`, the pidfile termination, `colima status`, the managed
+  configuration or `colima start` as the recovery reports each phase,
+  with configuration preparation its own phase before the start — rather than a
+  generic recovery or a probe that already answered; a heavy admission wait names
+  the hook's decision probe and the hook's own progress line, and its immediate
+  refusals are one plain line; a teardown
+  the runtime never narrates names its phase, the runtime report it awaits and
+  the elapsed wait; and a managed TUI pane's generic start state shows its
+  elapsed wait, with the shutdown footer naming the completion's real counts.
+  `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
+  on every compiler-resolved use of a fixed-label constructor in any workspace
+  crate, including through an alias or wrapper, naming the file, the line and
+  the migration. The gate also owns the spinner crate: `indicatif` may be
+  named in one production file (the reviewed sink) and that file may build one
+  bar, so a fixed-label spinner built through `ProgressBar::no_length`,
+  `ProgressStyle::default_spinner` and `enable_steady_tick` fails at its own
+  file and line, and `clippy::disallowed_methods` rejects every bar
+  constructor as a second gate. The gate is part of `effigy validate`,
+  `effigy qa` and `effigy qa:gates`, so the normal validation path and the
+  milestone QA path both refuse a bare spinner instead of depending on someone
+  running the selector. A managed pane's start
+  clock now belongs to the process's current attempt, so an entry that queued
+  behind its prerequisite starts its own count at zero rather than showing the
+  time it spent waiting, and a silent teardown names the command's exit as the
+  thing it awaits instead of a runtime report that never comes. Each site's
+  disposition is recorded in
+  [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while
@@ -838,6 +873,10 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Removed
 
+- The fixed-label spinner API: `Renderer::spinner` and `SpinnerHandle`. A step
+  is driven by a `ProgressSource` (`steps::live_step`) or is one
+  `steps::finish_line`, so a bare spinner with a canned label cannot be
+  constructed.
 - The gateway's dead-route sweep, certificate deletion on `down`, the
   route-table lock and the route's scope token.
 - The exec-ready probe and its recovery restart, restart recovery of exited

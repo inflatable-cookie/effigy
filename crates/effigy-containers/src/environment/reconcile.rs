@@ -1342,6 +1342,8 @@ mod tests {
             "{frame}"
         );
         assert!(frame.contains("last: published render "), "{frame}");
+        // The event and the awaited phase are both named.
+        assert!(frame.contains("; waiting for "), "{frame}");
         assert!(frame.ends_with("; 9s elapsed"), "{frame}");
 
         let mut record = run

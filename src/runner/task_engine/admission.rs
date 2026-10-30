@@ -50,6 +50,7 @@ use effigy_kernel::custody::{
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_manifest::ManifestTaskAdmission;
+use effigy_ui::steps::{live_step, ProgressSource};
 
 use super::identity::TaskTarget;
 use super::kernel::{self, CustodyWait};
@@ -527,10 +528,13 @@ pub(super) fn admit(
     let protocol = match protocol() {
         Ok(protocol) => protocol,
         Err(reason) => {
-            effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(
-                "heavy admission for `{}` was refused: {reason}",
-                target.label
-            ));
+            effigy_ui::steps::finish_line(
+                false,
+                &format!(
+                    "heavy admission for `{}` was refused: {reason}",
+                    target.label
+                ),
+            );
             return Err(refused("failed", reason));
         }
     };
@@ -545,10 +549,13 @@ pub(super) fn admit(
              durable parent tree), so its custodian set cannot be reported"
         );
         let next = format!("unset `{PROTOCOL_ENV}` for this run, or run it without `--run-id`");
-        effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(
-            "heavy admission for `{}` was refused: {reason}",
-            target.label
-        ));
+        effigy_ui::steps::finish_line(
+            false,
+            &format!(
+                "heavy admission for `{}` was refused: {reason}",
+                target.label
+            ),
+        );
         return Err(refusal_with(target, &run_id, "failed", reason, next));
     }
     let mut request = serde_json::json!({
@@ -587,8 +594,10 @@ pub(super) fn admit(
         label: HOOK_LABEL.to_owned(),
     };
     // A heavy run can queue for minutes behind the machine's other heavy work.
-    // The step says so, and the hook's own progress line becomes its label.
-    let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));
+    // The step names the task, the hook's own progress line as its sub-step and
+    // the elapsed wait (effigy#467, Q-017).
+    let waiting = admission_progress(&target.label, None);
+    let step = live_step(waiting.clone());
     let _waiting = CustodyWait::enter();
     let mut hook = match run.spawn(spec, true) {
         Ok(hook) => hook,
@@ -620,9 +629,13 @@ pub(super) fn admit(
         if !err.is_empty() {
             match admission_progress_line(&err) {
                 // The hook's own progress ("waiting for capacity, 2 ahead") is
-                // the operator's: it becomes the step's label.
+                // the operator's: it becomes the step's sub-step.
                 Some(progress) if effigy_ui::steps::mode() != effigy_ui::StepMode::Silent => {
-                    step.set_label(&admission_wait_label(&target.label, Some(&progress)));
+                    waiting.update(
+                        admission_wait_label(&target.label, Some(&progress)),
+                        None,
+                        None,
+                    );
                 }
                 _ => {
                     let _ = std::io::stderr().write_all(&err);
@@ -1028,6 +1041,16 @@ pub(in crate::runner) fn admission_wait_label(task: &str, progress: Option<&str>
     }
 }
 
+/// The live state of a heavy admission wait: what the hook last reported, the
+/// exact probe (the hook's decision line) and the elapsed wait. Before the
+/// hook says more, the frame names the probe it awaits.
+fn admission_progress(task: &str, progress: Option<&str>) -> ProgressSource {
+    let source =
+        ProgressSource::waiting_for(format!("the admission hook's decision for task `{task}`"));
+    source.update(admission_wait_label(task, progress), None, None);
+    source
+}
+
 /// The last non-empty line the hook wrote to stderr, as progress.
 fn admission_progress_line(stderr: &[u8]) -> Option<String> {
     String::from_utf8_lossy(stderr)
@@ -1078,6 +1101,27 @@ fn refusal_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_admission_wait_frame_names_its_probe_the_hook_progress_and_elapsed() {
+        let progress = admission_progress("dev", None);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(0)),
+            "waiting for heavy admission (task `dev`); waiting for the admission hook's \
+             decision for task `dev`; 0s elapsed"
+        );
+        progress.update(
+            admission_wait_label("dev", Some("waiting for capacity, 2 ahead")),
+            None,
+            None,
+        );
+        let later = progress.frame_at(Duration::from_secs(45));
+        assert_eq!(
+            later,
+            "waiting for heavy admission (task `dev`, waiting for capacity, 2 ahead); waiting \
+             for the admission hook's decision for task `dev`; 45s elapsed"
+        );
+    }
 
     /// The marker is held per thread, like the lexical run nesting it
     /// mirrors: a run on another thread of the same process is not inside

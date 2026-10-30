@@ -20,8 +20,9 @@ use effigy_ui::steps::{ProgressSource, Step};
 #[derive(Debug)]
 pub struct TimedStep {
     step: Step,
-    /// The live state a live step renders from; `None` for a legacy label.
-    source: Option<ProgressSource>,
+    /// The live state the step renders from: the current sub-step, counts,
+    /// latest event and elapsed wait.
+    source: ProgressSource,
     started: Instant,
     finished: Cell<bool>,
 }
@@ -32,20 +33,7 @@ impl TimedStep {
     pub fn live(source: ProgressSource) -> Self {
         Self {
             step: effigy_ui::steps::live_step(source.clone()),
-            source: Some(source),
-            started: Instant::now(),
-            finished: Cell::new(false),
-        }
-    }
-
-    #[cfg_attr(
-        effigy_feedback_lint,
-        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-    )]
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            step: effigy_ui::steps::step(&label.into()),
-            source: None,
+            source,
             started: Instant::now(),
             finished: Cell::new(false),
         }
@@ -53,17 +41,17 @@ impl TimedStep {
 
     /// The label a person last saw for this step.
     pub fn label(&self) -> String {
-        match &self.source {
-            Some(source) => source.frame_at(self.elapsed()),
-            None => self.step.label(),
-        }
+        self.source.frame_at(self.elapsed())
+    }
+
+    /// The label at `elapsed`. Tests use this as a fake clock, so a frame that
+    /// never changes is provable rather than assumed.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
+        self.source.frame_at(elapsed)
     }
 
     pub fn set_label(&self, label: impl Into<String>) {
-        match &self.source {
-            Some(source) => source.update(label.into(), None, None),
-            None => self.step.set_label(&label.into()),
-        }
+        self.source.update(label.into(), None, None);
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -105,19 +93,15 @@ impl TimedStep {
 /// A step that moves with the runtime's own progress lines. Between two lines
 /// the frame names the wait it is in, with elapsed time, so a long pull or
 /// start never shows one fixed label for its whole duration.
-fn runtime_step(label: String) -> TimedStep {
-    let source = ProgressSource::waiting_for("the runtime's next report");
-    source.update(label, None, None);
+///
+/// `awaiting` is the exact completion the step is waiting for. A runtime path
+/// that narrates its work awaits its next report; a teardown that can stay
+/// silent awaits the command's own exit, so the frame never names a report
+/// that may never come (effigy#467, Q-017).
+pub fn runtime_wait(label: impl Into<String>, awaiting: impl Into<String>) -> TimedStep {
+    let source = ProgressSource::waiting_for(awaiting);
+    source.update(label.into(), None, None);
     TimedStep::live(source)
-}
-
-/// A one-off step for a phase that has not finished yet.
-#[cfg_attr(
-    effigy_feedback_lint,
-    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-)]
-pub fn phase(label: impl Into<String>) -> TimedStep {
-    TimedStep::new(label)
 }
 
 /// `starting web (1.4s)` — every finished step says how long it ran.
@@ -150,10 +134,12 @@ impl ComposeSteps {
         let key = self.key(event);
         let subject = event.subject().to_owned();
         let project = self.project.clone();
-        let entry = self
-            .steps
-            .entry(key)
-            .or_insert_with(|| (runtime_step(event.label(&project)), subject.clone()));
+        let entry = self.steps.entry(key).or_insert_with(|| {
+            (
+                runtime_wait(event.label(&project), "the runtime's next report"),
+                subject.clone(),
+            )
+        });
         let step = &entry.0;
         if step.is_finished() {
             return;

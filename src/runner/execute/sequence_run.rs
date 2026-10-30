@@ -14,6 +14,7 @@ use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use effigy_ui::steps::{live_step, ProgressSource};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -455,7 +456,9 @@ fn run_steps(
             continue;
         }
         // A step can run for minutes, so each one is a live step that names
-        // which step of how many is running.
+        // which step of how many is running, what it waits on and how long it
+        // has waited, instead of redrawing one fixed ordinal (effigy#454,
+        // Q-017).
         let position = index + 1;
         let description = selection
             .task
@@ -468,7 +471,8 @@ fn run_steps(
             subject.as_deref()
         };
         let progress = sequence_step_label(task_name, position, total, subject);
-        let step = effigy_ui::steps::step(&progress);
+        let source = sequence_step_progress(&progress, &label);
+        let step = live_step(source.clone());
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
@@ -595,6 +599,16 @@ pub(in crate::runner::execute) fn sequence_step_label(
         label.push_str(&format!(": {subject}"));
     }
     label
+}
+
+/// The live state of one running sequence step: the step's own label and
+/// ordinal, then the exact child it waits on and the elapsed wait. Nothing
+/// observes the child's inside, so the frame names that wait rather than
+/// animating a fixed label (effigy#467, Q-017).
+fn sequence_step_progress(label: &str, step_id: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("step `{step_id}` to exit"));
+    progress.update(label, None, None);
+    progress
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
@@ -992,6 +1006,25 @@ mod tests {
         assert_eq!(
             sequence_step_label("dev", 1, 1, Some("starting services")),
             "running dev: starting services"
+        );
+    }
+
+    #[test]
+    fn a_sequence_step_frame_moves_with_elapsed_and_names_the_child_it_waits_for() {
+        let progress = super::sequence_step_progress(
+            &sequence_step_label("dev", 2, 4, Some("build")),
+            "db:migrate",
+        );
+        let first = progress.frame_at(std::time::Duration::from_secs(0));
+        assert_eq!(
+            first,
+            "running dev step 2/4: build; waiting for step `db:migrate` to exit; 0s elapsed"
+        );
+        let later = progress.frame_at(std::time::Duration::from_secs(45));
+        assert_ne!(first, later, "a frame that never changes is not progress");
+        assert_eq!(
+            later,
+            "running dev step 2/4: build; waiting for step `db:migrate` to exit; 45s elapsed"
         );
     }
 

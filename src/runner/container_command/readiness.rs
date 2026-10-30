@@ -829,7 +829,7 @@ mod tests {
         // Fake clock: the frame names the attempt, the last output and the time.
         assert_eq!(
             waiting.progress.frame_at(Duration::from_secs(12)),
-            "waiting for web to report healthy (attempt 1); last: GET / HTTP/1.1 404; 12s elapsed"
+            "waiting for web to report healthy (attempt 1); waiting for web to report healthy; last: GET / HTTP/1.1 404; 12s elapsed"
         );
         // The healthy service has no waiting step.
         assert!(!steps.contains_key("db"));
@@ -852,7 +852,7 @@ mod tests {
         observe_parent(&progress, &services);
         assert_eq!(
             progress.frame_at(Duration::from_secs(12)),
-            "waiting for web to report healthy (2/3); last: web is unhealthy after 4 failed checks; 12s elapsed"
+            "waiting for web to report healthy (2/3); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 12s elapsed"
         );
     }
 
@@ -943,7 +943,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(20)),
-            "listing the containers of project `demo` from the runtime (probe 3, up to 15s) (1/2); last: web is unhealthy after 4 failed checks; 20s elapsed"
+            "listing the containers of project `demo` from the runtime (probe 3, up to 15s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 20s elapsed"
         );
         let containers = ["demo-web-1".to_owned(), "demo-db-1".to_owned()];
         observe_probe_stage(
@@ -958,7 +958,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(24)),
-            "inspecting 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4, up to 5s) (1/2); last: web is unhealthy after 4 failed checks; 24s elapsed"
+            "inspecting 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4, up to 5s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 24s elapsed"
         );
         // A long list stays one bounded frame.
         let many = (0..5)
@@ -1021,7 +1021,7 @@ mod tests {
         let waiting = steps.get("web").expect("the regressed service waits again");
         assert_eq!(
             waiting.progress.frame_at(Duration::from_secs(7)),
-            "waiting for web to report healthy (attempt 1); last: GET / HTTP/1.1 500; 7s elapsed"
+            "waiting for web to report healthy (attempt 1); waiting for web to report healthy; last: GET / HTTP/1.1 500; 7s elapsed"
         );
         assert!(!steps.contains_key("db"));
     }
@@ -1045,7 +1045,7 @@ mod tests {
         observe_probe_started(&progress, "demo", 3, Duration::from_secs(15), Some((1, 2)));
         assert_eq!(
             progress.frame_at(Duration::from_secs(20)),
-            "reading the health of project `demo` from the runtime (probe 3, up to 15s) (1/2); last: web is unhealthy after 4 failed checks; 20s elapsed"
+            "reading the health of project `demo` from the runtime (probe 3, up to 15s) (1/2); waiting for the environment's services to report healthy; last: web is unhealthy after 4 failed checks; 20s elapsed"
         );
     }
 
@@ -1060,7 +1060,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(30)),
-            "waiting for the runtime to answer the container list of project `demo` (probe 3); last: docker: daemon not responding; 30s elapsed"
+            "waiting for the runtime to answer the container list of project `demo` (probe 3); waiting for the environment's services to report healthy; last: docker: daemon not responding; 30s elapsed"
         );
         // An inspect failure names the containers it was reading, even when
         // the error text is identical to the list read's.
@@ -1078,7 +1078,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(31)),
-            "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); last: docker: daemon not responding; 31s elapsed"
+            "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); waiting for the environment's services to report healthy; last: docker: daemon not responding; 31s elapsed"
         );
     }
 

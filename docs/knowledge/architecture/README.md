@@ -21,5 +21,6 @@ Current technical authority for Effigy.
 | Runtime kernel architecture (proposed) | [032-runtime-kernel-architecture.md](032-runtime-kernel-architecture.md) |
 | Gateway legacy upgrade and recovery | [034-gateway-legacy-upgrade-recovery.md](034-gateway-legacy-upgrade-recovery.md) |
 | Gateway endpoint storage API | [035-gateway-endpoint-store.md](035-gateway-endpoint-store.md) |
+| Live progress sites (Q-017) | [036-live-progress-sites.md](036-live-progress-sites.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |

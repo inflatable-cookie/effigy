@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use super::SessionState;
 
 #[test]
@@ -90,4 +92,55 @@ fn entry_waits_are_replaced_by_each_snapshot() {
     // front started too: nothing waits any more.
     state.apply_entry_waits(Vec::new());
     assert!(state.entry_waits.is_empty());
+}
+
+/// The start clock belongs to the process's current attempt. An entry that
+/// waited a minute for its prerequisite must not report that minute as its own
+/// starting time the moment it starts (Q-017).
+#[test]
+fn a_starting_entry_rebases_its_clock_instead_of_reporting_its_queue_time() {
+    use super::ProcessStartupState;
+
+    let mut state = SessionState::new(
+        ".".into(),
+        vec!["api".to_owned(), "web".to_owned()],
+        2000,
+        240,
+        8000,
+    );
+    state
+        .process_started_at
+        .insert("web".to_owned(), Instant::now() - Duration::from_secs(60));
+    state.pending_startup = 2;
+
+    let queued = state
+        .process_started_at_for("web")
+        .expect("clock")
+        .elapsed();
+    assert!(queued >= Duration::from_secs(60), "{queued:?}");
+
+    state.record_startup_state("web", ProcessStartupState::Starting);
+
+    let starting = state
+        .process_started_at_for("web")
+        .expect("clock")
+        .elapsed();
+    assert!(
+        starting < Duration::from_secs(1),
+        "a start attempt starts its own clock, not the queue wait: {starting:?}"
+    );
+    assert_eq!(
+        state.startup_states.get("web"),
+        Some(&ProcessStartupState::Starting)
+    );
+
+    // Another 30s of real starting time is the entry's own, and its frame says so.
+    state
+        .process_started_at
+        .insert("web".to_owned(), Instant::now() - Duration::from_secs(30));
+    let started = state
+        .process_started_at_for("web")
+        .expect("clock")
+        .elapsed();
+    assert!(started >= Duration::from_secs(30), "{started:?}");
 }

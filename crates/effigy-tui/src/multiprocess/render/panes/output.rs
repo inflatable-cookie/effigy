@@ -7,7 +7,7 @@ use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::state::ProcessStartupState;
 use crate::waits::{EntryPhase, EntryState};
 
-use super::super::super::terminal_text::{ansi_line, runtime_meta_line};
+use super::super::super::terminal_text::{ansi_line, format_elapsed, runtime_meta_line};
 
 pub(super) fn output_lines(
     active_logs: &[LogEntry],
@@ -42,10 +42,21 @@ pub(super) fn waiting_for_output_lines(
             )),
         ];
     }
+    // An entry that publishes its own state still owns its clock even when it
+    // names no further wait, so the pane shows the entry's phase elapsed
+    // rather than the session's (Q-017).
+    let startup_elapsed = entry_wait
+        .map(|entry| Duration::from_millis(entry.elapsed_ms))
+        .unwrap_or(active_elapsed);
     let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
     vec![
-        startup_meta_line(startup_state, active_elapsed, active_restart_count),
+        startup_meta_line(
+            startup_state,
+            startup_elapsed,
+            active_elapsed,
+            active_restart_count,
+        ),
         Line::from(vec![
             Span::styled(spinner.to_owned(), Style::default().fg(Color::Yellow)),
             Span::styled(
@@ -80,22 +91,32 @@ fn entry_meta_line(entry: &EntryState) -> Line<'static> {
 
 fn startup_meta_line(
     startup_state: ProcessStartupState,
+    startup_elapsed: Duration,
     active_elapsed: Duration,
     active_restart_count: usize,
 ) -> Line<'static> {
     match startup_state {
-        ProcessStartupState::Waiting => status_meta_line("pending"),
-        ProcessStartupState::Starting => status_meta_line("starting"),
+        ProcessStartupState::Waiting => status_meta_line("pending", Some(startup_elapsed)),
+        ProcessStartupState::Starting => status_meta_line("starting", Some(startup_elapsed)),
         ProcessStartupState::Running => runtime_meta_line(active_elapsed, active_restart_count),
-        ProcessStartupState::Failed => status_meta_line("failed"),
+        ProcessStartupState::Failed => status_meta_line("failed", None),
     }
 }
 
-fn status_meta_line(status: &'static str) -> Line<'static> {
-    Line::from(vec![
+/// A phase that names no further state still shows how long it has waited, so
+/// its pane is never a fixed label under a moving glyph (Q-017).
+fn status_meta_line(status: &'static str, elapsed: Option<Duration>) -> Line<'static> {
+    let mut spans = vec![
         Span::styled("startup: ", Style::default().fg(Color::LightBlue)),
         Span::styled(status, Style::default().fg(Color::DarkGray)),
-    ])
+    ];
+    if let Some(elapsed) = elapsed {
+        spans.push(Span::styled(
+            format!(" ({} elapsed)", format_elapsed(elapsed)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn waiting_label(startup_state: ProcessStartupState) -> &'static str {

@@ -2129,8 +2129,8 @@ fn listener_readiness_frames_keep_the_listener_address_as_blockers_arrive() {
         frames,
         vec![
             "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 1s elapsed",
-            "checking the verified listener on 127.0.0.1:8080; last: the gateway is not answering yet; 2s elapsed",
-            "checking the verified listener on 127.0.0.1:8080; last: the gateway record is not published yet; 3s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; last: the gateway is not answering yet; 2s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; last: the gateway record is not published yet; 3s elapsed",
         ]
     );
 }
@@ -2202,7 +2202,7 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
     );
 }
 
@@ -2221,7 +2221,7 @@ fn operator_start_frame_carries_the_self_test_blocker() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(6)),
-        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
     );
 }
 
@@ -2239,7 +2239,7 @@ fn operator_start_frame_names_an_unreadable_status() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(3)),
-        "checking the gateway self-test on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; waiting for the gateway to answer on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
     );
 }
 
@@ -2263,7 +2263,7 @@ fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "waiting for the gateway to stop; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
+        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
     );
 }
 
@@ -2288,13 +2288,13 @@ fn bind_probe_frames_name_each_address_as_it_is_probed() {
         frames,
         vec![
             format!("probing 127.0.0.1:53 (1/3); waiting for {awaited}; 1s elapsed"),
-            format!("probing 127.0.0.1:80 (2/3); last: 127.0.0.1:53 bound; 2s elapsed"),
-            format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:80 already in use; 3s elapsed"),
+            format!("probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:53 bound; 2s elapsed"),
+            format!("probing 127.0.0.1:443 (3/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 already in use; 3s elapsed"),
         ]
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:443 bound; 4s elapsed")
+        format!("probing 127.0.0.1:443 (3/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:443 bound; 4s elapsed")
     );
 }
 
@@ -2326,7 +2326,7 @@ fn bind_probe_refusal_reports_the_child_refusal_before_returning_it() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "probing 127.0.0.1:80 (2/3); last: 127.0.0.1:80 denied; 5s elapsed"
+        "probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 denied; 5s elapsed"
     );
 }
 
@@ -2352,7 +2352,7 @@ fn bind_probe_failure_names_the_address_and_keeps_its_reason() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(2)),
-        "probing 127.0.0.1:53 (1/1); last: 127.0.0.1:53 failed: Address already in use (os error 48); 2s elapsed"
+        "probing 127.0.0.1:53 (1/1); waiting for the bind probe for 127.0.0.1:53; last: 127.0.0.1:53 failed: Address already in use (os error 48); 2s elapsed"
     );
 }
 
@@ -2427,7 +2427,7 @@ fn route_frames_name_each_route_as_it_is_read() {
     assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "reading route b.test (2/2); last: b.test has no certificate yet; 5s elapsed"
+        "reading route b.test (2/2); waiting for the route table at /state/routes.json; last: b.test has no certificate yet; 5s elapsed"
     );
 }
 
@@ -2473,13 +2473,15 @@ fn route_frames_name_each_route_before_its_certificate_lookup() {
         frames,
         vec![
             format!("reading route a.test (1/3); waiting for {awaited}; 1s elapsed"),
-            format!("reading route b.test (2/3); last: a.test has its certificate; 2s elapsed"),
-            format!("reading route c.test (3/3); last: b.test has no certificate yet; 3s elapsed"),
+            format!("reading route b.test (2/3); waiting for {awaited}; last: a.test has its certificate; 2s elapsed"),
+            format!("reading route c.test (3/3); waiting for {awaited}; last: b.test has no certificate yet; 3s elapsed"),
         ]
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        "reading route c.test (3/3); last: c.test has its certificate; 4s elapsed"
+        format!(
+            "reading route c.test (3/3); waiting for {awaited}; last: c.test has its certificate; 4s elapsed"
+        )
     );
     assert_eq!(lookups, 3);
     assert_eq!(summary.route_count, 3);

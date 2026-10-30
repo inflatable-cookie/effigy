@@ -85,8 +85,12 @@ Start a live wait with `ProgressSource::waiting_for(probe)` and
 `effigy_ui::steps::live_step(source)`. The source supplies the current
 sub-step, known count, last event and elapsed wait; when no further event
 exists it names that exact probe. Finish with `succeed(summary)`,
-`fail(summary)` or `finish_clear`. The legacy `step(label)` constructor
-remains only for sites still on the feedback-spinner inventory.
+`fail(summary)` or `finish_clear`, and finish a short immediate operation with
+`effigy_ui::steps::finish_line(ok, summary)` instead of starting a step. The
+fixed-label `step(label)` constructor is a deprecated lint anchor: using it
+fails `effigy lint:feedback`, and so does any other bare
+`indicatif::ProgressBar::new_spinner`, so a canned label cannot reach a
+terminal.
 
 Labels are short, present tense and name their subject:
 

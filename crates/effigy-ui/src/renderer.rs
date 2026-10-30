@@ -29,13 +29,6 @@ impl From<std::io::Error> for UiError {
     }
 }
 
-pub trait SpinnerHandle {
-    fn set_message(&self, message: &str);
-    fn finish_success(&self, message: &str);
-    fn finish_error(&self, message: &str);
-    fn finish_clear(&self);
-}
-
 pub trait Renderer {
     fn text(&mut self, body: &str) -> UiResult<()>;
     fn section(&mut self, title: &str) -> UiResult<()>;
@@ -51,9 +44,4 @@ pub trait Renderer {
     fn summary(&mut self, counts: SummaryCounts) -> UiResult<()>;
 
     fn table(&mut self, spec: &TableSpec) -> UiResult<()>;
-    #[cfg_attr(
-        effigy_feedback_lint,
-        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-    )]
-    fn spinner(&mut self, label: &str) -> UiResult<Box<dyn SpinnerHandle>>;
 }

@@ -1935,9 +1935,15 @@ mod tests {
             subject: "demo-web-1".to_owned(),
         };
         progress.event(started.label("demo"));
+        // The event never replaces the call still awaited: two reads after it
+        // both keep `docker compose up` and the elapsed wait.
         assert_eq!(
             progress.frame_at(Duration::from_secs(20)),
-            "starting the `web` stack; last: starting web; 20s elapsed"
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 20s elapsed"
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(90)),
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 90s elapsed"
         );
         // Compose has returned and the restart-policy apply begins: each of its
         // stages names itself as it starts, so a stalled read names that read
@@ -2005,7 +2011,7 @@ mod tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(7)),
-            "waiting for the declared gateway service ports (attempt 1) (5/8); last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 7s elapsed"
+            "waiting for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 7s elapsed"
         );
         // The next poll keeps that blocker as the last thing this wait saw.
         super::gateway_port_wait_stage(
@@ -2015,7 +2021,7 @@ mod tests {
         assert!(
             progress
                 .frame_at(Duration::from_secs(8))
-                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); last: service `db`"),
+                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; last: service `db`"),
             "{}",
             progress.frame_at(Duration::from_secs(8))
         );

@@ -485,7 +485,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
     observer.gate_finished(2, 5, &result);
     assert_eq!(
         progress.frame_at(Duration::from_secs(40)),
-        "checking the next gate or stage (2/5); last: gate `cargo test` passed after 12s (2/5); 40s elapsed"
+        "checking the next gate or stage (2/5); waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 40s elapsed"
     );
 
     // A wait that is not one gate names itself as the sub-step; the last gate
@@ -493,7 +493,7 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
     observer.note("checking hosted GitHub Actions evidence");
     assert_eq!(
         progress.frame_at(Duration::from_secs(41)),
-        "checking hosted GitHub Actions evidence; last: gate `cargo test` passed after 12s (2/5); 41s elapsed"
+        "checking hosted GitHub Actions evidence; waiting for the next gate or stage; last: gate `cargo test` passed after 12s (2/5); 41s elapsed"
     );
 }
 

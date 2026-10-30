@@ -1596,7 +1596,9 @@
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::error::tests::) | test(cli::output::envelope::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(health::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
-"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ task = "lint:feedback:inventory" }, { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy-doctor -p effigy-manifest -p effigy-release -p effigy-secrets --all-targets -- -D warnings", timeout_ms = 900000 }] }
+# The Q-017 gate: no fixed-label spinner can reach a command plane, and the
+# whole workspace is linted, not a chosen package list (effigy#467).
+"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Fail on any fixed-label spinner entry point in any workspace crate, and lint every workspace target.", run = [{ task = "lint:feedback:inventory" }, { run = "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "check:feedback:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-ui -p effigy-containers --all-targets", timeout_ms = 900000 }] }
 "test:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test_feedback_inventory.py", timeout_ms = 900000 }] }
 "lint:feedback:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/check-feedback-inventory.py", timeout_ms = 900000 }] }
@@ -1703,7 +1705,7 @@
   "effigy docs check links",
   { task = "qa:ci:json" },
 ]
-"qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }] }
+"qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }, { task = "lint:feedback" }] }
 "qa:ci" = { visibility = "public", group = "Validation", description = "Mirror hosted CI: docs, JSON contracts, released surface and architecture.", run = [
   { task = "qa:docs" },
   { task = "qa:ci:json" },
@@ -1721,8 +1723,8 @@
 
 # Default validation shortcuts
 health = { visibility = "public", group = "Validation", description = "Format check plus a locked compile of the workspace.", run = [{ task = "fmt:check" }, "sh scripts/oxide-selector.sh check --workspace --locked"] }
-validate = { visibility = "public", group = "Validation", description = "Health plus clippy across every workspace target.", run = [{ task = "health" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
-qa = { visibility = "public", group = "Validation", description = "Built-in tests, the fault-injection proofs, docs checks and changed JSON contracts.", run = [{ task = "test" }, { task = "test:fault-injection" }, { task = "qa:docs" }, { task = "qa:json" }] }
+validate = { visibility = "public", group = "Validation", description = "Health, the live-progress feedback gate, and clippy across every workspace target.", run = [{ task = "health" }, { task = "lint:feedback" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
+qa = { visibility = "public", group = "Validation", description = "Built-in tests, the fault-injection proofs, docs checks, changed JSON contracts and the live-progress feedback gate.", run = [{ task = "test" }, { task = "test:fault-injection" }, { task = "qa:docs" }, { task = "qa:json" }, { task = "lint:feedback" }] }
 
 # Visibility/discovery changes: bounded tests and compilation of their owners.
 "test:tasks:visibility" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor --lib -E 'test(visibility) | test(task_defs::) | test(task_description_validation_tests) | test(manifest_schema)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
