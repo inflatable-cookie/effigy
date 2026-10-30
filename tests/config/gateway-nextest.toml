@@ -6,3 +6,11 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 # 1 s window failed healthy runs for slow reaping.
 leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
+
+[[profile.default.overrides]]
+# Detached exposure proofs start real supervisors and cold listener children
+# inside an enclosing activation budget. Reserve the runner so the covering
+# concurrent selection reaches the listener phase instead of spending that
+# budget competing with its other fixtures. Keep timeouts and assertions.
+filter = 'test(container_up_exposure_tests::)'
+threads-required = "num-test-threads"

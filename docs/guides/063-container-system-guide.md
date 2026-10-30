@@ -1043,6 +1043,10 @@ inventory, exec readiness or exposure verification leaves the scope in place.
 `effigy container up --detach` exits non-zero and reports the activation as
 unavailable. It never treats an unavailable probe as an empty or ready stack,
 and there is nothing to clean up: the next `up` reconciles from what is running.
+A host listener that fails its own readiness is the one exception that is not
+unavailable: the activation settles, the container's verified routes stay
+published, and the command reports partial exposure naming the withheld route
+and the published ones.
 
 The supported reconciliation command is `effigy container up --detach`.
 Each environment has one record (contract 053): the backend it runs on and why,
@@ -1067,6 +1071,30 @@ also reports preparation failures as unavailable with no recovery authority.
 These stages and codes identify caller boundaries, not readiness proof; the
 cause is what refused. Details contain no raw backend output, argv or
 environment.
+
+Partial exposure is reported separately, because the activation settled. When
+the container's routes are published and a managed host listener kept only its
+own route withheld, the JSON `state` is `partial`, `phase` is
+`listener_exposure`, `readiness` is `verified`, `exposure` is `partial` and
+`failure_kind` is `managed_listener_exposure`. `exposed_routes` lists every
+route the activation published as `domain -> target`, and `withheld_routes`
+names each failed listener with its `route_domain`, `status`,
+`observed_status`, bounded `detail`, bounded `output_tail` and its own
+`restart` recovery. The text form names the same published and withheld routes.
+A listener that answers the wrong status is refused as soon as that answer is
+seen, and a still-closed port's progress line carries the child's own bounded,
+redacted output tail. A port that never opens cannot hold the activation open:
+listener startup shares the bring-up's observation budget, so `up` returns with
+that listener's route withheld when the budget is spent, settling that
+generation before the command returns so it cannot publish after the report.
+A listener the activation did not start is reconciled against its own published
+generation first: a healthy generation the previous activation published stays
+exposed when it still matches the current declaration (route domain, TLS, bind
+and the live declared readiness request), and a generation that serves an older
+declaration, or no longer answers the declared readiness request, is settled so
+its route is withdrawn before the report withholds the declared one. A dependent of
+a withheld listener withholds its own route too, through a whole `depends_on`
+chain, instead of waiting for a record that process never wrote.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An
 owned replacement updates its TCP target in the same locked route transaction,
