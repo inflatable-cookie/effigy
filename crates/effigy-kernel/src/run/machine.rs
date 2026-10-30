@@ -20,8 +20,10 @@ pub fn record_gateway_operator(directory: &std::path::Path, action: OperatorActi
     if !directory.is_dir() {
         return;
     }
-    if let Err(error) = try_record_gateway_operator(directory, action, cause) {
-        eprintln!("[gateway] cannot log operator event: {error}");
+    let line = operator_event_line(action, cause);
+    // A failed write keeps the whole event on stderr, caller provenance included.
+    if let Err(error) = append_operator_line(directory, &line) {
+        eprintln!("[gateway] operator event log unavailable ({error}): {line}");
     }
 }
 
@@ -33,8 +35,11 @@ pub fn try_record_gateway_operator(
     action: OperatorAction,
     cause: &str,
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    append_operator_line(directory, &operator_event_line(action, cause))
+}
+
+/// The one event line: pid, redacted argv, cwd, cause and the caller chain.
+fn operator_event_line(action: OperatorAction, cause: &str) -> String {
     let pid = std::process::id();
     let caller = provenance::caller(
         &provenance::Platform,
@@ -46,7 +51,12 @@ pub fn try_record_gateway_operator(
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     let cwd = std::env::current_dir().ok();
-    let line = provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller);
+    provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller).to_string()
+}
+
+fn append_operator_line(directory: &std::path::Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let mut log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

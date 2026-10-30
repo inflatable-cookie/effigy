@@ -1465,6 +1465,56 @@ fn managed_start_launches_the_gateway_when_it_is_positively_stopped() {
     assert!(marker.exists(), "a stopped gateway must be started");
 }
 
+/// The machine gateway is what `container up` starts. Its managed start takes
+/// the operator lifecycle, not the preflight-and-command path, so this test
+/// drives that branch with the operator start injected. The live machine
+/// gateway is never touched (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_takes_the_operator_start() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    assert!(
+        !config.is_private(),
+        "the machine gateway is not a private root"
+    );
+    let starts = std::cell::Cell::new(0);
+    managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            starts.set(starts.get() + 1);
+            Ok(())
+        },
+        |_| panic!("the operator start does not preflight or run the command"),
+    )
+    .unwrap();
+    assert_eq!(
+        starts.get(),
+        1,
+        "the machine gateway starts once through the operator"
+    );
+}
+
+/// A refused operator start is an error for `container up`, never a silent
+/// success claim.
+#[test]
+fn managed_start_for_the_machine_gateway_surfaces_a_refused_operator_start() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let refused = managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| Err(RunnerError::task_invocation("operator start refused")),
+        |_| panic!("the operator start does not preflight"),
+    );
+    assert!(
+        refused.is_err(),
+        "a refused operator start must fail `container up`"
+    );
+}
+
 /// Papercut 0694ef12: a headless caller cannot read a root-owned gateway's
 /// identity. Status must keep that truth (`ok: false`, exit non-zero, status
 /// unknown) and additionally expose the supported observation labels, so a

@@ -116,14 +116,37 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
+    managed_gateway_up(
+        &config,
+        command,
+        operator_gateway_up,
+        verified_gateway_status_for_up,
+    )
+}
+
+/// The machine gateway's managed start goes through the operator lifecycle; a
+/// private root or an installed-override build takes the preflight-and-command
+/// path. `container up` reaches this branch through
+/// `gateway_up_for_managed_task`, so the branch choice is tested here with
+/// both starts injected.
+fn managed_gateway_up(
+    config: &GatewayConfig,
+    command: &str,
+    operator_up: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
+) -> Result<(), RunnerError> {
     if !config.is_private() && effigy_core::executable_override::current().is_none() {
         // A task run, not an operator command: name it as what it is.
-        record_managed_gateway_start(&config);
-        effigy_gateway::operator::up(&config)
-            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-        return Ok(());
+        record_managed_gateway_start(config);
+        return operator_up(config);
     }
-    gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+    gateway_up_for_managed_task_with(command, preflight)
+}
+
+fn operator_gateway_up(config: &GatewayConfig) -> Result<(), RunnerError> {
+    effigy_gateway::operator::up(config)
+        .map(|_| ())
+        .map_err(|e| RunnerError::task_invocation(e.to_string()))
 }
 
 /// One bounded event names an operator action at the command boundary, before
