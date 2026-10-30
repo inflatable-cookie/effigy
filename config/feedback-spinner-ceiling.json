@@ -1,17 +1,5 @@
 [
   [
-    "crates/effigy-containers/src/environment/reconcile.rs",
-    456,
-    "let waiting = effigy_ui::steps::step(&format!(",
-    41
-  ],
-  [
-    "crates/effigy-containers/src/environment/reconcile.rs",
-    828,
-    "let settling = effigy_ui::steps::step(&format!(\"settling environment `{env}`\"));",
-    42
-  ],
-  [
     "crates/effigy-containers/src/exec.rs",
     31,
     "pub use compose_steps::{phase, ComposeSteps, TimedStep};",
@@ -91,49 +79,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    228,
+    235,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    826,
+    848,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1000,
+    1022,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1003,
+    1025,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1005,
+    1027,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1007,
+    1029,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1024,
+    1046,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1026,
+    1048,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -163,45 +151,39 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    339,
+    397,
     "let integrations = steps::during(",
     31
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    356,
+    414,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    409,
+    481,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    424,
+    496,
     "let rendering_step = steps::phase(\"rendering the stack\");",
     33
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    449,
+    521,
     "steps::during(\"starting shared services\", \"shared services ready\", || {",
     16
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    491,
+    563,
     "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
     30
-  ],
-  [
-    "src/runner/container_command/profile.rs",
-    218,
-    "step: Some(effigy_ui::steps::step(label)),",
-    42
   ],
   [
     "src/runner/container_command/readiness.rs",
@@ -460,5 +442,23 @@
     565,
     "let spinner = renderer.spinner(label).ok();",
     32
+  ],
+  [
+    "crates/effigy-containers/src/environment/reconcile.rs",
+    456,
+    "let waiting = effigy_ui::steps::step(&format!(",
+    41
+  ],
+  [
+    "crates/effigy-containers/src/environment/reconcile.rs",
+    828,
+    "let settling = effigy_ui::steps::step(&format!(\"settling environment `{env}`\"));",
+    42
+  ],
+  [
+    "src/runner/container_command/profile.rs",
+    218,
+    "step: Some(effigy_ui::steps::step(label)),",
+    42
   ]
 ]
