@@ -85,43 +85,43 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    866,
+    876,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1040,
+    1050,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1043,
+    1053,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1045,
+    1055,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1047,
+    1057,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1064,
+    1074,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1066,
+    1076,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -130,24 +130,6 @@
     261,
     ".then(|| effigy_ui::steps::step(transient_spinner_label(&command)));",
     36
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    242,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    257,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
-    "src/runner/bundle_command.rs",
-    380,
-    "let step = effigy_ui::steps::step(&label);",
-    42
   ],
   [
     "src/runner/container_command/lifecycle.rs",
@@ -214,12 +196,6 @@
     41,
     "during(\"registering routes\", \"routes registered\", || {",
     13
-  ],
-  [
-    "src/runner/deploy_command/provider_package.rs",
-    251,
-    "let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));",
-    34
   ],
   [
     "src/runner/execute/sequence_run.rs",

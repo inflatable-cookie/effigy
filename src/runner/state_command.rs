@@ -411,6 +411,7 @@ fn layer_progress(
 
 /// The hook runs after its layer applied; the last event says so.
 fn show_apply_hook(progress: &ProgressSource, key: &str, position: usize, planned: usize) {
+    progress.now_waiting_for(format!("apply hook `{key}` to finish"));
     progress.update(
         apply_hook_label(key),
         Some((position as u64, planned as u64)),
@@ -455,14 +456,34 @@ fn capture_task_progress(name: &str) -> ProgressSource {
 
 /// A capture artifact's live step, waiting on the stage or push it names.
 fn capture_artifact_progress(key: &str, push: bool, destination: Option<&str>) -> ProgressSource {
-    let awaiting = match (push, destination) {
+    let progress = ProgressSource::waiting_for(capture_artifact_awaiting(key, push, destination));
+    progress.update(capture_artifact_label(key, push), Some((1, 1)), None);
+    progress
+}
+
+fn capture_artifact_awaiting(key: &str, push: bool, destination: Option<&str>) -> String {
+    match (push, destination) {
         (true, Some(destination)) => format!("artifact `{key}` to be pushed to {destination}"),
         (true, None) => format!("artifact `{key}` to be pushed"),
         (false, _) => format!("artifact `{key}` to be staged"),
-    };
-    let progress = ProgressSource::waiting_for(awaiting);
-    progress.update(capture_artifact_label(key, push), Some((1, 1)), None);
-    progress
+    }
+}
+
+/// The artifact is the second of two capture phases. Its wait replaces the
+/// task's, and the task that ran is the last event.
+fn show_capture_artifact_phase(
+    progress: &ProgressSource,
+    key: &str,
+    push: bool,
+    destination: Option<&str>,
+    task: &str,
+) {
+    progress.now_waiting_for(capture_artifact_awaiting(key, push, destination));
+    progress.update(
+        capture_artifact_label(key, push),
+        Some((2, 2)),
+        Some(format!("capture task `{task}` finished")),
+    );
 }
 
 fn captured_layer_summary(key: &str) -> String {
@@ -1008,12 +1029,12 @@ fn build_state_stack_capture_report(
             }
         }
         if let (Some(progress), Some(task)) = (progress.as_ref(), tasks.first()) {
-            // The artifact is the second of two phases; the task that ran is
-            // the last event.
-            progress.update(
-                capture_artifact_label(&key, request.push),
-                Some((2, 2)),
-                Some(format!("capture task `{}` finished", task.name)),
+            show_capture_artifact_phase(
+                progress,
+                &key,
+                request.push,
+                request.destination_ref.as_deref(),
+                &task.name,
             );
         }
     }
@@ -2156,7 +2177,7 @@ mod live_progress_tests {
 
     use super::{
         capture_artifact_progress, capture_task_progress, layer_progress, show_apply_hook,
-        ApplyAction,
+        show_capture_artifact_phase, ApplyAction,
     };
 
     #[test]
@@ -2193,6 +2214,22 @@ mod live_progress_tests {
         assert_eq!(
             progress.frame_at(Duration::from_secs(2)),
             "pushing capture artifact `db-dump` (1/1); waiting for artifact `db-dump` to be pushed to oci://registry/dump; 2s elapsed"
+        );
+    }
+
+    #[test]
+    fn the_artifact_phase_after_a_capture_task_names_the_artifact() {
+        let progress = capture_task_progress("snapshot");
+        show_capture_artifact_phase(
+            &progress,
+            "db-dump",
+            true,
+            Some("oci://registry/dump"),
+            "snapshot",
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(5)),
+            "pushing capture artifact `db-dump` (2/2); last: capture task `snapshot` finished; 5s elapsed"
         );
     }
 }
