@@ -459,7 +459,7 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_host_task() {
         let error = run_task(&checkout, "inherited", &[]).expect_err("the run must refuse");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!checkout.join("inherited-url.txt").exists());
 
@@ -492,7 +492,7 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
             .expect_err("the session refuses before its workload starts");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!checkout.join("session-database-url.txt").exists());
 
@@ -533,7 +533,7 @@ fn a_configured_host_suite_resolves_and_proves_an_inherited_url() {
         let error = run_task(&checkout, "test", &["unit"]).expect_err("the suite must refuse");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!out.exists(), "the refused suite never ran its command");
 
@@ -607,7 +607,7 @@ fn a_container_bound_session_proves_its_host_entry() {
             .expect_err("the session refuses before its container work starts");
         assert_task_invocation_error_contains(
             error,
-            &["postgres.acme.test", &alias, "effigy container up web"],
+            &["postgres.acme.test", &alias, "effigy container web up"],
         );
         assert!(
             !checkout.join("session-database-url.txt").exists(),
@@ -1254,7 +1254,7 @@ fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service
                 "postgres.acme.test",
                 &alias,
                 "no route for it is recorded",
-                "effigy container up web",
+                "effigy container web up",
             ],
         );
         assert!(
@@ -1405,7 +1405,7 @@ fn a_managed_session_refuses_without_a_published_backing_service() {
             .expect_err("the session refuses before its workload starts");
         assert_task_invocation_error_contains(
             error,
-            &["postgres.acme.test", &alias, "effigy container up web"],
+            &["postgres.acme.test", &alias, "effigy container web up"],
         );
         assert!(
             !checkout.join("session-database-url.txt").exists(),
@@ -1618,7 +1618,7 @@ env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
                 "test.suites.unit",
                 "postgres.acme.test",
                 &alias,
-                "effigy container up web",
+                "effigy container web up",
             ],
         );
         for path in [&suite, &setup, &teardown, &unselected] {

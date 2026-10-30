@@ -403,7 +403,7 @@ impl HostAliasResolver {
         let start = match environment.is_empty() {
             true => "start this checkout's stack first".to_owned(),
             false => format!(
-                "start this checkout's stack first with `effigy container up {environment}`"
+                "start this checkout's stack first with `effigy container {environment} up`"
             ),
         };
         RunnerError::task_invocation(format!(

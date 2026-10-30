@@ -916,6 +916,11 @@ until the host-log writer has a safe secret-handling boundary.
   carry no shims. `effigy tasks status` for such a task now reports
   `not-recorded` again.
 - `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
+- A floating Git bundle source updates on `dev` again. The remote check read
+  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
+  so every check kept the old pin without a warning. The check now reads the
+  object id and ref name with or without that TAB.
+
 - Database seed and dump keep the database password out of every spawned
   command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
   variable name and never the value, and each exec sources it from a private
@@ -1237,6 +1242,9 @@ until the host-log writer has a safe secret-handling boundary.
   records the cause as `route table empty for 300 s`. A managed `container up`
   that finds the machine gateway positively stopped starts it, and a start that
   cannot verify a running gateway refuses instead of claiming it up.
+- Shared-service and alias refusals suggest the environment's up command in the
+  order the grammar accepts (`effigy container <NAME> up`); the previous
+  `effigy container up <NAME>` form never parsed.
 
 ## [0.14.1] - 2026-10-08
 

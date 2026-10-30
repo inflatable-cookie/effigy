@@ -831,7 +831,7 @@ fn refuse_vanished_shared_render(
             .unwrap_or(&service.compose_file)
             .display();
         return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has no render at `{render}`, and the runtime's containers cannot be read, so no container can be ruled out. Nothing was stopped, removed, published or started. Make the runtime readable, then re-run `effigy container up {env}`.",
+            "shared {service} (project `{project}`) has no render at `{render}`, and the runtime's containers cannot be read, so no container can be ruled out. Nothing was stopped, removed, published or started. Make the runtime readable, then re-run `effigy container {env} up`.",
             service = service.service_name,
             project = service.project_name,
             env = policy.name,
@@ -868,7 +868,7 @@ fn refuse_vanished_shared_render(
         .collect::<Vec<_>>()
         .join(", ");
     Err(RunnerError::task_invocation(format!(
-        "shared {service} (project `{project}`) has container {names} created from render `{renders}`, which is missing, so Compose cannot start it. Nothing was stopped, removed or re-rendered: the container and its named data volume are unchanged. Recover by removing exactly the container named here with the runtime's `rm -f` (its named volume stays), then re-run `effigy container up {env}`, which renders the shared service and creates it on the preserved volume.",
+        "shared {service} (project `{project}`) has container {names} created from render `{renders}`, which is missing, so Compose cannot start it. Nothing was stopped, removed or re-rendered: the container and its named data volume are unchanged. Recover by removing exactly the container named here with the runtime's `rm -f` (its named volume stays), then re-run `effigy container {env} up`, which renders the shared service and creates it on the preserved volume.",
         service = service.service_name,
         project = service.project_name,
         env = policy.name,
@@ -3061,7 +3061,7 @@ variant = "default"
             "is missing",
             "named data volume",
             "rm -f",
-            "effigy container up web",
+            "effigy container web up",
         ] {
             assert!(message.contains(expected), "{expected}: {message}");
         }
