@@ -2080,6 +2080,13 @@ fn summarize_routes(
     summary
 }
 
+/// Show the platform phase the adapter is in: the resolver, trust or broker
+/// operation happening now, in place of the combined label the whole action
+/// started with. The child it waits on stays named as the awaited object.
+fn observe_platform_phase(progress: &ProgressSource, phase: &str) {
+    progress.update(phase, None, None);
+}
+
 /// Read the existing route table, one route at a time, naming each route with
 /// its position and certificate state as it is read. Returns how many routes
 /// the table held. This reads published state: an unreadable table returns the
@@ -2314,7 +2321,23 @@ fn run_gateway_setup(
                         "the DNS, certificate trust and broker setup for {}",
                         suffixes.join(", ")
                     ),
-                    |_| setup::apply_platform(run, cx, &config, &suffixes, uid),
+                    |progress| {
+                        setup::apply_platform(run, cx, &config, &suffixes, uid, &mut |phase| {
+                            // The same phase this process shows is the one the
+                            // command waiting on it reports: an elevated child
+                            // hands each phase back over its captured stdout.
+                            observe_platform_phase(progress, phase);
+                            if gateway_invocation_is_escalated() {
+                                setup::print_platform_phase(phase);
+                            }
+                        })?;
+                        progress.update(
+                            format!("applied the platform setup for {}", suffixes.join(", ")),
+                            None,
+                            None,
+                        );
+                        Ok(())
+                    },
                 )
             })?;
             return Ok("Gateway platform setup applied".into());
@@ -2398,7 +2421,27 @@ fn run_gateway_setup(
                     "the administrator-approved setup child to apply DNS, trust and broker for {}",
                     suffixes.join(", ")
                 ),
-                |_| setup::command(run, cx, argv, true),
+                |progress| {
+                    if remove {
+                        return setup::command(run, cx, argv, true);
+                    }
+                    // The child reports each platform phase on its captured
+                    // stdout while it runs, so the step names the resolver,
+                    // trust or broker operation that is happening now.
+                    let output = setup::command_reporting_platform_phases(
+                        run,
+                        cx,
+                        argv,
+                        true,
+                        &mut |phase| observe_platform_phase(progress, phase),
+                    )?;
+                    progress.update(
+                        format!("applied the platform setup for {}", suffixes.join(", ")),
+                        None,
+                        None,
+                    );
+                    Ok(output)
+                },
             )?;
             if remove {
                 return setup_step(

@@ -560,9 +560,14 @@ until the host-log writer has a safe secret-handling boundary.
   be read ends that step with the read error while the command itself still
   succeeds. `gateway setup` probes each low-port address in turn and names it as
   its outcome lands (bound, already in use, denied); a refusal stops at that
-  address with the probe's own sentence. Each step names the exact port, record,
-  route or suffix list it awaits, with elapsed time, and still ends with one
-  line. `--json` and piped output are unchanged.
+  address with the probe's own sentence. The platform setup action names each
+  operation as it runs too — the resolver files, the loopback launch job, the
+  privileged bind broker, the loopback addresses, or the DNS unit and low-port
+  capability on Linux — including after the administrator prompt, when the
+  elevated child reports each phase back through its own captured stdout. Each
+  step names the exact port, record, route or suffix list it awaits, with
+  elapsed time, and still ends with one line. `--json` and piped output are
+  unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations

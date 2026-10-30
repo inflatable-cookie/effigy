@@ -1995,6 +1995,46 @@ fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     );
 }
 
+/// A platform phase reported by the elevated child (or by a direct root run)
+/// becomes the current object, and the child it waits on stays named. Approval
+/// is over; the frame says which resolver, trust or broker operation is running,
+/// and the step ends by saying what now holds.
+#[test]
+fn platform_phase_frames_name_the_operation_while_the_child_runs() {
+    let awaited = "the administrator-approved setup child to apply DNS, trust and broker for test";
+    let progress = ProgressSource::waiting_for(awaited);
+    progress.update(
+        "applying platform setup (approve the administrator prompt if it appears)",
+        None,
+        None,
+    );
+    observe_platform_phase(&progress, "writing the resolver files for test");
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        format!("writing the resolver files for test; waiting for {awaited}; 4s elapsed")
+    );
+    observe_platform_phase(&progress, "installing the privileged bind broker");
+    assert_eq!(
+        progress.frame_at(fake_clock(9)),
+        format!("installing the privileged bind broker; waiting for {awaited}; 9s elapsed")
+    );
+
+    // The stage ends with what now holds, not with whichever phase ran last.
+    let (done, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_step(
+            "applying platform setup (approve the administrator prompt if it appears)",
+            awaited,
+            |progress| {
+                observe_platform_phase(progress, "installing the privileged bind broker");
+                progress.update("applied the platform setup for test", None, None);
+                Ok(())
+            },
+        )
+    });
+    done.expect("a finished stage");
+    assert_eq!(lines, vec!["✓ applied the platform setup for test"]);
+}
+
 /// The progress the readiness probes in these tests report into, shaped the
 /// way `wait_for_private_gateway_ready` builds it: the listener address lives
 /// in the probe's sub-step, not in the awaited sentence.
