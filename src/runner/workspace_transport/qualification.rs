@@ -203,8 +203,29 @@ impl GuestServingProbe<'_> {
         run: &effigy_kernel::run::Run<'_>,
         budget: Duration,
     ) -> io::Result<QualifiedHostLocator> {
+        let target = effigy_kernel::workspace_session::GuestLocatorTarget {
+            container_id: self.target.container_id.clone(),
+            vm_boot_id: self.target.vm_boot_id.clone(),
+        };
         launch
-            .qualify(self, budget)
+            .qualify_guest(
+                run,
+                target.clone(),
+                self.bind.expected_peer,
+                |challenge| match self.pinned_handshake(
+                    challenge.host_bind(),
+                    challenge.pin(),
+                    budget,
+                ) {
+                    Observed::Verified((), _) => challenge.verified(
+                        &target,
+                        SocketAddr::new(self.bind.expected_peer, challenge.host_bind().port()),
+                        &format!("{}:{}", self.bind.alias, challenge.host_bind().port()),
+                        challenge.pin(),
+                    ),
+                    _ => Err(effigy_kernel::workspace_session::ServingRefusal::Unqualified),
+                },
+            )
             .map_err(|_| invalid("guest TLS channel qualification refused"))?;
         let bound = launch
             .publish(run)
@@ -212,14 +233,12 @@ impl GuestServingProbe<'_> {
         if self.qualified_pin.as_ref() != Some(bound.lease().pin()) {
             return Err(invalid("session channel pin changed"));
         }
-        let endpoint = launch
-            .endpoint()
-            .ok_or_else(|| invalid("session listener stopped"))?;
+
         Ok(QualifiedHostLocator {
             session: bound.session().clone(),
             target: self.target.clone(),
             channel: WorkspaceChannelLocator {
-                endpoint: Some(format!("{}:{}", self.bind.alias, endpoint.port())),
+                endpoint: Some(bound.lease().endpoint().to_owned()),
                 server_identity: Some(format!("sha256:{}", bound.lease().pin().hex())),
             },
             bound,

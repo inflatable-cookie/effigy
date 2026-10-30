@@ -277,6 +277,10 @@ impl SelectionReceipt {
         if self.serving.session() != plan.binding() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
+        self.serving.require_target(
+            &self.publication.publication.container_id,
+            &self.publication.publication.vm_boot_id,
+        )?;
         let selected = format!("sha256:{}", self.selection.objects.binary.digest.hex());
         if self.publication.publication.artifact_digest != selected
             || self.publication.publication.context_generation

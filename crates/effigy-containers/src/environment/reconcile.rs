@@ -1335,9 +1335,9 @@ mod tests {
         use effigy_kernel::observe::{Evidence, Observed};
         use effigy_kernel::run::{AttachmentId, BeginOpts, Reconciled, SettlementAdapter};
         use effigy_kernel::workspace_session::{
-            ActivationDecision, ArtifactEvidence, ChannelListener, GuestObject, GuestSelection,
-            HostChannelListener, PublishInputs, SelectionObjects, SelectionReceipt, SelectorChange,
-            ServingKey, ServingProbe, SessionRef, TargetEvidence,
+            ActivationDecision, ArtifactEvidence, ChannelListener, GuestLocatorTarget, GuestObject,
+            GuestSelection, HostChannelListener, PublishInputs, SelectionObjects, SelectionReceipt,
+            SelectorChange, ServingKey, SessionRef, TargetEvidence,
         };
         use std::collections::BTreeMap;
         use std::time::{Duration, Instant};
@@ -1369,18 +1369,6 @@ mod tests {
         }
         fn evidence() -> Evidence {
             Evidence::new("container adapter".into(), None).expect("evidence")
-        }
-        #[derive(Debug)]
-        struct Pinned;
-        impl ServingProbe for Pinned {
-            fn pinned_handshake(
-                &mut self,
-                _endpoint: std::net::SocketAddr,
-                _pin: &effigy_kernel::id::Digest,
-                _deadline: Duration,
-            ) -> Observed<()> {
-                Observed::Verified((), evidence())
-            }
         }
 
         let home = home();
@@ -1585,14 +1573,41 @@ mod tests {
             Box::new(listener),
         )
         .expect("launch");
+        // Colima can expose a guest peer distinct from the numeric host bind.
+        // This fake transport answers the owning launch's exact challenge.
+        let guest_target = GuestLocatorTarget {
+            container_id: publication.publication.container_id.clone(),
+            vm_boot_id: publication.publication.vm_boot_id.clone(),
+        };
+        let guest_peer = "192.0.2.2".parse().expect("resolved guest peer");
         launch
-            .qualify(&mut Pinned, Duration::from_secs(1))
-            .expect("qualified");
+            .qualify_guest(
+                &session_run,
+                guest_target.clone(),
+                guest_peer,
+                |challenge| {
+                    challenge.verified(
+                        &guest_target,
+                        std::net::SocketAddr::new(guest_peer, challenge.host_bind().port()),
+                        &challenge.endpoint(),
+                        challenge.pin(),
+                    )
+                },
+            )
+            .expect("guest qualified");
         let _ = std::time::Instant::now() as Instant;
         let lease = {
             let bound = launch.publish(&session_run).expect("published");
             bound.lease().clone()
         };
+        assert_eq!(lease.socket(), launch.endpoint());
+        assert_eq!(
+            lease.endpoint(),
+            format!(
+                "effigy-host:{}",
+                launch.endpoint().expect("bound listener").port()
+            )
+        );
         let document = serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.workspace-context.v2",
             "version": inputs.guest.as_ref().expect("guest").version,
