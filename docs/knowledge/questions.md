@@ -625,8 +625,12 @@ the same state to the tab, the headless text and `status --json` `waiting_on`
 (effigy#458; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)).
 The source-wide
 audit is recorded at
-`/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
-the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.
+`/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`.
+effigy#467 executed it: every flagged site is a live-state step or an
+immediate one-line event, `lint:feedback` has no allowlist and rejects any
+fixed-label spinner entry point in production, and each site's disposition is
+recorded in
+[live progress sites](architecture/036-live-progress-sites.md).
 
 On 2026-10-30 the Effigy Supervisor deferred the whole managed-pane ANSI
 colour and plain-log projection task (#457, PR #616) to v0.16. Its producer

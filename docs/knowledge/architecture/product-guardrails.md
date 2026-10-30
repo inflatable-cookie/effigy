@@ -81,13 +81,16 @@ when the real cause was two named services failing their health checks.
   borrows another entry's clock (effigy#458).
   The UI's `ProgressSource` supplies the current subject, count, latest event
   and elapsed wait to `live_step`. When no event is available, it names the
-  exact awaited object or probe with the elapsed time. `lint:feedback` checks
-  compiler-resolved legacy constructor and wrapper uses against the finite
-  inventory in `config/feedback-spinner-baseline.json`; its ceiling prevents
-  additions. The inventory includes references and test uses as well as
-  production calls. Migrations remove their entries as they replace legacy
-  uses. The final v0.15 migration gate removes the inventory before candidate
-  freeze; it is not an exception to the live-state rule.
+  exact awaited object or probe with the elapsed time. `lint:feedback` is the
+  gate: `effigy-ui` keeps its legacy fixed-label constructors only as
+  deprecated anchors, and the check fails on every compiler-resolved use,
+  including through an alias or wrapper, naming the file, the line and the
+  migration. There is no allowlist, no exemption to add and no ceiling: a new
+  fixed-label spinner fails the lint instead of joining an inventory, and a
+  suppressed diagnostic fails it too. `clippy::disallowed_methods` rejects
+  every `indicatif::ProgressBar::new_spinner` except the one reviewed sink.
+  Every site's disposition is recorded in
+  [live progress sites](036-live-progress-sites.md).
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

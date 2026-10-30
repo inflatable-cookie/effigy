@@ -433,6 +433,21 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Changed
 
+- **No command plane shows a canned progress label.** The Q-017 live-state
+  rule is now a required lint gate rather than a migration list. A task-run
+  step names its ordinal, the exact child step it waits on and the elapsed
+  wait; a heavy admission wait names the hook's decision probe and the hook's
+  own progress line, and its immediate refusals are one plain line; a teardown
+  the runtime never narrates names its phase, the runtime report it awaits and
+  the elapsed wait; and a managed TUI pane's generic start state shows its
+  elapsed wait, with the shutdown footer naming the completion's real counts.
+  `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
+  on every compiler-resolved use of a fixed-label constructor, including
+  through an alias or wrapper, naming the file, the line and the migration, and
+  `clippy::disallowed_methods` rejects every bare
+  `indicatif::ProgressBar::new_spinner` outside the one reviewed sink. Each
+  site's disposition is recorded in
+  [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while
@@ -838,6 +853,10 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Removed
 
+- The fixed-label spinner API: `Renderer::spinner` and `SpinnerHandle`. A step
+  is driven by a `ProgressSource` (`steps::live_step`) or is one
+  `steps::finish_line`, so a bare spinner with a canned label cannot be
+  constructed.
 - The gateway's dead-route sweep, certificate deletion on `down`, the
   route-table lock and the route's scope token.
 - The exec-ready probe and its recovery restart, restart recovery of exited
