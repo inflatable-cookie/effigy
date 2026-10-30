@@ -861,10 +861,10 @@ fn activate<'a>(
     let reservation = decided(cx, root, environment);
     let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let mut environment_run = admit_activation(cx, root, &reservation, activation_id);
-    let receipt = commit_receipt(cx, root, &reservation, &environment_run, &session_run)
+    let (receipt, launch) = commit_receipt(cx, root, &reservation, &environment_run, &session_run)
         .expect("activation receipt");
     let committed = reservation
-        .commit_selection(cx, root, &environment_run, &session_run, &receipt)
+        .commit_selection(cx, root, &environment_run, &session_run, &receipt, &launch)
         .expect("activation commit");
     // A completed activation switches its selectors: the generation it
     // published is attachable only once its selection is finished.
@@ -2844,7 +2844,7 @@ fn publish_inputs(byte: u8, target: Option<ContainerIdentity>) -> PublishInputs 
         },
         // The resolved selection a decision freezes is the context document the
         // generation serves.
-        selection: Digest::of(&context_document(&digest)),
+        selection: Digest::of(&[byte, b's', b'e', b'l']),
         inputs_digest: Digest::of(&[byte, b'i']),
         target: match target {
             Some(identity) => TargetEvidence::Observed(identity),
@@ -2916,7 +2916,7 @@ fn decision_inputs(byte: u8) -> PublishInputs {
             digest: digest.clone(),
             object,
         },
-        selection: Digest::of(&context_document(&digest)),
+        selection: Digest::of(&[byte, b's', b'e', b'l']),
         inputs_digest: Digest::of(&[byte, b'i', b'n']),
         target: TargetEvidence::Absent {
             project: "fixture".to_owned(),
@@ -2962,10 +2962,37 @@ fn decided_with(
     }
 }
 
-/// The context document the fixture prepare would write for `binary`; its
-/// digest is the "resolved selection" a decision freezes.
-fn context_document(binary: &Digest) -> Vec<u8> {
-    format!("effigy.workspace-context.v2 fixture {binary}").into_bytes()
+/// The context document the fixture prepare would write: a real v2 document
+/// naming the exact generation, session, artifact, credential and locator this
+/// activation publishes. The kernel parses and validates it; a document for
+/// anything else is refused.
+fn context_document(
+    plan: &ActivationPlan,
+    selection: &GuestSelection,
+    lease: &ServingLease,
+    selection_digest: &Digest,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema": "effigy.workspace-context.v2",
+        "context_generation": selection.objects.context_generation.get(),
+        "environment_generation": plan.environment_generation().get(),
+        "session": {
+            "run_id": plan.session_run().to_string(),
+            "generation": plan.session_generation().get(),
+        },
+        "artifact_digest": format!("sha256:{}", selection.objects.binary.digest.hex()),
+        "credential": {
+            "generation": selection.objects.credential_generation.get(),
+            "path": selection.objects.credential.path,
+            "digest": selection.objects.credential.digest.hex(),
+        },
+        "locator": {
+            "endpoint": lease.endpoint(),
+            "pin": lease.pin().hex(),
+        },
+        "selection_digest": selection_digest.hex(),
+    }))
+    .expect("context document")
 }
 
 /// A fake reader of the exact target: what a test says the guest holds. The
@@ -3055,6 +3082,14 @@ impl SelectorReader for FakeSelectors {
 
 /// One session's own listener and key custody, bound and qualified, launched on
 /// behalf of the run that owns the session.
+/// The resolved selection digest a reservation's decision froze.
+fn receipt_selection(reservation: &WorkspaceActivationReservation) -> Digest {
+    reservation
+        .inputs()
+        .map(|inputs| inputs.selection.clone())
+        .unwrap_or_else(|| Digest::of(b"undecided"))
+}
+
 fn launch_for(session_run: &Run<'_>, session: &SessionRef) -> Result<SessionLaunch, RunError> {
     let owner = session_run.session_owner()?;
     let (mut listener, _stops) = FakeListener::bound();
@@ -3077,20 +3112,26 @@ fn commit_receipt(
     reservation: &WorkspaceActivationReservation,
     environment_run: &Run<'_>,
     session_run: &Run<'_>,
-) -> Result<SelectionReceipt, RunError> {
+) -> Result<(SelectionReceipt, SessionLaunch), RunError> {
     let plan = plan_of(reservation, &read_journal(cx, root))
         .ok_or_else(|| RunError::refused("no staged plan to commit"))?;
     let publication = publication_for(cx, root, reservation, environment_run);
     let binary = Digest::parse_hex(&publication.publication.artifact_digest)
         .ok_or_else(|| RunError::refused("the publication names no artifact digest"))?;
+    let selection_digest = reservation
+        .inputs()
+        .map(|inputs| inputs.selection.clone())
+        .unwrap_or_else(|| Digest::of(b"undecided"));
     let mut launch = launch_for(session_run, &plan.session())?;
-    Ok(selection_receipt(
+    let receipt = selection_receipt(
         &plan,
         publication,
         binary,
         None,
+        &selection_digest,
         &mut launch,
-    ))
+    );
+    Ok((receipt, launch))
 }
 
 fn commit_activation(
@@ -3100,8 +3141,8 @@ fn commit_activation(
     environment_run: &Run<'_>,
     session_run: &Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
-    let receipt = commit_receipt(cx, root, reservation, environment_run, session_run)?;
-    reservation.commit_selection(cx, root, environment_run, session_run, &receipt)
+    let (receipt, launch) = commit_receipt(cx, root, reservation, environment_run, session_run)?;
+    reservation.commit_selection(cx, root, environment_run, session_run, &receipt, &launch)
 }
 
 /// Commit *and* read the switch back: the generation is published and its
@@ -3113,9 +3154,9 @@ fn commit_and_switch(
     environment_run: &mut Run<'_>,
     session_run: &Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
-    let receipt = commit_receipt(cx, root, reservation, environment_run, session_run)?;
+    let (receipt, launch) = commit_receipt(cx, root, reservation, environment_run, session_run)?;
     let committed =
-        reservation.commit_selection(cx, root, environment_run, session_run, &receipt)?;
+        reservation.commit_selection(cx, root, environment_run, session_run, &receipt, &launch)?;
     if let Some(obligation) = committed.selection_obligation() {
         let mut reader = FakeSelectors::exact(&receipt);
         Attachments::selection_switched(environment_run, obligation, &mut reader)?;
@@ -3131,14 +3172,17 @@ fn selection_receipt(
     publication: WorkspacePublicationReceipt,
     binary: Digest,
     previous: Option<&str>,
+    selection_digest: &Digest,
     launch: &mut SessionLaunch,
 ) -> SelectionReceipt {
-    let document = context_document(&binary);
-    let context = Digest::of(&document);
+    // The document never names its own digest, so it is built from a
+    // placeholder context object and then hashed: the real digest becomes the
+    // context object the selection names, and the bytes are unchanged.
     let credential = Digest::of(b"enrol");
     let object = format!("/run/effigy/objects/bin/{binary}");
     let generation = Generation::new(publication.publication.context_generation);
-    let selection = GuestSelection {
+    let context = Digest::of(&[]);
+    let mut selection = GuestSelection {
         backend: "docker-desktop".to_owned(),
         objects: SelectionObjects {
             binary: GuestObject {
@@ -3173,6 +3217,13 @@ fn selection_receipt(
                 next: generation.get().to_string(),
             },
         ],
+    };
+    let lease = launch.publish().expect("published").lease().clone();
+    let document = context_document(plan, &selection, &lease, selection_digest);
+    let context = Digest::of(&document);
+    selection.objects.context = GuestObject {
+        path: format!("/run/effigy/objects/context/{context}"),
+        digest: context,
     };
     SelectionReceipt::new(plan, publication, selection, &document, launch)
         .expect("selection receipt")
@@ -3226,9 +3277,16 @@ fn activate_with_selection<'a>(
     // receipt is validated against the run that actually recorded it.
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
-    let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        binary,
+        None,
+        &receipt_selection(&reservation),
+        &mut launch,
+    );
     let committed = reservation
-        .commit_selection(cx, root, &environment_run, &session_run, &receipt)
+        .commit_selection(cx, root, &environment_run, &session_run, &receipt, &launch)
         .expect("selection commit");
     let obligation = committed
         .selection_obligation()
@@ -3498,9 +3556,23 @@ fn a_pending_selection_refuses_attach_and_reservation() {
         admit_activation_publishing(&cx, &root, &reservation, run_id(207), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
-    let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        binary,
+        None,
+        &receipt_selection(&reservation),
+        &mut launch,
+    );
     reservation
-        .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
         .expect("commit a Pending selection");
     let reader = read_journal(&cx, &root);
     assert_eq!(
@@ -3650,9 +3722,16 @@ fn commit_pending_selection<'a>(
         admit_activation_publishing(cx, root, &reservation, activation_id, &binary);
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
-    let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        binary,
+        None,
+        &receipt_selection(&reservation),
+        &mut launch,
+    );
     let committed = reservation
-        .commit_selection(cx, root, &environment_run, &session_run, &receipt)
+        .commit_selection(cx, root, &environment_run, &session_run, &receipt, &launch)
         .expect("selection commit");
     let obligation = committed
         .selection_obligation()
@@ -4070,7 +4149,6 @@ fn a_selection_never_names_another_session_s_listener() {
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(225), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let document = context_document(&binary);
     // A session ref another run claims has no owner proof for this run, so no
     // launch exists to publish its locator at all.
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
@@ -4079,6 +4157,7 @@ fn a_selection_never_names_another_session_s_listener() {
         publication.clone(),
         binary.clone(),
         None,
+        &receipt_selection(&reservation),
         &mut launch,
     )
     .selection()
@@ -4113,6 +4192,12 @@ fn a_selection_never_names_another_session_s_listener() {
         Box::new(listener),
     )
     .expect("launch");
+    let lease = launch_for(&session_run, &plan.session()).expect("custody");
+    let document = {
+        let mut published = lease;
+        let lease = published.publish().expect("published").lease().clone();
+        context_document(&plan, &selection, &lease, &receipt_selection(&reservation))
+    };
     let error = SelectionReceipt::new(&plan, publication, selection, &document, &mut unqualified)
         .expect_err("an unqualified listener publishes nothing");
     assert!(
@@ -4167,17 +4252,32 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
         publication.clone(),
         binary.clone(),
         None,
+        &receipt_selection(&reservation),
         &mut launch,
     );
     let committed = reservation
-        .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
         .expect("selection commit");
     let obligation = committed
         .selection_obligation()
         .expect("obligation")
         .clone();
     let again = reservation
-        .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
         .expect("a retried commit answers with the same obligation");
     assert_eq!(
         again.selection_obligation().map(SelectionObligation::id),
@@ -4191,10 +4291,11 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
         publication,
         binary,
         Some("an earlier value"),
+        &receipt_selection(&reservation),
         &mut launch,
     );
     let error = reservation
-        .commit_selection(&cx, &root, &environment_run, &session_run, &other)
+        .commit_selection(&cx, &root, &environment_run, &session_run, &other, &launch)
         .expect_err("a committed selection is frozen");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     let reader = read_journal(&cx, &root);
@@ -4237,7 +4338,14 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
         admit_activation_publishing(&cx, &root, &reservation, run_id(221), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
-    let good = selection_receipt(&plan, publication.clone(), binary, None, &mut launch);
+    let good = selection_receipt(
+        &plan,
+        publication.clone(),
+        binary,
+        None,
+        &receipt_selection(&reservation),
+        &mut launch,
+    );
     assert!(good.validate(&plan).is_ok());
     // A selection whose context object names other bytes is not the receipt.
     let mut wrong = good.selection().clone();
@@ -4624,13 +4732,21 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
             let staged = session_run.as_ref().expect("owning successor");
             let mut launch = launch_for(staged, &plan.session()).expect("session custody");
-            let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
+            let receipt = selection_receipt(
+                &plan,
+                publication,
+                binary,
+                None,
+                &receipt_selection(&reservation),
+                &mut launch,
+            );
             let committed = reservation.commit_selection(
                 &cx,
                 &root,
                 activating,
                 session_run.as_ref().expect("owning successor"),
                 &receipt,
+                &launch,
             )?;
             obligation = committed.selection_obligation().cloned();
             let activating = activation_run.as_mut().expect("activation run");
@@ -4930,9 +5046,23 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
         admit_activation_publishing(&cx, &root, &reservation, run_id(245), &published);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
-    let receipt = selection_receipt(&plan, publication, published, None, &mut launch);
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        published,
+        None,
+        &receipt_selection(&reservation),
+        &mut launch,
+    );
     let error = reservation
-        .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
         .expect_err("the frozen artifact is the one that must be published");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     let reader = read_journal(&cx, &root);
@@ -4957,4 +5087,352 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
         &mut adapter(),
     )
     .expect("settle the failed successor");
+}
+
+#[test]
+fn a_commit_without_live_session_custody_publishes_nothing() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let inputs = publish_inputs(95, None);
+    let reservation = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("decision")
+    {
+        ActivationDecision::Activate(reservation) => *reservation,
+        ActivationDecision::Attach(_) => panic!("fresh environment"),
+    };
+    let binary = artifact(95);
+    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let (environment_run, _publication) =
+        admit_activation_publishing(&cx, &root, &reservation, run_id(247), &binary);
+    let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
+    let (receipt, mut launch) =
+        commit_receipt(&cx, &root, &reservation, &environment_run, &session_run).expect("receipt");
+    // The supervisor loses its listener between publishing the context and
+    // committing: the lease a stopped launch held is not custody any more.
+    launch.stop();
+    let error = reservation
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
+        .expect_err("a stopped launch cannot publish a session");
+    assert!(matches!(error, RunError::Refused(_)), "{error:?}");
+    let reader = read_journal(&cx, &root);
+    assert_eq!(mapping(&reader, &environment), None);
+    assert_eq!(obligation_row(&reader, &environment), None);
+    assert_eq!(plan.environment_generation(), Generation::new(2));
+    end_run(
+        &cx,
+        environment_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    drop(session_run);
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        run_id(246),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("settle the failed successor");
+}
+
+#[test]
+fn a_context_document_for_another_activation_is_refused() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let inputs = publish_inputs(96, None);
+    let reservation = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("decision")
+    {
+        ActivationDecision::Activate(reservation) => *reservation,
+        ActivationDecision::Attach(_) => panic!("fresh environment"),
+    };
+    let binary = artifact(96);
+    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(248));
+    let (environment_run, publication) =
+        admit_activation_publishing(&cx, &root, &reservation, run_id(249), &binary);
+    let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
+    let selection_digest = receipt_selection(&reservation);
+    let good = selection_receipt(
+        &plan,
+        publication.clone(),
+        binary,
+        None,
+        &selection_digest,
+        &mut launch_for(&session_run, &plan.session()).expect("custody"),
+    );
+    // The document a prepare would write for this activation, byte for byte.
+    let document = || {
+        let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
+        let lease = launch.publish().expect("published").lease().clone();
+        context_document(&plan, good.selection(), &lease, &selection_digest)
+    };
+    let mutate = |field: &str, value: serde_json::Value| {
+        let mut parsed: serde_json::Value = serde_json::from_slice(&document()).expect("document");
+        parsed[field] = value;
+        serde_json::to_vec(&parsed).expect("document")
+    };
+    // Each of these would publish a context for another environment, session,
+    // artifact or locator, so none of them is accepted.
+    let cases = [
+        mutate("schema", serde_json::json!("effigy.workspace-context.v1")),
+        mutate("environment_generation", serde_json::json!(99)),
+        mutate("context_generation", serde_json::json!(42)),
+        mutate(
+            "artifact_digest",
+            serde_json::json!(format!("sha256:{}", "ff".repeat(32))),
+        ),
+        mutate(
+            "locator",
+            serde_json::json!({"endpoint": "127.0.0.1:1", "pin": "00".repeat(32)}),
+        ),
+    ];
+    let mut session_mutated: serde_json::Value =
+        serde_json::from_slice(&document()).expect("document");
+    session_mutated["session"]["run_id"] = serde_json::json!(run_id(250).to_string());
+    let mut cases = cases.to_vec();
+    cases.push(serde_json::to_vec(&session_mutated).expect("document"));
+    for bytes in cases {
+        let mut selection = good.selection().clone();
+        selection.objects.context.digest = Digest::of(&bytes);
+        let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
+        let error =
+            SelectionReceipt::new(&plan, publication.clone(), selection, &bytes, &mut launch)
+                .expect_err("a context for another activation is never published");
+        assert!(matches!(error, RunError::Refused(_)), "{error:?}");
+    }
+    let reader = read_journal(&cx, &root);
+    assert_eq!(mapping(&reader, &environment), None);
+    drop(session_run);
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        run_id(248),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("settle the unused successor");
+    end_run(
+        &cx,
+        environment_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+}
+
+#[test]
+fn recovery_observes_under_the_environment_gate() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let (_, _, _, environment_run, receipt, obligation) = commit_pending_selection(
+        &cx,
+        &root,
+        &environment,
+        run_id(251),
+        run_id(252),
+        &publish_inputs(97, None),
+    );
+    // The activation run still holds `Gate(Env)`: recovery must not take a
+    // readback behind its back, so it refuses before it reads anything.
+    #[derive(Debug, Default)]
+    struct UnreadableReaders;
+    impl SelectorReader for UnreadableReaders {
+        fn read_selector(&mut self, _path: &str) -> Observed<String> {
+            panic!("recovery read the target outside the environment gate")
+        }
+        fn read_object(&mut self, _path: &str) -> Observed<Digest> {
+            panic!("recovery read an object outside the environment gate")
+        }
+    }
+    let live = SelectionLiveness {
+        session: Observed::Verified((), evidence()),
+        target: Observed::Verified((), evidence()),
+        listener: Observed::Verified((), evidence()),
+    };
+    let error = selection_recovered(
+        &cx,
+        &root,
+        &obligation,
+        &live,
+        &mut UnreadableReaders,
+        Wait::FailFast,
+    )
+    .expect_err("the environment gate is held by the activation run");
+    assert!(matches!(error, RunError::Gate(_)), "{error:?}");
+    // Only after the activation run releases the gate does recovery read and
+    // complete.
+    end_run(
+        &cx,
+        environment_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    selection_recovered(
+        &cx,
+        &root,
+        &obligation,
+        &live,
+        &mut FakeSelectors::exact(&receipt),
+        Wait::FailFast,
+    )
+    .expect("recovery completes under the gate it acquired");
+    assert!(una_finished(&read_journal(&cx, &root), &environment).is_none());
+}
+
+#[test]
+fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let binary = artifact(98);
+    let inputs = PublishInputs {
+        artifact: ArtifactEvidence::Unselected {
+            image_reference: "registry.local/workspace:1".to_owned(),
+            backend: "docker-desktop".to_owned(),
+        },
+        selection: Digest::of(b"fresh selection"),
+        inputs_digest: Digest::of(b"fresh inputs"),
+        target: TargetEvidence::Absent {
+            project: "fixture".to_owned(),
+            backend: "docker-desktop".to_owned(),
+        },
+    };
+    let reservation = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("decision")
+    {
+        ActivationDecision::Activate(reservation) => *reservation,
+        ActivationDecision::Attach(_) => panic!("fresh environment"),
+    };
+    let (session_run, session) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let (mut environment_run, publication) =
+        admit_activation_publishing(&cx, &root, &reservation, run_id(254), &binary);
+    let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
+    let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        binary.clone(),
+        None,
+        &inputs.selection,
+        &mut launch,
+    );
+    let committed = reservation
+        .commit_selection(
+            &cx,
+            &root,
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
+        .expect("a fresh project publishes the artifact it selected");
+    assert_eq!(committed.session(), session);
+    let reader = read_journal(&cx, &root);
+    let stored = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("the reservation")
+        .record()
+        .inputs
+        .clone()
+        .expect("frozen inputs");
+    match stored.artifact {
+        ArtifactEvidence::Selected { digest, .. } => {
+            assert_eq!(digest, binary, "the selected artifact is frozen once");
+        }
+        ArtifactEvidence::Unselected { .. } => panic!("the first publication freezes the artifact"),
+    }
+    // The switch completes the selection, so the published generation is
+    // attachable and the next decision compares against the frozen artifact.
+    Attachments::selection_switched(
+        &mut environment_run,
+        committed
+            .selection_obligation()
+            .expect("the commit records its selection"),
+        &mut FakeSelectors::exact(&receipt),
+    )
+    .expect("the switch is recorded");
+    // The activation run finishes and releases `Gate(Env)`.
+    end_run(
+        &cx,
+        environment_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    // The next decision sees a selected artifact, so the same unselected intent
+    // is a successor, never a re-publication of the frozen generation.
+    let next = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("decision after the first publication")
+    {
+        ActivationDecision::Activate(reservation) => reservation,
+        ActivationDecision::Attach(_) => panic!("an unselected intent never attaches"),
+    };
+    assert_eq!(
+        next.generation(),
+        committed
+            .plan()
+            .environment_generation()
+            .next()
+            .expect("E+1")
+    );
+    next.cancel(&cx, &root, Wait::FailFast)
+        .expect("release the unused successor");
+    end_run(
+        &cx,
+        session_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
 }

@@ -2146,6 +2146,7 @@ impl WorkspaceActivationReservation {
         environment_run: &Run<'_>,
         session_run: &Run<'_>,
         selection: &SelectionReceipt,
+        launch: &SessionLaunch,
     ) -> Result<CommittedActivation, RunError> {
         let fence = environment_run.fence().clone();
         if fence.resource != self.record.environment {
@@ -2183,6 +2184,12 @@ impl WorkspaceActivationReservation {
         };
         let receipt = plan.validate_publication(environment_run)?;
         selection.validate(&plan)?;
+        // The commit holds the session's live custody: the launch that published
+        // this lease, for this session, with the key and listener still in hand.
+        // A receipt alone cannot publish a session nothing is serving.
+        if launch.binding() != *plan.binding() || launch.lease() != Some(selection.serving()) {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
         // The decision froze its inputs before anything was applied. Publishing
         // is the moment they are due: the artifact and target this run
         // acknowledged must be exactly the ones the decision recorded, or the
@@ -2190,17 +2197,25 @@ impl WorkspaceActivationReservation {
         let Some(frozen) = frozen else {
             return Err(ActivationRefusal::Unfrozen.into());
         };
-        match &frozen.artifact {
-            ArtifactEvidence::Selected { digest, .. }
-                if *digest == selection.selection().objects.binary.digest => {}
-            ArtifactEvidence::Selected { .. } | ArtifactEvidence::Unselected { .. } => {
+        let selected = selection.selection().objects.binary.digest.clone();
+        // A fresh project cannot name an artifact before its image platform is
+        // read, so its decision records `Unselected`: this commit freezes the
+        // artifact the run actually selected, once, in its own transaction. Any
+        // later activation compares against that frozen digest.
+        let fresh_artifact = match &frozen.artifact {
+            ArtifactEvidence::Selected { digest, .. } if *digest == selected => None,
+            ArtifactEvidence::Selected { .. } => {
                 return Err(ActivationRefusal::SelectionMismatch.into())
             }
-        }
-        // The resolved selection the decision froze is the context this
-        // generation serves: its document digest. A context prepared for another
-        // selection is never published under this decision.
-        if frozen.selection != selection.selection().objects.context.digest {
+            ArtifactEvidence::Unselected { .. } => Some(ArtifactEvidence::Selected {
+                digest: selected.clone(),
+                object: selection.selection().objects.binary.path.clone(),
+            }),
+        };
+        // The resolved selection the decision froze is the one the published
+        // context document names. A context prepared for another selection is
+        // never published under this decision.
+        if selection.selection_digest() != &frozen.selection {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         if let TargetEvidence::Observed(identity) = &frozen.target {
@@ -2238,6 +2253,43 @@ impl WorkspaceActivationReservation {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
             }
             plan.validate_receipt(&receipt)?;
+            // Freeze the artifact a fresh project just selected, in this same
+            // transaction and exactly once: a row that already names another
+            // artifact refuses instead of being rewritten.
+            if let Some(fresh) = fresh_artifact.as_ref() {
+                let stored_inputs: Option<String> = txn.conn().query_row(
+                    "SELECT inputs FROM workspace_activation_reservations \
+                     WHERE environment=?1 AND environment_generation=?2",
+                    params![
+                        self.record.environment.name().to_string(),
+                        self.record.generation.get() as i64
+                    ],
+                    |row| row.get(0),
+                )?;
+                let Some(stored_inputs) = stored_inputs else {
+                    return Err(ActivationRefusal::Frozen.into());
+                };
+                let mut inputs: PublishInputs = serde_json::from_str(&stored_inputs)?;
+                match &inputs.artifact {
+                    ArtifactEvidence::Selected { digest, .. } if *digest == selected => {}
+                    ArtifactEvidence::Selected { .. } => {
+                        return Err(ActivationRefusal::Frozen.into())
+                    }
+                    ArtifactEvidence::Unselected { .. } => {
+                        inputs.artifact = fresh.clone();
+                        txn.conn().execute(
+                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
+                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved'",
+                            params![
+                                self.record.environment.name().to_string(),
+                                self.record.generation.get() as i64,
+                                serde_json::to_string(&inputs)?,
+                                txn.now()
+                            ],
+                        )?;
+                    }
+                }
+            }
             if stored.state == ActivationReservationState::Committed {
                 // A retry answers with the obligation the first commit wrote. A
                 // retry that names different bytes is refused: the committed
@@ -2245,7 +2297,9 @@ impl WorkspaceActivationReservation {
                 let obligation =
                     selection::read_obligation(txn.conn(), &self.record.environment, self.record.generation)?;
                 if let Some(stored) = obligation.as_ref() {
-                    if selection.selection() != stored.receipt().selection() {
+                    if selection.selection() != stored.receipt().selection()
+                        || selection.selection_digest() != stored.receipt().selection_digest()
+                    {
                         return Err(ActivationRefusal::SelectionMismatch.into());
                     }
                 }

@@ -187,12 +187,14 @@ until the host-log writer has a safe secret-handling boundary.
   mapping and the session's `Borrow` attachment. That is the only commit: the
   generic one refuses rather than publishing a generation with no durable
   selection, a generation never *decided* refuses as unfrozen, the artifact,
-  target and context selection must be the ones the decision froze, and the
-  lease can only come from the session's own bound, qualified launch, which
-  needs the session's owning run. `unfinished_selection`,
+  target and context selection must be the ones the decision froze (a fresh
+  project's unselected artifact is frozen by its first publication), the
+  context document is parsed and checked field by field, and the commit requires
+  the session's own live launch — bound, qualified and rooted in the run that
+  owns it. `unfinished_selection`,
   `Attachments::selection_switched`, `selection_recovered` (three proven
   liveness facts *and* every selector and object read back through a
-  `SelectorReader` at its committed value) and
+  `SelectorReader` under `Gate(Env)` at its committed value) and
   `selection_abandoned` (only once the exact successor is settled) complete,
   complete-from-recovery or revoke it without ever publishing an unserved
   generation or restoring the predecessor. Concurrent decision callers are

@@ -3081,7 +3081,7 @@ impl SessionLaunch {
     pub fn launch(session: &SessionRef, owner: SessionOwner, supervisor_id: impl Into<String>, key: ServingKey, listener: Box<dyn ChannelListener>) -> Result<Self, ServingRefusal>;
 }
 impl WorkspaceActivationReservation {
-    pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt) -> Result<CommittedActivation, RunError>;
+    pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt, launch: &SessionLaunch) -> Result<CommittedActivation, RunError>;
 }
 impl CommittedActivation { pub fn selection_obligation(&self) -> Option<&SelectionObligation>; }
 impl Attachments {
@@ -3094,16 +3094,23 @@ pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &Se
 ```
 
 `commit_selection` takes the validated `SelectionReceipt`, not a bare `GuestSelection`: the receipt is the only value that has
-hashed the context document, and a selection that never hashed it cannot be committed. It is the **only** commit: the generic
+parsed and hashed the context document, and a selection that never did cannot be committed. It also takes the session's live
+`SessionLaunch` and requires that launch's binding to be this plan's session and its published lease to be the receipt's locator, so
+a generation is never committed for a session nothing is serving. The document itself is parsed as `effigy.workspace-context.v2` and
+every field — schema, context generation, E, session run/S, artifact digest, credential generation/path/digest, locator endpoint/pin —
+is checked against the frozen plan and selection; a document for another activation is refused, not hashed and trusted. It is the **only** commit: the generic
 `commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects, and a
 reservation that was never *decided* refuses `unfrozen` because nothing was frozen to publish. The commit re-checks the frozen
 `PublishInputs`: the artifact the activation acknowledged must be the decided digest and, when the decision observed a target, the
-published container and boot must be that observation. `SelectionReceipt::new` takes the session's live `SessionLaunch` and
+published container and boot must be that observation. A fresh project's `ArtifactEvidence::Unselected` decision is published once:
+that commit freezes the artifact the run actually selected into the reservation, in its own transaction, and every later activation
+compares against it. `SelectionReceipt::new` takes the session's live `SessionLaunch` and
 publishes the locator from it, so a selection can only name an endpoint and pin that a bound, qualified, session-owned listener
 holds; a launch serving another session, or one whose listener was never qualified, publishes nothing. A receipt's `ServingLease`
 names its own session, so a lease another session's launch published is refused.
-Recovery is completion, not assumption: `selection_recovered` requires the three proven liveness facts **and** a `SelectorReader`.
-The kernel reads every selector and every selected object back through that reader itself, compares each answer with the committed
+Recovery is completion, not assumption: `selection_recovered` takes `Gate(Env)` first and only then requires the three proven
+liveness facts **and** a `SelectorReader`. The kernel reads every selector and every selected object back through that reader under
+that same gate (a read taken before it could describe a target another activation replaced), compares each answer with the committed
 target, and only then builds the `SelectionSwitchReceipt` it records — its fields are private and nothing else constructs one. A
 third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
 never a completed selection. The same reader drives `Attachments::selection_switched` on the live path, so both complete exactly

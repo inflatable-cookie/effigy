@@ -797,10 +797,11 @@ Three production facts remain to implement and prove:
   `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
   `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
   the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
-  that publishes a generation, and only from inputs a decision froze, including
-  the context document it resolved, and a lease the session's own launch
-  published), the per-selector readback switch/recovery order (the kernel reads
-  selectors and objects through a `SelectorReader` and records only what it
+  that publishes a generation: it needs the session's live launch, a parsed and
+  validated v2 context document, and inputs a decision froze — a fresh
+  project's unselected artifact is frozen by its first publication), the
+  per-selector readback switch/recovery order (the kernel reads selectors and
+  objects through a `SelectorReader` under `Gate(Env)` and records only what it
   observed) and the settled-successor abandonment are implemented and
   fault-proven against the real journal, including concurrent decision callers.
   Listener/key custody is rooted in the detached session owner: a launch needs

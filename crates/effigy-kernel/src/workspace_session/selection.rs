@@ -117,6 +117,52 @@ pub struct SelectionReceipt {
     /// The locator the session's own launch published. It is taken from a bound,
     /// qualified listener, never supplied by the caller.
     serving: super::ServingLease,
+    /// The resolved selection the published context document names, as the
+    /// document itself declares it. `commit_selection` holds it against the
+    /// decision's frozen selection.
+    selection_digest: Digest,
+}
+
+/// Schema of the context document this seam validates (052 §8.11).
+const CONTEXT_SCHEMA_V2: &str = "effigy.workspace-context.v2";
+
+/// The guest context document, as far as the kernel must understand it. Every
+/// field is checked against the frozen activation plan and the selection; a
+/// document for another generation, session, artifact, credential or locator is
+/// refused, never hashed and accepted.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextDocument {
+    schema: String,
+    context_generation: u64,
+    environment_generation: u64,
+    session: DocumentSession,
+    artifact_digest: String,
+    credential: DocumentCredential,
+    locator: DocumentLocator,
+    selection_digest: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocumentSession {
+    run_id: String,
+    generation: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocumentCredential {
+    generation: u64,
+    path: String,
+    digest: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocumentLocator {
+    endpoint: String,
+    pin: String,
 }
 
 impl SelectionReceipt {
@@ -142,10 +188,30 @@ impl SelectionReceipt {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         let serving = launch.publish()?.lease().clone();
+        let parsed: ContextDocument = serde_json::from_slice(document)
+            .map_err(|_| RunError::from(ActivationRefusal::SelectionMismatch))?;
+        let mismatch = ActivationRefusal::SelectionMismatch;
+        if parsed.schema != CONTEXT_SCHEMA_V2
+            || parsed.context_generation != selection.objects.context_generation.get()
+            || parsed.environment_generation != plan.environment_generation().get()
+            || parsed.session.run_id != plan.session_run().to_string()
+            || parsed.session.generation != plan.session_generation().get()
+            || parsed.artifact_digest != format!("sha256:{}", selection.objects.binary.digest.hex())
+            || parsed.credential.generation != selection.objects.credential_generation.get()
+            || parsed.credential.path != selection.objects.credential.path
+            || Digest::parse_hex(&parsed.credential.digest).as_ref()
+                != Some(&selection.objects.credential.digest)
+            || parsed.locator.endpoint != serving.endpoint()
+            || Digest::parse_hex(&parsed.locator.pin).as_ref() != Some(serving.pin())
+        {
+            return Err(mismatch.into());
+        }
+        let selection_digest = Digest::parse_hex(&parsed.selection_digest).ok_or(mismatch)?;
         let receipt = Self {
             publication,
             selection,
             serving,
+            selection_digest,
         };
         receipt.validate(plan)?;
         Ok(receipt)
@@ -184,6 +250,10 @@ impl SelectionReceipt {
     /// The locator this generation serves, published by its own launch.
     pub fn serving(&self) -> &super::ServingLease {
         &self.serving
+    }
+    /// The resolved selection the published context document names.
+    pub fn selection_digest(&self) -> &Digest {
+        &self.selection_digest
     }
 }
 
@@ -787,8 +857,9 @@ impl WorkspaceActivationReservation {
         environment_run: &Run<'_>,
         session_run: &Run<'_>,
         receipt: &SelectionReceipt,
+        launch: &SessionLaunch,
     ) -> Result<CommittedActivation, RunError> {
-        self.commit_with(cx, root, environment_run, session_run, receipt)
+        self.commit_with(cx, root, environment_run, session_run, receipt, launch)
     }
 }
 
@@ -817,19 +888,18 @@ pub fn selection_recovered(
     if !liveness.complete() {
         return Err(ActivationRefusal::ServingLost.into());
     }
-    // Recovery *completes* the committed selection, it does not assume it: the
-    // kernel reads the exact target back and compares every selector and object
-    // with the committed selection. A third value, a still-previous value, a
-    // missing object or an unreadable one is refused exactly as on the live
-    // path, and a receipt the caller assembled is never accepted.
-    let receipt = obligation.observe(reader)?;
-    obligation.validate_switch(&receipt)?;
+    // The readback happens *under* `Gate(Env)`: a read taken before the gate
+    // could describe a target another activation replaced in between, and a
+    // recovery that records that read would complete a generation it never
+    // observed. Recovery re-reads the obligation under the gate too.
     let _gate = Gate::acquire(
         cx,
         root,
         std::slice::from_ref(obligation.environment()),
         wait,
     )?;
+    let receipt = obligation.observe(reader)?;
+    obligation.validate_switch(&receipt)?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         obligation.require_serving(txn)?;
