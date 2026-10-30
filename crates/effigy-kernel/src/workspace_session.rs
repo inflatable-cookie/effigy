@@ -1163,6 +1163,16 @@ fn attachable(
     {
         return Ok(None);
     }
+    // A target the live generation froze must still be the container and boot
+    // its publication names, and a re-observation must agree with that same
+    // publication: a replaced container is never attached to.
+    if let TargetEvidence::Observed(frozen_target) = &frozen.target {
+        if publication.publication.container_id != frozen_target.container_id
+            || publication.publication.vm_boot_id != frozen_target.vm_boot_id
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+    }
     if let Some(observed) = publishing.target.container() {
         if publication.publication.container_id != observed.container_id
             || publication.publication.vm_boot_id != observed.vm_boot_id
@@ -1656,12 +1666,43 @@ impl WorkspaceActivationReservation {
         publishing.validate()?;
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
         crate::fault_point!(ActivationDecisionBefore)?;
+        // The live session's *owner* liveness is observed under the same gate,
+        // before the deciding transaction: a mapped run whose owner gate is free
+        // is an interrupted session, not a live one, and Unknown liveness grants
+        // nothing. The transaction re-reads the mapping and only attaches to the
+        // same run this observation named.
+        let owner = {
+            let observe = cx.operation().observe().map_err(|_| {
+                RunError::broken("an activation decision needs an observing context")
+            })?;
+            let reader = activation_reader(&observe, root)?;
+            live_session_row(reader.conn(), environment)?.map(|live| {
+                let liveness = reader.run_owner_state(&observe, root, &live.run);
+                (live.run, liveness)
+            })
+        };
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let decision = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             txn.resource(environment, "environment")?;
             if let Some(live) = live_session_row(txn.conn(), environment)? {
-                if let Some(session) = attachable(txn.conn(), environment, &live, publishing)? {
-                    return Ok::<_, RunError>(ActivationDecision::Attach(session));
+                match &owner {
+                    Some((
+                        run,
+                        crate::observe::Observed::Verified(crate::gate::OwnerState::Held, _),
+                    )) if *run == live.run => {
+                        if let Some(session) =
+                            attachable(txn.conn(), environment, &live, publishing)?
+                        {
+                            return Ok::<_, RunError>(ActivationDecision::Attach(session));
+                        }
+                    }
+                    Some((_, crate::observe::Observed::Unknown(reason))) => {
+                        return Err(RunError::unavailable(format!(
+                            "the live workspace session's owner liveness is unknown: {reason}"
+                        )))
+                    }
+                    // Interrupted, closed or absent: no live session to reuse.
+                    _ => {}
                 }
             }
             let record = Self::reserve_under(txn, environment, Some(publishing))?;
@@ -1714,6 +1755,19 @@ impl WorkspaceActivationReservation {
                 // anything is applied — and every later one must match.
                 match (&existing.inputs, inputs) {
                     (Some(frozen), Some(inputs)) if frozen != inputs => {
+                        // A replaced container or a changed boot is refused by
+                        // name, not hidden behind a superseding generation.
+                        if let (
+                            TargetEvidence::Observed(frozen_target),
+                            TargetEvidence::Observed(observed),
+                        ) = (&frozen.target, &inputs.target)
+                        {
+                            if frozen_target.container_id != observed.container_id
+                                || frozen_target.vm_boot_id != observed.vm_boot_id
+                            {
+                                return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+                            }
+                        }
                         return Err(RunError::refused(
                             "this environment generation is reserved by a workspace activation with other publish inputs; wait for that activation or cancel its reservation",
                         ));

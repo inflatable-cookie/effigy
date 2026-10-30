@@ -778,13 +778,15 @@ impl<'a> Run<'a> {
                 "only an admitted workspace session owns a channel listener",
             ));
         }
-        // A workspace session is either staged for a reserved activation or the
-        // environment's mapped session; either record is this run's own.
+        // A workspace session is a *detached* run whose private slot the journal
+        // records: either staged for a reserved activation or the environment's
+        // mapped session. An inline run has no durable owner to hold custody.
         let known: bool = self.store.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM workspace_session_runs \
+            "SELECT (EXISTS(SELECT 1 FROM workspace_session_runs \
              WHERE run_id=?1 AND owner=?2 AND generation=?3) \
              OR EXISTS(SELECT 1 FROM workspace_sessions \
-             WHERE run_id=?1 AND session_generation=?3)",
+             WHERE run_id=?1 AND session_generation=?3)) \
+             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND (placement='detached' OR kind='custody'))",
             params![
                 self.id.to_string(),
                 self.owner.resource.name().to_string(),
@@ -801,6 +803,21 @@ impl<'a> Run<'a> {
             self.id,
             self.owner.clone(),
         ))
+    }
+
+    /// Test-only: record this workspace session run as detached custody without
+    /// spawning a supervisor. Production reaches the same row through the
+    /// custody registration a detached run performs; these kernel tests exercise
+    /// the record, not process supervision (`test:kernel:custody` does that).
+    #[cfg(test)]
+    pub(crate) fn test_register_detached_owner(&self) {
+        self.store
+            .conn()
+            .execute(
+                "UPDATE runs SET kind='custody',placement='detached' WHERE run_id=?1",
+                params![self.id.to_string()],
+            )
+            .expect("test detached custody record");
     }
 
     pub(crate) fn owns_workspace_session(

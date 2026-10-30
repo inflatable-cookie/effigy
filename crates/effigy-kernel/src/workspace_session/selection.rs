@@ -138,6 +138,8 @@ struct ContextDocument {
     environment_generation: u64,
     session: DocumentSession,
     artifact_digest: String,
+    container_id: String,
+    vm_boot_id: String,
     credential: DocumentCredential,
     locator: DocumentLocator,
     selection_digest: String,
@@ -197,6 +199,8 @@ impl SelectionReceipt {
             || parsed.session.run_id != plan.session_run().to_string()
             || parsed.session.generation != plan.session_generation().get()
             || parsed.artifact_digest != format!("sha256:{}", selection.objects.binary.digest.hex())
+            || parsed.container_id != publication.publication.container_id
+            || parsed.vm_boot_id != publication.publication.vm_boot_id
             || parsed.credential.generation != selection.objects.credential_generation.get()
             || parsed.credential.path != selection.objects.credential.path
             || Digest::parse_hex(&parsed.credential.digest).as_ref()

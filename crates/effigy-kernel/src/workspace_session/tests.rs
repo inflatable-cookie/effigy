@@ -184,7 +184,7 @@ fn admit_session<'a>(
     root: &'a StateRoot,
     environment: &Fence,
 ) -> (Run<'a>, SessionRef) {
-    SessionRef::admit(
+    let (run, session) = SessionRef::admit(
         cx,
         root,
         &inv(workspace_entry(), "workspace"),
@@ -194,7 +194,9 @@ fn admit_session<'a>(
         environment,
         Placement::Detached,
     )
-    .expect("workspace session")
+    .expect("workspace session");
+    run.test_register_detached_owner();
+    (run, session)
 }
 
 fn stop_requests(cx: &EffectContext, root: &StateRoot, run: RunId) -> usize {
@@ -784,7 +786,7 @@ fn admit_frozen<'a>(
     reservation: &WorkspaceActivationReservation,
     run: RunId,
 ) -> (Run<'a>, SessionRef) {
-    SessionRef::admit_reserved(
+    let (admitted, session) = SessionRef::admit_reserved(
         cx,
         root,
         &inv(workspace_entry(), "workspace"),
@@ -794,7 +796,9 @@ fn admit_frozen<'a>(
         reservation,
         Placement::Detached,
     )
-    .expect("reserved workspace session")
+    .expect("reserved workspace session");
+    admitted.test_register_detached_owner();
+    (admitted, session)
 }
 
 /// Stage and admit in one step, for tests that are not about the boundary.
@@ -1917,6 +1921,7 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
                 &reservation,
                 Placement::Detached,
             )?;
+            run.test_register_detached_owner();
             staged_run = Some(run);
             let run = Run::begin_claimed(
                 &cx,
@@ -2968,6 +2973,7 @@ fn decided_with(
 /// anything else is refused.
 fn context_document(
     plan: &ActivationPlan,
+    publication: &WorkspacePublicationReceipt,
     selection: &GuestSelection,
     lease: &ServingLease,
     selection_digest: &Digest,
@@ -2981,6 +2987,8 @@ fn context_document(
             "generation": plan.session_generation().get(),
         },
         "artifact_digest": format!("sha256:{}", selection.objects.binary.digest.hex()),
+        "container_id": publication.publication.container_id,
+        "vm_boot_id": publication.publication.vm_boot_id,
         "credential": {
             "generation": selection.objects.credential_generation.get(),
             "path": selection.objects.credential.path,
@@ -3219,7 +3227,7 @@ fn selection_receipt(
         ],
     };
     let lease = launch.publish().expect("published").lease().clone();
-    let document = context_document(plan, &selection, &lease, selection_digest);
+    let document = context_document(plan, &publication, &selection, &lease, selection_digest);
     let context = Digest::of(&document);
     selection.objects.context = GuestObject {
         path: format!("/run/effigy/objects/context/{context}"),
@@ -4196,7 +4204,13 @@ fn a_selection_never_names_another_session_s_listener() {
     let document = {
         let mut published = lease;
         let lease = published.publish().expect("published").lease().clone();
-        context_document(&plan, &selection, &lease, &receipt_selection(&reservation))
+        context_document(
+            &plan,
+            &publication,
+            &selection,
+            &lease,
+            &receipt_selection(&reservation),
+        )
     };
     let error = SelectionReceipt::new(&plan, publication, selection, &document, &mut unqualified)
         .expect_err("an unqualified listener publishes nothing");
@@ -4459,7 +4473,7 @@ impl ServingFixture {
         };
         let mut options = opts(run_id(id));
         options.id = run_id(id);
-        SessionRef::admit(
+        let (run, session) = SessionRef::admit(
             &self.cx,
             &self.root,
             &inv(workspace_entry(), "workspace"),
@@ -4469,7 +4483,9 @@ impl ServingFixture {
             &fence,
             Placement::Detached,
         )
-        .expect("workspace session")
+        .expect("workspace session");
+        run.test_register_detached_owner();
+        (run, session)
     }
 }
 
@@ -4495,7 +4511,15 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         "an unqualified listener is never published"
     );
     // The transport qualifies the endpoint; the launch owns the fact.
-    launch.qualify().expect("qualified");
+    launch
+        .qualify(
+            &mut FakeProbe {
+                answer: Some(Observed::Verified((), evidence())),
+                calls: 0,
+            },
+            Duration::from_secs(1),
+        )
+        .expect("qualified");
     let lease = launch
         .publish()
         .expect("a bound, qualified listener publishes")
@@ -4510,7 +4534,12 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         &lease,
         "one session has one locator"
     );
-    // A retry gets the same lease and never rebinds.
+    // A retried publish still answers the same lease: retrying never rebinds.
+    assert_eq!(
+        launch.publish().expect("retried publish").lease(),
+        &lease,
+        "a retry does not re-lease the session"
+    );
     assert_eq!(stops.get(), 0);
     let probed = launch.liveness(
         &mut FakeProbe {
@@ -4627,7 +4656,15 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let mut launch =
         SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
             .expect("launch");
-    launch.qualify().expect("qualified");
+    launch
+        .qualify(
+            &mut FakeProbe {
+                answer: Some(Observed::Verified((), evidence())),
+                calls: 0,
+            },
+            Duration::from_secs(1),
+        )
+        .expect("qualified");
     launch.publish().expect("published before it stops");
     launch.stop();
     assert!(matches!(launch.publish(), Err(ServingRefusal::Stopped)));
@@ -4916,7 +4953,6 @@ fn concurrent_decisions_reserve_one_generation_or_attach_one_session() {
         activate_with_selection(&cx, &root, &environment, run_id(240), run_id(241), &live);
     let session = activated.session.clone();
     let generations = reservation_rows(&read_journal(&cx, &root), &environment);
-    drop(activated);
 
     // Two callers with the live generation's exact inputs both attach, and
     // neither reserves anything.
@@ -4937,9 +4973,9 @@ fn concurrent_decisions_reserve_one_generation_or_attach_one_session() {
     // Two callers with changed inputs reserve one successor generation: the
     // loser recovers the winner's reservation instead of creating a second.
     let changed = publish_inputs(91, None);
-    let activated = concurrent_decisions(fixture.path().to_path_buf(), changed.clone(), 2);
+    let successors = concurrent_decisions(fixture.path().to_path_buf(), changed.clone(), 2);
     let mut ids = Vec::new();
-    for decision in activated {
+    for decision in successors {
         match decision {
             ActivationDecision::Activate(reservation) => {
                 assert_eq!(reservation.inputs(), Some(&changed));
@@ -4959,6 +4995,7 @@ fn concurrent_decisions_reserve_one_generation_or_attach_one_session() {
     // The live generation is untouched by either decision.
     assert_eq!(resolved(&reader, &environment), Some(session));
     assert_eq!(stop_requests(&cx, &root, run_id(240)), 0);
+    drop(activated);
 }
 
 #[test]
@@ -5191,7 +5228,13 @@ fn a_context_document_for_another_activation_is_refused() {
     let document = || {
         let mut launch = launch_for(&session_run, &plan.session()).expect("custody");
         let lease = launch.publish().expect("published").lease().clone();
-        context_document(&plan, good.selection(), &lease, &selection_digest)
+        context_document(
+            &plan,
+            &publication,
+            good.selection(),
+            &lease,
+            &selection_digest,
+        )
     };
     let mutate = |field: &str, value: serde_json::Value| {
         let mut parsed: serde_json::Value = serde_json::from_slice(&document()).expect("document");
@@ -5435,4 +5478,37 @@ fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
             signal: None,
         },
     );
+}
+
+#[test]
+fn a_dead_session_is_never_attached_to() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let inputs = publish_inputs(99, None);
+    let activated =
+        activate_with_selection(&cx, &root, &environment, run_id(255), run_id(254), &inputs);
+    let session = activated.session.clone();
+    // The session's owner is gone: its private slot is free, so the mapping is
+    // an interrupted session, not a live one.
+    drop(activated);
+    let decision =
+        WorkspaceActivationReservation::decide(&cx, &root, &environment, &inputs, Wait::FailFast)
+            .expect("a dead session is replaceable, never attachable");
+    let reservation = match decision {
+        ActivationDecision::Activate(reservation) => *reservation,
+        ActivationDecision::Attach(found) => {
+            panic!("a dead session must not be attached: {found:?}")
+        }
+    };
+    assert_eq!(
+        reservation.generation(),
+        session.environment_generation().next().expect("E+1"),
+        "the successor is the generation after the dead session"
+    );
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("release the unused successor");
+    assert_ne!(reservation.id().to_string(), String::new());
 }

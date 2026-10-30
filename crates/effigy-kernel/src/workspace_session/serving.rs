@@ -418,10 +418,23 @@ impl SessionLaunch {
     pub fn phase(&self) -> ListenerPhase {
         self.listener.phase()
     }
-    /// The transport qualified the endpoint the launch holds. A stopped
-    /// listener refuses, so a dead one never becomes publishable.
-    pub fn qualify(&mut self) -> Result<(), ServingRefusal> {
-        self.listener.qualify()
+    /// Qualify the endpoint the launch holds: a bounded pinned handshake,
+    /// against the key this launch still holds, at the address it actually
+    /// bound. Only a verified answer moves the listener to `Holding`; an absent
+    /// or unknown one refuses, so a listener is never published on a promise.
+    pub fn qualify(
+        &mut self,
+        probe: &mut dyn ServingProbe,
+        deadline: Duration,
+    ) -> Result<(), ServingRefusal> {
+        if self.listener.phase() == ListenerPhase::Stopped {
+            return Err(ServingRefusal::Stopped);
+        }
+        let endpoint = self.listener.endpoint().ok_or(ServingRefusal::Unbound)?;
+        match probe.pinned_handshake(endpoint, &self.key.pin(), deadline) {
+            Observed::Verified(..) => self.listener.qualify(),
+            Observed::Absent(_) | Observed::Unknown(_) => Err(ServingRefusal::Unqualified),
+        }
     }
     /// Stop the listener the launch holds. Idempotent; the lease is dropped
     /// with it, so a stopped launch reports no locator.

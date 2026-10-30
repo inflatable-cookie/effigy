@@ -3102,7 +3102,8 @@ is checked against the frozen plan and selection; a document for another activat
 `commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects, and a
 reservation that was never *decided* refuses `unfrozen` because nothing was frozen to publish. The commit re-checks the frozen
 `PublishInputs`: the artifact the activation acknowledged must be the decided digest and, when the decision observed a target, the
-published container and boot must be that observation. A fresh project's `ArtifactEvidence::Unselected` decision is published once:
+published container and boot must be that observation — and the context document names the same container and boot, so a target
+fact is fenced at both the decision and the published context. A fresh project's `ArtifactEvidence::Unselected` decision is published once:
 that commit freezes the artifact the run actually selected into the reservation, in its own transaction, and every later activation
 compares against it. `SelectionReceipt::new` takes the session's live `SessionLaunch` and
 publishes the locator from it, so a selection can only name an endpoint and pin that a bound, qualified, session-owned listener
@@ -3115,8 +3116,12 @@ target, and only then builds the `SelectionSwitchReceipt` it records — its fie
 third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
 never a completed selection. The same reader drives `Attachments::selection_switched` on the live path, so both complete exactly
 what was observed. Custody is rooted in the detached session owner: `SessionLaunch::launch` takes the session's `SessionRef` and a
-`SessionOwner` that only `Run::session_owner` builds, from the run whose private session slot (staged or mapped) the journal
-records, so a listener and key are never launched for a binding or an environment run a caller assembled. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
+`SessionOwner` that only `Run::session_owner` builds, from a *detached* run (its recorded custody placement) whose private session
+slot (staged or mapped) the journal records, so a listener and key are never launched for a binding, an inline run or an
+environment run a caller assembled. Qualification is an attested pinned handshake: `SessionLaunch::qualify(probe, deadline)` runs
+it against the bound endpoint with the key the launch holds and only a verified answer reaches `Holding`, so no caller can publish
+on a promise. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
+`Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
 or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
 is what they call.
