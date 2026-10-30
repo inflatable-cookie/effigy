@@ -7,6 +7,21 @@ use effigy_context::EffigyRuntimeContext;
 use effigy_manifest::{with_test_user_config_home, USER_CONFIG_FILE};
 use std::fs;
 
+/// Runs `name` as a direct foreground task under a private user-config home,
+/// so the host's `~/.effigy/config.toml` cannot move it to durable custody.
+fn run_direct_task(name: &str, context: &EffigyRuntimeContext) -> Result<String, RunnerError> {
+    let home = temp_workspace(&format!("direct-task-home-{name}"));
+    with_test_user_config_home(&home, || {
+        run_command_with_context(
+            Command::Task(TaskInvocation {
+                name: name.to_owned(),
+                args: Vec::new(),
+            }),
+            context,
+        )
+    })
+}
+
 /// A user config home whose `[programs]` block is the only one under test.
 fn user_home_with_program(name: &str, program: &str, fallback: &str) -> std::path::PathBuf {
     let home = temp_workspace(name);
@@ -85,14 +100,7 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
     );
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "echo".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect("direct task");
+    run_direct_task("echo", &context).expect("direct task");
 
     assert_file_text_equals(&marker, "ok");
     let status = root_task_status_for_tests(&root, "echo");
@@ -112,14 +120,7 @@ fn direct_foreground_dispatch_reports_failure_without_recording_history() {
     write_root_manifest(&root, "[tasks.fail]\nrun = \"sh -c 'exit 7'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    let error = run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "fail".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect_err("task should fail");
+    let error = run_direct_task("fail", &context).expect_err("task should fail");
     match error {
         RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(7)),
         other => panic!("unexpected error: {other}"),
@@ -137,14 +138,7 @@ fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
     write_root_manifest(&root, "[tasks.stop]\nrun = \"sh -c 'exit 130'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    let error = run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "stop".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect_err("task should cancel");
+    let error = run_direct_task("stop", &context).expect_err("task should cancel");
     match error {
         RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(130)),
         other => panic!("unexpected error: {other}"),

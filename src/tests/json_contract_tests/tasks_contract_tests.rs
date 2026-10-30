@@ -1,6 +1,7 @@
 use crate::runner::json_contract_tests::prelude::{
     execution::run_manifest_task_with_cwd, harness::*, json::*, runtime::*,
 };
+use effigy_manifest::with_test_user_config_home;
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {
@@ -376,33 +377,38 @@ fn tasks_json_contract_selectors_inventory_is_portable_and_deterministic() {
 #[test]
 fn tasks_status_json_contract_has_versioned_top_level_shape() {
     let root = temp_workspace("tasks-status-json-contract");
+    // A private user-config home: the host's `[programs]` block must not move
+    // this direct task to durable custody and change the asserted status.
+    let home = temp_workspace("tasks-status-json-contract-home");
     write_manifest(
         &root.join("effigy.toml"),
         "[tasks.check]\nrun = \"printf check\"\n",
     );
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "check".to_owned(),
-            args: Vec::new(),
-        },
-        root.clone(),
-    )
-    .expect("run check");
+    let out = with_test_user_config_home(&home, || {
+        run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "check".to_owned(),
+                args: Vec::new(),
+            },
+            root.clone(),
+        )
+        .expect("run check");
 
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            status_selector: Some("check".to_owned()),
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
+        with_cwd(&root, || {
+            run_tasks(TasksArgs {
+                all: false,
+                repo_override: None,
+                task_name: None,
+                resolve_selector: None,
+                status_selector: Some("check".to_owned()),
+                status_all: false,
+                output_json: true,
+                pretty_json: true,
+                qa: None,
+            })
         })
-    })
-    .expect("run task status json");
+        .expect("run task status json")
+    });
 
     let parsed = parse_json(&out);
     assert_eq!(parsed["schema"], "effigy.tasks-status.v3");
