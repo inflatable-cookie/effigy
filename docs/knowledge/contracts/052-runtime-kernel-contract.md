@@ -2967,6 +2967,77 @@ struct TlsChannelTransport { /* workspace_channel::Transport */ } struct PinnedC
 impl ChannelOpener for PinnedChannelOpener { fn open(&mut self, context: &VerifiedWorkspaceContext) -> Result<Box<dyn Transport>, ChannelError>; }
 ```
 
+The A adapter is `src/runner/workspace_transport`: `TlsChannelTransport` verifies
+TLS 1.3, the SHA-256 DER-SPKI pin, leaf validity and the P-256 handshake signature
+before exposing a writable transport. `opener::PinnedChannelOpener` consumes the
+verified context, requires protocol 1 and a known pin, and resolves only the
+unique rendered `effigy-host` entry in a bounded `/etc/hosts` snapshot (no DNS or
+OS-trust fallback). Connect/handshake, each read/write and close have absolute
+budgets; fresh connections retain no TLS session or application state.
+
+`listener::SessionTlsListener` implements the kernel's `ChannelListener`.
+`SessionLaunch::launch` takes its listener and memory-only `ServingKey`; the
+weak `HostChannelAcceptor` requires the exact live launch/owning run before
+handing a server transport to the existing kernel dispatcher. Holding probes
+never enter that dispatch queue. Stop/owner settlement shuts down accepted
+sockets, revokes the signing key even from retained TLS configurations/signers,
+and joins the bounded worker. Process death releases its socket and key; a
+successor generates a new key, never reuses the old locator. No grant registry,
+credential storage or request authority exists in this adapter.
+
+`qualification::prepare_channel` is the engine handoff after ordinary apply:
+resolve in the exact created container/boot, choose Direct or an observed Proxy
+bind, launch under session custody, then require the guest's TLS-only evidence
+to match target, resolved peer, assigned port and pin before constructing the
+private `QualifiedHostLocator`. Its accessors expose the existing context
+locator and kernel `ChannelBound`/lease to the C publisher; the C publisher still
+owns immutable publication and commit. Hybrid returns no listener/key/probe.
+The owning activation retains one launch; retries use that launch, and a failed
+unpublished preparation closes its candidate before returning. The module does
+not render/apply Compose, dispatch guest commands, or implement the engine's
+`GuestChannelProbe`: those integrations stay with C and #452. The protocol
+module and its frame/admission rules are unchanged.
+
+Bounded source qualification uses private TLS listeners for all three backend
+plans and exact-target fake guest adapters, not live engine qualification.
+The proxy fixtures dial IPv6 loopback and forward to a different IPv4 host bind;
+the Linux fixture dials the directly resolved bind address:
+`test:workspace:channel:colima`, `test:workspace:channel:docker-desktop` and
+`test:workspace:channel:linux-docker:fresh`. `test:workspace:transport:tls` also
+covers pin/validity/signature refusal, reconnect, frame limit, operation budgets,
+hybrid, failed qualification, owner drop/crash and retained-signer revocation. The unchanged kernel protocol
+and deterministic workspace-session recovery model run through
+`test:workspace:transport:kernel`.
+These receipts do not claim a native backend passed. Before candidate native
+qualification, execute these checks through the selected engine adapter:
+
+1. Record exact engine/Compose and host versions, selected backend/profile,
+   rootful/rootless mode, VM runtime/type and boot identity. Rootless Linux and
+   Apple Containers have no qualified plan. For Colima cover Docker/containerd
+   and VZ/QEMU separately; for Desktop record proxy/firewall/VPN settings.
+2. Observe the selected proxy's host-bind address and Colima gateway; unknown or
+   multiple observations refuse. Render `effigy-host` before ordinary gated
+   apply creates the network and target. On Linux distinguish daemon
+   host-gateway from Compose IPAM gateway; do not read a project network before
+   its creation. Exercise configured host-gateway and custom subnets/networks.
+3. In that exact full container ID/boot, run the staged guest adapter's bounded
+   hosts resolver. Require one alias address and the independent target
+   identity; copied context/cgroup claims are insufficient. Pass that result to
+   `channel_bind`; never attempt to host-bind a proxy's guest-facing IP.
+4. Bind the session listener at port zero and run the staged guest's bounded
+   TLS-only dial to the rendered alias/assigned port. Compare its actually
+   connected peer, pin and exact container/boot to the frozen target before
+   `SessionLaunch::qualify`/`publish`. Exercise IPv4/IPv6, custom DNS/hosts,
+   loopback settings, firewall/VPN denial and unreachable/ambiguous answers.
+   No Hello or credential is sent by this probe.
+5. Feed the qualified locator/lease into C's immutable receipt/commit, then
+   dispatch through #452 only after the exact session is serving. Exercise
+   prepare interruption, owner EOF, supervisor kill, target replacement and
+   retry: old pins/endpoints refuse, no listener survives settlement, and only
+   a newly qualified successor is published. Record selected versions and all
+   observed addresses/identities plus the exact-head proof results; never infer
+   native success from the private fixture's backend name.
+
 A session owns one memory-only ECDSA P-256 key/leaf and listener. The TLS verifier checks the SPKI pin and handshake signature
 (key possession); copying a leaf is insufficient. `Transport::verified_peer` reports the verified identity, and
 `WorkspaceClient::connect` calls the existing `check_server_pin` before its first frame, including Hello. Missing/wrong pin or
