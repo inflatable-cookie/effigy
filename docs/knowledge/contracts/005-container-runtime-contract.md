@@ -164,7 +164,12 @@ The route-registration stage polls the runtime for the declared gateway service
 ports for up to 60s; its frame names the read in flight (`reading the runtime's
 containers for the declared gateway service ports (attempt 2)`) and then the
 blocker that read reported, with the service and domain when the detail knows
-them, instead of holding the stage label.
+them, instead of holding the stage label. The work after a ready poll is
+reported as its own stages too — confirming the primary container's binding,
+resolving the declared routes against the published ports, writing the route
+table, and, on timeout, reading the exited containers for the diagnostic — and
+entering a stage clears the previous stage's blocker so a resolved one is never
+shown against later work.
 
 Readiness is Running plus the service's own health check. Its progress names
 which of the probe's two runtime reads is running — the project's container

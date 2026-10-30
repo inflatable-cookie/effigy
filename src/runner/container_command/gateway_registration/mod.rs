@@ -249,6 +249,17 @@ pub(in crate::runner) enum GatewayPortWait<'a> {
     /// The read answered and the ports are still missing: what blocks them,
     /// naming the service and domain where the detail knows them.
     Blocked { attempt: u64, detail: &'a str },
+    /// The ports are published and the primary container's binding is being
+    /// re-verified.
+    ConfirmingOwnership,
+    /// Resolving and validating the declared routes against the published
+    /// ports, aliases included.
+    ResolvingRoutes,
+    /// Writing the reconciled route table.
+    ReconcilingRoutes,
+    /// The poll timed out and the exited containers are being read for the
+    /// timeout diagnostic.
+    ReadingExitedContainers,
 }
 
 /// The same registration, reporting each poll of the declared service ports.
@@ -259,22 +270,38 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container_observed
     on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let rows = wait_for_gateway_service_ports_ready(repo_root, policy, on_wait)?;
+    finish_gateway_route_registration(repo_root, policy, binding, &rows, on_wait)
+}
+
+/// The work after the declared service ports are published: prove the primary
+/// container still owns its binding, resolve every declared route against the
+/// published ports and write the table. Each step is reported as it starts, so
+/// the last poll frame is never shown for this work (effigy#460, Q-017).
+fn finish_gateway_route_registration(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+    rows: &[RunningComposeContainer],
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(binding) = binding {
+        on_wait(GatewayPortWait::ConfirmingOwnership);
         binding.reverify(
             repo_root,
             policy,
             Instant::now() + crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT,
         )?;
     }
+    on_wait(GatewayPortWait::ResolvingRoutes);
     let mut routes =
-        resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+        resolve_gateway_routes_against_rows(repo_root, policy, rows)?.ok_or_else(|| {
             gateway_runtime_target_error(format!(
                 "container `{}` published no host port for a declared gateway route",
                 policy.name
             ))
         })?;
     let project_alias_routes =
-        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
+        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
         repo_root,
         policy,
@@ -283,8 +310,9 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container_observed
     )?;
     routes.extend(project_alias_routes);
     routes.extend(shared_alias_routes);
-    validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
+    validate_gateway_routes_against_rows(repo_root, policy, &routes, rows)?;
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
+    on_wait(GatewayPortWait::ReconcilingRoutes);
     let route_table_path = gateway_route_table_path()?;
     reconcile_gateway_routes_guarded(&route_table_path, repo_root, &routes)?;
     Ok(routes)
@@ -414,6 +442,9 @@ fn wait_for_gateway_service_ports_ready_observed(
         (reads.pause)(poll_interval.min(remaining));
     }
 
+    // The poll has ended without the ports; the diagnostic read of the exited
+    // containers is its own wait and names itself (effigy#460, Q-017).
+    on_wait(GatewayPortWait::ReadingExitedContainers);
     let exited = (reads.all_rows)(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
         .ok()
         .and_then(|rows| exited_gateway_service_detail(policy, &rows));

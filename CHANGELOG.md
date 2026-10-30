@@ -700,8 +700,11 @@ until the host-log writer has a safe secret-handling boundary.
   reports instead of holding one fixed label. Integration stages count the
   stages finished (`3/8`) and name the one now running; the gateway-route stage
   names the runtime read polling the declared service ports and the blocker it
-  last reported, with the service and domain that blocker knows; shared
-  services name the services they await. Every frame carries elapsed time. JSON, piped and
+  last reported, with the service and domain that blocker knows; the work after
+  that poll — confirming the primary container's binding, resolving the declared
+  routes, writing the route table, and the timeout diagnostic's read of exited
+  containers — is reported as its own stages, and entering a new stage clears
+  the previous stage's blocker; shared services name the services they await. Every frame carries elapsed time. JSON, piped and
   quiet output stay silent. Rendering is a single finished line, not a spinner.
   A readiness refusal carries its machine-readable `waiting_on` list in
   `--json`: one entry per service still unready, with its problem, and one for

@@ -687,6 +687,9 @@ fn render_container_up_interrupted(
 const INTEGRATION_STAGES: u64 = 8;
 
 fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
+    // A new stage is a new wait: an earlier stage's blocker must not stay on
+    // screen for work it no longer describes (effigy#460, Q-017).
+    progress.clear_event();
     progress.update(stage, Some((finished, INTEGRATION_STAGES)), None);
 }
 
@@ -698,20 +701,49 @@ fn gateway_port_wait_stage(
     progress: &ProgressSource,
     wait: super::gateway_registration::GatewayPortWait<'_>,
 ) {
+    use super::gateway_registration::GatewayPortWait;
     let count = Some((5, INTEGRATION_STAGES));
     match wait {
-        super::gateway_registration::GatewayPortWait::Reading { attempt } => progress.update(
+        // The next poll keeps the last blocker as its event: that is what the
+        // previous read observed about this same wait.
+        GatewayPortWait::Reading { attempt } => progress.update(
             format!(
                 "reading the runtime's containers for the declared gateway service ports (attempt {attempt})"
             ),
             count,
             None,
         ),
-        super::gateway_registration::GatewayPortWait::Blocked { attempt, detail } => progress.update(
+        GatewayPortWait::Blocked { attempt, detail } => progress.update(
             format!("waiting for the declared gateway service ports (attempt {attempt})"),
             count,
             Some(detail.to_owned()),
         ),
+        // The work after the poll is a different wait, so the poll's blocker is
+        // cleared rather than shown against it.
+        GatewayPortWait::ConfirmingOwnership => {
+            progress.clear_event();
+            progress.update("confirming the primary container still owns its binding", count, None);
+        }
+        GatewayPortWait::ResolvingRoutes => {
+            progress.clear_event();
+            progress.update(
+                "resolving the declared gateway routes against the published ports",
+                count,
+                None,
+            );
+        }
+        GatewayPortWait::ReconcilingRoutes => {
+            progress.clear_event();
+            progress.update("writing the gateway route table", count, None);
+        }
+        GatewayPortWait::ReadingExitedContainers => {
+            progress.clear_event();
+            progress.update(
+                "reading the exited gateway service containers for the timeout diagnostic",
+                count,
+                None,
+            );
+        }
     }
 }
 
@@ -1857,23 +1889,73 @@ mod tests {
         // The runtime read now in flight, with its attempt and the stage count.
         super::gateway_port_wait_stage(
             &progress,
-            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 2 },
+            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 1 },
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(12)),
-            "reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; 12s elapsed"
+            progress.frame_at(Duration::from_secs(6)),
+            "reading the runtime's containers for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; 6s elapsed"
         );
         // The read answered and its blocker names the service and domain.
         super::gateway_port_wait_stage(
             &progress,
             super::super::gateway_registration::GatewayPortWait::Blocked {
-                attempt: 2,
+                attempt: 1,
                 detail: "service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`",
             },
         );
         assert_eq!(
-            progress.frame_at(Duration::from_secs(13)),
-            "waiting for the declared gateway service ports (attempt 2) (5/8); last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 13s elapsed"
+            progress.frame_at(Duration::from_secs(7)),
+            "waiting for the declared gateway service ports (attempt 1) (5/8); last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 7s elapsed"
+        );
+        // The next poll keeps that blocker as the last thing this wait saw.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 2 },
+        );
+        assert!(
+            progress
+                .frame_at(Duration::from_secs(8))
+                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); last: service `db`"),
+            "{}",
+            progress.frame_at(Duration::from_secs(8))
+        );
+        // The poll then succeeds, and the work after it is its own wait: the
+        // resolved blocker is not shown against it.
+        for (wait, expected) in [
+            (
+                super::super::gateway_registration::GatewayPortWait::ConfirmingOwnership,
+                "confirming the primary container still owns its binding (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+            (
+                super::super::gateway_registration::GatewayPortWait::ResolvingRoutes,
+                "resolving the declared gateway routes against the published ports (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+            (
+                super::super::gateway_registration::GatewayPortWait::ReconcilingRoutes,
+                "writing the gateway route table (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+        ] {
+            super::gateway_port_wait_stage(&progress, wait);
+            assert_eq!(progress.frame_at(Duration::from_secs(9)), expected);
+            assert!(
+                !progress.frame_at(Duration::from_secs(9)).contains("last:"),
+                "the poll's blocker is cleared for the work that follows it"
+            );
+        }
+        // The timeout diagnostic's own read is named too.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::ReadingExitedContainers,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(10)),
+            "reading the exited gateway service containers for the timeout diagnostic (5/8); waiting for the runtime integrations of this environment; 10s elapsed"
+        );
+        // A later integration stage clears what the previous stage observed.
+        super::integration_stage(&progress, 6, "reconciling tcp alias hosts");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(11)),
+            "reconciling tcp alias hosts (6/8); waiting for the runtime integrations of this environment; 11s elapsed"
         );
     }
 
