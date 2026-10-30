@@ -1829,7 +1829,8 @@ fn redaction_replaces_a_reformed_secret_with_a_byte_no_reader_drops() {
     let cx = cx();
     // A marker-substring secret, a secret that a marker joins, and a secret
     // set whose join only appears after replacement.
-    let cases: [(&str, Vec<Vec<u8>>, &[u8]); 3] = [
+    type Case = (&'static str, Vec<Vec<u8>>, &'static [u8]);
+    let cases: [Case; 3] = [
         ("marker substring", vec![b"R".to_vec()], b"R"),
         ("marker joins", vec![b"ab[".to_vec(), b"X".to_vec()], b"abX"),
         (
