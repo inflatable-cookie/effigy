@@ -320,6 +320,18 @@ impl Run<'_> {
                     // A keyed workspace request's final answer and every
                     // client attachment end in this same commit (§8.11).
                     workspace::closed(txn, self.id, &workload, complete)?;
+                    // A workspace session's serving custody ends here too, in
+                    // the one transaction that closes its run: a settled session
+                    // is no longer an owner, and nothing can serve a listener on
+                    // its behalf. There is deliberately no earlier release: a
+                    // crash before this commit keeps the row, so a successor
+                    // still finds the recorded custody and can settle or refuse
+                    // rather than silently dropping authority (I-R7). A run that
+                    // is not a session has no row, so this is a no-op for it.
+                    txn.conn().execute(
+                        "DELETE FROM workspace_session_custody WHERE run_id=?1",
+                        [self.id.to_string()],
+                    )?;
                     if machine && complete {
                         if self.owner.resource.kind() == crate::id::ResourceKind::Gateway {
                             let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };

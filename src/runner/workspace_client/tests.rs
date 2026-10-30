@@ -2060,3 +2060,77 @@ fn dropping_the_owner_closes_the_socket_it_held() {
         );
     });
 }
+
+// ---------------------------------------------------------------------------
+// Durable session custody: retained before the close, released in it.
+// ---------------------------------------------------------------------------
+
+fn custody_rows(root: &StateRoot, run: RunId) -> Vec<String> {
+    let connection =
+        rusqlite::Connection::open(root.path().join(effigy_kernel::store::DB_NAME)).expect("store");
+    let mut query = connection
+        .prepare("SELECT supervisor FROM workspace_session_custody WHERE run_id=?1")
+        .expect("prepare");
+    let rows = query
+        .query_map([run.to_string()], |row| row.get::<_, String>(0))
+        .expect("query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("rows");
+    rows
+}
+
+#[test]
+fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let session_run_id = session.run();
+        // Adopting the run is what records the durable custody: the session is
+        // an owner, and the kernel can check that against the journal.
+        assert_eq!(
+            custody_rows(root, session_run_id),
+            vec!["452-supervisor".to_owned()],
+            "an adopted session records its supervisor"
+        );
+        assert!(
+            supervisor.session_owner().is_ok(),
+            "the run that holds the row is the session's owner"
+        );
+
+        // Serving and stopping release the listener and the key, but the run is
+        // not closed yet: a crash here must leave the recorded custody, so a
+        // successor still finds the owner instead of silently losing it.
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let owner = ServingOwner::adopt_owned(
+            OwnedWorkspaceChannel {
+                supervisor,
+                session,
+                channel: prepared,
+            },
+            serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
+            cx,
+            observe,
+            root,
+        )
+        .expect("adopted");
+        let mut owner = owner;
+        owner.stop();
+        assert!(!owner.key_held(), "stopping releases the key");
+        assert_eq!(
+            custody_rows(root, session_run_id),
+            vec!["452-supervisor".to_owned()],
+            "a crash before the close retains the recorded custody"
+        );
+
+        // The close transaction releases it, once, in the same commit that
+        // closes the run.
+        let cleanup_context = cleanup(cx);
+        owner
+            .settle(&cleanup_context, &mut NoEffects)
+            .expect("settled");
+        assert!(
+            custody_rows(root, session_run_id).is_empty(),
+            "the close releases the session's custody exactly once"
+        );
+        // Re-reading the same journal cannot resurrect it.
+        assert!(custody_rows(root, session_run_id).is_empty());
+    });
+}

@@ -3446,14 +3446,15 @@ context that qualifies a locator is opened through `PinnedChannelOpener`
 guest client's own `check_server_pin` still runs before the first byte. A
 context without a qualified locator refuses `unavailable` and local reads keep
 working. What remains is #482's production context and guest-local identity
-observation (§8.1 forbids trusting the context's own container claim), and one
-kernel-owned gap: `workspace_session_custody` is insert-only
-(`run/mod.rs:833-855`; `session_owner()` at `:783-795` only checks existence),
-so a settled session leaves a custody row. The bounded follow-up is a kernel
-release on the run's close transaction, e.g.
-`Run::release_session_custody(&mut self) -> Result<(), RunError>`; this module
-does not delete that row itself, because store mutation belongs to the owning
-engine.
+observation (§8.1 forbids trusting the context's own container claim).
+
+Session custody is durable and released in the close. `SessionSupervisor::adopt`
+records `workspace_session_custody`, and a run's close transaction now deletes
+the row for that exact run in the same commit that writes `phase='closed'`
+(`run/settle.rs`, beside `workspace::closed`). Nothing releases it earlier: a
+crash or a stopped listener before the close keeps the row, so a successor still
+finds the recorded owner and settles or refuses instead of silently dropping
+authority, and a settled session is never an owner.
 
 ## 9. Authority map
 
