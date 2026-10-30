@@ -3283,7 +3283,7 @@ fn selection_receipt(
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
     let lease = launch
-        .publish(&session_run)
+        .publish(session_run)
         .expect("published")
         .lease()
         .clone();

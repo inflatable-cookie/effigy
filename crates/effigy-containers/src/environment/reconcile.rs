@@ -1284,7 +1284,7 @@ mod tests {
         use effigy_kernel::ctx::{EffectClass, Placement};
         use effigy_kernel::id::{ExecutionTarget, Route, Surface, TaskId};
         use effigy_kernel::observe::{Evidence, Observed};
-        use effigy_kernel::run::{AttachmentId, BeginOpts, Reconciled, Run, SettlementAdapter};
+        use effigy_kernel::run::{AttachmentId, BeginOpts, Reconciled, SettlementAdapter};
         use effigy_kernel::workspace_session::{
             ActivationDecision, ArtifactEvidence, ChannelListener, GuestObject, GuestSelection,
             HostChannelListener, PublishInputs, SelectionObjects, SelectionReceipt, SelectorChange,
@@ -1430,7 +1430,7 @@ mod tests {
             let observe = ctx.cx.operation().observe().expect("observe");
             let reader = match effigy_kernel::store::Store::read(&observe, &state) {
                 Observed::Verified(reader, _) => reader,
-                other => panic!("store is not readable: {other:?}"),
+                _ => panic!("the kernel store is not readable here"),
             };
             reservation
                 .plan(&reader)

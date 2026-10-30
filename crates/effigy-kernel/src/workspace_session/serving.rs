@@ -374,7 +374,7 @@ pub struct SessionLaunch {
     /// The listener and key live here so the session's own settlement can take
     /// and drop them: dropping the listener closes the socket and dropping the
     /// key wipes its bytes.
-    state: std::sync::Arc<std::sync::Mutex<LaunchState>>,
+    state: std::rc::Rc<std::cell::RefCell<LaunchState>>,
 }
 
 #[derive(Debug, Default)]
@@ -429,7 +429,7 @@ impl SessionLaunch {
         if listener.endpoint().is_none() {
             return Err(ServingRefusal::Unbound);
         }
-        let state = std::sync::Arc::new(std::sync::Mutex::new(LaunchState {
+        let state = std::rc::Rc::new(std::cell::RefCell::new(LaunchState {
             held: Some(Held {
                 listener: Some(listener),
                 key: Some(key),
@@ -450,10 +450,8 @@ impl SessionLaunch {
         })
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, LaunchState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> std::cell::RefMut<'_, LaunchState> {
+        self.state.borrow_mut()
     }
 
     pub fn session(&self) -> &SessionRef {
@@ -730,11 +728,8 @@ impl SessionLaunch {
 }
 
 /// Drop the listener and the key, closing the socket and wiping the secret.
-fn release_state(state: &std::sync::Arc<std::sync::Mutex<LaunchState>>) {
-    let mut state = match state.lock() {
-        Ok(state) => state,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+fn release_state(state: &std::rc::Rc<std::cell::RefCell<LaunchState>>) {
+    let mut state = state.borrow_mut();
     state.owned = false;
     state.bound = None;
     state.served = false;
