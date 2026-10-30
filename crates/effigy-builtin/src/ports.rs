@@ -102,6 +102,49 @@ pub trait HostSuiteCustody: Send {
 /// reach-back from the built-in layer into the rest of the runner goes
 /// through this trait.
 pub trait BuiltinRuntimePorts {
+    /// The declared/effective backing-service aliases this checkout's host
+    /// execution delivers (effigy#431, contract 005). A suite's environment,
+    /// its rendered command and its `setup`/`teardown` commands receive the
+    /// effective alias where they carry the declared one. Empty — the default,
+    /// and every container-routed suite — leaves them as written: the
+    /// container's own network answers both names.
+    fn host_suite_env_aliases(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<Vec<crate::BuiltinHostAlias>, BuiltinError> {
+        let _ = root;
+        Ok(Vec::new())
+    }
+
+    /// Resolve the values this host suite would otherwise inherit unchanged
+    /// from the caller's environment, with the scope's aliases and their
+    /// publication proof (effigy#431 review). A key the suite's own environment
+    /// delivers — its `env`, a step's `env`, or a rendered command's assignment
+    /// — is never resolved or proved: that value already won.
+    fn resolve_host_suite_inherited_env(
+        &self,
+        root: &std::path::Path,
+        _label: &str,
+        _delivered: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(String, String)>, BuiltinError> {
+        let _ = root;
+        Ok(Vec::new())
+    }
+
+    /// Prove every delivered alias this suite would use before anything runs:
+    /// the alias's route must belong to this checkout and publish an upstream
+    /// port. `label` names the suite in the refusal. The default implementation
+    /// refuses nothing because it delivers no alias.
+    fn prove_host_suite_aliases(
+        &self,
+        root: &std::path::Path,
+        label: &str,
+        texts: &[&str],
+    ) -> Result<(), BuiltinError> {
+        let _ = (root, label, texts);
+        Ok(())
+    }
+
     /// Whether the caller wants test-only child evidence for built-in suite
     /// executions. Production implementations leave this disabled.
     fn builtin_test_child_evidence_enabled(&self) -> bool {

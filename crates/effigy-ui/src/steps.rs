@@ -140,12 +140,21 @@ impl ProgressSource {
         }
     }
 
-    /// Name the exact object or probe the operation is waiting on now.
-    pub fn set_awaiting(&self, awaiting: impl Into<String>) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .awaiting = awaiting.into();
+    /// Publish the latest event without changing the current sub-step: what an
+    /// operation just observed about the object it is waiting on.
+    pub fn event(&self, event: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.event = Some(event.into());
+    }
+
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
     }
 
     /// What the step ends with when it succeeds: the sub-step last set, or
@@ -158,8 +167,7 @@ impl ProgressSource {
             .unwrap_or_else(|| state.awaiting.clone())
     }
 
-    /// The frame an operator sees `elapsed` after the step started. A clock
-    /// argument keeps frames testable without sleeping.
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
@@ -169,11 +177,10 @@ impl ProgressSource {
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
-        if state.sub_step.is_some() {
-            label.push_str(&format!("; waiting for {}", state.awaiting));
-        }
         if let Some(event) = &state.event {
             label.push_str(&format!("; last: {event}"));
+        } else if state.sub_step.is_some() {
+            label.push_str(&format!("; waiting for {}", state.awaiting));
         }
         label.push_str(&format!("; {}s elapsed", elapsed.as_secs()));
         label
@@ -728,7 +735,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(5)));
         assert_eq!(
             step.label(),
-            "checking web (2/3); waiting for web health probe on port 8080; last: HTTP 404; 5s elapsed"
+            "checking web (2/3); last: HTTP 404; 5s elapsed"
         );
         source.update(
             "checking database",
@@ -738,11 +745,26 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(7)));
         assert_eq!(
             step.label(),
-            "checking database (3/3); waiting for web health probe on port 8080; last: connection refused; 7s elapsed"
+            "checking database (3/3); last: connection refused; 7s elapsed"
         );
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
         assert!(step.label().ends_with("7s elapsed"));
+    }
+
+    #[test]
+    fn an_event_lands_without_moving_the_sub_step() {
+        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(1)),
+            "waiting for the environment gate for `stack`; 1s elapsed"
+        );
+        source.update("reconciling the backend", Some((1, 3)), None);
+        source.event("run agq holds it (pid 9012, task `dev`)");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(3)),
+            "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+        );
     }
 
     #[test]

@@ -609,6 +609,42 @@ fn gateway_readiness_reports_a_declared_service_exit() {
     );
 }
 
+/// An uncertain container identity refuses before any route is written: the
+/// readiness wait never returns rows the registration could resolve a target
+/// from, so the domain stays unrouted (effigy#455).
+#[test]
+fn uncertain_container_identity_refuses_before_any_route_is_published() {
+    with_test_home("uncertain-identity", || {
+        let policy = test_policy();
+        let route_table = gateway_route_table_path().expect("route table path");
+        let error = wait_for_gateway_service_ports_ready_with(
+            Path::new("/tmp/repo"),
+            &policy,
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_millis(1),
+            |_| {
+                Err(
+                    "binding unavailable: full-ID/project/service/oneoff/running/checkout ownership changed or is unknown"
+                        .to_owned(),
+                )
+            },
+            |_| Ok(Vec::new()),
+            |_| {},
+        )
+        .expect_err("an uncertain identity is never a row to route");
+        let detail = error.to_string();
+        assert!(
+            detail.contains("ownership changed or is unknown"),
+            "the refusal names the identity it could not verify: {detail}"
+        );
+        let table = RouteTable::load(&route_table).expect("route table");
+        assert!(
+            table.lookup("clientname.test").is_none(),
+            "an uncertain identity publishes no route: {table:?}"
+        );
+    });
+}
+
 #[test]
 fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
     let policy = test_policy();

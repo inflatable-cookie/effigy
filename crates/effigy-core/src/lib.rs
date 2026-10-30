@@ -15,6 +15,7 @@ pub mod fs_probe;
 pub mod git_exec;
 pub mod git_source;
 pub mod git_worktree;
+pub mod host_alias;
 pub mod path_error_text;
 pub mod path_probe;
 pub mod repo;

@@ -131,7 +131,12 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   processes) run between the runs, outside the gate. The activation run
   publishes `active`, attaching requesting holders in the same transaction. A
   crash before activation leaves nothing to repair: the next `up` reconciles
-  from what is running.
+  from what is running. Exposure is decided per declared route target: a host
+  listener that never reaches its own readiness withholds only its own route,
+  the container's published routes and the other listeners' routes stay
+  exposed, and the activation still publishes `active`. A detached command
+  reports that partial exposure per route rather than the whole activation's
+  readiness and exposure as unverified (effigy#455).
 - **One apply.** `compose up -d --build --remove-orphans`, with no recreate
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
@@ -251,7 +256,20 @@ Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
 is an environment-owned detached kernel run with custody of its process group,
 started after the environment's services report ready and in `depends_on`
 order, stopped by `down`, `reset` and session settle with a
-`HostProcessStopReport`.
+`HostProcessStopReport`. A sidecar listener's readiness is its own route claim:
+when it fails, its own route stays withheld while the environment's published
+routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
+withheld listener withholds its route too, through the whole chain (effigy#455).
+The current dependency decision precedes reconciliation of any previous
+generation. A withheld dependent's old run is settled before the report,
+including a process without a listener; an incomplete stop remains a refusal.
+Sidecar startup shares the bring-up's one runtime-observation budget: a listener
+still starting when it is spent withholds its route and ends the command's wait
+rather than holding the activation open, while the supervisor keeps its own
+readiness semantics.
+Every withheld listener start is settled before the command returns, including
+a retrying failure before its first child. Only successful starts are detached;
+the withheld supervisor cannot publish a late route.
 
 ## 9. Not yet
 

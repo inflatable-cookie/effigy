@@ -112,6 +112,10 @@
       "std::fs::rename": 2,
       "std::fs::write": 1
     },
+    "crates/effigy-gateway/src/linux_operator.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.spawn": 1
+    },
     "crates/effigy-gateway/src/ports.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -351,6 +355,10 @@
       "std::fs::rename": 1,
       "std::fs::write": 1
     },
+    "src/runner/managed_secrets.rs": {
+      "std.fs.OpenOptions.write": 4,
+      "std::fs::remove_file": 1
+    },
     "src/runner/qa_group_command/mod.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -385,10 +393,10 @@
       "std::fs::File::create": 2
     },
     "src/runner/workspace_command/provisioning.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.status": 1,
-      "std::fs::rename": 2,
-      "std::fs::write": 5
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::remove_file": 1,
+      "std::fs::rename": 1,
+      "std::fs::write": 4
     }
   },
   "tests": {

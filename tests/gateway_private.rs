@@ -1300,7 +1300,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                 .path()
                 .join(format!("listener-control-{index}/readiness-refused"))
                 .is_file(),
-            "fixture listener should refuse readiness briefly before becoming healthy"
+            "fixture listener should not answer readiness until it is ready"
         );
         let listener = &report["managed_host_listeners"][0];
         assert_eq!(listener["status"], "ready");
@@ -1664,15 +1664,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         !delayed.status.success(),
         "a listener that never becomes ready must fail startup"
     );
-    // The caller's readiness budget starts at the supervisor's own activation
-    // record, so a slow publication is supervision admission, not readiness.
-    // The failure the caller reports is therefore the supervisor's typed
-    // readiness observation, never the caller's own deadline (b1bf877f).
+    // A slow activation publication is supervision admission, not readiness.
+    // The partial-exposure failure must carry the supervisor's observed HTTP
+    // refusal, rather than substituting the caller's publication deadline.
     let delayed_stdout = String::from_utf8_lossy(&delayed.stdout);
     let delayed_stderr = String::from_utf8_lossy(&delayed.stderr);
     let delayed_report = format!("{delayed_stdout}{delayed_stderr}");
     assert!(
-        delayed_report.contains("failed before readiness"),
+        delayed_report.contains("partial") && delayed_report.contains("status_mismatch"),
         "the caller must report the supervisor's own terminal readiness failure: {delayed_report}"
     );
     assert!(
@@ -1680,8 +1679,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "the caller substituted its own readiness deadline for the supervisor's terminal record: {delayed_report}"
     );
     assert!(
-        delayed_report.contains("waiting for the managed listener at"),
-        "the failure names the reserved address the supervisor waited on: {delayed_report}"
+        delayed_report.contains("503") && delayed_report.contains("/health"),
+        "the failure names the observed status and readiness path: {delayed_report}"
     );
     let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
     // The detached `up` returns only after the losing scope is settled, so the
@@ -3082,7 +3081,12 @@ fn managed_listener_fixture_child() {
         .expect("Effigy supplies the listener bind preference")
         .parse::<SocketAddr>()
         .expect("valid listener bind preference");
-    let readiness_delay = if std::env::var("FIXTURE_NEVER_READY").is_ok() {
+    // A never-ready listener answers a definite wrong status, which the
+    // listener contract now refuses at once. A merely slow listener has not
+    // opened its readiness answer yet, so it answers nothing and the declared
+    // readiness budget continues.
+    let never_ready = std::env::var("FIXTURE_NEVER_READY").is_ok();
+    let readiness_delay = if never_ready {
         Duration::from_secs(60 * 60)
     } else {
         Duration::from_millis(1500)
@@ -3128,6 +3132,7 @@ fn managed_listener_fixture_child() {
                         stream,
                         &body,
                         ready_at,
+                        never_ready,
                         &readiness_refused_file,
                         &requests_log_file,
                     )
@@ -4695,6 +4700,7 @@ fn respond_managed_listener_fixture(
     mut stream: TcpStream,
     body: &str,
     readiness_ready_at: Instant,
+    readiness_refuses: bool,
     readiness_refused_file: &Path,
     requests_log_file: &Path,
 ) {
@@ -4741,11 +4747,16 @@ fn respond_managed_listener_fixture(
         let _ = writeln!(log, "{request:?}");
     }
     if request.starts_with("get /health ") && Instant::now() < readiness_ready_at {
-        let _ = fs::write(readiness_refused_file, b"readiness initially refused\n");
-        let response =
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        let _ = stream.write_all(response);
-        let _ = stream.flush();
+        let _ = fs::write(readiness_refused_file, b"readiness not answered yet\n");
+        if readiness_refuses {
+            // A definite wrong status is a terminal refusal under the listener
+            // contract, which is exactly what the never-ready proof needs.
+            let response = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(response);
+            let _ = stream.flush();
+        }
+        // A slow listener answers nothing: the probe reads no status line and
+        // the declared readiness budget keeps waiting for it.
         let _ = stream.shutdown(Shutdown::Both);
     } else if request.contains("upgrade: websocket") {
         let _ = stream.write_all(
@@ -5810,6 +5821,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
 
     let home = fixture.path().join("home");
     private_directory(&home);
+    let guest_adapter = write_switch_fake_guest(fixture.path(), &home);
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
@@ -5996,6 +6008,10 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
         let mut command = Command::new(EFFIGY);
         command
             .env("FAKE_OWNED_STATE", &state)
+            .env("FAKE_GUEST_ADAPTER", &guest_adapter)
+            .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
+            .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
             .args(["container", env])
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
@@ -6162,6 +6178,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let short_home =
         effigy_test_support::Fixture::short_home("e235g.").expect("short private home");
     let home = short_home.path().to_path_buf();
+    let guest_adapter = write_switch_fake_guest(fixture.path(), &home);
     // Managed process commands run through `sh -lc`, whose login profile
     // reorders PATH behind the developer's real docker; the fixture home's
     // profile pins the sentinel docker first for every spawned shell.
@@ -6349,6 +6366,10 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let managed_env = |command: &mut Command| {
         command
             .env("FAKE_OWNED_STATE", &state)
+            .env("FAKE_GUEST_ADAPTER", &guest_adapter)
+            .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
+            .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
             .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -6405,8 +6426,11 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     );
     let managed = &mut managed_guard.0;
 
-    // The run's environment state from the managed status projection.
-    let lifecycle_state = || {
+    let supervisor_output =
+        || fs::read_to_string(fixture.path().join("managed-supervisor.out")).unwrap_or_default();
+    // Environment publication alone precedes guest preparation. Wait for
+    // the owning managed run to finish startup before attempting takeover.
+    let managed_status = || {
         let mut status = Command::new(EFFIGY);
         status.args(["dev:container", "status", "--json"]);
         managed_env(&mut status);
@@ -6415,7 +6439,6 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             .lines()
             .rev()
             .find_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
-            .and_then(|status| status["environment"]["state"].as_str().map(str::to_owned))
             .unwrap_or_default()
     };
     let lifecycle_log = || {
@@ -6437,25 +6460,28 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             .try_wait()
             .expect("poll managed supervisor")
             .is_some()
-            && route_count() == 0
         {
             let _ = managed.wait();
             panic!(
-                "the managed supervisor exited before publishing routes: lifecycle_log={} supervisor_stderr={}",
+                "the managed supervisor exited before becoming active: lifecycle_log={} supervisor_output={}",
                 lifecycle_log(),
-                fs::read_to_string(fixture.path().join("managed-supervisor.out"))
-                    .unwrap_or_default()
+                supervisor_output()
             );
         }
-        if lifecycle_state() == "up" && route_count() > 0 {
+        let status = managed_status();
+        if status["state"] == "running"
+            && status["run"]["phase"] == "active"
+            && status["environment"]["state"] == "up"
+            && route_count() > 0
+        {
             break route_count();
         }
         assert!(
             Instant::now() < deadline,
-            "the managed lifecycle did not publish routes in time: state={} routes={} lifecycle_log={}",
-            lifecycle_state(),
+            "the managed owner did not become active in time: status={status} routes={} lifecycle_log={} supervisor_output={}",
             route_count(),
-            lifecycle_log()
+            lifecycle_log(),
+            supervisor_output()
         );
         thread::sleep(Duration::from_millis(50));
     };
@@ -6480,6 +6506,14 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 
     // A following hybrid `up` takes over per #195 while the supervisor is
     // still running, under the same concurrent policy-resolution load.
+    assert!(
+        managed
+            .try_wait()
+            .expect("poll active managed owner")
+            .is_none(),
+        "the managed owner exited before takeover: {}",
+        supervisor_output()
+    );
     let mut takeover = Command::new(EFFIGY);
     takeover.args(["container", "hybrid", "up", "--detach"]);
     managed_env(&mut takeover);
@@ -6491,11 +6525,13 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     );
     assert!(
         takeover.status.success(),
-        "the hybrid takeover refused under concurrent policy load: {takeover_text}"
+        "the hybrid takeover refused under concurrent policy load: {takeover_text}; supervisor_output={}",
+        supervisor_output()
     );
     assert!(
         takeover_text.contains("stopping environment `stack`"),
-        "the takeover hands the whole stack environment over: {takeover_text}"
+        "the takeover hands the whole stack environment over: {takeover_text}; supervisor_output={}",
+        supervisor_output()
     );
     assert!(
         !state.join(format!("active-{stack_project}")).exists(),
@@ -7280,6 +7316,110 @@ exit 0
     }
 }
 
+/// A private guest store for the scoped handover cases. Preparation
+/// publishes real context bytes and verifies their digests; the fake never
+/// executes the guest artifact or writes to host paths named by guest scripts.
+fn write_switch_fake_guest(root: &Path, home: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+
+    let version = effigy_core::build_info::active_version();
+    let triple = "x86_64-unknown-linux-gnu";
+    let artifact = home
+        .join(".effigy/workspace-bin/linux")
+        .join(triple)
+        .join(format!("v{}", env!("CARGO_PKG_VERSION")))
+        .join(format!("effigy-{triple}"));
+    fs::create_dir_all(artifact.parent().expect("private artifact parent"))
+        .expect("private artifact cache");
+    let bytes = b"private fake guest executable, never executed\n";
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    fs::write(&artifact, bytes).expect("fake guest artifact");
+    fs::write(artifact.with_extension("active-version"), &version).expect("artifact version");
+    fs::write(
+        artifact.with_extension("install-identity"),
+        format!("release:v{version}"),
+    )
+    .expect("artifact install identity");
+    fs::write(
+        artifact.with_extension("receipt"),
+        format!("release_triple={triple}\nsha256={digest}\n"),
+    )
+    .expect("artifact digest receipt");
+
+    let adapter = root.join("guest-adapter.py");
+    fs::create_dir(root.join("guest")).expect("private guest store");
+    fs::write(
+        &adapter,
+        r#"import hashlib, os, pathlib, shlex, shutil, sys
+root = pathlib.Path(os.environ['FAKE_GUEST_ROOT']).resolve()
+identity = 'a' * 64
+def guest(name):
+    path = pathlib.PurePosixPath(name)
+    assert path.is_absolute() and '..' not in path.parts, name
+    assert name.startswith(('/run/effigy/', '/tmp/effigy-host-', '/usr/local/bin/effigy')), name
+    local = root.joinpath(*path.parts[1:])
+    assert local.resolve().is_relative_to(root), name
+    return local
+def read(path):
+    if not path.is_file(): sys.exit(3)
+    return path.read_bytes()
+args = sys.argv[1:]
+if args[0] == 'cp':
+    target, dest = args[2].split(':', 1)
+    assert target == identity, target
+    dest = guest(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(args[1], dest)
+    sys.exit(0)
+assert args[:3] == [identity, 'sh', '-lc'], args
+script = args[3]
+probe = '''printf 'boot=%s\\n' "$(cat /proc/sys/kernel/random/boot_id)"
+printf 'platform=%s\\n' "$(uname -m)"
+printf 'libc_musl=%s\\n' "$(ls /lib/ld-musl-*.so.1 2>/dev/null | head -n1)"
+printf 'libc_glibc=%s\\n' "$(ls /lib/*-linux-gnu*/libc.so.6 /lib/libc.so.6 /lib64/libc.so.6 2>/dev/null | head -n1)"'''
+if script == probe:
+    # The full container id is proven by the exec target, never a guest claim.
+    print('boot=fake-handover-boot\nplatform=x86_64\nlibc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6')
+elif script.startswith('set -eu\npatch_alias()'):
+    pass  # DNS alias preparation, also modeled by the switch fake.
+elif script.startswith('p=') and 'sha256sum' in script:
+    path = guest(shlex.split(script.splitlines()[0])[0][2:])
+    print(hashlib.sha256(read(path)).hexdigest())
+else:
+    words = shlex.split(script)
+    if words[:1] == ['cat'] and words[2:] == ['2>/dev/null', '||', 'exit', '3']:
+        sys.stdout.buffer.write(read(guest(words[1])))
+    elif words[:2] == ['mkdir', '-p'] and words[3:5] == ['&&', 'chmod']:
+        guest(words[2]).mkdir(parents=True, exist_ok=True)
+    elif words[:2] == ['install', '-m'] and words[5:8] == ['&&', 'rm', '-f']:
+        dest = guest(words[4])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(guest(words[3]), dest)
+        guest(words[3]).unlink()
+    elif words[:2] == ['printf', '%s\\n'] and words[3] == '>' and words[5:8] == ['&&', 'mv', '-f']:
+        dest = guest(words[-1])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(words[2] + '\n')
+    elif words[:2] == ['ln', '-sfn'] and words[4:7] == ['&&', 'mv', '-Tf']:
+        dest = guest(words[-1])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.unlink(missing_ok=True)
+        dest.symlink_to(guest(words[2]))
+    elif words[:2] == ['[', '-L'] and words[3:] == [']', '||', 'exit', '3', 'readlink', words[2]]:
+        path = guest(words[2])
+        if not path.is_symlink(): sys.exit(3)
+        print('/' + str(path.resolve().relative_to(root)))
+    else:
+        sys.exit('unmodeled guest preparation command: ' + repr(script))
+"#,
+    )
+    .expect("write private guest adapter");
+    adapter
+}
+
 fn write_switch_fake_docker(path: &Path) {
     fs::write(
         path,
@@ -7335,7 +7475,10 @@ elif [ "${1-}" = exec ]; then
   done
   if [ -n "${MATRIX_EXEC:-}" ]; then python3 "$MATRIX_ADAPTER" exec "$@"; exit $?; fi
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
+  if [ -n "${FAKE_GUEST_ADAPTER:-}" ]; then exec python3 "$FAKE_GUEST_ADAPTER" "$@"; fi
   exit 0
+elif [ "${1-}" = cp ] && [ -n "${FAKE_GUEST_ADAPTER:-}" ]; then
+  exec python3 "$FAKE_GUEST_ADAPTER" "$@"
 elif [ "${1-}" = compose ]; then
   shift
   project=""

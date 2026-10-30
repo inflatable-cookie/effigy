@@ -41,6 +41,7 @@ pub mod test_support;
 mod text_doc;
 
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
+pub use effigy_core::host_alias::HostAlias as BuiltinHostAlias;
 pub use error::BuiltinError;
 pub use ports::{
     BuiltinContainerSuiteTarget, BuiltinLockGuards, BuiltinRuntimePorts, BuiltinTestChildEvidence,

@@ -11,19 +11,23 @@ pub(super) fn run_task_process(
     verbose_root: bool,
     context: &ExecutionTaskContext<'_>,
     secret_env: Option<&[(&str, &SecretString)]>,
+    inherited_env: &[(String, String)],
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
-    let env = secret_env
-        .unwrap_or_default()
+    // An inherited value Effigy resolved is delivered plainly, exactly as the
+    // child would have inherited it.
+    let mut env = inherited_env
         .iter()
-        .map(|(key, secret)| {
-            (
-                (*key).to_owned(),
-                EnvOverride::Secret(secret.expose().to_owned()),
-            )
-        })
-        .collect();
+        .map(|(key, value)| (key.clone(), EnvOverride::Plain(value.clone())))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    env.extend(secret_env.unwrap_or_default().iter().map(|(key, secret)| {
+        (
+            (*key).to_owned(),
+            EnvOverride::Secret(secret.expose().to_owned()),
+        )
+    }));
+    let env = env.into_iter().collect::<Vec<_>>();
     let exit = run_plain(
         run,
         PlainCommand {

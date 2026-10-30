@@ -14,17 +14,19 @@ pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
+    ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetSet, BuiltinError> {
     if let Some(prefix) = prefix {
-        return resolve_prefixed_target(prefix, catalogs);
+        return resolve_prefixed_target(prefix, catalogs, ports);
     }
 
-    collect_workspace_targets(resolved_root, catalogs)
+    collect_workspace_targets(resolved_root, catalogs, ports)
 }
 
 fn resolve_prefixed_target(
     prefix: &str,
     catalogs: &[LoadedCatalog],
+    ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetSet, BuiltinError> {
     let Some(catalog) = catalogs.iter().find(|catalog| catalog.alias == prefix) else {
         return Ok(BuiltinTestTargetSet {
@@ -38,6 +40,7 @@ fn resolve_prefixed_target(
         catalogs,
         &catalog.catalog_root,
         matches!(runtime, BuiltinTargetRuntime::Host),
+        ports,
     )?;
     if plans.is_empty() {
         return Ok(BuiltinTestTargetSet {
@@ -66,6 +69,7 @@ fn resolve_prefixed_target(
 fn collect_workspace_targets(
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
+    ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetSet, BuiltinError> {
     let excluded_targets = workspace_exclusions(resolved_root, catalogs)?;
     let mut targets = Vec::new();
@@ -82,6 +86,7 @@ fn collect_workspace_targets(
             catalogs,
             &root,
             matches!(runtime, BuiltinTargetRuntime::Host),
+            ports,
         )?;
         if plans.is_empty() {
             continue;
