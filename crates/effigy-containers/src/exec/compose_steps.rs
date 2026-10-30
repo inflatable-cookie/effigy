@@ -44,6 +44,12 @@ impl TimedStep {
         self.source.frame_at(self.elapsed())
     }
 
+    /// The label at `elapsed`. Tests use this as a fake clock, so a frame that
+    /// never changes is provable rather than assumed.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
+        self.source.frame_at(elapsed)
+    }
+
     pub fn set_label(&self, label: impl Into<String>) {
         self.source.update(label.into(), None, None);
     }
@@ -88,11 +94,12 @@ impl TimedStep {
 /// the frame names the wait it is in, with elapsed time, so a long pull or
 /// start never shows one fixed label for its whole duration.
 ///
-/// This is also the honest fallback for a runtime invocation that narrates
-/// nothing this parser recognises: the frame shows the phase's label, the
-/// exact report it awaits and the elapsed wait (effigy#467, Q-017).
-pub fn runtime_wait(label: impl Into<String>) -> TimedStep {
-    let source = ProgressSource::waiting_for("the runtime's next report");
+/// `awaiting` is the exact completion the step is waiting for. A runtime path
+/// that narrates its work awaits its next report; a teardown that can stay
+/// silent awaits the command's own exit, so the frame never names a report
+/// that may never come (effigy#467, Q-017).
+pub fn runtime_wait(label: impl Into<String>, awaiting: impl Into<String>) -> TimedStep {
+    let source = ProgressSource::waiting_for(awaiting);
     source.update(label.into(), None, None);
     TimedStep::live(source)
 }
@@ -127,10 +134,12 @@ impl ComposeSteps {
         let key = self.key(event);
         let subject = event.subject().to_owned();
         let project = self.project.clone();
-        let entry = self
-            .steps
-            .entry(key)
-            .or_insert_with(|| (runtime_wait(event.label(&project)), subject.clone()));
+        let entry = self.steps.entry(key).or_insert_with(|| {
+            (
+                runtime_wait(event.label(&project), "the runtime's next report"),
+                subject.clone(),
+            )
+        });
         let step = &entry.0;
         if step.is_finished() {
             return;
