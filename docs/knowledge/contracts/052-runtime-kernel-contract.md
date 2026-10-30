@@ -3416,16 +3416,33 @@ the owned values it produced:
 ```rust
 ServingOwner::adopt_owned(
     OwnedWorkspaceChannel {
-        supervisor,   // the run already adopted under its supervisor id
+        supervisor,            // the run already adopted under its supervisor id
         session: SessionRef,
         channel: PreparedHostChannel,
+        effect: Arc<EffectContext>,     // the activation's own retained operation
+        observe: Arc<ObserveContext>,   // derived from that same operation
     },
     dispatcher,
-    &cx,
-    &observe,
-    &root,
+    root: &'a StateRoot,
 ) -> Result<ServingOwner, AdoptError>
 ```
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+two contexts are retained as owned `Arc` handles rather than borrowed for
+`'static`: the environment context is local to the activation, and the activation
+hands over its own operation and cancellation state instead of leaking it or
+building a self-referential owner. The root is the environment's cached
+`StateRoot` reference. The entry refuses a prepared channel whose locator names
+another session, and retains run, listener, key, advertised locator and both
+contexts for the session's whole life; the activation must move them and not
+keep, drop or recreate them when its call returns. `settle` stops serving, stops
+the listener, wipes the key and settles the adopted run through the kernel's
+close transaction; dropping the owner stops the listener and wipes the key
+without settling, so the supervisor decides the outcome.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's

@@ -1579,10 +1579,10 @@ fn the_owned_channel_is_adopted_retained_and_settled() {
                 supervisor,
                 session,
                 channel: prepared,
+                effect: Arc::new(cx.clone()),
+                observe: Arc::new(observe.clone()),
             },
             serving_server_for(calls.clone(), root),
-            cx,
-            observe,
             root,
         )
         .expect("the frozen channel is adopted");
@@ -1644,10 +1644,10 @@ fn a_channel_published_for_another_session_is_never_adopted() {
                 supervisor,
                 session: other,
                 channel: prepared,
+                effect: Arc::new(cx.clone()),
+                observe: Arc::new(observe.clone()),
             },
             serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
-            cx,
-            observe,
             root,
         )
         .expect_err("a channel published for another session is refused");
@@ -1961,7 +1961,15 @@ fn a_connection_is_served_only_after_the_session_run_serves() {
                 RunIds(VecDeque::new()),
             ),
         );
-        let mut owner = ServingOwner::new(supervisor, launch, acceptor, server, cx, observe, root);
+        let mut owner = ServingOwner::new(
+            supervisor,
+            launch,
+            acceptor,
+            server,
+            Arc::new(cx.clone()),
+            Arc::new(observe.clone()),
+            root,
+        );
         assert!(
             !owner.serving(),
             "no connection is dispatched before the owner serves"
@@ -2048,8 +2056,8 @@ fn dropping_the_owner_closes_the_socket_it_held() {
                 accepted: 0,
             },
             server,
-            cx,
-            observe,
+            Arc::new(cx.clone()),
+            Arc::new(observe.clone()),
             root,
         );
         assert!(TcpStream::connect(endpoint).is_ok(), "the listener is live");
@@ -2104,10 +2112,10 @@ fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
                 supervisor,
                 session,
                 channel: prepared,
+                effect: Arc::new(cx.clone()),
+                observe: Arc::new(observe.clone()),
             },
             serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
-            cx,
-            observe,
             root,
         )
         .expect("adopted");

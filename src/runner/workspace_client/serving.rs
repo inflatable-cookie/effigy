@@ -17,6 +17,7 @@
 use std::io;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use effigy_kernel::ctx::{EffectContext, ObserveContext};
@@ -130,6 +131,14 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     /// `environment::workspace::WorkspaceOwner::channel`: the launch, the TLS
     /// acceptor and the qualified locator publication produced.
     pub(crate) channel: PreparedHostChannel,
+    /// The activation's own effect context, retained rather than borrowed. The
+    /// environment context is local to the activation and goes away when its
+    /// call returns; this handle keeps the same operation and cancellation
+    /// state, so the serving owner never needs a `'static` reference or a
+    /// self-referential leak.
+    pub(crate) effect: Arc<EffectContext>,
+    /// The observation context derived from that same operation.
+    pub(crate) observe: Arc<ObserveContext>,
 }
 
 /// Why the frozen channel was not adopted for serving.
@@ -208,14 +217,14 @@ where
     pub(crate) fn adopt_owned(
         owned: OwnedWorkspaceChannel<'a>,
         server: channel::Server<Ad, Rs, Ob, Id>,
-        cx: &'a EffectContext,
-        observe: &'a ObserveContext,
         root: &'a StateRoot,
     ) -> Result<Self, AdoptError> {
         let OwnedWorkspaceChannel {
             supervisor,
             session,
             channel: prepared,
+            effect,
+            observe,
         } = owned;
         let PreparedHostChannel {
             launch,
@@ -227,7 +236,7 @@ where
         {
             return Err(AdoptError::WrongSession);
         }
-        let mut owner = Self::new(supervisor, launch, acceptor, server, cx, observe, root);
+        let mut owner = Self::new(supervisor, launch, acceptor, server, effect, observe, root);
         owner.custody.locator = Some(locator);
         Ok(owner)
     }
@@ -253,8 +262,8 @@ where
     custody: ChannelCustody,
     acceptor: A,
     server: channel::Server<Ad, Rs, Ob, Id>,
-    cx: &'a EffectContext,
-    observe: &'a ObserveContext,
+    cx: Arc<EffectContext>,
+    observe: Arc<ObserveContext>,
     root: &'a StateRoot,
     served: usize,
     _transport: PhantomData<fn() -> T>,
@@ -296,8 +305,8 @@ where
         launch: SessionLaunch,
         acceptor: A,
         server: channel::Server<Ad, Rs, Ob, Id>,
-        cx: &'a EffectContext,
-        observe: &'a ObserveContext,
+        cx: Arc<EffectContext>,
+        observe: Arc<ObserveContext>,
         root: &'a StateRoot,
     ) -> Self {
         Self {
@@ -363,9 +372,13 @@ where
         else {
             return Ok(None);
         };
-        let served =
-            self.server
-                .serve(&mut transport, self.cx, self.observe, self.root, streams)?;
+        let served = self.server.serve(
+            &mut transport,
+            self.cx.as_ref(),
+            self.observe.as_ref(),
+            self.root,
+            streams,
+        )?;
         self.served += 1;
         Ok(Some(served))
     }
