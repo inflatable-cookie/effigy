@@ -4212,13 +4212,15 @@ impl WorkspaceActivationReservation {
     /// `authority` is the environment run that claimed *this* reservation and
     /// still holds its `Gate(Env)`; the reservation, not a bare target, is what
     /// the transaction checks, so two environments can never be confused:
-    /// `self.fence()` must equal `authority.fence()`, the row must still be
+    /// `authority.fence()` must name this reservation's environment and E; the row must still be
     /// `reserved` and name `authority.id()`, the environment's current
     /// generation must be this reservation's E, and the caller must hold the
-    /// gate the claim was bound under. Refuses `TargetChanged` when the decision
+    /// gate the claim was bound under. Refuses `TargetEvidenceMismatch` when
+    /// the decision
     /// observed a different container or boot, `TargetAmbiguous` when the
-    /// project names zero or several containers, `WrongReservation`/
-    /// `ClaimedByAnotherRun` for the fence or binding above, and
+    /// project names zero or several containers, `WrongGeneration` for a fence
+    /// mismatch, and `WrongReservation`/`ClaimedByAnotherRun` for the stored
+    /// reservation identity or claim above.
     /// Repeating the exact evidence returns the original binding; contradictory
     /// evidence refuses. The write is at most once and idempotent to read.
     pub fn bind_target(
@@ -4243,14 +4245,15 @@ impl WorkspaceActivationReservation {
     /// supplies this run as `authority`. It is the **only** writer of the
     /// artifact the activation will publish: the digest and object it returns are
     /// what staging installs, what the receipt names, and what a later `Attach`
-    /// compares against. Refuses `PlatformObserved` when the decision already
-    /// froze a different platform, `ArtifactMismatch` when an `ArtifactEvidence::
-    /// Selected` digest is not the one this platform selects,
-    /// `UnsupportedPlatform` when `LinuxWorkspaceTarget::from_image` has no
-    /// pinned artifact, `PlatformDisagreement` when the staged executable's
-    /// `e_machine`/`PT_INTERP` do not match, `EmulationUnavailable` when the
-    /// selected artifact cannot execute in this host/backend pair, and
-    /// a contradictory existing binding. An exact replay returns it unchanged.
+    /// compares against. Platform/artifact failures return `RunError::refused`
+    /// prose: the decision froze a different platform, a selected artifact has
+    /// another digest or object, the image has no supported Linux artifact
+    /// family, image and artifact platform/loader disagree, or the backend
+    /// cannot execute the artifact natively or through verified emulation.
+    /// A contradictory existing binding also refuses; an exact replay returns
+    /// the binding unchanged. A target disagreement uses
+    /// `ActivationRefusal::TargetEvidenceMismatch`; unknown image observations
+    /// remain unavailable rather than being guessed.
     pub fn bind_platform(
         &self, authority: &mut Run<'_>, observed: Observed<BoundPlatform>,
     ) -> Result<BoundPlatform, RunError>;
@@ -4303,8 +4306,9 @@ publication names (a replaced container, a boot change, or two observations that
 do not agree) is not attachable either, and there the decision **refuses** with
 `ActivationRefusal::TargetEvidenceMismatch` and names re-preparation rather than
 re-targeting the live session or silently superseding it. The refusal variants
-this needs — `TargetChanged`, `TargetAmbiguous`, `TargetEvidenceMismatch` — are
-proposed with `decide` (C1).
+this needs — `TargetEvidenceMismatch` and `TargetAmbiguous` — are
+`ActivationRefusal` variants; platform and artifact disagreements instead use
+`RunError::refused` prose.
 
 Losing callers are refused without invalidating
 anything: a caller that loses the staging race gets
@@ -4336,8 +4340,8 @@ context document is written once, after the probes succeed.
 | E0 | activation | `reservation.claim()`, then `EnvRun::begin_claimed(&ctx, env, Operation::Up, deadline, &reservation)`; E is the reserved generation. This is one process holding `Task(session)` and then `Env`, which is canonical order; nothing in it waits on another process's gate | `ClaimedByAnotherRun`, `Cancelled`, `AlreadyCommitted`: refuse, nothing published |
 | E1 | activation | the ordinary `Up` apply: render with the alias from P1 through `add_extra_host`, and let Compose create the project network and the containers. Before it, `workspace_apply_would_recreate` compares the live container's Compose `config-hash` with the render, and after it `env_run.bind_target(&reservation, bound)` records the container and boot the apply created; the wrapper supplies its own held run as the kernel's `authority`, so the transaction checks this reservation, this run's fence and E | a render that would recreate a container a live predecessor names, an unreadable hash, a target that differs from the decision's `Observed` one, zero or several candidate containers (`TargetAmbiguous`), or another activation's claim: refuse, never re-target, publish nothing, cancel after settle |
 | E2 | activation | `plan = reservation.plan(&reader)`, then `env_run.publish_workspace_guest_with(&plan, publish)`; the call journals the publication intent (state `pending`) before the closure runs, and E3–E7 are that closure's guest I/O | a refused intent: publish nothing |
-| E1c | activation | `env_run.bind_platform(&reservation, observed)` — the wrapper passes its own held run and gate as the kernel's `authority` — with the `ImagePlatform` read from the bound container's image (`Os`/`Architecture`/`Variant`), the image root's single loader family, and the `uname -m` diagnostic; then `LinuxWorkspaceTarget::from_image(machine, libc)` selects the artifact family, and the binding freezes `{ platform, artifact_digest, object }` for E3's staging, E7's receipt `artifact_digest`, and every later `Attach` comparison; an `ArtifactEvidence::Selected` input that names another digest refuses `ArtifactMismatch` | a backend that cannot report the image platform, an unsupported machine/libc, a platform that differs from the decision's `Observed` one, or an artifact that cannot execute (no `binfmt`/Rosetta): refuse `UnsupportedPlatform`/`PlatformDisagreement`/`EmulationUnavailable`/`ArtifactMismatch`, publish nothing |
-| E3 | activation | **stage only what is independent of the endpoint and the verified identity** — `Attachments::intend_guest_binary(&mut run, &reservation.guest_binary_stage(&run)?)` for exactly the digest and object E1c bound (`ArtifactMismatch` otherwise), exclusive creation of the digest object, re-hash of the exact bytes in the exact container, ELF `e_machine`/`PT_INTERP` compared with the bound `ImagePlatform`, then `Attachments::guest_binary_staged(&mut run, &ticket, receipt)`; the generation-scoped credential (`enrol/<g>`, 0600) is written the same no-replace way. **The context document is not written here**: it needs the endpoint and pin from E5 and the verified identity from E6. Additive and digest-addressed, never rewritten, and **no selector is touched**, so a live predecessor keeps its own binary, context and credential | a mismatched or failed install records `guest_binary_unknown`: settle, publish nothing, and no probe runs against an unstaged object |
+| E1c | activation | `env_run.bind_platform(&reservation, observed)` — the wrapper passes its own held run and gate as the kernel's `authority` — with the `ImagePlatform` read from the bound container's image (`Os`/`Architecture`/`Variant`), the image root's single loader family, and the `uname -m` diagnostic; then `LinuxWorkspaceTarget::from_image(machine, libc)` selects the artifact family, and the binding freezes `{ platform, artifact_digest, object }` for E3's staging, E7's receipt `artifact_digest`, and every later `Attach` comparison; an `ArtifactEvidence::Selected` input that names another digest refuses with artifact-disagreement prose | a backend that cannot report the image platform, an unsupported machine/libc, a platform that differs from the decision's `Observed` one, or an artifact that cannot execute (no `binfmt`/Rosetta): return `RunError::refused` prose identifying the unsupported, conflicting or unexecutable image/artifact evidence (unknown observations remain unavailable), publish nothing |
+| E3 | activation | **stage only what is independent of the endpoint and the verified identity** — `Attachments::intend_guest_binary(&mut run, &reservation.guest_binary_stage(&run)?)` for exactly the digest and object E1c bound (otherwise `RunError::refused` describes the artifact disagreement), exclusive creation of the digest object, re-hash of the exact bytes in the exact container, ELF `e_machine`/`PT_INTERP` compared with the bound `ImagePlatform`, then `Attachments::guest_binary_staged(&mut run, &ticket, receipt)`; the generation-scoped credential (`enrol/<g>`, 0600) is written the same no-replace way. **The context document is not written here**: it needs the endpoint and pin from E5 and the verified identity from E6. Additive and digest-addressed, never rewritten, and **no selector is touched**, so a live predecessor keeps its own binary, context and credential | a mismatched or failed install records `guest_binary_unknown`: settle, publish nothing, and no probe runs against an unstaged object |
 | E4 | activation | `__guest-reach --resolve` runs the staged **object by path** (`<binary-object> --resolve`) in the exact target, never through `binary/current`, and returns a typed `ResolvedAlias { address }`: the single address the guest's own resolver returned. It is the bind input for `BindPlan::ResolvedGuestAddress` and the peer input for every plan | zero, several, an in-container loopback address or an unreadable file: publish nothing, refuse `unavailable` |
 | E5 | activation → supervisor | `workspace_channel_reachability(&alias, input, port)` with `ReachabilityInput::Proxy` (before E4) or `ReachabilityInput::Resolved(resolved)` (after E4) yields the typed `ChannelBind { plan, bind, advertise }`; the activation sends it with the qualification deadline and the supervisor generates the key, binds `bind`, enters its **qualifying** accept phase and reports `SessionEvent::ChannelBound { endpoint, pin }` | a call with the other plan's input (`WrongBindPlan`), a bind this host cannot perform, a gone supervisor, or a bind or key failure: publish nothing; neither plan falls back to a guessed address |
 | E5b | activation | after E4, `channel_peer_expectation(&bind, &resolved)` yields the final `PeerExpectation`: `ResolvesAlias { alias: resolved.address }` for a proxy bind, `EqualsBound` for a directly bound one | a resolution that disagrees with a bound address (`AddressMismatch`), or an expectation that cannot be built: publish nothing |
@@ -4734,7 +4738,7 @@ untouched in every one of them until E8 commits:
 
 | Window | What the guest resolves | Recovery |
 | --- | --- | --- |
-| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetChanged` or `TargetAmbiguous` and the activation cancels after settle; a foreign creation is never adopted as this activation's target, and no later step may re-target |
+| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a foreign creation is never adopted as this activation's target, and no later step may re-target |
 | Before E8 (no commit) | the predecessor's pair, A and A, and its own credential generation; the staged B objects are unselected orphans, and a crash before E7 leaves no context document at all | no selector moved, so there is nothing to restore; the reservation is cancelled after both bound runs settle and `preserve_active_predecessor` keeps the predecessor's applied fence, so a live predecessor and **its next invocation** stay fully usable on A |
 | Killed immediately after E8, before E9 runs at all | still A and A, with A's environment generation now superseded, so requests refuse `stale_context` | the obligation was written by E8's own transaction, so `unfinished_selection` names every selector, its expected previous value and every digest; `reserve` and `recover` prefer the oldest unfinished reservation, so a retry cannot roll past it, and recovery runs the same compares before any new generation is reserved |
 | Killed during E9 (some selectors moved, completion lost) | a mixed pair, reported as `stale_context` and re-read | each selector reports `AlreadyNext` or `Swapped`; recovery writes only what is still behind and then completes, so the set converges on g, B and the credential generation |

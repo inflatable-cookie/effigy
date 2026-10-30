@@ -7268,6 +7268,25 @@ fn a_legacy_context_without_frozen_guest_fields_is_never_attached() {
         WorkspaceActivationReservation::decide(&cx, &root, &environment, &inputs, Wait::FailFast)
             .expect_err("new decisions require guest inputs");
     assert!(error.to_string().contains("guest inputs"));
+    let valid_inputs = reservation.inputs().expect("valid guest-carrying inputs");
+    let successor = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        valid_inputs,
+        Wait::FailFast,
+    )
+    .expect("valid decision against legacy publication")
+    {
+        ActivationDecision::Activate(successor) => successor,
+        ActivationDecision::Attach(_) => {
+            panic!("a guest-less committed generation cannot serve a complete v2 context")
+        }
+    };
+    assert_eq!(
+        successor.generation().get(),
+        reservation.generation().get() + 1
+    );
     assert_eq!(
         resolved(&read_journal(&cx, &root), &environment),
         Some(first)
