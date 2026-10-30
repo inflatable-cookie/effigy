@@ -369,6 +369,10 @@ fn recovery_phase_labels(profile: &str, phase: ColimaRecoveryPhase) -> (String, 
             format!("verifying Colima profile `{profile}` is stopped"),
             format!("`colima status` to report profile `{profile}` stopped"),
         ),
+        ColimaRecoveryPhase::Configuring => (
+            format!("preparing the managed configuration for Colima profile `{profile}`"),
+            format!("the managed Colima configuration for profile `{profile}` to be written"),
+        ),
         ColimaRecoveryPhase::Restarting => (
             format!("starting Colima profile `{profile}`"),
             format!("`colima start` to finish for profile `{profile}`"),
@@ -1411,6 +1415,11 @@ mod progress_tests {
                 ColimaRecoveryPhase::VerifyingStopped,
                 "verifying Colima profile `effigy` is stopped",
                 "`colima status` to report profile `effigy` stopped",
+            ),
+            (
+                ColimaRecoveryPhase::Configuring,
+                "preparing the managed configuration for Colima profile `effigy`",
+                "the managed Colima configuration for profile `effigy` to be written",
             ),
             (
                 ColimaRecoveryPhase::Restarting,

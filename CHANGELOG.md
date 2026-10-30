@@ -442,8 +442,9 @@ until the host-log writer has a safe secret-handling boundary.
   while the finished capture task stays as its last event), and a Colima
   profile command waits on the command now in flight — the list probe, then
   `colima stop`, the pidfile termination, `colima status`, the managed
-  configuration or `colima start` as the recovery reports each phase — rather
-  than a generic recovery or a probe that already answered; a heavy admission wait names
+  configuration or `colima start` as the recovery reports each phase,
+  with configuration preparation its own phase before the start — rather than a
+  generic recovery or a probe that already answered; a heavy admission wait names
   the hook's decision probe and the hook's own progress line, and its immediate
   refusals are one plain line; a teardown
   the runtime never narrates names its phase, the runtime report it awaits and

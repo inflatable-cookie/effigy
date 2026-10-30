@@ -727,7 +727,10 @@ pub enum ColimaRecoveryPhase {
     TerminatingProcesses,
     /// `colima status` proving the profile is stopped.
     VerifyingStopped,
-    /// Writing the managed configuration and `colima start`.
+    /// Creating the profile directories and reading, parsing and writing its
+    /// managed configuration, before `colima start` can run.
+    Configuring,
+    /// `colima start` for the profile.
     Restarting,
     /// `colima status` proving the restarted profile is healthy.
     VerifyingHealth,
@@ -966,13 +969,16 @@ fn restart_and_verify_colima_profile(
     steps: &mut Vec<String>,
     progress: ColimaRecoveryProgress<'_>,
 ) -> Result<(), ContainerExecError> {
-    progress(ColimaRecoveryPhase::Restarting);
+    // Preparation reads, parses and writes the profile's managed configuration;
+    // `colima start` has not begun while it runs.
+    progress(ColimaRecoveryPhase::Configuring);
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
         command: "colima profile config".to_owned(),
         code: None,
         stdout: String::new(),
         stderr: error,
     })?;
+    progress(ColimaRecoveryPhase::Restarting);
     let start = colima_start_command(policy);
     let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
     run_command_capture_with_timeout(
@@ -1632,9 +1638,11 @@ esac
                 ColimaRecoveryPhase::Stopping,
                 ColimaRecoveryPhase::TerminatingProcesses,
                 ColimaRecoveryPhase::VerifyingStopped,
+                ColimaRecoveryPhase::Configuring,
                 ColimaRecoveryPhase::Restarting,
                 ColimaRecoveryPhase::VerifyingHealth,
-            ]
+            ],
+            "configuration preparation is its own phase, before the start"
         );
 
         fixture.state("running");
