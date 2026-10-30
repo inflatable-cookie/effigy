@@ -551,6 +551,26 @@ until the host-log writer has a safe secret-handling boundary.
   with ✓ or ✗ naming the failure. On a terminal, a warning or note from source
   acquisition prints above the spinner, and `--json` writes nothing to stderr
   for it.
+- **Gateway setup and operator steps show the phase they are in.** `gateway up`
+  and `gateway down` show the supervisor admitting the run, then the daemon's
+  own reported status and the blocker that status carries while it self-tests
+  or winds down. `gateway up` and `gateway setup` name each route already in the
+  route table as they read it, with its position and certificate state; they
+  read the published table and never publish a route, and a table that cannot
+  be read ends that step with the read error while the command itself still
+  succeeds. That step performs only the reads it names — the table snapshot and
+  each certificate file — so mkcert and trust-store state stay in `gateway
+  status` instead of blocking an already-started gateway. `gateway setup` probes
+  each low-port address in turn and names it as
+  its outcome lands (bound, already in use, denied); a refusal stops at that
+  address with the probe's own sentence. The platform setup action names each
+  operation as it runs too — the resolver files, the loopback launch job, the
+  privileged bind broker, the loopback addresses, or the DNS unit and low-port
+  capability on Linux — including after the administrator prompt, when the
+  elevated child reports each phase back through its own captured stdout. Each
+  step names the exact port, record, route or suffix list it awaits, with
+  elapsed time, and still ends with one line. `--json` and piped output are
+  unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations

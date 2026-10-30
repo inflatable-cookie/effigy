@@ -511,7 +511,33 @@ pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
 }
 
 pub fn up(config: &GatewayConfig) -> io::Result<Status> {
-    up_with_executable(config, &std::env::current_exe()?)
+    up_observed(config, &|_| {})
+}
+
+/// The phases of one operator start, reported as the start enters them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartPhase {
+    /// The supervisor is admitting the daemon run: spawn, journal, gate, custody.
+    Admitting,
+    /// The admitted daemon runs its own self-test. `status` is the state it
+    /// last reported, and `reason` the blocker that state carries, if any.
+    SelfTest {
+        status: &'static str,
+        reason: Option<String>,
+    },
+    /// The daemon's status could not be read on this pass; `reason` says why.
+    Unobserved { reason: String },
+}
+
+/// [`up`] that reports each phase it enters, so a caller's progress names the
+/// actual state instead of one fixed label.
+pub fn up_observed(config: &GatewayConfig, report: &dyn Fn(StartPhase)) -> io::Result<Status> {
+    up_with_executable_observed(
+        config,
+        &std::env::current_exe()?,
+        StartupBudget::DEFAULT,
+        report,
+    )
 }
 
 /// Bounded phases of one operator gateway start.
@@ -549,6 +575,15 @@ pub fn up_with_executable_within(
     config: &GatewayConfig,
     executable_path: &Path,
     budget: StartupBudget,
+) -> io::Result<Status> {
+    up_with_executable_observed(config, executable_path, budget, &|_| {})
+}
+
+fn up_with_executable_observed(
+    config: &GatewayConfig,
+    executable_path: &Path,
+    budget: StartupBudget,
+    report: &dyn Fn(StartPhase),
 ) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
@@ -616,6 +651,7 @@ pub fn up_with_executable_within(
     // Admission phase: everything up to the supervisor reporting the run
     // active has its own bound, so a timeout names admission instead of the
     // daemon's self-test.
+    report(StartPhase::Admitting);
     let admission = context(budget.admission, EffectClass::Mutate);
     let cx = admission.effects().map_err(error)?;
     let admitted = (|| {
@@ -672,6 +708,7 @@ pub fn up_with_executable_within(
     // must not depend on the caller's expired deadline.
     let control = context(budget.readiness, EffectClass::Mutate);
     let control_cx = control.effects().map_err(error)?;
+    let mut reported: Option<StartPhase> = None;
     loop {
         if op.check("gateway readiness").is_err() {
             let _ = client.stop(&control_cx, run_id()?);
@@ -680,19 +717,38 @@ pub fn up_with_executable_within(
                 budget.readiness.as_secs()
             )));
         }
-        if let Ok(result) = status(config) {
-            if result.run == Some(client.run) && result.status == "stopped" {
-                let reason = result
-                    .reason
-                    .unwrap_or_else(|| "gateway daemon stopped during startup".into());
-                client
-                    .wait(&context(budget.readiness, EffectClass::Observe))
-                    .map_err(error)?;
-                return Err(error(reason));
+        match status(config) {
+            Ok(result) => {
+                let phase = StartPhase::SelfTest {
+                    status: result.status,
+                    reason: result.reason.clone(),
+                };
+                if reported.as_ref() != Some(&phase) {
+                    report(phase.clone());
+                    reported = Some(phase);
+                }
+                if result.run == Some(client.run) && result.status == "stopped" {
+                    let reason = result
+                        .reason
+                        .unwrap_or_else(|| "gateway daemon stopped during startup".into());
+                    client
+                        .wait(&context(budget.readiness, EffectClass::Observe))
+                        .map_err(error)?;
+                    return Err(error(reason));
+                }
+                if result.ready {
+                    client.detach(&control_cx, run_id()?).map_err(error)?;
+                    return Ok(result);
+                }
             }
-            if result.ready {
-                client.detach(&control_cx, run_id()?).map_err(error)?;
-                return Ok(result);
+            Err(read) => {
+                let phase = StartPhase::Unobserved {
+                    reason: read.to_string(),
+                };
+                if reported.as_ref() != Some(&phase) {
+                    report(phase.clone());
+                    reported = Some(phase);
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -730,6 +786,24 @@ fn note_reused_gateway_build(status: &Status) {
 }
 
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
+    down_observed(config, &|_| {})
+}
+
+/// The phases of one operator stop, reported as the stop enters them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopPhase {
+    /// The stop request is recorded in the gateway's run store.
+    Requested,
+    /// The daemon winds down. `status` is the state it last reported, and
+    /// `reason` the blocker that state carries, if any.
+    Settling {
+        status: &'static str,
+        reason: Option<String>,
+    },
+}
+
+/// [`down`] that reports each phase it enters.
+pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
     // As `up`: no event here. The command boundary records the stop request, so
@@ -755,6 +829,7 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     if current.run != Some(id) {
         return Err(error("gateway generation changed; retry down"));
     }
+    report(StopPhase::Requested);
     run::request(
         &cx,
         &root,
@@ -776,9 +851,18 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
         &owner(),
         id,
     );
+    let mut reported: Option<StopPhase> = None;
     loop {
         op.check("gateway settle").map_err(error)?;
         let result = status(config)?;
+        let phase = StopPhase::Settling {
+            status: result.status,
+            reason: result.reason.clone(),
+        };
+        if reported.as_ref() != Some(&phase) {
+            report(phase.clone());
+            reported = Some(phase);
+        }
         if result.status == "stopped" {
             return Ok(result);
         }

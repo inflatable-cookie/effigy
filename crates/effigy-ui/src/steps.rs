@@ -166,6 +166,16 @@ impl ProgressSource {
         state.event = None;
     }
 
+    /// What the step ends with when it succeeds: the sub-step last set, or
+    /// the awaited object if the operation never named a sub-step.
+    pub fn summary(&self) -> String {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .sub_step
+            .clone()
+            .unwrap_or_else(|| state.awaiting.clone())
+    }
+
     /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

@@ -1,5 +1,6 @@
 use super::*;
 use chrono::Utc;
+use effigy_gateway::linux_operator::{BindOutcome, BindProbe, BindProbeReport, BIND_PROBE_SCHEMA};
 use effigy_gateway::routes::{Route, RouteSource};
 
 /// A fixture child this test started, stopped by its own recorded PID.
@@ -23,13 +24,18 @@ fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let started = std::time::Instant::now();
-    daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
-        if started.elapsed() < std::time::Duration::from_millis(1100) {
-            Err(effigy_gateway::GatewayError::NotRunning)
-        } else {
-            Ok(())
-        }
-    })
+    daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        readiness_listener(),
+        || {
+            if started.elapsed() < std::time::Duration::from_millis(1100) {
+                Err(effigy_gateway::GatewayError::NotRunning)
+            } else {
+                Ok(())
+            }
+        },
+    )
     .expect("durable initialization may exceed one second before verified publication");
 }
 
@@ -39,9 +45,12 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
         std::time::Duration::from_millis(20),
         effigy_kernel::ctx::EffectClass::Observe,
     );
-    let error = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
-        Err(effigy_gateway::GatewayError::NotRunning)
-    })
+    let error = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        readiness_listener(),
+        || Err(effigy_gateway::GatewayError::NotRunning),
+    )
     .unwrap_err();
     // Before: `private gateway startup interrupted: TimedOut { phase:
     // "private gateway verified listener publication", elapsed: 22ms }`.
@@ -68,12 +77,17 @@ fn private_gateway_publication_never_retries_an_unverified_permission_refusal() 
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let mut probes = 0;
-    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
-        probes += 1;
-        Err(effigy_gateway::GatewayError::Io(
-            std::io::ErrorKind::PermissionDenied.into(),
-        ))
-    });
+    let result = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        readiness_listener(),
+        || {
+            probes += 1;
+            Err(effigy_gateway::GatewayError::Io(
+                std::io::ErrorKind::PermissionDenied.into(),
+            ))
+        },
+    );
     assert!(result.is_err());
     assert_eq!(probes, 1);
 }
@@ -112,7 +126,7 @@ fn render_gateway_status_json_includes_routes_when_stopped() {
         .collect(),
     };
     let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
-    let tls = gateway_tls_summary(&config, &table);
+    let tls = gateway_tls_summary(&config, route_certificate_summary(&config, &table));
 
     let rendered = serde_json::to_string(&render_routes_json(&gateway_route_dashboard(
         &config, &table, &tls,
@@ -411,18 +425,13 @@ fn probe_state_up_refuses_unknown_without_starting_a_replacement() {
     let unknown = inspect_existing_gateway(
         &config,
         Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
-        false,
     );
     assert!(
         unknown.is_err(),
         "up must not start a replacement when the probe is unknown"
     );
 
-    let stopped = inspect_existing_gateway(
-        &config,
-        Err(effigy_gateway::GatewayError::NotRunning),
-        false,
-    );
+    let stopped = inspect_existing_gateway(&config, Err(effigy_gateway::GatewayError::NotRunning));
     assert!(matches!(stopped, Ok(ExistingGateway::Absent)));
 }
 
@@ -673,12 +682,9 @@ fn gateway_up_preflight_does_not_mutate_before_lock() {
     let before_identity = std::fs::read(&identity_path).expect("read identity");
     let config = gateway_config().expect("config");
 
-    let classified = inspect_existing_gateway(
-        &config,
-        verified_gateway_status_for_up(&config).status,
-        false,
-    )
-    .expect("unlocked classify");
+    let classified =
+        inspect_existing_gateway(&config, verified_gateway_status_for_up(&config).status)
+            .expect("unlocked classify");
     assert!(
         matches!(classified, ExistingGateway::Running(_)),
         "mismatched generation must be classified running"
@@ -704,12 +710,8 @@ fn gateway_up_preflight_does_not_mutate_before_lock() {
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .expect("transition lock");
-    match inspect_existing_gateway(
-        &config,
-        verified_gateway_status_for_up(&config).status,
-        false,
-    )
-    .expect("locked recheck")
+    match inspect_existing_gateway(&config, verified_gateway_status_for_up(&config).status)
+        .expect("locked recheck")
     {
         ExistingGateway::Running(status) => {
             stop_existing_gateway(&status).expect("locked stop");
@@ -885,7 +887,7 @@ fn gateway_status_preflight_preserves_stale_records() {
     let before_version = std::fs::read(&version_path).expect("version");
     let before_identity = std::fs::read(&identity_path).expect("identity");
 
-    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config), false)
+    let classified = inspect_existing_gateway(&config, verified_gateway_status(&config))
         .expect("unlocked classify");
     assert!(
         matches!(classified, ExistingGateway::Absent),
@@ -1846,6 +1848,68 @@ fn gateway_down_names_each_step_it_takes() {
     );
 }
 
+/// Reusing a running private gateway still reads what it serves as its own
+/// observable step: the per-route progress is not skipped just because nothing
+/// needs starting, and the render still reports the gateway as already running.
+#[test]
+fn reusing_a_running_private_gateway_reads_the_route_table_as_its_own_step() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("private gateway directory");
+
+    // An empty table still ends the step with what it read.
+    let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+        report_reused_private_gateway(&config, started_status(8080), false)
+    });
+    let text = rendered.expect("an already-running private gateway renders");
+    assert!(text.contains("gateway already running"), "{text}");
+    assert_eq!(
+        lines,
+        vec!["✓ the route table has no routes registered yet".to_owned()],
+        "{lines:?}"
+    );
+
+    // Two routes already in the table are read as that same step, and the reuse
+    // reports them without starting or replacing anything.
+    effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path)
+        .routes::<_, effigy_gateway::GatewayError>(|table| {
+            for domain in ["api.test", "web.test"] {
+                table.upsert(Route {
+                    domain: domain.to_owned(),
+                    target: Some("127.0.0.1:8080".to_owned()),
+                    dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
+                    source: RouteSource::Manual,
+                    project: root.display().to_string(),
+                    tls: false,
+                    managed_listener: None,
+                    registered: Utc::now(),
+                });
+            }
+            Ok(())
+        })
+        .expect("the existing routes are on record");
+    let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+        report_reused_private_gateway(&config, started_status(8080), false)
+    });
+    rendered.expect("the reuse renders with the existing routes");
+    assert_eq!(
+        lines,
+        vec!["✓ read 2 existing routes from the route table".to_owned()],
+        "{lines:?}"
+    );
+
+    // The same reuse renders the JSON action without starting anything.
+    let json = report_reused_private_gateway(&config, started_status(8080), true)
+        .expect("the JSON render");
+    assert!(json.contains("\"result\":\"already_running\""), "{json}");
+}
+
 /// An `up` from a command line records exactly one event, at the boundary, and
 /// the shared lifecycle it calls records none (effigy#450 review).
 #[test]
@@ -1951,24 +2015,608 @@ fn gateway_down_records_its_caller_before_it_reads_any_state() {
 #[test]
 fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     let (done, lines) = effigy_ui::steps::capture_lines(|| {
-        setup_step("trusting mkcert's local CA", |step| {
-            step.set_label("the mkcert CA is trusted for this user");
-            Ok(())
-        })
+        setup_step(
+            "trusting mkcert's local CA",
+            "mkcert's local CA in this user's trust store",
+            |progress| {
+                progress.update("the mkcert CA is trusted for this user", None, None);
+                Ok(())
+            },
+        )
     });
     done.expect("a finished stage");
     assert_eq!(lines, vec!["✓ the mkcert CA is trusted for this user"]);
 
     let (failed, lines) = effigy_ui::steps::capture_lines(|| {
-        setup_step::<()>("applying platform setup", |_| {
-            Err(std::io::Error::other(
-                "the administrator declined the elevation prompt",
-            ))
-        })
+        setup_step::<()>(
+            "applying platform setup",
+            "the DNS, certificate trust and broker setup for test",
+            |_| {
+                Err(std::io::Error::other(
+                    "the administrator declined the elevation prompt",
+                ))
+            },
+        )
     });
     assert!(failed.is_err());
     assert_eq!(
         lines,
         vec!["✗ the administrator declined the elevation prompt"]
     );
+}
+
+/// A platform phase reported by the elevated child (or by a direct root run)
+/// becomes the current object, and the child it waits on stays named. Approval
+/// is over; the frame says which resolver, trust or broker operation is running,
+/// and the step ends by saying what now holds.
+#[test]
+fn platform_phase_frames_name_the_operation_while_the_child_runs() {
+    let awaited = "the administrator-approved setup child to apply DNS, trust and broker for test";
+    let progress = ProgressSource::waiting_for(awaited);
+    progress.update(
+        "applying platform setup (approve the administrator prompt if it appears)",
+        None,
+        None,
+    );
+    observe_platform_phase(&progress, "writing the resolver files for test");
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        format!("writing the resolver files for test; waiting for {awaited}; 4s elapsed")
+    );
+    observe_platform_phase(&progress, "installing the privileged bind broker");
+    assert_eq!(
+        progress.frame_at(fake_clock(9)),
+        format!("installing the privileged bind broker; waiting for {awaited}; 9s elapsed")
+    );
+
+    // The stage ends with what now holds, not with whichever phase ran last.
+    let (done, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_step(
+            "applying platform setup (approve the administrator prompt if it appears)",
+            awaited,
+            |progress| {
+                observe_platform_phase(progress, "installing the privileged bind broker");
+                progress.update("applied the platform setup for test", None, None);
+                Ok(())
+            },
+        )
+    });
+    done.expect("a finished stage");
+    assert_eq!(lines, vec!["✓ applied the platform setup for test"]);
+}
+
+/// The progress the readiness probes in these tests report into, shaped the
+/// way `wait_for_private_gateway_ready` builds it: the listener address lives
+/// in the probe's sub-step, not in the awaited sentence.
+fn readiness_progress() -> ProgressSource {
+    ProgressSource::waiting_for("the gateway to answer")
+}
+
+fn readiness_listener() -> std::net::SocketAddr {
+    "127.0.0.1:8080".parse().expect("listener")
+}
+
+/// Fake-clock frames while the listener is not yet answering: each refusal
+/// becomes the last event, and every frame keeps the exact listener address
+/// and the elapsed count as it goes.
+#[test]
+fn listener_readiness_frames_keep_the_listener_address_as_blockers_arrive() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let progress = readiness_progress();
+    let mut frames = Vec::new();
+    let mut probes = 0;
+    daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &progress,
+        readiness_listener(),
+        || {
+            probes += 1;
+            frames.push(progress.frame_at(std::time::Duration::from_secs(probes)));
+            match probes {
+                1 => Err(effigy_gateway::GatewayError::NotRunning),
+                2 => Err(effigy_gateway::GatewayError::Io(
+                    std::io::ErrorKind::NotFound.into(),
+                )),
+                _ => Ok(()),
+            }
+        },
+    )
+    .expect("the listener answers on the third probe");
+    assert_eq!(
+        frames,
+        vec![
+            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 1s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; last: the gateway is not answering yet; 2s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; last: the gateway record is not published yet; 3s elapsed",
+        ]
+    );
+}
+
+/// A probe that refuses for good names what is wrong and stops the wait, with
+/// the listener it refused on still in the frame.
+#[test]
+fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let progress = readiness_progress();
+    let result = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &progress,
+        readiness_listener(),
+        || {
+            Err(effigy_gateway::GatewayError::Io(
+                std::io::ErrorKind::PermissionDenied.into(),
+            ))
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(5)),
+        "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 5s elapsed"
+    );
+}
+
+fn bind_report(addresses: &[(&str, BindOutcome)]) -> BindProbeReport {
+    BindProbeReport {
+        schema: BIND_PROBE_SCHEMA.to_string(),
+        effective_uid: 501,
+        root: false,
+        capability_effective: true,
+        addresses: addresses
+            .iter()
+            .map(|(address, outcome)| BindProbe {
+                address: (*address).to_string(),
+                outcome: outcome.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn fake_clock(seconds: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(seconds)
+}
+
+/// Fake-clock frames for an operator start: the supervisor admits the run,
+/// then the daemon's own self-test reports the status it is in.
+#[test]
+fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(&progress, "127.0.0.1:80", StartPhase::Admitting);
+    assert_eq!(
+        progress.frame_at(fake_clock(1)),
+        "admitting the gateway run; waiting for the supervisor to start the gateway daemon; 1s elapsed"
+    );
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::SelfTest {
+            status: "starting",
+            reason: None,
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
+    );
+}
+
+/// The self-test's own blocker reaches the operator frame, word for word.
+#[test]
+fn operator_start_frame_carries_the_self_test_blocker() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::SelfTest {
+            status: "starting",
+            reason: Some("the listener on 127.0.0.1:80 is not bound yet".into()),
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(6)),
+        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+    );
+}
+
+/// A status that cannot be read on this pass is the step's event, not silence.
+#[test]
+fn operator_start_frame_names_an_unreadable_status() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::Unobserved {
+            reason: "permission denied reading the gateway record".into(),
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(3)),
+        "checking the gateway self-test on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+    );
+}
+
+/// Fake-clock frames for an operator stop, with the daemon's blocker while it
+/// winds down.
+#[test]
+fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
+    let progress = ProgressSource::waiting_for("the gateway process to exit");
+    progress.update("stopping the gateway process", None, None);
+    observe_stop(&progress, StopPhase::Requested);
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        "requesting the gateway stop; waiting for the supervisor to record the stop; 2s elapsed"
+    );
+    observe_stop(
+        &progress,
+        StopPhase::Settling {
+            status: "stopping",
+            reason: Some("the daemon is closing its listeners".into()),
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(5)),
+        "waiting for the gateway to stop; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
+    );
+}
+
+/// Fake-clock frames through the real per-address probe: each address is named
+/// while it is probed, and its outcome is the event that follows.
+#[test]
+fn bind_probe_frames_name_each_address_as_it_is_probed() {
+    let awaited = "the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443";
+    let progress = ProgressSource::waiting_for(awaited);
+    let outcomes = [BindOutcome::Bound, BindOutcome::InUse, BindOutcome::Bound];
+    let addresses = ["127.0.0.1:53", "127.0.0.1:80", "127.0.0.1:443"].map(str::to_owned);
+    let mut frames = Vec::new();
+    let mut calls = 0;
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        calls += 1;
+        frames.push(progress.frame_at(fake_clock(calls)));
+        let outcome = outcomes[calls as usize - 1].clone();
+        Ok(bind_probe_child(&[(address, outcome)], 0))
+    });
+    result.expect("no address refused");
+    assert_eq!(
+        frames,
+        vec![
+            format!("probing 127.0.0.1:53 (1/3); waiting for {awaited}; 1s elapsed"),
+            format!("probing 127.0.0.1:80 (2/3); last: 127.0.0.1:53 bound; 2s elapsed"),
+            format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:80 already in use; 3s elapsed"),
+        ]
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:443 bound; 4s elapsed")
+    );
+}
+
+/// Negative: a denied bind refuses setup at the real child-result boundary. The
+/// child prints its report, writes its own reason and exits non-zero, so the
+/// report is still read: the refused address and its count reach the operator
+/// frame before the error, and the error is the refusal's own sentence.
+#[test]
+fn bind_probe_refusal_reports_the_child_refusal_before_returning_it() {
+    let awaited = "the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443";
+    let progress = ProgressSource::waiting_for(awaited);
+    let addresses = ["127.0.0.1:53", "127.0.0.1:80", "127.0.0.1:443"].map(str::to_owned);
+    let mut probed = Vec::new();
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        probed.push(address.to_owned());
+        let outcome = if address == "127.0.0.1:80" {
+            BindOutcome::Denied
+        } else {
+            BindOutcome::Bound
+        };
+        let code = i32::from(address == "127.0.0.1:80");
+        Ok(bind_probe_child(&[(address, outcome)], code))
+    });
+    let error = result.expect_err("a denied bind refuses setup");
+    assert_eq!(probed, vec!["127.0.0.1:53", "127.0.0.1:80"]);
+    assert_eq!(
+        error.to_string(),
+        "the installed gateway binary still cannot bind 127.0.0.1:80 as the operator: CAP_NET_BIND_SERVICE is not effective. Run `effigy gateway setup` again; if the binary moved, install it again first"
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(5)),
+        "probing 127.0.0.1:80 (2/3); last: 127.0.0.1:80 denied; 5s elapsed"
+    );
+}
+
+/// The same boundary for a failed bind: the failed address and its count are
+/// the last event, and the refusal keeps the child's own reason.
+#[test]
+fn bind_probe_failure_names_the_address_and_keeps_its_reason() {
+    let progress = ProgressSource::waiting_for("the bind probe for 127.0.0.1:53");
+    let addresses = ["127.0.0.1:53"].map(str::to_owned);
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        Ok(bind_probe_child(
+            &[(
+                address,
+                BindOutcome::Failed("Address already in use (os error 48)".into()),
+            )],
+            1,
+        ))
+    });
+    let error = result.expect_err("a failed bind refuses setup");
+    assert_eq!(
+        error.to_string(),
+        "the low-port probe for 127.0.0.1:53 failed: Address already in use (os error 48)"
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        "probing 127.0.0.1:53 (1/1); last: 127.0.0.1:53 failed: Address already in use (os error 48); 2s elapsed"
+    );
+}
+
+/// The custody tail keeps both child streams in arrival order, so the report is
+/// the output line that parses as one; a child that printed no readable report
+/// keeps the adapter's own refusal.
+#[test]
+fn a_bind_probe_child_result_is_read_from_its_own_output() {
+    let report = bind_report(&[("127.0.0.1:80", BindOutcome::Bound)]);
+    let json = serde_json::to_string(&report).expect("report JSON");
+    for output in [format!("{json}\n"), format!("a startup warning\n{json}\n")] {
+        let child = BindProbeChildResult {
+            code: 0,
+            output: output.into_bytes(),
+        };
+        assert_eq!(child.report().expect("the report line"), report);
+    }
+    let child = BindProbeChildResult {
+        code: 2,
+        output: b"cannot spawn the probe\n".to_vec(),
+    };
+    assert!(child.report().is_err());
+    assert_eq!(
+        child.adapter_failure().to_string(),
+        "gateway setup adapter failed (exit 2): cannot spawn the probe\n"
+    );
+}
+
+fn bind_probe_child(addresses: &[(&str, BindOutcome)], code: i32) -> BindProbeChildResult {
+    let report = bind_report(addresses);
+    let mut output = serde_json::to_vec(&report).expect("report JSON");
+    output.push(b'\n');
+    if let Some(reason) = report.refusal() {
+        // `probe_entry` writes its reason after printing the report.
+        output.extend(reason.as_bytes());
+        output.push(b'\n');
+    }
+    BindProbeChildResult { code, output }
+}
+
+/// Fake-clock frames through the real route summary: each route is named as it
+/// is read, with the certificate state the summary found for it.
+#[test]
+fn route_frames_name_each_route_as_it_is_read() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let mut route_table = RouteTable::new();
+    for domain in ["b.test", "a.test"] {
+        route_table.routes.insert(
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:8080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Manual,
+                project: "/tmp/demo".to_owned(),
+                tls: true,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        );
+    }
+    let awaited = "the route table at /state/routes.json";
+    let progress = ProgressSource::waiting_for(awaited);
+    progress.update("reading the route table", None, None);
+    let summary = summarize_published_routes(&config, &route_table, &progress);
+    // No certificate store exists here, so both TLS routes are missing one.
+    assert_eq!(summary.route_count, 2);
+    assert_eq!(summary.cert_ready_count, 0);
+    assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
+    assert_eq!(
+        progress.frame_at(fake_clock(5)),
+        "reading route b.test (2/2); last: b.test has no certificate yet; 5s elapsed"
+    );
+}
+
+/// Fake-clock frames through the real route summary. Each route becomes the
+/// current object, with its position, before its certificate is looked up; the
+/// outcome is the event that follows, and the next route's frame keeps it as
+/// the last event. The frame while a lookup runs never names the route before
+/// it.
+#[test]
+fn route_frames_name_each_route_before_its_certificate_lookup() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let mut route_table = RouteTable::new();
+    for domain in ["b.test", "a.test", "c.test"] {
+        route_table.routes.insert(
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:8080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Manual,
+                project: "/tmp/demo".to_owned(),
+                tls: true,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        );
+    }
+    let awaited = format!("the route table at {}", config.route_table_path.display());
+    let progress = ProgressSource::waiting_for(&awaited);
+    progress.update("reading the existing route table", None, None);
+    let mut frames = Vec::new();
+    let mut lookups = 0;
+    let summary = summarize_routes(&config, &route_table, &progress, |_, domain| {
+        lookups += 1;
+        frames.push(progress.frame_at(fake_clock(lookups)));
+        // a.test and c.test have their certificate; b.test does not.
+        domain != "b.test"
+    });
+    assert_eq!(
+        frames,
+        vec![
+            format!("reading route a.test (1/3); waiting for {awaited}; 1s elapsed"),
+            format!("reading route b.test (2/3); last: a.test has its certificate; 2s elapsed"),
+            format!("reading route c.test (3/3); last: b.test has no certificate yet; 3s elapsed"),
+        ]
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        "reading route c.test (3/3); last: c.test has its certificate; 4s elapsed"
+    );
+    assert_eq!(lookups, 3);
+    assert_eq!(summary.route_count, 3);
+    assert_eq!(summary.cert_ready_count, 2);
+    assert_eq!(summary.missing_domains, vec!["b.test"]);
+}
+
+/// A route table with no routes is stated, not left as a stale label: there is
+/// nothing to read, and the step says so.
+#[test]
+fn an_empty_route_table_is_read_without_a_route_frame() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    progress.update("reading the existing route table", None, None);
+    let mut lookups = 0;
+    let summary = summarize_routes(&config, &RouteTable::new(), &progress, |_, _| {
+        lookups += 1;
+        false
+    });
+    assert_eq!(lookups, 0);
+    assert_eq!(summary.route_count, 0);
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        "reading the existing route table; waiting for the gateway to answer on 127.0.0.1:80; 2s elapsed"
+    );
+}
+
+/// The operator path reads through the real loader. An absent table is no
+/// routes yet; an unreadable one returns the exact read error so the caller can
+/// finish its step with that cause.
+#[test]
+fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let progress = ProgressSource::waiting_for("the gateway to answer");
+    progress.update("checking the gateway self-test", None, None);
+    let count = read_existing_routes(&config, &progress).expect("an absent table reads as empty");
+    assert_eq!(count, 0);
+    assert_eq!(
+        progress.summary(),
+        "the route table has no routes registered yet"
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        format!(
+            "the route table has no routes registered yet; waiting for the route table at {}; 2s elapsed",
+            config.route_table_path.display()
+        )
+    );
+
+    // A table path under a regular file cannot be read: the read error comes
+    // back so the step can finish with it.
+    let blocked = home.path().join("not-a-directory");
+    std::fs::write(&blocked, b"not a directory").expect("blocking file");
+    let unreadable = GatewayConfig::standard(blocked.join("gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer");
+    progress.update("checking the gateway self-test", None, None);
+    let error = read_existing_routes(&unreadable, &progress)
+        .expect_err("a table under a regular file cannot be read");
+    assert!(!error.to_string().is_empty(), "{error}");
+}
+
+/// The route-read step reads the table and each certificate and nothing else.
+/// mkcert and the trust store are status-only probes: a fixture mkcert that
+/// records every invocation proves the step never spawns it, while the status
+/// summary still asks.
+#[test]
+fn the_route_read_step_runs_no_mkcert_or_trust_probe() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let marker = home.path().join("mkcert-ran");
+    let mkcert = home.path().join("mkcert");
+    std::fs::write(
+        &mkcert,
+        format!("#!/bin/sh\n: > '{}'\nexit 1\n", marker.display()),
+    )
+    .expect("fixture mkcert");
+    std::fs::set_permissions(&mkcert, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        effigy_gateway::tls::MKCERT_BIN_ENV,
+        Some(mkcert.display().to_string()),
+    )]);
+
+    let progress = ProgressSource::waiting_for("the route table at /state/routes.json");
+    read_existing_routes(&config, &progress).expect("an absent table reads as empty");
+    assert!(
+        !marker.exists(),
+        "reading the existing table must not run mkcert or the trust store"
+    );
+
+    // The status summary is where the operator's mkcert state belongs.
+    let tls = gateway_tls_summary(&config, RouteCertificateSummary::default());
+    assert!(!tls.mkcert_available);
+    assert!(
+        marker.exists(),
+        "the status summary still asks the operator's mkcert"
+    );
+}
+
+/// The read step ends with what it read, and a read failure ends the step with
+/// its exact cause instead of a success mark: the command's own outcome is
+/// unaffected because this step only reads published state.
+#[test]
+fn the_route_read_step_finishes_with_what_it_read_or_why_it_could_not() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let ((), lines) = effigy_ui::steps::capture_lines(|| read_existing_routes_step(&config));
+    assert_eq!(
+        lines,
+        vec!["✓ the route table has no routes registered yet"]
+    );
+
+    let blocked = home.path().join("not-a-directory");
+    std::fs::write(&blocked, b"not a directory").expect("blocking file");
+    let unreadable = GatewayConfig::standard(blocked.join("gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer");
+    progress.update("checking the gateway self-test", None, None);
+    let cause = read_existing_routes(&unreadable, &progress)
+        .expect_err("a table under a regular file cannot be read")
+        .to_string();
+    let ((), lines) = effigy_ui::steps::capture_lines(|| read_existing_routes_step(&unreadable));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    assert!(
+        line.starts_with(&format!(
+            "✗ cannot read the route table at {}: ",
+            unreadable.route_table_path.display()
+        )),
+        "{line}"
+    );
+    assert!(line.contains(&cause), "{line}");
 }
