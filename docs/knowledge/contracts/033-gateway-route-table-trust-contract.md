@@ -61,6 +61,12 @@ State what a route claim is and why there is no separate trust verdict.
    the empty table under the table's read lock. A reload that returns a route
    takes the write lock and moves the generation, so it either cancels the stop
    or lands after the gateway has begun stopping.
+5. **A managed start never claims an unverified gateway.** `container up`
+   starts the machine gateway only when its previous run is positively stopped.
+   A start that does not verify a ready gateway is a refusal naming the observed
+   status, and an unobservable or legacy identity warns or refuses without
+   starting or replacing anything. Route registration never follows an
+   unverified running claim.
 
 ## What changed from v0.14
 

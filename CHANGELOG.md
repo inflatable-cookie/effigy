@@ -869,7 +869,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The machine gateway stays running after its last route is withdrawn; it no
   longer stops five minutes after `container down`. A private gateway still
   stops once its route table stays empty for five minutes, and its operator log
-  records the cause as `route table empty for 300 s`.
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
 
 ## [0.14.1] - 2026-10-08
 

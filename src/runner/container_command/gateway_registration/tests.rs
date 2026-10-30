@@ -1697,7 +1697,11 @@ fn container_up_starts_a_stopped_machine_gateway_then_registers_its_route() {
                 command,
                 |_| {
                     starts.set(starts.get() + 1);
-                    Ok(())
+                    Ok(crate::runner::gateway_command::ManagedStartOutcome {
+                        status: "running",
+                        ready: true,
+                        reason: None,
+                    })
                 },
                 |_| crate::runner::gateway_command::GatewayUpStatusProbe {
                     status: Err(effigy_gateway::GatewayError::NotRunning),
@@ -1717,5 +1721,49 @@ fn container_up_starts_a_stopped_machine_gateway_then_registers_its_route() {
         let table = RouteTable::load(&route_table_path).expect("load registered route table");
         let registered = table.lookup("clientname.test").expect("registered route");
         assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
+    });
+}
+
+/// A managed start that did not verify a running gateway stops `container up`
+/// before any route registers: an unverified identity is never a running
+/// claim, so no route is written for a gateway this run cannot vouch for
+/// (effigy#480).
+#[test]
+fn container_up_refuses_an_unverified_machine_gateway_before_registering_routes() {
+    with_test_home("container-up-unverified-machine", || {
+        let policy = test_policy();
+        assert!(
+            crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(&policy),
+            "the fixture policy routes through the gateway"
+        );
+        let refusal = ensure_gateway_running_for_container_with(&policy, |command| {
+            let config = crate::runner::gateway_command::gateway_config().expect("gateway config");
+            crate::runner::gateway_command::managed_gateway_up(
+                &config,
+                command,
+                |_| {
+                    Ok(crate::runner::gateway_command::ManagedStartOutcome {
+                        status: "unknown",
+                        ready: false,
+                        reason: Some("gateway ownership is unobservable".to_owned()),
+                    })
+                },
+                |_| crate::runner::gateway_command::GatewayUpStatusProbe {
+                    status: Err(effigy_gateway::GatewayError::NotRunning),
+                    identity_permission_denied: false,
+                },
+            )
+        })
+        .expect_err("an unverified gateway is a refusal");
+        let message = refusal.to_string();
+        assert!(message.contains("did not verify a running gateway"));
+        assert!(message.contains("operator status `unknown`"));
+        assert!(message.contains("gateway ownership is unobservable"));
+        let route_table_path = gateway_route_table_path().expect("gateway route table");
+        assert!(
+            !route_table_path.exists(),
+            "no route is registered after the refusal: {}",
+            route_table_path.display()
+        );
     });
 }

@@ -134,7 +134,7 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
 pub(in crate::runner) fn managed_gateway_up(
     config: &GatewayConfig,
     command: &str,
-    operator_up: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
+    operator_up: impl FnOnce(&GatewayConfig) -> Result<ManagedStartOutcome, RunnerError>,
     preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
 ) -> Result<(), RunnerError> {
     if config.is_private() || effigy_core::executable_override::current().is_some() {
@@ -151,22 +151,68 @@ pub(in crate::runner) fn managed_gateway_up(
             // A task run, not an operator command: name it as what it is.
             emit_gateway_startup_notice(ManagedStartState::Stopped);
             record_managed_gateway_start(config);
-            operator_up(config)
+            // The operator reports what it observed. Only a verified ready
+            // gateway is a start this caller can rely on: `up` reuses whatever
+            // it finds, including a gateway it could not verify, so an
+            // unchecked status here would become a false running claim.
+            operator_up(config)?.require_verified()
         }
-        // An ambiguous process state is reported, never claimed up.
+        // An ambiguous process state is reported, never claimed up, and no
+        // start or replacement is attempted.
         Err(error @ effigy_gateway::GatewayError::ProcessStateUnknown { .. }) => {
             eprintln!("[gateway] cannot verify the running gateway ({error}); proceeding without starting or replacing it");
             Ok(())
         }
-        // Any other refusal, such as a legacy identity, stays the operator
-        // lifecycle's explicit refusal, as it was before this branch preflighted.
-        Err(_) => operator_up(config),
+        // Every other refusal stays the operator lifecycle's own refusal, as it
+        // was before this branch preflighted: a legacy identity, or an
+        // unreadable or malformed record. Its observation is checked too, so a
+        // start that never verified a ready gateway is never claimed up.
+        Err(_) => operator_up(config)?.require_verified(),
     }
 }
 
-fn operator_gateway_up(config: &GatewayConfig) -> Result<(), RunnerError> {
+/// What the operator lifecycle observed when a managed start ran. A start is
+/// `ready` only when the gateway's own identity and self-test verified it; an
+/// unverified observation keeps its own status so a caller can report it
+/// instead of naming the gateway running (effigy#480).
+pub(in crate::runner) struct ManagedStartOutcome {
+    pub(in crate::runner) status: &'static str,
+    pub(in crate::runner) ready: bool,
+    pub(in crate::runner) reason: Option<String>,
+}
+
+impl ManagedStartOutcome {
+    /// Continue only on a verified running gateway. Anything else — an
+    /// unverifiable identity, a gateway still starting, or a start that never
+    /// became ready — is a refusal naming what was observed.
+    fn require_verified(self) -> Result<(), RunnerError> {
+        if self.ready {
+            return Ok(());
+        }
+        let reason = self
+            .reason
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default();
+        Err(RunnerError::task_invocation(format!(
+            "the managed gateway start did not verify a running gateway (operator status `{}`{reason}); refusing to continue as if the gateway were up. `effigy gateway status` reports the observation; if it is unverifiable, ask the host administrator to confirm the daemon is stopped, then `effigy gateway down` and `effigy gateway up` replace it",
+            self.status,
+        )))
+    }
+}
+
+impl From<effigy_gateway::operator::Status> for ManagedStartOutcome {
+    fn from(status: effigy_gateway::operator::Status) -> Self {
+        Self {
+            status: status.status,
+            ready: status.ready,
+            reason: status.reason,
+        }
+    }
+}
+
+fn operator_gateway_up(config: &GatewayConfig) -> Result<ManagedStartOutcome, RunnerError> {
     effigy_gateway::operator::up(config)
-        .map(|_| ())
+        .map(ManagedStartOutcome::from)
         .map_err(|e| RunnerError::task_invocation(e.to_string()))
 }
 

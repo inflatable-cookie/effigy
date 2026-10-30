@@ -701,7 +701,24 @@ pub fn up_with_executable_within(
 /// One warning when the gateway `up` is using runs a different build. `up`
 /// never replaces a running gateway; the operator action that does is `down`
 /// followed by `up`.
+///
+/// A reuse that is not verified ready is named by its observation instead:
+/// only a ready gateway is reported as running, so an unverifiable identity
+/// stays visible to the caller rather than becoming a running claim
+/// (effigy#480).
 fn note_reused_gateway_build(status: &Status) {
+    if !status.ready {
+        let reason = status
+            .reason
+            .as_deref()
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default();
+        eprintln!(
+            "[gateway] the gateway could not be verified running (status `{}`{reason}); using its state as it is instead of starting a replacement. `effigy gateway down` then `effigy gateway up` replaces it",
+            status.status,
+        );
+        return;
+    }
     let current = effigy_core::build_info::active_version();
     if status.binary_version.as_deref() == Some(current.as_str()) {
         return;
