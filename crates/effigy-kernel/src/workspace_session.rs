@@ -536,6 +536,42 @@ impl SessionRef {
     }
 }
 
+/// The independently retained supervisor side of a detached session handoff.
+/// Adopting consumes the owning Run: an invoking client retains only SessionRef.
+/// The supervisor must retain this value until settlement; dropping it releases
+/// the private slot and all registered listener/key custody.
+#[derive(Debug)]
+pub struct SessionSupervisor<'a> {
+    run: Run<'a>,
+}
+
+impl<'a> SessionSupervisor<'a> {
+    pub fn adopt(mut run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
+        run.register_session_custody(supervisor)?;
+        Ok(Self { run })
+    }
+
+    pub fn settle(
+        self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<crate::outcome::Outcome<crate::run::Settled>, RunError> {
+        self.run.settle(cleanup, adapter)
+    }
+}
+
+impl<'a> std::ops::Deref for SessionSupervisor<'a> {
+    type Target = Run<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.run
+    }
+}
+impl std::ops::DerefMut for SessionSupervisor<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.run
+    }
+}
+
 /// The placement a workspace session may be admitted with. A `Detached` session
 /// is its own supervisor, so it plans that lifecycle rather than promising one
 /// and running another.

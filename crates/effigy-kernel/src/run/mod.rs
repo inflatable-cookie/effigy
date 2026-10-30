@@ -829,7 +829,8 @@ impl<'a> Run<'a> {
     /// the serving supervisor that holds it. The detached supervisor performs
     /// this when it adopts the session; a run without it is not a custody
     /// owner, however it was admitted.
-    pub fn register_session_custody(&mut self, supervisor_id: &str) -> Result<(), RunError> {
+    pub(crate) fn register_session_custody(&mut self, supervisor_id: &str) -> Result<(), RunError> {
+        self.can_effect()?;
         if self.owner.resource.kind() != crate::id::ResourceKind::Task
             || supervisor_id.trim().is_empty()
         {

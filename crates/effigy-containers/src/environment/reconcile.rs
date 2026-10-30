@@ -1402,7 +1402,7 @@ mod tests {
             .operation()
             .cleanup(Duration::from_secs(10))
             .expect("cleanup budget");
-        let (mut session_run, session) = SessionRef::admit_reserved(
+        let (session_run, session) = SessionRef::admit_reserved(
             &ctx.cx,
             &state,
             &invocation,
@@ -1423,9 +1423,9 @@ mod tests {
             effigy_kernel::supervise::Placement::Detached,
         )
         .expect("reserved session");
-        session_run
-            .register_session_custody("supervisor-1")
-            .expect("detached custody");
+        let mut session_run =
+            effigy_kernel::workspace_session::SessionSupervisor::adopt(session_run, "supervisor-1")
+                .expect("detached custody");
         let mut run =
             EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
                 .expect("claimed admission");

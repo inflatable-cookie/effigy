@@ -3652,6 +3652,14 @@ locally. State and vault mounts remain masked. No failed channel request falls
 back to guest execution. Hybrid provisions no guest binary, context, listener
 or enrolment credential.
 
+Detached channel custody is handed to `workspace_session::SessionSupervisor::adopt`,
+which consumes the admitted session Run. Only this retained supervisor registers
+custody; a client keeps a session reference, never the owning Run. Listener and
+key release actions belong to the Run's gate guard and execute on settlement or
+unsettled owner drop even when a launch handle remains. A Pending committed
+selection fences every new decision under Gate(Env), including when its owner
+is interrupted or absent; settlement and explicit abandonment precede replacement.
+
 The kernel seam is `run::{reserve, lookup, Run::begin_admitted,
 resume_owner, attach_secondary}`. A `Session` must identify an admitted,
 nonclosed session run at its current resource generation. The reservation

@@ -2072,6 +2072,28 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
                 .cancel(&cx, &root, Wait::FailFast)
                 .expect("release failed activation");
         }
+        if committed {
+            let obligation =
+                una_finished(&read_journal(&cx, &root), &environment).expect("pending");
+            let dead = SelectionLiveness {
+                session: Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                    table: "runs".into(),
+                }),
+                target: Observed::Verified((), evidence()),
+                listener: Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                    table: "listener".into(),
+                }),
+            };
+            selection_abandoned(
+                &cx,
+                &root,
+                &obligation,
+                &dead,
+                "settled dead successor",
+                Wait::FailFast,
+            )
+            .expect("abandon after settlement");
+        }
         let (_, successor_run, successor, _) =
             activate(&cx, &root, &environment, run_id(104), run_id(105));
         assert_eq!(
@@ -2429,6 +2451,9 @@ fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot()
         Placement::Detached,
     )
     .expect("actual detached successor admission");
+    session_run
+        .register_session_custody("supervisor-1")
+        .expect("supervisor adopted");
     let metadata = run::metadata(&observe(&cx), &root, session_run.id());
     let metadata = metadata.verified().expect("registered lifecycle");
     assert_eq!(metadata.placement, "detached");
@@ -3058,19 +3083,6 @@ impl FakeSelectors {
         fake
     }
 
-    /// A switch that stopped after `moved` selectors: the rest still hold the
-    /// value the obligation expected to replace.
-    fn partial(receipt: &SelectionReceipt, moved: usize) -> Self {
-        let mut fake = Self::exact(receipt);
-        for change in &receipt.selection().switches[moved..] {
-            fake.selectors.insert(
-                change.path.clone(),
-                Observed::Verified(change.expected.clone().unwrap_or_default(), evidence()),
-            );
-        }
-        fake
-    }
-
     /// A selector holding a value this activation never committed.
     fn third(receipt: &SelectionReceipt) -> Self {
         let mut fake = Self::exact(receipt);
@@ -3097,18 +3109,19 @@ impl FakeSelectors {
 
 impl SelectorReader for FakeSelectors {
     fn read_selector(&mut self, path: &str) -> Observed<String> {
-        self.selectors.remove(path).unwrap_or(Observed::Absent(
-            crate::observe::AbsenceProof::NoRow {
+        self.selectors
+            .get(path)
+            .cloned()
+            .unwrap_or(Observed::Absent(crate::observe::AbsenceProof::NoRow {
                 table: "guest-selector".into(),
-            },
-        ))
+            }))
     }
     fn read_object(&mut self, path: &str) -> Observed<Digest> {
-        self.objects
-            .remove(path)
-            .unwrap_or(Observed::Absent(crate::observe::AbsenceProof::NoRow {
+        self.objects.get(path).cloned().unwrap_or(Observed::Absent(
+            crate::observe::AbsenceProof::NoRow {
                 table: "guest-object".into(),
-            }))
+            },
+        ))
     }
 }
 
@@ -4997,6 +5010,19 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             )
             .expect_err("a dead successor is never completed");
             assert!(matches!(error, RunError::Refused(_)), "{error:?}");
+            assert!(
+                matches!(
+                    WorkspaceActivationReservation::decide(
+                        &cx,
+                        &root,
+                        &environment,
+                        &decision_inputs(71),
+                        Wait::FailFast
+                    ),
+                    Err(RunError::Refused(_))
+                ),
+                "dead Pending successor cannot be bypassed"
+            );
             let reader = read_journal(&cx, &root);
             assert_eq!(
                 obligation_row(&reader, &environment).map(|row| row.0),
@@ -5140,17 +5166,91 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (_, session_run, _session, mut environment_run, receipt, obligation) =
-        commit_pending_selection(
+    let inputs = publish_inputs(92, None);
+    let reservation = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .unwrap()
+    {
+        ActivationDecision::Activate(r) => *r,
+        _ => panic!("activate"),
+    };
+    let binary = inputs.artifact.selected().unwrap().clone();
+    let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(242));
+    let (mut environment_run, publication) =
+        admit_activation_publishing(&cx, &root, &reservation, run_id(243), &binary);
+    let plan = plan_of(&reservation, &read_journal(&cx, &root)).unwrap();
+    let mut launch = launch_for(&mut session_run, &plan.session()).unwrap();
+    let receipt = selection_receipt(
+        &plan,
+        publication,
+        binary,
+        Some("prior"),
+        &receipt_selection(&reservation),
+        &session_run,
+        &mut launch,
+    );
+    let mut partial = FakeSelectors::default();
+    for object in [
+        &receipt.selection().objects.binary,
+        &receipt.selection().objects.context,
+        &receipt.selection().objects.credential,
+    ] {
+        assert!(partial
+            .objects
+            .insert(
+                object.path.clone(),
+                Observed::Verified(object.digest.clone(), evidence())
+            )
+            .is_none());
+    }
+    for change in &receipt.selection().switches {
+        partial.selectors.insert(
+            change.path.clone(),
+            Observed::Verified(change.expected.clone().unwrap(), evidence()),
+        );
+    }
+    let staged = partial.objects.clone();
+    assert!(una_finished(&read_journal(&cx, &root), &environment).is_none());
+    let committed = reservation
+        .commit_selection(
             &cx,
             &root,
-            &environment,
-            run_id(242),
-            run_id(243),
-            &publish_inputs(92, None),
+            &environment_run,
+            &session_run,
+            &receipt,
+            &launch,
+        )
+        .unwrap();
+    let obligation = committed.selection_obligation().unwrap();
+    assert!(una_finished(&read_journal(&cx, &root), &environment).is_some());
+    // Every switch compares the same mutable target with expected or next.
+    let switch = |guest: &mut FakeSelectors, change: &SelectorChange| -> bool {
+        let value = guest
+            .selectors
+            .get(&change.path)
+            .unwrap()
+            .verified()
+            .unwrap();
+        if value == &change.next {
+            return true;
+        }
+        if Some(value) != change.expected.as_ref() {
+            return false;
+        }
+        guest.selectors.insert(
+            change.path.clone(),
+            Observed::Verified(change.next.clone(), evidence()),
         );
-    // Two selectors moved, the context pointer still holds its previous value.
-    let mut partial = FakeSelectors::partial(&receipt, 2);
+        true
+    };
+    for change in &receipt.selection().switches[..2] {
+        assert!(switch(&mut partial, change));
+    }
     let error = Attachments::selection_switched(&mut environment_run, &obligation, &mut partial)
         .expect_err("a partial switch is not a completion");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
@@ -5162,13 +5262,30 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
     );
     assert!(una_finished(&reader, &environment).is_some());
 
-    // The retry reads every selector back at the committed next value.
-    Attachments::selection_switched(
-        &mut environment_run,
-        &obligation,
-        &mut FakeSelectors::exact(&receipt),
-    )
-    .expect("the retried switch completes");
+    let last = &receipt.selection().switches[2];
+    partial.selectors.insert(
+        last.path.clone(),
+        Observed::Verified("unknown third".into(), evidence()),
+    );
+    assert!(!switch(&mut partial, last));
+    assert_eq!(
+        partial.selectors[&last.path].verified().unwrap(),
+        "unknown third"
+    );
+    // External repair restores the known prior value; retry uses the same target.
+    partial.selectors.insert(
+        last.path.clone(),
+        Observed::Verified(last.expected.clone().unwrap(), evidence()),
+    );
+    for change in &receipt.selection().switches {
+        assert!(switch(&mut partial, change));
+    }
+    assert_eq!(
+        partial.objects, staged,
+        "immutable objects never change during switching"
+    );
+    Attachments::selection_switched(&mut environment_run, obligation, &mut partial)
+        .expect("retry completes");
     let reader = read_journal(&cx, &root);
     assert_eq!(
         obligation_row(&reader, &environment).map(|row| row.0),
@@ -5864,54 +5981,126 @@ fn recovery_refuses_a_target_that_is_not_the_published_container() {
     );
 }
 
-/// The activation CLI hands its session and custody to the serving supervisor.
-/// What the caller built is returned; nothing of the caller's scope remains
-/// when the supervisor uses it, which is the caller-EOF handoff the brief names.
-fn activation_hands_off(fixture: &ServingFixture, id: u8) -> (Run<'_>, SessionRef, SessionLaunch) {
-    let (mut session_run, session) = fixture.admit(id);
-    let (listener, _stops) = FakeListener::bound();
-    let key = ServingKey::new(vec![4u8; 32], Digest::of(b"handoff pin")).expect("key");
-    let launch = SessionLaunch::launch(
-        &mut session_run,
-        &session,
-        "supervisor-1",
-        key,
-        Box::new(listener),
-    )
-    .expect("launch");
-    (session_run, session, launch)
-}
-
 #[test]
 fn custody_survives_the_activation_clients_eof() {
     let fixture = ServingFixture::new();
-    // The activation CLI ran and exited: only its handoff remains.
-    let (session_run, session, mut launch) = activation_hands_off(&fixture, 80);
-    assert_eq!(launch.session().run(), session.run());
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (commands, requests) = std::sync::mpsc::sync_channel(1);
+        let fixture = &fixture;
+        let owner = scope.spawn(move || {
+            let (run, session) = fixture.admit(80);
+            let mut supervisor =
+                SessionSupervisor::adopt(run, "independent-supervisor").expect("handoff");
+            let listener = HostChannelListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let key = ServingKey::new(vec![4; 32], Digest::of(b"handoff pin")).unwrap();
+            let mut launch = SessionLaunch::launch(
+                &mut supervisor,
+                &session,
+                "independent-supervisor",
+                key,
+                Box::new(listener),
+            )
+            .unwrap();
+            launch
+                .qualify(&mut verifying_probe(), Duration::from_secs(1))
+                .unwrap();
+            let lease = launch.publish(&supervisor).unwrap().lease().clone();
+            launch.serve(&supervisor).unwrap();
+            let ticket = match run::reserve(
+                &fixture.cx,
+                &fixture.root,
+                run::AdmissionKey {
+                    session: session.session(),
+                    request: run::RequestId::new([82; 16]),
+                },
+                Digest::of(b"secondary task"),
+                run_id(82),
+            )
+            .unwrap()
+            {
+                run::Reservation::Fresh(ticket) => ticket,
+                _ => panic!("fresh admission"),
+            };
+            let workload = Run::begin_admitted(
+                &fixture.cx,
+                &fixture.root,
+                &inv(task("secondary-task"), "secondary-task"),
+                opts(run_id(82)),
+                &cleanup(&fixture.cx),
+                &mut adapter(),
+                ticket,
+            )
+            .unwrap();
+            tx.send((session, lease.clone())).unwrap();
+            requests.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(launch.publish(&supervisor).unwrap().lease(), &lease);
+            assert!(launch
+                .liveness(&supervisor, &mut verifying_probe(), Duration::from_secs(1))
+                .verified()
+                .is_some());
+            end_run(&fixture.cx, workload, WorkloadOutcome::NotStarted);
+            supervisor
+                .interrupt(&cleanup(&fixture.cx), WorkloadOutcome::NotStarted)
+                .unwrap();
+            supervisor
+                .settle(&cleanup(&fixture.cx), &mut adapter())
+                .unwrap();
+            assert!(!launch.key_held());
+            assert!(launch.lease().is_none());
+            assert!(std::net::TcpStream::connect(lease.endpoint()).is_err());
+        });
+        // This client owns no Run or launch, and closes its own channel at EOF.
+        let (session, lease) = {
+            let caller = rx;
+            caller.recv_timeout(Duration::from_secs(10)).unwrap()
+        };
+        assert!(std::net::TcpStream::connect(lease.endpoint()).is_ok());
+        // A secondary attachment resolves the independently retained owner.
+        let reader = read_journal(&fixture.cx, &fixture.root);
+        assert_eq!(
+            resolved(&reader, &fixture.environment),
+            Some(session.clone())
+        );
+        let attachment = run::AttachmentId::new([83; 16]);
+        let _secondary = run::attach_secondary(
+            &fixture.cx,
+            &fixture.root,
+            session.session(),
+            run_id(82),
+            attachment,
+        )
+        .expect("secondary attaches after caller EOF");
+        let _reconnected = run::resume_secondary(
+            &fixture.cx,
+            &fixture.root,
+            session.session(),
+            run_id(82),
+            attachment,
+        )
+        .expect("same secondary reconnects");
+        commands.send(()).unwrap();
+        owner.join().unwrap();
+    });
+}
+
+#[test]
+fn dropping_an_unsettled_owner_closes_its_socket_and_wipes_its_key() {
+    let fixture = ServingFixture::new();
+    let (mut run, session) = fixture.admit(81);
+    let listener = HostChannelListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let endpoint = listener.endpoint().unwrap();
+    let key = ServingKey::new(vec![5; 32], Digest::of(b"drop pin")).unwrap();
+    let mut launch =
+        SessionLaunch::launch(&mut run, &session, "supervisor-1", key, Box::new(listener)).unwrap();
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
-        .expect("qualified");
-    let lease = launch
-        .publish(&session_run)
-        .expect("published")
-        .lease()
-        .clone();
-    assert_eq!(
-        launch
-            .publish(&session_run)
-            .expect("retried publish")
-            .lease(),
-        &lease,
-        "a retry after the caller's EOF answers the same locator"
-    );
-    assert!(
-        launch
-            .liveness(&session_run, &mut verifying_probe(), Duration::from_secs(1))
-            .verified()
-            .is_some(),
-        "the supervisor's held key answers after the caller's EOF"
-    );
-    launch.serve(&session_run).expect("adopted");
-    assert!(launch.serving(&session_run));
-    launch.release();
+        .unwrap();
+    launch.publish(&run).unwrap();
+    assert!(std::net::TcpStream::connect(&endpoint).is_ok());
+    drop(run);
+    assert!(!launch.key_held());
+    assert!(!launch.owned());
+    assert!(launch.lease().is_none());
+    assert!(std::net::TcpStream::connect(endpoint).is_err());
 }
