@@ -84,9 +84,8 @@ pub(in crate::runner) fn run_standard_task(
     let memory = run_key.is_none()
         && inherited_managed_run.is_none()
         && !inside_container_handoff()
-        && crate::runner::program_fallback::configured()
+        && !crate::runner::program_fallback::activates_here()
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            .is_empty()
         && super::super::sequence_run::foreground_tree(preflight, selection)?;
     let begin = if memory {
         TaskRun::begin_foreground

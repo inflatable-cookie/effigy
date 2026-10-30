@@ -193,6 +193,16 @@ pub(in crate::runner) fn configured() -> Result<Vec<Program>, Refusal> {
         .collect()
 }
 
+/// Whether a configured block would put a shim on this run's `PATH`. Only
+/// such a run needs durable custody: foreground memory runs carry no shims,
+/// and an inactive block changes nothing (see `prepare`).
+pub(in crate::runner) fn activates_here() -> Result<bool, Refusal> {
+    let path = std::env::var_os("PATH");
+    Ok(configured()?
+        .iter()
+        .any(|program| program.force || resolve(&program.name, path.as_deref()).is_none()))
+}
+
 fn parse_program(
     name: String,
     block: effigy_manifest::UserProgramConfig,

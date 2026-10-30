@@ -909,6 +909,12 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Fixed
 
+- A direct foreground task stays in memory custody and records no `latest` or
+  `history` entry, even when the user config declares a `[programs]` block.
+  Only a block that puts a shim on the run's `PATH` (program absent, or
+  `force = true`) moves the run to durable custody, since foreground runs
+  carry no shims. `effigy tasks status` for such a task now reports
+  `not-recorded` again.
 - Database seed and dump keep the database password out of every spawned
   command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
   variable name and never the value, and each exec sources it from a private
