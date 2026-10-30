@@ -2867,7 +2867,9 @@ mod tests {
         assert!(message.contains("is missing"), "{message}");
         assert!(message.contains(&container), "{message}");
         assert!(message.contains("rm -f"), "{message}");
-        assert!(message.contains("effigy container up"), "{message}");
+        assert!(message.contains("effigy container web up"), "{message}");
+        effigy_cli::parse_command(["container", "web", "up"].into_iter().map(str::to_owned))
+            .expect("the suggested container recovery command parses");
         assert!(
             !fixture.render_dir("this-render").exists(),
             "the vanished render is not silently restored"
