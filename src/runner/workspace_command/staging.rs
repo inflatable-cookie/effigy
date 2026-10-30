@@ -243,9 +243,13 @@ impl<'a> StagedGuestProbe<'a> {
     /// The object this adapter executes: the first observation's, which every
     /// later observation must repeat.
     fn bind_object(&mut self, object: &GuestObject) -> Result<GuestObject, UnknownReason> {
-        if !object.path.starts_with('/') || object.digest == Digest([0; 32]) {
+        let named = Path::new(&object.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| !name.is_empty() && !name.contains('\n'));
+        if !object.path.starts_with('/') || !named || object.digest == Digest([0; 32]) {
             return Err(UnknownReason::Inconsistent(
-                "the staged guest probe was asked about no immutable object".into(),
+                "the staged guest probe was asked about no named immutable object".into(),
             ));
         }
         match &self.object {
@@ -340,9 +344,13 @@ impl<'a> StagedGuestProbe<'a> {
                 ))
             }
             Some(GateRefusal::ObjectUnreadable) => {
+                // Denied access is not absence: the object may be there and the
+                // observation simply could not look at it.
                 return Observed::Unknown(UnknownReason::Inconsistent(
-                    "the staged object could not be opened for the pinned run".into(),
-                ))
+                    "the staged object could not be examined or opened in the guest, so its \
+                     absence is unproven"
+                        .into(),
+                ));
             }
             None => {}
         }
@@ -412,21 +420,34 @@ impl<'a> StagedGuestProbe<'a> {
 /// The shell that gates and then runs the staged object.
 ///
 /// One `open` describes the bytes: the digest is read from that descriptor and
-/// the same descriptor is what `exec`s (`/dev/fd/3`), so a path replaced between
-/// the check and the run cannot be executed — the descriptor keeps the inode the
-/// digest was taken from. A guest whose `/dev/fd` cannot be executed fails closed
-/// rather than falling back to the path. `sha256sum` and `shasum` print the digest first and `openssl`
-/// last, so each branch reduces the output to the digest field, and only that
-/// field is compared: a digest that appears in the object's own path is never
-/// taken as the hash. The digest tool is the one `GuestReader::file_sha256`
-/// already requires of the image.
+/// the same descriptor is what `exec`s (`/proc/self/fd/3`), so a path replaced
+/// between the check and the run cannot be executed — the descriptor keeps the
+/// inode the digest was taken from. There is no fallback to the path: a kernel
+/// that cannot execute a descriptor refuses here. The guest is Linux and already
+/// requires `/proc` for the identity probe.
 ///
-/// A path that exists but is not the immutable regular file (a symlink, a
-/// directory, a fifo, a device, a socket) is its own refusal, never an absence
-/// proof: an object was put there and it is not the one this publication
-/// staged.
+/// The classification is fail-closed in the direction that matters. A failed
+/// `stat` says nothing on its own: it means "nothing there" or "not allowed to
+/// look", and only the second must never become an absence proof. So a path that
+/// exists as something other than the immutable regular file (a symlink, a
+/// directory, a fifo, a device, a socket) is its own refusal, a path the process
+/// cannot examine is `object-unreadable`, and absence is claimed only when the
+/// examination failed *and* the containing directory is readable and searchable
+/// — proof that the failed look was "no such name" rather than "denied".
+///
+/// `sha256sum` and `shasum` print the digest first and `openssl` last, so each
+/// branch reduces the output to the digest field, and only that field is
+/// compared: a digest that appears in the object's own path is never taken as
+/// the hash. The digest tool is the one `GuestReader::file_sha256` already
+/// requires of the image.
 fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
     let path = shell_quote(&object.path);
+    let parent = shell_quote(
+        Path::new(&object.path)
+            .parent()
+            .and_then(Path::to_str)
+            .unwrap_or("/"),
+    );
     let digest = object.digest.hex();
     let args = args
         .iter()
@@ -434,11 +455,13 @@ fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "p={path}\n\
+        "p={path}\nd={parent}\n\
          if [ -L \"$p\" ]; then printf '%s\\n' {not_regular_marker} >&2; exit {not_regular}\n\
          elif [ -f \"$p\" ]; then :\n\
          elif [ -d \"$p\" ] || [ -p \"$p\" ] || [ -S \"$p\" ] || [ -b \"$p\" ] || [ -c \"$p\" ]; then printf '%s\\n' {not_regular_marker} >&2; exit {not_regular}\n\
-         else printf '%s\\n' {absent_marker} >&2; exit {absent}\n\
+         elif ls -d \"$p\" >/dev/null 2>&1; then printf '%s\\n' {unreadable_marker} >&2; exit {unreadable}\n\
+         elif ls -a \"$d\" >/dev/null 2>&1; then printf '%s\\n' {absent_marker} >&2; exit {absent}\n\
+         else printf '%s\\n' {unreadable_marker} >&2; exit {unreadable}\n\
 fi\n\
          exec 3< \"$p\" || {{ printf '%s\\n' {unreadable_marker} >&2; exit {unreadable}; }}\n\
          if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum <&3)\n\

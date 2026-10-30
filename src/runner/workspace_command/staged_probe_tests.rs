@@ -389,7 +389,7 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     ));
     let mut probe = backend.linked_probe(&policy);
     let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
-    assert!(reason.contains("could not be opened"), "{reason}");
+    assert!(reason.contains("absence is unproven"), "{reason}");
 
     backend.body("printf 'not a probe document'");
     let mut probe = backend.linked_probe(&policy);
@@ -544,6 +544,26 @@ fn the_object_gate_runs_the_pinned_bytes_and_refuses_everything_else() {
     let (code, _, stderr) = gate(&occupied.display().to_string(), digest.clone(), system_path);
     assert_eq!((code, stderr.as_str()), (67, GATE_OBJECT_NOT_REGULAR));
     std::fs::remove_file(&occupied).expect("remove symlink");
+
+    // A path the process is not allowed to examine is not an absence: it must be
+    // its own refusal, because the object may well be there.
+    let locked = fixture.path().join("locked");
+    std::fs::create_dir(&locked).expect("locked directory");
+    let locked_object = locked.join("object");
+    std::fs::write(&locked_object, &object_bytes).expect("locked object");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+        .expect("deny the containing directory");
+    let denied = gate(
+        &locked_object.display().to_string(),
+        digest.clone(),
+        system_path,
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+        .expect("restore the containing directory");
+    assert_eq!(denied.0, 68, "denied access is never absence: {}", denied.2);
+    assert_eq!(denied.2, GATE_OBJECT_UNREADABLE);
+    assert!(denied.1.is_empty());
+    std::fs::remove_dir_all(&locked).expect("remove the locked directory");
 
     // Only a path with nothing at it is a verified absence.
     let missing = fixture.path().join("missing-object");
