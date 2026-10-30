@@ -1,5 +1,7 @@
+#[path = "reserved_guest.rs"]
+pub(in crate::runner) mod reserved_guest;
 #[path = "staging.rs"]
-mod staging;
+pub(in crate::runner) mod staging;
 
 use effigy_containers::{load_workspace_ownership_plan, EffectiveContainerPolicy};
 use effigy_core::repo_markers::has_task_manifest;
@@ -54,7 +56,7 @@ const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LinuxWorkspaceTarget {
+pub(in crate::runner) enum LinuxWorkspaceTarget {
     X86_64Gnu,
     Aarch64Gnu,
     X86_64Musl,

@@ -3,10 +3,10 @@
 
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::ResolvedInvocation;
-use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{BeginOpts, Run};
 use effigy_kernel::workspace_session::{
-    ActivationDecision, PublishInputs, SessionRef, WorkspaceActivationReservation,
+    ActivationDecision, PublishInputs, SessionRef, SessionSupervisor,
+    WorkspaceActivationReservation,
 };
 
 use super::{EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation};
@@ -23,10 +23,12 @@ pub enum WorkspaceBegin<'r> {
 #[derive(Debug)]
 pub struct WorkspaceActivation<'r> {
     environment: EnvRun<'r>,
-    session_run: Run<'r>,
+    supervisor: SessionSupervisor<'r>,
     session: SessionRef,
     reservation: WorkspaceActivationReservation,
     selected: bool,
+    committed: Option<effigy_kernel::workspace_session::SelectionObligation>,
+    supervisor_id: String,
 }
 
 impl<'r> WorkspaceActivation<'r> {
@@ -39,7 +41,13 @@ impl<'r> WorkspaceActivation<'r> {
         inputs: &PublishInputs,
         invocation: &ResolvedInvocation,
         options: BeginOpts,
+        supervisor_id: &str,
     ) -> Result<WorkspaceBegin<'r>, EnvError> {
+        if supervisor_id.trim().is_empty() || supervisor_id.contains('\0') {
+            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "workspace supervisor identity is empty or malformed",
+            )));
+        }
         let wait = options.wait;
         let reservation = match WorkspaceActivationReservation::decide(
             &ctx.cx,
@@ -68,25 +76,44 @@ impl<'r> WorkspaceActivation<'r> {
             effigy_kernel::supervise::Placement::Detached,
         )
         .map_err(EnvError::Kernel)?;
+        // Custody is registered before listener construction. The consumer
+        // receives this already-adopted supervisor and never re-adopts it.
+        let supervisor =
+            SessionSupervisor::adopt(session_run, supervisor_id).map_err(EnvError::Kernel)?;
         // Retain this exact owning Task Run while acquiring the claimed Env.
         let environment = match EnvRun::begin_claimed(ctx, env, Operation::Up, wait, &reservation) {
             Ok(environment) => environment,
             Err(error) => {
-                session_run
-                    .settle(&ctx.cleanup()?, &mut EnvSettlement)
-                    .map_err(EnvError::Kernel)?;
-                reservation
-                    .cancel(&ctx.cx, ctx.root, wait)
-                    .map_err(EnvError::Kernel)?;
-                return Err(error);
+                let mut failures = Vec::new();
+                let settled = ctx.cleanup().and_then(|cleanup| {
+                    supervisor
+                        .settle(&cleanup, &mut EnvSettlement)
+                        .map_err(EnvError::Kernel)
+                });
+                if let Err(error) = settled {
+                    failures.push(error);
+                }
+                if let Err(error) = reservation.cancel(&ctx.cx, ctx.root, wait) {
+                    failures.push(EnvError::Kernel(error));
+                }
+                return Err(if failures.is_empty() {
+                    error
+                } else {
+                    EnvError::Cleanup {
+                        cause: Box::new(error),
+                        failures,
+                    }
+                });
             }
         };
         Ok(WorkspaceBegin::Activate(Box::new(Self {
             environment,
-            session_run,
+            supervisor,
             session,
             reservation,
             selected: false,
+            committed: None,
+            supervisor_id: supervisor_id.to_owned(),
         })))
     }
 
@@ -98,6 +125,10 @@ impl<'r> WorkspaceActivation<'r> {
         apply: impl FnOnce() -> Result<(), super::BackendError>,
     ) -> Result<super::Applied, EnvError> {
         super::ops::reconcile_in(&mut self.environment, request, apply, |run| run.holders())
+    }
+
+    pub fn supervisor_id(&self) -> &str {
+        &self.supervisor_id
     }
 
     pub fn session(&self) -> &SessionRef {
@@ -113,27 +144,13 @@ impl<'r> WorkspaceActivation<'r> {
     /// A listener factory must borrow this exact run, never recreate an owner
     /// from SessionRef. It registers custody before launching its bound key.
     pub fn session_run_mut(&mut self) -> &mut Run<'r> {
-        &mut self.session_run
+        &mut self.supervisor
     }
 
-    pub fn plan(
+    pub fn current_plan(
         &self,
-        ctx: &EnvContext<'_>,
     ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
-        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), ctx.root) {
-            Observed::Verified(reader, _) => reader,
-            _ => {
-                return Err(EnvError::Kernel(effigy_kernel::run::RunError::unavailable(
-                    "workspace activation journal is unreadable",
-                )))
-            }
-        };
-        match self.reservation.plan(&reader) {
-            Observed::Verified(Some(plan), _) => Ok(plan),
-            _ => Err(EnvError::Kernel(effigy_kernel::run::RunError::unavailable(
-                "workspace activation plan is not admitted",
-            ))),
-        }
+        self.environment.workspace_plan(&self.reservation)
     }
 
     /// Atomic commit retains both exact owning runs and the qualified launch.
@@ -143,12 +160,14 @@ impl<'r> WorkspaceActivation<'r> {
         receipt: &effigy_kernel::workspace_session::SelectionReceipt,
         launch: &effigy_kernel::workspace_session::SessionLaunch,
     ) -> Result<effigy_kernel::workspace_session::CommittedActivation, EnvError> {
-        self.environment.commit_workspace_selection(
+        let committed = self.environment.commit_workspace_selection(
             &self.reservation,
-            &self.session_run,
+            &self.supervisor,
             receipt,
             launch,
-        )
+        )?;
+        self.committed = committed.selection_obligation().cloned();
+        Ok(committed)
     }
 
     /// Only actual target readback completes the committed obligation. The
@@ -167,33 +186,81 @@ impl<'r> WorkspaceActivation<'r> {
 
     /// Ends Env first, then hands the still-owning session to the supervisor.
     /// A pending obligation cannot be advertised as a completed activation.
-    pub fn finish_selected(self) -> Result<(Run<'r>, SessionRef), EnvError> {
+    pub fn finish_selected(self) -> Result<(SessionSupervisor<'r>, SessionRef), EnvError> {
         if !self.selected {
             return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
                 "workspace selection has not been verified",
             )));
         }
         self.environment.finish(true)?;
-        Ok((self.session_run, self.session))
+        Ok((self.supervisor, self.session))
+    }
+
+    /// An interrupted activation can hand its still-owned supervisor to the
+    /// recovery driver without claiming successful selection. Env settles first;
+    /// the durable Pending obligation continues to block successors.
+    pub fn interrupt_for_recovery(self) -> Result<(SessionSupervisor<'r>, SessionRef), EnvError> {
+        if self.committed.is_none() || self.selected {
+            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "only an unfinished committed activation enters selection recovery",
+            )));
+        }
+        self.environment.finish(false)?;
+        Ok((self.supervisor, self.session))
     }
 
     /// Pre-commit failure: settle both bound runs before cancelling. A committed
     /// generation instead remains fenced by its durable selection obligation;
     /// its owner must call selection recovery/abandon, never restore a predecessor.
     pub fn abort(self, ctx: &EnvContext<'_>, wait: Wait) -> Result<(), EnvError> {
+        self.abort_with_target(
+            ctx,
+            wait,
+            effigy_kernel::observe::Observed::Unknown(
+                effigy_kernel::observe::UnknownReason::GuardUnavailable,
+            ),
+        )
+    }
+
+    /// Stop/settle the exact successor before revoking a committed failed
+    /// selection. Unknown target evidence keeps it Pending for recovery; no
+    /// selector is restored and no predecessor authority is recreated.
+    pub fn abort_with_target(
+        self,
+        ctx: &EnvContext<'_>,
+        wait: Wait,
+        target: effigy_kernel::observe::Observed<()>,
+    ) -> Result<(), EnvError> {
         let environment = self.environment.finish(false);
-        let session = self
-            .session_run
-            .settle(&ctx.cleanup()?, &mut EnvSettlement)
-            .map_err(EnvError::Kernel);
-        let reservation = self
-            .reservation
-            .cancel(&ctx.cx, ctx.root, wait)
-            .map_err(EnvError::Kernel);
+        let session = ctx.cleanup().and_then(|cleanup| {
+            self.supervisor
+                .settle(&cleanup, &mut EnvSettlement)
+                .map_err(EnvError::Kernel)
+        });
         environment?;
         session?;
-        reservation?;
-        Ok(())
+        if let Some(obligation) = self.committed {
+            use effigy_kernel::observe::{AbsenceProof, Observed};
+            let closed = || Observed::Absent(AbsenceProof::GateFreeRunClosed);
+            effigy_kernel::workspace_session::selection_abandoned(
+                &ctx.cx,
+                ctx.root,
+                &obligation,
+                &effigy_kernel::workspace_session::SelectionLiveness {
+                    session: closed(),
+                    target,
+                    listener: closed(),
+                },
+                "owning publication failed and its exact supervisor settled",
+                wait,
+            )
+            .map_err(EnvError::Kernel)
+        } else {
+            self.reservation
+                .cancel(&ctx.cx, ctx.root, wait)
+                .map(|_| ())
+                .map_err(EnvError::Kernel)
+        }
     }
 }
 
@@ -283,27 +350,78 @@ mod tests {
         let state = root(fixture.path());
         let ctx = EnvContext::new(&state, CancelToken::default()).expect("context");
         let env = env("workspace");
-        let WorkspaceBegin::Activate(activation) =
-            WorkspaceActivation::begin(&ctx, &env, &inputs(), &invocation(), options(1))
-                .expect("begin")
-        else {
+        let WorkspaceBegin::Activate(mut activation) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(1),
+            "fixture-supervisor",
+        )
+        .expect("begin") else {
             panic!("fresh activation")
         };
         assert_eq!(activation.session().run(), options(1).id);
+        let session = activation.session().clone();
         assert_eq!(
-            activation.plan(&ctx).expect("plan").binding().generation,
+            activation
+                .session_run_mut()
+                .session_owner()
+                .expect("adopted before channel")
+                .run(),
+            session.run()
+        );
+        let listener = effigy_kernel::workspace_session::HostChannelListener::bind(
+            "127.0.0.1:0".parse().expect("socket"),
+        )
+        .expect("bound fixture listener");
+        let key = effigy_kernel::workspace_session::ServingKey::new(
+            vec![7; 32],
+            Digest::of(b"fixture pin"),
+        )
+        .expect("key");
+        let mut launch = effigy_kernel::workspace_session::SessionLaunch::launch(
+            activation.session_run_mut(),
+            &session,
+            "fixture-supervisor",
+            key,
+            Box::new(listener),
+        )
+        .expect("already adopted session launches its own channel");
+        assert!(
+            launch.publish(activation.session_run_mut()).is_err(),
+            "adoption alone never qualifies a locator"
+        );
+        launch.stop();
+        assert_eq!(
+            activation
+                .current_plan()
+                .expect("plan")
+                .binding()
+                .generation,
             activation.session().generation()
         );
-        assert!(
-            WorkspaceActivation::begin(&ctx, &env, &inputs(), &invocation(), options(2)).is_err()
-        );
+        assert!(WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(2),
+            "fixture-supervisor"
+        )
+        .is_err());
         activation
             .abort(&ctx, Wait::FailFast)
             .expect("settle before cancel");
-        let WorkspaceBegin::Activate(retry) =
-            WorkspaceActivation::begin(&ctx, &env, &inputs(), &invocation(), options(3))
-                .expect("retry")
-        else {
+        let WorkspaceBegin::Activate(retry) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(3),
+            "fixture-supervisor",
+        )
+        .expect("retry") else {
             panic!("unpublished retry")
         };
         assert!(

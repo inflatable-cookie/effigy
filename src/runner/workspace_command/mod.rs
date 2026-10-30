@@ -1,5 +1,5 @@
 pub(in crate::runner) mod permissions;
-mod provisioning;
+pub(in crate::runner) mod provisioning;
 mod session;
 pub(in crate::runner) use provisioning::operator_workspace_for_policy;
 

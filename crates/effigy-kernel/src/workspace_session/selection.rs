@@ -243,7 +243,11 @@ impl SelectionReceipt {
             LoaderFamily::Gnu => "gnu",
             LoaderFamily::Musl => "musl",
         };
-        if parsed.platform != machine
+        let crate::id::Scope::Checkout(checkout) = plan.environment().scope() else {
+            return Err(mismatch.into());
+        };
+        if parsed.checkout_id != checkout.text()
+            || parsed.platform != machine
             || parsed.libc != libc
             || parsed.protocol != guest.protocol
             || parsed.host_user != guest.host_user

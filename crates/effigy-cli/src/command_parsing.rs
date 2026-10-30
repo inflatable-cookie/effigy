@@ -1642,6 +1642,34 @@ fn parse_guest_probe(mut args: impl Iterator<Item = String>) -> Result<Command, 
         Some("--resolve") if args.next().is_none() => {
             Ok(Command::InternalGuestProbe(crate::GuestProbeArgs::Resolve))
         }
+        Some("--context-dial") => {
+            if args.next().as_deref() != Some("--context") {
+                return Err(invalid());
+            }
+            let context = args.next().ok_or_else(invalid)?;
+            if args.next().as_deref() != Some("--digest") {
+                return Err(invalid());
+            }
+            let digest = args.next().ok_or_else(invalid)?;
+            if args.next().as_deref() != Some("--timeout-ms") {
+                return Err(invalid());
+            }
+            let timeout_ms = args
+                .next()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| (1..=30000).contains(v))
+                .ok_or_else(invalid)?;
+            if args.next().is_some() {
+                return Err(invalid());
+            }
+            Ok(Command::InternalGuestProbe(
+                crate::GuestProbeArgs::ContextDial {
+                    context,
+                    digest,
+                    timeout_ms,
+                },
+            ))
+        }
         Some("--dial") => {
             if args.next().as_deref() != Some("--endpoint") {
                 return Err(invalid());
@@ -1702,6 +1730,35 @@ mod guest_probe_tests {
             ])
             .is_err());
         }
+        assert!(matches!(
+            parse(&[
+                "__guest-reach",
+                "--context-dial",
+                "--context",
+                "/run/effigy/context/4/context.json",
+                "--digest",
+                "hex",
+                "--timeout-ms",
+                "1000"
+            ]),
+            Ok(Command::InternalGuestProbe(
+                crate::GuestProbeArgs::ContextDial {
+                    timeout_ms: 1000,
+                    ..
+                }
+            ))
+        ));
+        assert!(parse(&[
+            "__guest-reach",
+            "--context-dial",
+            "--context",
+            "/copied",
+            "--digest",
+            "hex",
+            "--timeout-ms",
+            "0"
+        ])
+        .is_err());
         assert!(matches!(
             parse(&[
                 "__guest-reach",

@@ -69,6 +69,11 @@ pub enum Command {
 pub enum GuestProbeArgs {
     Identity,
     Resolve,
+    ContextDial {
+        context: String,
+        digest: String,
+        timeout_ms: u64,
+    },
     Dial {
         endpoint: String,
         pin: String,

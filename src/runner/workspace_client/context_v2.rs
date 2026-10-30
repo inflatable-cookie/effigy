@@ -1,7 +1,7 @@
 //! Strict full v2 document. This is one immutable document; no secondary
 //! identity file or projection may stand in for the bytes selection commits.
 //! The #504 qualified locator/validator binding is required before publication.
-#![allow(dead_code)] // Final publication binding waits for the locator owner.
+#![allow(dead_code)] // The workspace-client owner binds the final guest entry.
 
 use super::*;
 use crate::runner::workspace_client::identity::{GuestIdentity, GuestIdentityRefusal};
@@ -23,6 +23,32 @@ impl std::ops::Deref for WorkspaceContextV2 {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+/// Strict v2 guest-reader entry. A legacy v1 document is refused by this
+/// parser; callers never infer v2 fields from a v1 projection.
+pub(crate) fn read_published_v2(
+    guest: &mut dyn GuestReader,
+) -> Result<Option<WorkspaceContextV2>, ContextReadError> {
+    let Some(generation) = read_published_generation(guest)? else {
+        return Ok(None);
+    };
+    let bytes = guest
+        .read_file(&context_path(generation))
+        .map_err(ContextReadError::Guest)?
+        .ok_or_else(|| {
+            ContextRefusal::unavailable(
+                "published v2 document is missing; re-prepare on the host".into(),
+            )
+        })?;
+    let document = WorkspaceContextV2::parse(&bytes)?;
+    if document.context_generation != generation {
+        return Err(ContextRefusal::unavailable(
+            "published v2 context generation differs from its selector".into(),
+        )
+        .into());
+    }
+    Ok(Some(document))
 }
 
 impl WorkspaceContextV2 {
@@ -112,6 +138,21 @@ impl WorkspaceContextV2 {
                 "workspace context schema or protocol differs; re-prepare on the host".into(),
             ));
         }
+        effigy_kernel::workspace_session::GuestContextInputs {
+            version: context.version.clone(),
+            protocol: context.protocol,
+            host_user: context.host_user.clone(),
+            checkout_id: context.checkout_id.clone(),
+            environment_resource: context.environment_resource.clone(),
+            profile: context.profile.clone(),
+            runtime: context.runtime.clone(),
+            vm_type: context.vm_type.clone(),
+            routes: context.routes.clone(),
+            paths: context.paths.clone(),
+            sources: context.sources.clone(),
+        }
+        .validate()
+        .map_err(|error| ContextRefusal::unavailable(error.to_string()))?;
         Ok(context)
     }
 
@@ -146,7 +187,8 @@ impl WorkspaceContextV2 {
             || self.session.generation == 0
             || self.session.run_id.parse::<RunId>().is_err()
             || self.credential.generation != self.context_generation
-            || !self.credential.path.starts_with("/run/effigy/")
+            || self.credential.path
+                != format!("/run/effigy/objects/enrol/{}", self.context_generation)
             || self
                 .credential
                 .path
@@ -230,7 +272,7 @@ mod tests {
             "binary_path": format!("/run/effigy/objects/bin/{}", Digest::of(b"artifact")),
             "container_id": "a1".repeat(32), "vm_boot_id": "3a7c86df-0045-472e-b065-c1295816ab22",
             "platform": "x86_64", "libc": "gnu",
-            "credential": { "generation": 4, "path": "/run/effigy/enrol/4/credential", "digest": Digest::of(b"credential").hex() },
+            "credential": { "generation": 4, "path": "/run/effigy/objects/enrol/4", "digest": Digest::of(b"credential").hex() },
             "locator": { "endpoint": "effigy-host:47121", "pin": format!("sha256:{}", Digest::of(b"spki").hex()) },
             "selection_digest": Digest::of(b"selection").hex(), "version": "0.15.0", "protocol": 1,
             "host_user": "1000", "checkout_id": "checkout", "environment_resource": "environment",

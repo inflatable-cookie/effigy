@@ -2981,11 +2981,25 @@ The C full-v2 producer/reader is `workspace_client/context_v2.rs`. Its session b
 comes from `ActivationPlan::session()`, its channel from `QualifiedHostLocator`,
 and it refuses v1 documents and unknown fields. The reserved owner orchestration
 is `environment_workspace.rs` over the container engine's `WorkspaceActivation`:
-Task admission precedes claimed Env admission, and successful completion requires
-durable selection readback. Its typed publication provider must be installed at
-Up with the canonical kernel validator and advertised-locator API; the C source
-boundary supplies no default locator or successful publication fallback. Legacy
-local preparation remains separate from that reserved authority path.
+Task admission precedes claimed Env admission. The admitted Run is adopted once
+before channel construction; its already-adopted `SessionSupervisor` and exact
+listener are moved together to serving. Successful completion requires durable
+selection readback. `up_prepared` calls the C `prepare_reserved_guest` producer:
+required publication intent, target/platform binding, required immutable binary
+stage, independent guest identity, the merged qualified advertised-locator API,
+full-v2 document, staged-guest context-bound TLS-only probe, canonical kernel
+receipt, commit, CAS and readback. No credential is minted before independent
+identity or staged before pinned qualification. Recovery re-reads the exact
+Pending obligation under an actual Env guard; unknown target/listener evidence
+switches nothing, while a settled failed successor can be abandoned without
+restoring its predecessor. Its typed source boundary supplies no default locator
+or successful publication fallback. The workspace-client owner installs the
+serialized CLI/serving consumer after this producer, moving the already-adopted
+supervisor, exact session/listener and original Arc effect/observe contexts and
+root together; it owns final serving E2E and durable custody close. Legacy local
+preparation remains separate from that reserved authority path. Native Colima,
+Docker Desktop and Linux Docker identity/reachability qualification is still
+required at the candidate gate.
 
 The host selects the first artifact from the exact container image's backend OS/architecture/variant and one observed image loader
 family, before executing it. `/proc/self/exe` ELF machine/interpreter verifies those staged bytes; it does not select them.

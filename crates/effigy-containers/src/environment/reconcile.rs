@@ -453,6 +453,11 @@ pub enum EnvError {
     Backend(BackendError),
     Invalid(String),
     Kernel(RunError),
+    /// Preserve the original refusal when cleanup also needs recovery.
+    Cleanup {
+        cause: Box<EnvError>,
+        failures: Vec<EnvError>,
+    },
 }
 
 impl std::fmt::Display for EnvError {
@@ -483,6 +488,11 @@ impl std::fmt::Display for EnvError {
             Self::Backend(error) => write!(f, "{error}"),
             Self::Invalid(message) => f.write_str(message),
             Self::Kernel(error) => write!(f, "environment record: {error}"),
+            Self::Cleanup { cause, failures } => {
+                write!(f, "{cause}")?;
+                for error in failures { write!(f, "; cleanup requires recovery: {error}")?; }
+                Ok(())
+            }
         }
     }
 }
@@ -1064,6 +1074,80 @@ impl<'r> EnvRun<'r> {
                 Err(EnvError::Backend(error))
             }
         }
+    }
+
+    /// Read this held activation's plan from its own root and capability.
+    pub fn workspace_plan(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
+        let observe = self
+            .cx
+            .child(Duration::from_secs(30))
+            .operation()
+            .observe()
+            .map_err(|_| {
+                EnvError::Kernel(RunError::refused(
+                    "workspace activation cannot observe its plan",
+                ))
+            })?;
+        let reader = match effigy_kernel::store::Store::read(&observe, self.root) {
+            Observed::Verified(reader, _) => reader,
+            _ => {
+                return Err(EnvError::Kernel(RunError::unavailable(
+                    "workspace activation journal is unreadable",
+                )))
+            }
+        };
+        match reservation.plan(&reader) {
+            Observed::Verified(Some(plan), _)
+                if plan.environment_run() == Some(self.id()) && plan.fence() == *self.fence() =>
+            {
+                Ok(plan)
+            }
+            _ => Err(EnvError::Kernel(RunError::unavailable(
+                "workspace activation plan is not bound to this owner",
+            ))),
+        }
+    }
+
+    /// Start the required publication before the caller's sequenced staging
+    /// and channel I/O. The sealed ticket is still owned by this exact Env run.
+    pub fn intend_workspace_publication(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+    ) -> Result<effigy_kernel::run::GuestPublicationTicket, EnvError> {
+        if plan.environment_run() != Some(self.run.id()) || plan.fence() != *self.run.fence() {
+            return self.kernel(Err(RunError::refused(
+                "workspace publication plan names another activation",
+            )));
+        }
+        let result = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(result)?;
+        self.transitioned = true;
+        Ok(ticket)
+    }
+
+    pub fn acknowledge_workspace_publication(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+        ticket: &effigy_kernel::run::GuestPublicationTicket,
+        receipt: effigy_kernel::workspace_session::WorkspacePublicationReceipt,
+    ) -> Result<(), EnvError> {
+        let result = plan
+            .validate_receipt(&receipt)
+            .and_then(|()| Attachments::workspace_guest_published(&mut self.run, ticket, receipt));
+        self.kernel(result)
+    }
+
+    pub fn unknown_workspace_publication(
+        &mut self,
+        ticket: &effigy_kernel::run::GuestPublicationTicket,
+        reason: UnknownReason,
+    ) -> Result<(), EnvError> {
+        self.failed = true;
+        let result = Attachments::guest_publication_unknown(&mut self.run, ticket, reason);
+        self.kernel(result)
     }
 
     /// Publish the exact frozen successor session and record the guest's

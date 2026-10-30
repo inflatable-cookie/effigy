@@ -1,6 +1,6 @@
 //! Additive objects for reserved activation. No function in this module moves
 //! a selector; the owning run commits a SelectionObligation before CAS.
-#![allow(dead_code)] // Reserved production caller binds after #504.
+#![allow(dead_code)] // The workspace-client owner installs the final consuming caller.
 
 use super::*;
 use effigy_containers::environment::{EnvError, EnvRun};
@@ -152,11 +152,11 @@ pub(super) fn stage_document(
 /// never the stable entry/current selector. Captures and process lifetimes are
 /// bounded by the qualification caller's remaining budget.
 #[derive(Debug)]
-pub(super) struct StagedGuestProbe<'a> {
-    pub(super) repo_root: &'a Path,
-    pub(super) policy: &'a EffectiveContainerPolicy,
-    pub(super) object: &'a GuestObject,
-    pub(super) target: &'a WorkspaceContainerIdentity,
+pub(in crate::runner) struct StagedGuestProbe<'a> {
+    pub(in crate::runner) repo_root: &'a Path,
+    pub(in crate::runner) policy: &'a EffectiveContainerPolicy,
+    pub(in crate::runner) object: &'a GuestObject,
+    pub(in crate::runner) target: &'a WorkspaceContainerIdentity,
 }
 
 impl StagedGuestProbe<'_> {
@@ -266,6 +266,62 @@ impl crate::runner::workspace_transport::qualification::GuestChannelProbe for St
     }
 }
 
+impl super::reserved_guest::WorkspaceGuestProbe for StagedGuestProbe<'_> {
+    fn context_dial(
+        &mut self,
+        target: &WorkspaceContainerIdentity,
+        object: &GuestObject,
+        context: &GuestObject,
+        budget: std::time::Duration,
+    ) -> Observed<crate::runner::workspace_transport::qualification::GuestDialEvidence> {
+        if target != self.target || object != self.object {
+            return observation(Err(RunnerError::task_invocation(
+                "context probe targets another guest or executable",
+            )));
+        }
+        let args = format!(
+            "__guest-reach --context-dial --context {} --digest {} --timeout-ms {}",
+            shell_quote(&context.path),
+            shell_quote(&context.digest.hex()),
+            budget.as_millis().min(30000)
+        );
+        observation(self.probe(&args, budget).and_then(|reply| {
+            let peer = reply
+                .peer
+                .ok_or_else(|| RunnerError::task_invocation("full-context TLS peer is absent"))?;
+            let pin = reply
+                .pin
+                .as_deref()
+                .and_then(|pin| pin.strip_prefix("sha256:"))
+                .and_then(Digest::parse_hex)
+                .ok_or_else(|| RunnerError::task_invocation("full-context TLS pin is absent"))?;
+            Ok(
+                crate::runner::workspace_transport::qualification::GuestDialEvidence {
+                    target: target.clone(),
+                    peer,
+                    pin,
+                },
+            )
+        }))
+    }
+    fn identity(
+        &mut self,
+        target: &WorkspaceContainerIdentity,
+        object: &GuestObject,
+        budget: std::time::Duration,
+    ) -> Observed<crate::runner::workspace_client::identity::GuestSelfObservation> {
+        if target != self.target || object != self.object {
+            return observation(Err(RunnerError::task_invocation(
+                "identity probe targets another immutable object or container",
+            )));
+        }
+        observation(
+            self.probe("__guest-identity", budget)
+                .map(|reply| reply.identity),
+        )
+    }
+}
+
 fn observation<T>(result: Result<T, RunnerError>) -> Observed<T> {
     match result {
         Ok(value) => Observed::Verified(
@@ -361,7 +417,7 @@ pub(super) fn switch_selection(
     obligation: &effigy_kernel::workspace_session::SelectionObligation,
     reader: &mut GuestSelectionReader<'_>,
 ) -> Result<(), EnvError> {
-    use effigy_kernel::workspace_session::{SelectionState, SelectorReader, ENTRY_SELECTOR};
+    use effigy_kernel::workspace_session::SelectionState;
     if run.id() != obligation.run()
         || run.fence().resource != *obligation.environment()
         || run.fence().generation != obligation.environment_generation()
@@ -371,6 +427,30 @@ pub(super) fn switch_selection(
             "selection does not belong to this held activation",
         )));
     }
+    apply_switches(obligation, reader)
+}
+
+/// Recovery uses the same CAS engine only while the actual Env guard covers
+/// the committed obligation. The caller re-reads Pending under that guard.
+pub(super) fn switch_recovery(
+    guard: &effigy_kernel::gate::GateGuard,
+    obligation: &effigy_kernel::workspace_session::SelectionObligation,
+    reader: &mut GuestSelectionReader<'_>,
+) -> Result<(), EnvError> {
+    if !guard.covers(obligation.environment())
+        || obligation.state() != effigy_kernel::workspace_session::SelectionState::Pending
+    {
+        return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+            "recovery CAS needs the obligation's actual Env guard",
+        )));
+    }
+    apply_switches(obligation, reader)
+}
+fn apply_switches(
+    obligation: &effigy_kernel::workspace_session::SelectionObligation,
+    reader: &mut GuestSelectionReader<'_>,
+) -> Result<(), EnvError> {
+    use effigy_kernel::workspace_session::{SelectorReader, ENTRY_SELECTOR};
     for change in &obligation.receipt().selection().switches {
         let current = match reader.read_selector(&change.path) {
             Observed::Verified(value, _) => Some(value),
