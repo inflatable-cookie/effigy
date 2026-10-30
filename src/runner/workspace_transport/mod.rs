@@ -2,7 +2,7 @@
 //!
 //! No application bytes are writable until both the SPKI pin and the TLS
 //! CertificateVerify signature have passed. Each connection owns fresh TLS
-//! state. This module does not publish locators or admit workspace requests.
+//! state. Context publication and request admission remain in their owning layers.
 #![allow(dead_code)] // Consumed by the channel qualification and #452 glue.
 
 use std::io::{self, Read, Write};
@@ -215,7 +215,22 @@ impl TlsChannelTransport {
         self.begin_operation()?;
         self.stream.conn.send_close_notify();
         let result = self.stream.flush();
-        let closed = self.stream.sock.socket.shutdown(Shutdown::Both);
+        // Drain post-handshake records/peer closure under the same deadline.
+        // Closing a TCP socket with unread tickets can otherwise reset it and
+        // discard already-flushed application bytes at the peer.
+        if result.is_ok() {
+            let mut discard = [0u8; 1024];
+            while self.stream.sock.remaining().is_ok() {
+                match self.stream.read(&mut discard) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
+        let closed = match self.stream.sock.socket.shutdown(Shutdown::Both) {
+            Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+            result => result,
+        };
         result.and(closed)
     }
 }
@@ -235,5 +250,12 @@ impl Transport for TlsChannelTransport {
     }
 }
 
+pub(crate) mod listener;
+pub(crate) mod opener;
+pub(crate) mod qualification;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod session_tests;

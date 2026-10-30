@@ -174,6 +174,8 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
+
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
   `Attach` or reserves exactly the next environment generation from the frozen

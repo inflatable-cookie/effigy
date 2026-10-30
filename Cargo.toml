@@ -149,10 +149,10 @@ minijinja = "2"
 rpassword = "7"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 x509-parser = "0.16"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 tempfile = "3"
 
 [dev-dependencies]
-rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 
 effigy-json-schema = { path = "crates/effigy-json-schema" }
 effigy-test-support = { path = "crates/effigy-test-support" }
