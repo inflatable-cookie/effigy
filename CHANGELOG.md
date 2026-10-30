@@ -436,8 +436,10 @@ until the host-log writer has a safe secret-handling boundary.
 - **No command plane shows a canned progress label.** The Q-017 live-state
   rule is now a required lint gate rather than a migration list. A task-run
   step names its ordinal, the exact child step it waits on and the elapsed
-  wait; a heavy admission wait names the hook's decision probe and the hook's
-  own progress line, and its immediate refusals are one plain line; a teardown
+  wait; a state capture's push frame keeps the artifact's destination while the
+  finished capture task stays as its last event; a heavy admission wait names
+  the hook's decision probe and the hook's own progress line, and its immediate
+  refusals are one plain line; a teardown
   the runtime never narrates names its phase, the runtime report it awaits and
   the elapsed wait; and a managed TUI pane's generic start state shows its
   elapsed wait, with the shutdown footer naming the completion's real counts.
