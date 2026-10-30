@@ -1592,7 +1592,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 7] = [
+const ADDITIVE_TABLES: [(&str, &str); 8] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1714,6 +1714,17 @@ CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_run
     // a reader that meets a state it does not know refuses instead of guessing;
     // `selection` and `publication` are the exact receipts the commit validated
     // and never carry secret bytes.
+    // 052 §8.11: the detached supervisor's custody registration for a session
+    // run. A run without one is not a custody owner, so a listener and key are
+    // never launched for a run nobody supervises.
+    (
+        "workspace_session_custody",
+        "CREATE TABLE IF NOT EXISTS workspace_session_custody (
+  run_id TEXT PRIMARY KEY,
+  supervisor TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+) STRICT;",
+    ),
     (
         "workspace_selection_obligations",
         "CREATE TABLE IF NOT EXISTS workspace_selection_obligations (

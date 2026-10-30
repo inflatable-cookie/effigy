@@ -78,7 +78,6 @@ impl MachineFacts {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
-                settle_actions: Vec::new(),
             };
             previous.settle_inner(cleanup, adapter)?;
             let effects = previous

@@ -552,7 +552,6 @@ pub(crate) fn settle_interrupted_wait(
         checkout_custody: None,
         ancestor_closure: None,
         processes: Default::default(),
-        settle_actions: Vec::new(),
     }
     .settle(cleanup, adapter)
 }

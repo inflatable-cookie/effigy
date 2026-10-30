@@ -368,9 +368,6 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
-    /// Actions the run performs when it settles: listener/key custody a session
-    /// owner handed to this run, so settlement releases it.
-    settle_actions: Vec<Box<dyn FnOnce()>>,
 }
 
 impl std::fmt::Debug for Run<'_> {
@@ -686,7 +683,6 @@ impl<'a> Run<'a> {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
-                settle_actions: Vec::new(),
             };
             previous.settle_recovering(
                 &cleanup,
@@ -746,7 +742,6 @@ impl<'a> Run<'a> {
             checkout_custody: None,
             ancestor_closure: None,
             processes: Default::default(),
-            settle_actions: Vec::new(),
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
@@ -791,11 +786,18 @@ impl<'a> Run<'a> {
                 "only an admitted workspace session owns a channel listener",
             ));
         }
-        // A workspace session is a run whose private slot the journal records:
-        // either staged for a reserved activation or the environment's mapped
-        // session. Only `SessionRef::admit*` writes those records, and it refuses
-        // any placement but `Detached`, so an environment or inline run never
-        // qualifies however it is spelled.
+        // Custody is a detached registration the serving supervisor made, on a
+        // run the journal records as this workspace session.
+        let registered: bool = self.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_session_custody WHERE run_id=?1)",
+            params![self.id.to_string()],
+            |row| row.get(0),
+        )?;
+        if !registered {
+            return Err(RunError::refused(
+                "this run holds no detached session custody registration",
+            ));
+        }
         let known: bool = self.store.conn().query_row(
             "SELECT (EXISTS(SELECT 1 FROM workspace_session_runs \
              WHERE run_id=?1 AND owner=?2 AND generation=?3) \
@@ -823,19 +825,31 @@ impl<'a> Run<'a> {
         ))
     }
 
-    /// Test-only: record this workspace session run as detached custody without
-    /// spawning a supervisor. Production reaches the same row through the
-    /// custody registration a detached run performs; these kernel tests exercise
-    /// the record, not process supervision (`test:kernel:custody` does that).
-    #[cfg(test)]
-    pub(crate) fn test_register_detached_owner(&self) {
-        self.store
-            .conn()
-            .execute(
-                "UPDATE runs SET kind='custody',placement='detached' WHERE run_id=?1",
-                params![self.id.to_string()],
-            )
-            .expect("test detached custody record");
+    /// Register this run as a detached session's custody owner, on behalf of
+    /// the serving supervisor that holds it. The detached supervisor performs
+    /// this when it adopts the session; a run without it is not a custody
+    /// owner, however it was admitted.
+    pub fn register_session_custody(&mut self, supervisor_id: &str) -> Result<(), RunError> {
+        if self.owner.resource.kind() != crate::id::ResourceKind::Task
+            || supervisor_id.trim().is_empty()
+        {
+            return Err(RunError::refused(
+                "only a detached workspace session registers custody, under a named supervisor",
+            ));
+        }
+        if crate::workspace_session::session_of_run(self.store.conn(), self.id)?.is_none() {
+            return Err(RunError::refused(
+                "only a recorded workspace session registers custody",
+            ));
+        }
+        self.store.transaction(&self.cx, |txn| {
+            txn.conn().execute(
+                "INSERT INTO workspace_session_custody(run_id,supervisor,created_at) VALUES (?1,?2,?3) \
+                 ON CONFLICT(run_id) DO UPDATE SET supervisor=excluded.supervisor",
+                params![self.id.to_string(), supervisor_id, txn.now()],
+            )?;
+            Ok::<_, RunError>(())
+        })
     }
 
     pub(crate) fn owns_workspace_session(
@@ -1262,15 +1276,13 @@ impl<'a> Run<'a> {
     /// Register an action the run performs when it settles (or is dropped
     /// un-settled). A session's listener and key custody are released this way,
     /// so settlement closes the socket and wipes the secret.
-    pub fn on_settle(&mut self, action: impl FnOnce() + 'static) {
-        self.settle_actions.push(Box::new(action));
+    pub fn on_settle(&mut self, action: impl FnOnce() + Send + 'static) {
+        self.guard.on_release(action);
     }
 
     /// Run everything registered with [`Run::on_settle`], exactly once.
     fn run_settle_actions(&mut self) {
-        for action in std::mem::take(&mut self.settle_actions) {
-            action();
-        }
+        self.guard.release_actions();
     }
 
     pub fn settle(

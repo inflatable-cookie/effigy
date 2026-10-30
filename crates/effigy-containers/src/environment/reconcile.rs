@@ -1423,6 +1423,9 @@ mod tests {
             effigy_kernel::supervise::Placement::Detached,
         )
         .expect("reserved session");
+        session_run
+            .register_session_custody("supervisor-1")
+            .expect("detached custody");
         let mut run =
             EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
                 .expect("claimed admission");

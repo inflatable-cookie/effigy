@@ -1224,6 +1224,66 @@ fn owner_identity(conn: &rusqlite::Connection, name: &str) -> Result<ResourceId,
     decode_owner(&canonical)
 }
 
+/// The recorded workspace session a run belongs to, if any: the mapping names
+/// it, or a staging froze it. This is a read of the journal's own records.
+pub(crate) fn session_of_run(
+    conn: &rusqlite::Connection,
+    run: RunId,
+) -> Result<Option<SessionRef>, RunError> {
+    let mapped: Option<(i64, i64, String)> = conn
+        .query_row(
+            "SELECT session_generation, environment_generation, environment FROM workspace_sessions \
+             WHERE run_id=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((session, environment_generation, environment)) = mapped {
+        let environment = owner_identity(conn, &environment)?;
+        return Ok(Some(SessionRef::new(
+            run,
+            Fence {
+                resource: environment.clone(),
+                generation: Generation::new(session as u64),
+            },
+            environment,
+            Generation::new(environment_generation as u64),
+        )));
+    }
+    let staged: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation, owner FROM workspace_session_runs WHERE run_id=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((generation, owner)) = staged else {
+        return Ok(None);
+    };
+    let owner = owner_identity(conn, &owner)?;
+    let reservation: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT environment, environment_generation FROM workspace_activation_reservations \
+             WHERE session_run=?1",
+            [run.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((environment, environment_generation)) = reservation else {
+        return Ok(None);
+    };
+    let environment = owner_identity(conn, &environment)?;
+    Ok(Some(SessionRef::new(
+        run,
+        Fence {
+            resource: owner,
+            generation: Generation::new(generation as u64),
+        },
+        environment,
+        Generation::new(environment_generation as u64),
+    )))
+}
+
 /// The generation `owner`'s counter would advance to next, read *without* its
 /// gate: a staging is a prediction that the successor's own admission confirms
 /// under `Gate(owner)`, so a staging grants nothing the counter does not.
@@ -1699,6 +1759,12 @@ impl WorkspaceActivationReservation {
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let decision = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             txn.resource(environment, "environment")?;
+            // A committed selection that is still unfinished fences every
+            // decision, whatever its owner's liveness: the recovery order is
+            // settle/revoke/abandon, and no attach or successor may bypass it.
+            if selection::pending_obligation(txn.conn(), environment)?.is_some() {
+                return Err(ActivationRefusal::SelectionPending.into());
+            }
             if let Some(live) = live_session_row(txn.conn(), environment)? {
                 match &owner {
                     Some((

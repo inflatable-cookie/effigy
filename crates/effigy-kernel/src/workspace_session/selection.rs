@@ -637,6 +637,28 @@ pub(super) fn read_obligation(
         .transpose()
 }
 
+/// The environment's committed but unfinished selection, whatever its owner's
+/// liveness: a decision must meet it before it attaches or reserves anything.
+pub(super) fn pending_obligation(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+) -> Result<Option<SelectionObligation>, RunError> {
+    let sql = format!(
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 \
+         ORDER BY environment_generation DESC LIMIT 1"
+    );
+    let row = conn
+        .query_row(&sql, [environment.name().to_string()], obligation_row)
+        .optional()?;
+    match row {
+        Some(row) => {
+            let obligation = decode_obligation(environment, row)?;
+            Ok((obligation.state() == SelectionState::Pending).then_some(obligation))
+        }
+        None => Ok(None),
+    }
+}
+
 /// The one unfinished selection for `environment`, if any. `Absent` means no
 /// obligation was ever committed or the latest one finished; `Unknown` never
 /// becomes either.

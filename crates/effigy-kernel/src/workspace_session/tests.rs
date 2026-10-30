@@ -184,7 +184,7 @@ fn admit_session<'a>(
     root: &'a StateRoot,
     environment: &Fence,
 ) -> (Run<'a>, SessionRef) {
-    let (run, session) = SessionRef::admit(
+    let (mut run, session) = SessionRef::admit(
         cx,
         root,
         &inv(workspace_entry(), "workspace"),
@@ -195,7 +195,8 @@ fn admit_session<'a>(
         Placement::Detached,
     )
     .expect("workspace session");
-    run.test_register_detached_owner();
+    run.register_session_custody("supervisor-1")
+        .expect("detached custody");
     (run, session)
 }
 
@@ -786,7 +787,7 @@ fn admit_frozen<'a>(
     reservation: &WorkspaceActivationReservation,
     run: RunId,
 ) -> (Run<'a>, SessionRef) {
-    let (admitted, session) = SessionRef::admit_reserved(
+    let (mut admitted, session) = SessionRef::admit_reserved(
         cx,
         root,
         &inv(workspace_entry(), "workspace"),
@@ -797,7 +798,9 @@ fn admit_frozen<'a>(
         Placement::Detached,
     )
     .expect("reserved workspace session");
-    admitted.test_register_detached_owner();
+    admitted
+        .register_session_custody("supervisor-1")
+        .expect("detached custody");
     (admitted, session)
 }
 
@@ -1931,7 +1934,7 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
                 }
             };
             reservation.stage_session_binding(&cx, &root, &workspace_entry(), run_id(102))?;
-            let (run, _) = SessionRef::admit_reserved(
+            let (mut run, _) = SessionRef::admit_reserved(
                 &cx,
                 &root,
                 &inv(workspace_entry(), "workspace"),
@@ -1941,7 +1944,8 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
                 &reservation,
                 Placement::Detached,
             )?;
-            run.test_register_detached_owner();
+            run.register_session_custody("supervisor-1")
+                .expect("detached custody");
             staged_run = Some(run);
             let run = Run::begin_claimed(
                 &cx,
@@ -4463,12 +4467,12 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
 struct FakeListener {
     endpoint: Option<std::net::SocketAddr>,
     phase: ListenerPhase,
-    stops: std::rc::Rc<std::cell::Cell<usize>>,
+    stops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl FakeListener {
-    fn bound() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
-        let stops = std::rc::Rc::new(std::cell::Cell::new(0));
+    fn bound() -> (Self, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let stops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         (
             Self {
                 endpoint: Some("127.0.0.1:45999".parse().expect("address")),
@@ -4495,7 +4499,7 @@ impl ChannelListener for FakeListener {
         Ok(())
     }
     fn stop(&mut self) {
-        self.stops.set(self.stops.get() + 1);
+        self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.phase = ListenerPhase::Stopped;
     }
 }
@@ -4559,7 +4563,7 @@ impl ServingFixture {
         };
         let mut options = opts(run_id(id));
         options.id = run_id(id);
-        let (run, session) = SessionRef::admit(
+        let (mut run, session) = SessionRef::admit(
             &self.cx,
             &self.root,
             &inv(workspace_entry(), "workspace"),
@@ -4570,7 +4574,8 @@ impl ServingFixture {
             Placement::Detached,
         )
         .expect("workspace session");
-        run.test_register_detached_owner();
+        run.register_session_custody("supervisor-1")
+            .expect("detached custody");
         (run, session)
     }
 }
@@ -4592,7 +4597,7 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     // The supervisor holds both the run and the launch: the caller that asked
     // for the session is gone, and the launch keeps its listener and key.
     assert_eq!(launch.phase(), ListenerPhase::Qualifying);
-    assert_eq!(stops.get(), 0);
+    assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert!(
         matches!(
             launch.publish(&session_run),
@@ -4636,7 +4641,7 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         &lease,
         "a retry does not re-lease the session"
     );
-    assert_eq!(stops.get(), 0);
+    assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 0);
     let probed = launch.liveness(
         &session_run,
         &mut FakeProbe {
@@ -4653,7 +4658,11 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     launch.serve(&session_run).expect("adopted");
     assert!(launch.serving(&session_run));
     launch.release();
-    assert_eq!(stops.get(), 1, "release stops the listener");
+    assert_eq!(
+        stops.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "release stops the listener"
+    );
 }
 
 #[test]
@@ -4682,7 +4691,11 @@ fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
         ),
         Err(ServingRefusal::WrongSession)
     ));
-    assert_eq!(stops.get(), 0, "a refused launch stops nothing");
+    assert_eq!(
+        stops.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a refused launch stops nothing"
+    );
     // An environment run holds no session custody at all.
     let mut environment_run =
         admit_activation_stub(&fixture.cx, &fixture.root, &fixture.environment);
@@ -4713,7 +4726,7 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let (mut session_run, session) = fixture.admit(71);
     let _owner = session_run.session_owner().expect("owner");
     // No endpoint at all is not a listener.
-    let stops = std::rc::Rc::new(std::cell::Cell::new(0));
+    let stops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let unbound = FakeListener {
         endpoint: None,
         phase: ListenerPhase::Qualifying,
@@ -5723,9 +5736,13 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
         "a released owner has no served locator"
     );
     assert_eq!(launch.lease(), None);
-    assert_eq!(stops.get(), 0, "abandonment leaves the listener to settle");
+    assert_eq!(
+        stops.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "abandonment leaves the listener to settle"
+    );
     launch.release();
-    assert_eq!(stops.get(), 1);
+    assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 1);
     drop(session_run);
     let _ = lease;
 }

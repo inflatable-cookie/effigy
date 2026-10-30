@@ -238,7 +238,7 @@ impl Drop for ServingKey {
 /// implementation binds a loopback socket and accepts nothing itself; a
 /// transport implementation (#483) or a fake in a test supplies the same three
 /// facts: its endpoint, its phase and an idempotent stop.
-pub trait ChannelListener: std::fmt::Debug {
+pub trait ChannelListener: std::fmt::Debug + Send {
     fn endpoint(&self) -> Option<SocketAddr>;
     fn phase(&self) -> ListenerPhase;
     /// Record that the transport qualified this endpoint: the session's pin
@@ -374,7 +374,7 @@ pub struct SessionLaunch {
     /// The listener and key live here so the session's own settlement can take
     /// and drop them: dropping the listener closes the socket and dropping the
     /// key wipes its bytes.
-    state: std::rc::Rc<std::cell::RefCell<LaunchState>>,
+    state: std::sync::Arc<std::sync::Mutex<LaunchState>>,
 }
 
 #[derive(Debug, Default)]
@@ -429,7 +429,7 @@ impl SessionLaunch {
         if listener.endpoint().is_none() {
             return Err(ServingRefusal::Unbound);
         }
-        let state = std::rc::Rc::new(std::cell::RefCell::new(LaunchState {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(LaunchState {
             held: Some(Held {
                 listener: Some(listener),
                 key: Some(key),
@@ -450,8 +450,10 @@ impl SessionLaunch {
         })
     }
 
-    fn lock(&self) -> std::cell::RefMut<'_, LaunchState> {
-        self.state.borrow_mut()
+    fn lock(&self) -> std::sync::MutexGuard<'_, LaunchState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn session(&self) -> &SessionRef {
@@ -728,8 +730,11 @@ impl SessionLaunch {
 }
 
 /// Drop the listener and the key, closing the socket and wiping the secret.
-fn release_state(state: &std::rc::Rc<std::cell::RefCell<LaunchState>>) {
-    let mut state = state.borrow_mut();
+fn release_state(state: &std::sync::Arc<std::sync::Mutex<LaunchState>>) {
+    let mut state = match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     state.owned = false;
     state.bound = None;
     state.served = false;
