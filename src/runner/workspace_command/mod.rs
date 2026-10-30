@@ -551,16 +551,16 @@ impl WorkspaceOpProgress {
         probe: impl Into<String>,
         leading_blank_lines: bool,
     ) -> Self {
-        if leading_blank_lines {
-            let mut stderr = std::io::stderr().lock();
-            let _ = writeln!(stderr);
-            let _ = writeln!(stderr);
-        }
         if suppress {
             return Self {
                 source: None,
                 step: None,
             };
+        }
+        if leading_blank_lines {
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(stderr);
+            let _ = writeln!(stderr);
         }
         let source = ProgressSource::waiting_for(probe);
         let step = steps::live_step(source.clone());
