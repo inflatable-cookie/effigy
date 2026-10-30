@@ -167,9 +167,14 @@ a definite status line outside `2xx`/`3xx` is refused at once, naming the status
 it observed and the primary container's own last output, instead of spending
 the declared budget on an answer waiting cannot change (effigy#455); a check
 that does not answer at all keeps the budgeted wait. The container named in
-that evidence is the one the runtime's own row reports for the primary service,
-so a declared Compose `container_name` is read and reported as it is rather
-than assumed from the project and service names. A service's declared
+that evidence — in the human diagnostic as well as `waiting_on` — is the one the
+runtime's own row reports for the primary service, so a declared Compose
+`container_name` is read and reported as it is rather than assumed from the
+project and service names; when the runtime cannot name one, the diagnostic
+describes the environment and its primary service instead of calling the
+environment a container. The restart-policy apply after Compose names its own
+stages as they start: the Compose declaration read, the runtime inventory read,
+then the update, which may not be sent at all when no service qualifies. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays

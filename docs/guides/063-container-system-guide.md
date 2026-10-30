@@ -1037,7 +1037,10 @@ status outside `2xx`/`3xx` is refused at once with the status it observed and
 the primary container's last output, because waiting cannot change an answer
 the service already gave. The container is the one the runtime's own row names
 for that service, so a declared Compose `container_name` is never guessed from
-the project and service names.
+the project and service names; when no container can be read, the message names
+the environment and its primary service instead. The restart policy that
+follows Compose reports its own stages — the Compose declaration read, the
+runtime inventory read, then the update.
 A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
 Effigy never hand-starts a stopped service and never stops or mutates

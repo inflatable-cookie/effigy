@@ -61,14 +61,14 @@ pub fn probe_health_status(check: Option<&str>) -> Option<&'static str> {
 pub enum HealthWaitError {
     /// The declared budget was spent without the check answering ready.
     NotReady {
-        container: String,
+        subject: String,
         check: String,
         timeout_secs: u64,
     },
     /// The check answered a definite status line outside its ready class, so
     /// the declared budget is not spent (effigy#455).
     StatusMismatch {
-        container: String,
+        subject: String,
         check: String,
         status: u16,
         timeout_secs: u64,
@@ -76,10 +76,12 @@ pub enum HealthWaitError {
 }
 
 impl HealthWaitError {
-    /// The container whose declared check this was.
-    pub fn container(&self) -> &str {
+    /// What the check belonged to: a container identity, or the honest
+    /// environment-and-service description the caller supplied when the
+    /// runtime could not name the container.
+    pub fn subject(&self) -> &str {
         match self {
-            Self::NotReady { container, .. } | Self::StatusMismatch { container, .. } => container,
+            Self::NotReady { subject, .. } | Self::StatusMismatch { subject, .. } => subject,
         }
     }
 
@@ -120,21 +122,21 @@ impl std::fmt::Display for HealthWaitError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotReady {
-                container,
+                subject,
                 check,
                 timeout_secs,
             } => write!(
                 formatter,
-                "container `{container}` health check `{check}` did not become ready within {timeout_secs}s"
+                "the health check of {subject} (`{check}`) did not become ready within {timeout_secs}s"
             ),
             Self::StatusMismatch {
-                container,
+                subject,
                 check,
                 status,
                 timeout_secs,
             } => write!(
                 formatter,
-                "container `{container}` health check `{check}` answered HTTP {status} where a 2xx or 3xx status is required (status_mismatch); a definite answer is terminal, so the declared {timeout_secs}s budget is not spent"
+                "the health check of {subject} (`{check}`) answered HTTP {status} where a 2xx or 3xx status is required (status_mismatch); a definite answer is terminal, so the declared {timeout_secs}s budget is not spent"
             ),
         }
     }
@@ -142,12 +144,17 @@ impl std::fmt::Display for HealthWaitError {
 
 /// Wait for a container health check to pass within a timeout.
 ///
+/// `subject` is what the check belongs to: the container identity the runtime
+/// reports, or an honest environment-and-service description when the runtime
+/// could not name one. Frames and the refusal use that phrase instead of
+/// calling an environment a container (effigy#460).
+///
 /// Returns `Some("ready")` on success, `Some("interrupted")` if the
 /// stop flag is set, or the reason the check did not come ready. A check that
 /// answers a definite status line outside its ready class ends the wait at
 /// once and reports what it answered (effigy#455).
 pub fn wait_for_ready(
-    container_name: &str,
+    subject: &str,
     check: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
@@ -161,7 +168,7 @@ pub fn wait_for_ready(
     // names the probe now in flight and its attempt, and keeps the last answer
     // the check gave, with elapsed time (effigy#460, Q-017).
     let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
-        "`{check}` to report `{container_name}` healthy"
+        "`{check}` to report {subject} healthy"
     ));
     let step = effigy_ui::steps::live_step(progress.clone());
     let mut attempts = 0_u32;
@@ -172,13 +179,13 @@ pub fn wait_for_ready(
         }
         attempts += 1;
         progress.update(
-            format!("probing `{check}` for {container_name} (attempt {attempts})"),
+            format!("probing `{check}` for {subject} (attempt {attempts})"),
             None,
             None,
         );
         match probe_health_detail(check) {
             HealthProbe::Ready => {
-                step.succeed(&format!("{container_name} reports healthy"));
+                step.succeed(&format!("{subject} reports healthy"));
                 return Ok(Some("ready"));
             }
             // The service bound and answered this request with another
@@ -186,13 +193,13 @@ pub fn wait_for_ready(
             // wait ends with the status it observed (effigy#455).
             HealthProbe::StatusMismatch(status) => {
                 let error = HealthWaitError::StatusMismatch {
-                    container: container_name.to_owned(),
+                    subject: subject.to_owned(),
                     check: check.to_owned(),
                     status,
                     timeout_secs,
                 };
                 step.fail(&format!(
-                    "{container_name} answered HTTP {status} for `{check}`, not a ready status"
+                    "{subject} answered HTTP {status} for `{check}`, not a ready status"
                 ));
                 return Err(error);
             }
@@ -203,10 +210,10 @@ pub fn wait_for_ready(
         std::thread::sleep(Duration::from_millis(250));
     }
     step.fail(&format!(
-        "{container_name} did not report healthy within {timeout_secs}s ({check})"
+        "{subject} did not report healthy within {timeout_secs}s ({check})"
     ));
     Err(HealthWaitError::NotReady {
-        container: container_name.to_owned(),
+        subject: subject.to_owned(),
         check: check.to_owned(),
         timeout_secs,
     })

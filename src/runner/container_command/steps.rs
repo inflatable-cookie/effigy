@@ -6,25 +6,24 @@
 //! with its own failure sentence.
 
 pub(super) use effigy_containers::exec::{ComposeSteps, TimedStep};
+pub(super) use effigy_containers::policy::restart::RestartPolicyStage;
 pub(super) use effigy_ui::steps::ProgressSource;
 
-/// The wait now in flight once Compose has returned for one stack: the runtime
-/// is being asked to keep that stack's services running, so a stalled read
-/// names that operation instead of the Compose call that already finished
-/// (effigy#460, Q-017).
-pub(super) fn restart_policy_wait(
+/// Name one stage of the restart-policy apply now in flight: the Compose
+/// declaration read, the runtime inventory read, or the update itself. A
+/// stalled read names that read instead of claiming an update was sent, and
+/// never names the Compose call that already finished (effigy#460, Q-017).
+pub(super) fn restart_policy_stage(
     progress: &ProgressSource,
-    subject: impl AsRef<str>,
+    subject: &str,
+    stage: RestartPolicyStage,
     count: Option<(u64, u64)>,
 ) {
-    let mut awaiting = format!(
-        "the runtime to apply `restart: unless-stopped` to {}",
-        subject.as_ref()
-    );
-    if let Some((done, total)) = count {
-        awaiting.push_str(&format!(" ({done}/{total})"));
-    }
-    progress.now_waiting_for(awaiting);
+    // `now_waiting_for` drops the previous stage's event and count, so the
+    // frame names only the stage now running; the stage's own sentence is the
+    // frame's subject and the wait behind it is the policy being applied.
+    progress.now_waiting_for(format!("`restart: unless-stopped` on {subject}"));
+    progress.update(stage.description(subject), count, None);
 }
 
 /// Run one phase under a live step driven by `progress`, ending it with

@@ -606,23 +606,24 @@ fn run_container_up_compose(
     match output {
         Ok(_) => {
             // Compose has returned, but the runtime work is not over: the stack
-            // is told to keep its services running. Advance the step to that
-            // operation and the read it waits on before entering it, so a
-            // stalled read never shows the finished Compose call
+            // is told to keep its services running. The step follows that
+            // apply's own stages — the Compose declaration read, the runtime
+            // inventory read, then the update — so a stalled read never shows
+            // the finished Compose call or claims an update was sent
             // (effigy#460, Q-017).
-            restart_policy_source(&progress, &plan.policy.name);
-            // The runtime can be told to keep it up without racing Compose's
-            // create/start (effigy#383). This read is the first of the
-            // bring-up's observations, so it starts the one budget they all
-            // share (effigy#411).
             let deadline = super::readiness::observation_deadline(&plan.policy);
             observation.set(Some(deadline));
-            effigy_containers::policy::restart::apply_after_start(
+            let subject = format!("the `{}` stack", plan.policy.name);
+            let mut restart_stage = |stage: steps::RestartPolicyStage| {
+                steps::restart_policy_stage(&progress, &subject, stage, None);
+            };
+            effigy_containers::policy::restart::apply_after_start_observed(
                 &plan.policy.repo_root,
                 &plan.policy,
                 &plan.policy.project_name,
                 &plan.policy.compose_files,
                 Some(deadline),
+                &mut restart_stage,
             );
             if compose_steps.touched() == 0 {
                 whole_stack.succeed("the stack is up");
@@ -651,17 +652,6 @@ fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
     let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
     progress.update(format!("starting the `{stack}` stack"), None, None);
     progress
-}
-
-/// The same step once Compose has returned and the runtime is asked to keep
-/// the stack's services running: the operation now in flight and the exact
-/// read it waits on, with elapsed time (effigy#460, Q-017).
-fn restart_policy_source(progress: &ProgressSource, stack: &str) {
-    steps::restart_policy_wait(
-        progress,
-        format!("the services of `{stack}` that declare none"),
-        None,
-    );
 }
 
 /// The machine-readable details of a container wait that ended unfinished.
@@ -1631,6 +1621,7 @@ mod tests {
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
+    use effigy_containers::policy::restart::RestartPolicyStage;
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
@@ -1783,13 +1774,40 @@ mod tests {
             progress.frame_at(Duration::from_secs(20)),
             "starting the `web` stack; last: starting web; 20s elapsed"
         );
-        // Compose has returned and the runtime is now applying the restart
-        // policy: the frame names that operation and its wait, never the
-        // finished Compose call or its last event (effigy#460, Q-017).
-        super::restart_policy_source(&progress, "web");
+        // Compose has returned and the restart-policy apply begins: each of its
+        // stages names itself as it starts, so a stalled read names that read
+        // and never the finished Compose call or its last event (effigy#460,
+        // Q-017).
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::ComposeDeclaration,
+            None,
+        );
         assert_eq!(
             progress.frame_at(Duration::from_secs(30)),
-            "waiting for the runtime to apply `restart: unless-stopped` to the services of `web` that declare none; 30s elapsed"
+            "reading the Compose declaration of the `web` stack for services without a restart policy; waiting for `restart: unless-stopped` on the `web` stack; 30s elapsed"
+        );
+        // A stalled runtime inventory read keeps saying what it is reading.
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::RuntimeInventory,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(44)),
+            "reading the running containers of the `web` stack from the runtime; waiting for `restart: unless-stopped` on the `web` stack; 44s elapsed"
+        );
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::Apply,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(51)),
+            "asking the runtime to keep the containers of the `web` stack on `restart: unless-stopped`; waiting for `restart: unless-stopped` on the `web` stack; 51s elapsed"
         );
     }
 

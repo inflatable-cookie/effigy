@@ -58,12 +58,13 @@ fn split_host_port_cases() {
 fn a_failed_health_wait_returns_its_error_and_draws_no_step_output() {
     // Timeout 0 keeps the wait from probing: the contract under test is the
     // error a caller reports, and that a non-terminal run draws no step text.
-    let error = wait_for_ready("web", Some("tcp://127.0.0.1:9"), 0, None)
+    let error = wait_for_ready("container `web`", Some("tcp://127.0.0.1:9"), 0, None)
         .expect_err("an unreachable health check must fail the wait");
     assert_eq!(error.outcome(), "not_ready");
     assert!(error.to_string().contains(
-        "container `web` health check `tcp://127.0.0.1:9` did not become ready within 0s"
+        "the health check of container `web` (`tcp://127.0.0.1:9`) did not become ready within 0s"
     ));
+    assert_eq!(error.subject(), "container `web`");
     assert_eq!(effigy_ui::steps::mode(), effigy_ui::StepMode::Silent);
 }
 
@@ -92,7 +93,7 @@ fn a_definite_status_mismatch_ends_the_health_wait_at_once() {
     let check = format!("http://127.0.0.1:{port}/health");
     let started = std::time::Instant::now();
     // A long declared budget: a definite answer must not spend it.
-    let error = wait_for_ready("web", Some(&check), 300, None)
+    let error = wait_for_ready("container `web`", Some(&check), 300, None)
         .expect_err("a 500 is a definite refusal, not a slow start");
     assert_eq!(error.observed_status(), Some(500));
     assert_eq!(error.outcome(), "status_mismatch");

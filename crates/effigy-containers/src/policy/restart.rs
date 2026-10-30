@@ -19,6 +19,39 @@ use crate::EffectiveContainerPolicy;
 /// The restart policy a service gets when its stack declares none.
 pub const RESTART_POLICY: &str = "unless-stopped";
 
+/// One stage of the post-start restart-policy apply, in the order it runs.
+///
+/// The apply reads the Compose declarations, reads the runtime's container
+/// inventory, and only then may ask the runtime to update anything. A caller
+/// that shows progress names the stage now in flight, so a stalled read never
+/// claims an update was already sent (effigy#460, Q-017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartPolicyStage {
+    /// Reading the Compose files for the services that declare no policy.
+    ComposeDeclaration,
+    /// Reading the running containers of those services from the runtime.
+    RuntimeInventory,
+    /// Asking the runtime to keep those containers running.
+    Apply,
+}
+
+impl RestartPolicyStage {
+    /// The stage in the operator's words, for the stack or service `subject`.
+    pub fn description(self, subject: &str) -> String {
+        match self {
+            Self::ComposeDeclaration => format!(
+                "reading the Compose declaration of {subject} for services without a restart policy"
+            ),
+            Self::RuntimeInventory => {
+                format!("reading the running containers of {subject} from the runtime")
+            }
+            Self::Apply => format!(
+                "asking the runtime to keep the containers of {subject} on `restart: {RESTART_POLICY}`"
+            ),
+        }
+    }
+}
+
 /// Give every container `up` started the restart policy its stack did not
 /// declare. A file or container list that cannot be read, and an update the
 /// runtime refuses, are each named and the activation proceeds: the stack is
@@ -34,6 +67,26 @@ pub fn apply_after_start(
     compose_files: &[PathBuf],
     deadline: Option<Instant>,
 ) {
+    apply_after_start_observed(
+        repo_root,
+        policy,
+        project_name,
+        compose_files,
+        deadline,
+        &mut |_| {},
+    );
+}
+
+/// The same apply, reporting each stage as it starts.
+pub fn apply_after_start_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+    compose_files: &[PathBuf],
+    deadline: Option<Instant>,
+    stage: &mut dyn FnMut(RestartPolicyStage),
+) {
+    stage(RestartPolicyStage::ComposeDeclaration);
     let services = match undeclared_services(compose_files) {
         Ok(services) => services,
         Err(error) => {
@@ -44,6 +97,7 @@ pub fn apply_after_start(
     if services.is_empty() {
         return;
     }
+    stage(RestartPolicyStage::RuntimeInventory);
     let containers = match crate::exec::list_running_compose_containers_for_project_with_deadline(
         repo_root,
         policy,
@@ -67,6 +121,7 @@ pub fn apply_after_start(
     if containers.is_empty() {
         return;
     }
+    stage(RestartPolicyStage::Apply);
     if let Err(error) =
         crate::exec::set_restart_policy(repo_root, policy, &containers, RESTART_POLICY)
     {

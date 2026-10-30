@@ -699,7 +699,13 @@ During v0.x, MINOR bumps may include breaking changes.
   container's last output, instead of spending the whole health budget on an
   answer waiting cannot change (effigy#455). That container is the identity the
   runtime's own row reports for the service, so an explicit Compose
-  `container_name` reads its own logs and is the one `waiting_on` names.
+  `container_name` reads its own logs and is the one the diagnostic and
+  `waiting_on` name; when the runtime cannot name a container, the diagnostic
+  describes the environment and its primary service instead of calling the
+  environment a container. The restart-policy apply that follows Compose names
+  its own stages — the Compose declaration read, the runtime inventory read,
+  then the update — for the whole stack and for each shared service, so a
+  stalled read never claims an update was sent.
 
 ### Removed
 
