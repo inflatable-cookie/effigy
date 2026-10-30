@@ -679,7 +679,10 @@ During v0.x, MINOR bumps may include breaking changes.
   quiet output stay silent. Rendering is a single finished line, not a spinner.
   A readiness refusal carries its machine-readable `waiting_on` list in
   `--json`: one entry per service still unready, with its problem, and one for
-  a health read the runtime did not answer. Shared-service waits name the
+  a health read the runtime did not answer, naming that read (`container_list`
+  or `containers_inspect`), its probe number and, for an inspect, the container
+  names it covered. A failed read keeps that identity in the retry frame and in
+  the timeout diagnostic too. Shared-service waits name the
   machine gate, the runtime container read, the render publication, or the
   `docker compose up` they are in. A readiness frame names which of the probe's
   two runtime reads is in flight — the project's container list, then the

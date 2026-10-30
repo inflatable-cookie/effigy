@@ -164,7 +164,11 @@ Readiness is Running plus the service's own health check. Its progress names
 which of the probe's two runtime reads is running — the project's container
 list, or the inspect of the container names that list returned, with those
 names in the frame — because a stalled `ps` and a stalled `inspect` are
-different waits. A service whose health regresses after reporting healthy opens
+different waits. A read that fails keeps that identity: the retry frame and the
+timeout diagnostic name the read, its probe number and, for an inspect, the
+containers it was reading, and the `waiting_on` probe entry carries the same
+facts as `probe` (`container_list` or `containers_inspect`), `probe_number` and
+`containers`. A service whose health regresses after reporting healthy opens
 a fresh step with its own attempt and last check output. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
 one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers

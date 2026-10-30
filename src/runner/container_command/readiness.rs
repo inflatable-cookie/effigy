@@ -73,6 +73,68 @@ struct ServiceStep {
     step: TimedStep,
 }
 
+/// The runtime read a probe last started, kept through its failure so the retry
+/// frame, the human diagnostic and `waiting_on` all name that exact read and
+/// its subjects (effigy#460, Q-017).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbeRead {
+    /// Which probe attempt this read belonged to.
+    probe: u64,
+    stage: ProbeReadStage,
+}
+
+/// The two reads one project health probe makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProbeReadStage {
+    /// The project's container list.
+    Containers,
+    /// The inspect of these container names.
+    Inspection(Vec<String>),
+}
+
+impl ProbeRead {
+    /// The project's container list, the first read of a probe.
+    fn containers(probe: u64) -> Self {
+        Self {
+            probe,
+            stage: ProbeReadStage::Containers,
+        }
+    }
+
+    /// The read as a stable machine token.
+    fn token(&self) -> &'static str {
+        match self.stage {
+            ProbeReadStage::Containers => "container_list",
+            ProbeReadStage::Inspection(_) => "containers_inspect",
+        }
+    }
+
+    /// The containers this read covered, when it was an inspect.
+    fn inspected(&self) -> Option<&[String]> {
+        match &self.stage {
+            ProbeReadStage::Containers => None,
+            ProbeReadStage::Inspection(containers) => Some(containers),
+        }
+    }
+
+    /// The exact read in the operator's words, for `project`.
+    fn description(&self, project: &str) -> String {
+        match &self.stage {
+            ProbeReadStage::Containers => format!(
+                "the container list of project `{project}` (probe {})",
+                self.probe
+            ),
+            ProbeReadStage::Inspection(containers) => format!(
+                "the inspect of {} container{} of project `{project}`: {} (probe {})",
+                containers.len(),
+                if containers.len() == 1 { "" } else { "s" },
+                bounded_names(containers),
+                self.probe
+            ),
+        }
+    }
+}
+
 /// Wait until every service of `policy`'s environment reports ready.
 ///
 /// The wait is bounded by `deadline`, the one budget the bring-up shares with
@@ -95,6 +157,7 @@ pub(super) fn await_services_ready(
     let mut tracker = SharedFailureTracker::default();
     let mut last_services: Vec<ServiceHealth> = Vec::new();
     let mut last_probe_error: Option<String> = None;
+    let mut last_failed_read: Option<ProbeRead> = None;
     let mut observed = false;
     let mut probes = 0_u64;
     let mut known_counts: Option<(u64, u64)> = None;
@@ -120,31 +183,50 @@ pub(super) fn await_services_ready(
             known_counts,
         );
         // The probe is two runtime reads; the frame follows the one in flight,
-        // naming the containers the inspect will read (effigy#460, Q-017).
+        // naming the containers the inspect will read, and a failed read keeps
+        // that identity for the retry frame and the refusal (effigy#460,
+        // Q-017). The closure's borrow ends before the result is reported.
         let budget = probe_deadline.saturating_duration_since(Instant::now());
-        let mut probe_stage = |stage: HealthProbeStage<'_>| {
-            observe_probe_stage(
-                &progress,
-                &policy.project_name,
-                probes,
-                budget,
-                known_counts,
-                stage,
-            );
+        let mut in_flight_read: Option<ProbeRead> = None;
+        let probe_result = {
+            let mut probe_stage = |stage: HealthProbeStage<'_>| {
+                in_flight_read = Some(match stage {
+                    HealthProbeStage::ListingContainers => ProbeRead::containers(probes),
+                    HealthProbeStage::InspectingContainers { containers } => ProbeRead {
+                        probe: probes,
+                        stage: ProbeReadStage::Inspection(containers.to_vec()),
+                    },
+                });
+                observe_probe_stage(
+                    &progress,
+                    &policy.project_name,
+                    probes,
+                    budget,
+                    known_counts,
+                    stage,
+                );
+            };
+            inspect_project_health_observed(
+                repo_root,
+                policy,
+                Some(probe_deadline),
+                &mut probe_stage,
+            )
         };
-        match inspect_project_health_observed(
-            repo_root,
-            policy,
-            Some(probe_deadline),
-            &mut probe_stage,
-        ) {
+        match probe_result {
             Ok(services) if services.is_empty() => {
                 for waiting in steps.values() {
                     waiting.step.finish_clear();
                 }
                 parent.finish_clear();
                 return Ok(if observed && last_probe_error.is_some() {
-                    readiness_failure(policy, &last_services, last_probe_error, &steps)?
+                    readiness_failure(
+                        policy,
+                        &last_services,
+                        last_probe_error,
+                        last_failed_read.as_ref(),
+                        &steps,
+                    )?
                 } else {
                     ReadinessReport {
                         end: ReadinessEnd::NothingToAwait,
@@ -155,6 +237,7 @@ pub(super) fn await_services_ready(
             Ok(services) => {
                 observed = true;
                 last_probe_error = None;
+                last_failed_read = None;
                 last_services = services.clone();
                 observe_parent(&progress, &services);
                 known_counts = Some((
@@ -191,13 +274,20 @@ pub(super) fn await_services_ready(
                     return Err(readiness_wait_error(
                         policy,
                         diagnosis,
-                        waiting_on_entries(&services, None, &policy.project_name),
+                        waiting_on_entries(&services, None, None, &policy.project_name),
                     ));
                 }
             }
             Err(error) => {
-                observe_probe_failure(&progress, &policy.project_name, &error.to_string());
+                // A backend-selection failure can read the same for either
+                // read, so the stage is reported from the read that started,
+                // not inferred from the error text.
+                let read = in_flight_read
+                    .clone()
+                    .unwrap_or_else(|| ProbeRead::containers(probes));
+                observe_probe_failure(&progress, &policy.project_name, &read, &error.to_string());
                 last_probe_error = Some(error.to_string());
+                last_failed_read = Some(read);
             }
         }
         if Instant::now() >= deadline {
@@ -224,7 +314,13 @@ pub(super) fn await_services_ready(
             observed: last_services,
         });
     }
-    readiness_failure(policy, &last_services, last_probe_error, &steps)
+    readiness_failure(
+        policy,
+        &last_services,
+        last_probe_error,
+        last_failed_read.as_ref(),
+        &steps,
+    )
 }
 
 /// The parent step after a probe that read every service: the services it is
@@ -319,7 +415,8 @@ fn observe_probe_started(
 /// service still unready, and one for a health read the runtime did not answer.
 fn waiting_on_entries(
     services: &[ServiceHealth],
-    probe_error: Option<&str>,
+    failed_read: Option<&ProbeRead>,
+    error: Option<&str>,
     project: &str,
 ) -> Vec<serde_json::Value> {
     let mut waits: Vec<serde_json::Value> = unready(services)
@@ -334,13 +431,18 @@ fn waiting_on_entries(
             })
         })
         .collect();
-    if let Some(error) = probe_error {
-        waits.push(serde_json::json!({
+    if let (Some(read), Some(error)) = (failed_read, error) {
+        let mut entry = serde_json::json!({
             "kind": "probe",
             "project": project,
-            "probe": "health read",
+            "probe": read.token(),
+            "probe_number": read.probe,
             "error": first_line(error),
-        }));
+        });
+        if let Some(containers) = read.inspected() {
+            entry["containers"] = serde_json::json!(containers);
+        }
+        waits.push(entry);
     }
     waits
 }
@@ -364,10 +466,13 @@ fn readiness_wait_error(
 }
 
 /// The parent step after a probe the runtime could not answer: it names the
-/// exact health read it is waiting on, with the error that read returned.
-fn observe_probe_failure(progress: &ProgressSource, project: &str, error: &str) {
+/// exact read and subjects it was in, with the error that read returned.
+fn observe_probe_failure(progress: &ProgressSource, project: &str, read: &ProbeRead, error: &str) {
     progress.update(
-        format!("waiting for the runtime to answer the health read of project `{project}`"),
+        format!(
+            "waiting for the runtime to answer {}",
+            read.description(project)
+        ),
         None,
         Some(first_line(error)),
     );
@@ -409,23 +514,43 @@ fn readiness_failure(
     policy: &EffectiveContainerPolicy,
     services: &[ServiceHealth],
     probe_error: Option<String>,
+    failed_read: Option<&ProbeRead>,
     steps: &BTreeMap<String, ServiceStep>,
 ) -> Result<ReadinessReport, RunnerError> {
     let logs = exited_logs(&policy.repo_root, policy, services);
+    // The diagnostic says which read failed and what it covered; the JSON keeps
+    // the same read as a token, its probe number and its container names.
+    let read_error = probe_error
+        .as_deref()
+        .map(|error| probe_read_error(&policy.project_name, failed_read, error));
     let diagnostic = readiness_diagnostic(
         &policy.name,
         services,
         policy.health_timeout_secs,
         &logs,
-        probe_error.as_deref(),
+        read_error.as_deref(),
     );
     for service in unready(services) {
         if let Some(waiting) = steps.get(&service.service) {
             waiting.step.fail(service.problem());
         }
     }
-    let waiting_on = waiting_on_entries(services, probe_error.as_deref(), &policy.project_name);
+    let waiting_on = waiting_on_entries(
+        services,
+        failed_read,
+        probe_error.as_deref(),
+        &policy.project_name,
+    );
     Err(readiness_wait_error(policy, diagnostic, waiting_on))
+}
+
+/// The diagnostic's account of a read that failed: the exact read, the
+/// subjects it covered and the error it returned (effigy#460, Q-017).
+fn probe_read_error(project: &str, failed_read: Option<&ProbeRead>, error: &str) -> String {
+    match failed_read {
+        Some(read) => format!("{}: {}", read.description(project), first_line(error)),
+        None => first_line(error),
+    }
 }
 
 /// The last log line of every service that stopped instead of starting.
@@ -589,7 +714,14 @@ mod tests {
             ),
             health("db", "running", Some(HealthState::Healthy), 0, None),
         ];
-        let waits = waiting_on_entries(&services, Some("docker: daemon not responding"), "demo");
+        // A failed container-list read names that read and its probe number.
+        let list = ProbeRead::containers(3);
+        let waits = waiting_on_entries(
+            &services,
+            Some(&list),
+            Some("docker: daemon not responding"),
+            "demo",
+        );
         assert_eq!(waits.len(), 2, "{waits:?}");
         assert_eq!(waits[0]["kind"], "service");
         assert_eq!(waits[0]["service"], "web");
@@ -599,7 +731,34 @@ mod tests {
         );
         assert_eq!(waits[1]["kind"], "probe");
         assert_eq!(waits[1]["project"], "demo");
+        assert_eq!(waits[1]["probe"], "container_list");
+        assert_eq!(waits[1]["probe_number"], 3);
         assert_eq!(waits[1]["error"], "docker: daemon not responding");
+        assert!(
+            waits[1].get("containers").is_none(),
+            "a list read inspected no containers: {waits:?}"
+        );
+
+        // A failed inspect read carries the containers it was reading.
+        let inspect = ProbeRead {
+            probe: 4,
+            stage: ProbeReadStage::Inspection(vec![
+                "demo-web-1".to_owned(),
+                "demo-db-1".to_owned(),
+            ]),
+        };
+        let waits = waiting_on_entries(
+            &services,
+            Some(&inspect),
+            Some("docker: daemon not responding"),
+            "demo",
+        );
+        assert_eq!(waits[1]["probe"], "containers_inspect");
+        assert_eq!(waits[1]["probe_number"], 4);
+        assert_eq!(
+            waits[1]["containers"],
+            serde_json::json!(["demo-web-1", "demo-db-1"])
+        );
     }
 
     #[test]
@@ -742,11 +901,54 @@ mod tests {
         observe_probe_failure(
             &progress,
             "demo",
+            &ProbeRead::containers(3),
             "docker: daemon not responding\nsecond line",
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(30)),
-            "waiting for the runtime to answer the health read of project `demo`; last: docker: daemon not responding; 30s elapsed"
+            "waiting for the runtime to answer the container list of project `demo` (probe 3); last: docker: daemon not responding; 30s elapsed"
+        );
+        // An inspect failure names the containers it was reading, even when
+        // the error text is identical to the list read's.
+        observe_probe_failure(
+            &progress,
+            "demo",
+            &ProbeRead {
+                probe: 4,
+                stage: ProbeReadStage::Inspection(vec![
+                    "demo-web-1".to_owned(),
+                    "demo-db-1".to_owned(),
+                ]),
+            },
+            "docker: daemon not responding\nsecond line",
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(31)),
+            "waiting for the runtime to answer the inspect of 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4); last: docker: daemon not responding; 31s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_described_with_its_subjects_and_its_error() {
+        let inspect = ProbeRead {
+            probe: 5,
+            stage: ProbeReadStage::Inspection(vec!["demo-web-1".to_owned()]),
+        };
+        assert_eq!(
+            probe_read_error(
+                "demo-web-renamed",
+                Some(&inspect),
+                "docker: daemon not responding\nsecond line",
+            ),
+            "the inspect of 1 container of project `demo-web-renamed`: `demo-web-1` (probe 5): docker: daemon not responding"
+        );
+        assert_eq!(
+            probe_read_error(
+                "demo-web-renamed",
+                Some(&ProbeRead::containers(2)),
+                "docker: daemon not responding",
+            ),
+            "the container list of project `demo-web-renamed` (probe 2): docker: daemon not responding"
         );
     }
 
