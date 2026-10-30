@@ -58,6 +58,39 @@
 //!   owner's loss, a coordinated down or a listener failure. Every cause closes
 //!   the socket, wipes the key and settles the run once.
 //!
+//! # Path (a): the detached host supervisor, and its two prerequisites
+//!
+//! The owner's ruling selects a supervisor that starts *before* the session run
+//! is adopted and before the listener exists, performs the activation
+//! transaction there, and then serves and retires in that same process
+//! (`ServingOwner::adopt_production` already binds that shape: it consumes
+//! `OwnedWorkspaceChannel`, which only the activating process can build).
+//!
+//! Two things are missing from this head before that supervisor can be proven
+//! end to end, and neither is a value this module may invent:
+//!
+//! 1. **A production activation caller.** `environment::workspace::up_prepared`
+//!    has only test call sites; `PublishInputs` and `ReservedGuestInput` have
+//!    only test constructors. A detached supervisor's production branch can
+//!    therefore only refuse until #452 (with #506's planner) supplies it.
+//! 2. **A fixture that may admit a session run.** A disposable activation still
+//!    has to begin a real session run, and `SessionRef::admit` borrows the
+//!    environment, which requires `resources.state='active'` at the borrowed
+//!    generation. In this head the only writers of that row are the container
+//!    activation (needs `PublishInputs`) and the kernel's own
+//!    `run::attachments::publish_active_state`, which is `pub(crate)`. The
+//!    existing in-crate proof reaches it with a raw store `UPDATE` from a test
+//!    (`workspace_client/tests.rs`, `with_admitted_session`); production code
+//!    cannot, and adding a writer here would be the second activation authority
+//!    the brief forbids. So the process-lifetime proof needs a decision:
+//!    a test-support activation crate (or a kernel test hook) for the
+//!    disposable activation, or #506/#452's planner landed first.
+//!
+//! The process-lifetime proof the brief asks for is exactly what those two
+//! prerequisites gate: start this supervisor through the real kernel launch
+//! path, let the initiating CLI exit, and read the still-bound listener and the
+//! live session run from a third process.
+//!
 //! # What a *detached process* still needs from the kernel
 //!
 //! Holding this custody in another process needs a release/adopt protocol the
