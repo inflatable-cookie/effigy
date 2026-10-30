@@ -1684,7 +1684,28 @@ fn classify_environment(
 fn nonsecret_host_environment(name: &str) -> bool {
     matches!(
         name,
-        "LC_ALL"
+        "NEXTEST"
+            | "NEXTEST_RUN_ID"
+            | "NEXTEST_TEST_GROUP"
+            | "NEXTEST_TEST_GROUP_SLOT"
+            | "NEXTEST_TEST_GLOBAL_SLOT"
+            | "NEXTEST_PROFILE"
+            | "NEXTEST_TEST_NAME"
+            | "NEXTEST_BINARY_ID"
+            | "NEXTEST_ATTEMPT"
+            | "NEXTEST_EXECUTION_MODE"
+            | "CARGO_INCREMENTAL"
+            | "CARGO_MANIFEST_DIR"
+            | "CARGO_MANIFEST_PATH"
+            | "CARGO_PKG_NAME"
+            | "CARGO_PKG_VERSION"
+            | "MallocNanoZone"
+            | "OSLogRateLimit"
+            | "NoDefaultCurrentDirectoryInExePath"
+            | "LESS"
+            | "CODEX_CI"
+            | "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS"
+            | "LC_ALL"
             | "LC_CTYPE"
             | "LC_MESSAGES"
             | "LC_COLLATE"
@@ -2620,6 +2641,8 @@ mod tests {
         use effigy_kernel::custody::EnvValue;
         let values = [
             ("PATH", "/bin"),
+            ("NEXTEST_ATTEMPT", "1"),
+            ("CARGO_INCREMENTAL", "1"),
             ("TOKEN", "hidden-value"),
             ("ALIAS", "prefix-hidden-value-suffix"),
             ("UNKNOWN", "opaque"),
@@ -2649,7 +2672,13 @@ mod tests {
                 "{key}"
             );
         }
-        for key in ["PATH", "MODE", "PUBLIC"] {
+        for key in [
+            "PATH",
+            "MODE",
+            "PUBLIC",
+            "NEXTEST_ATTEMPT",
+            "CARGO_INCREMENTAL",
+        ] {
             assert!(
                 matches!(
                     classified.get(std::ffi::OsStr::new(key)),
