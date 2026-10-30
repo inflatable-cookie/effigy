@@ -1,13 +1,20 @@
 //! Additive objects for reserved activation. No function in this module moves
 //! a selector; the owning run commits a SelectionObligation before CAS.
-#![allow(dead_code)] // The workspace-client owner installs the final consuming caller.
+#![allow(dead_code)] // `up_prepared`'s input builder constructs the probe; its
+                     // reserved-publication caller is a separate task, and the
+                     // selection readback helpers await the serving driver.
 
 use super::*;
+use crate::runner::workspace_client::guest_probe::GuestProbeReply;
+use crate::runner::workspace_transport::qualification::{
+    GuestChannelProbe, GuestDialEvidence, ResolvedAlias,
+};
 use effigy_containers::environment::{EnvError, EnvRun};
 use effigy_kernel::id::Digest;
-use effigy_kernel::observe::{Evidence, Observed};
+use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::workspace_session::{
-    BoundPlatform, GuestBinaryReceipt, GuestObject, LoaderFamily, WorkspaceActivationReservation,
+    BoundPlatform, ContainerIdentity, GuestBinaryReceipt, GuestObject, LoaderFamily,
+    WorkspaceActivationReservation,
 };
 
 pub(super) fn stage_binary(
@@ -148,121 +155,392 @@ pub(super) fn stage_document(
     Ok(())
 }
 
-/// Every command executes the verified digest object in the exact bound target,
-/// never the stable entry/current selector. Captures and process lifetimes are
-/// bounded by the qualification caller's remaining budget.
+/// The production guest-observation adapter. Every command executes the exact
+/// immutable digest object in the exact host-verified container, never the
+/// stable entry/current selector and never a Compose service alias.
+///
+/// The target is owned, and the staged object is late-bound: the publication
+/// only stages the object after it has received this adapter, so the first
+/// observation binds it and every later call must name that same object. Each
+/// observation is one bounded Compose exec whose shell gates the object's
+/// digest and then `exec`s it, so a replaced object refuses before the guest
+/// program runs.
 #[derive(Debug)]
 pub(in crate::runner) struct StagedGuestProbe<'a> {
-    pub(in crate::runner) repo_root: &'a Path,
-    pub(in crate::runner) policy: &'a EffectiveContainerPolicy,
-    pub(in crate::runner) object: &'a GuestObject,
-    pub(in crate::runner) target: &'a WorkspaceContainerIdentity,
+    repo_root: &'a Path,
+    policy: &'a EffectiveContainerPolicy,
+    target: ContainerIdentity,
+    object: Option<GuestObject>,
 }
 
-impl StagedGuestProbe<'_> {
-    fn probe(
+/// The staged-object gate's exit codes. They are this adapter's contract with
+/// the shell that runs the object, never a guest program's exit status.
+const EXIT_OBJECT_ABSENT: i32 = 3;
+const EXIT_NO_HASH_TOOL: i32 = 4;
+const EXIT_OBJECT_DIFFERS: i32 = 5;
+/// The guest entry's reply schema. A reply that does not name it is another
+/// program's output.
+const GUEST_PROBE_SCHEMA: &str = "effigy.guest-probe.v1";
+/// The prepared alias the host adds to the guest's own hosts file, and the most
+/// time the guest may spend on its own dial.
+const PREPARED_ALIAS: &str = "effigy-host";
+const GUEST_DIAL_CEILING_MS: u128 = 30_000;
+const PROBE_STDOUT_BYTES: u64 = 64 * 1024;
+const PROBE_STDERR_BYTES: u64 = 8 * 1024;
+
+impl<'a> StagedGuestProbe<'a> {
+    /// Bind the host-verified target this publication applies to. The staged
+    /// object is not known yet; `identity`/`context_dial` bind it when the
+    /// publication hands over the object it actually staged.
+    ///
+    /// `target` is copied, so the caller keeps no borrow alive and can move its
+    /// own bindings into `ReservedGuestInput` without a self-reference.
+    pub(in crate::runner) fn new(
+        repo_root: &'a Path,
+        policy: &'a EffectiveContainerPolicy,
+        target: &ContainerIdentity,
+    ) -> Result<Self, RunnerError> {
+        let full_id = target.container_id.len() == 64
+            && target
+                .container_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+        if !full_id || target.vm_boot_id.trim().is_empty() {
+            return Err(RunnerError::task_invocation(
+                "workspace guest probe needs the host-verified full container id and boot, not a \
+                 service alias or a short id",
+            ));
+        }
+        Ok(Self {
+            repo_root,
+            policy,
+            target: target.clone(),
+            object: None,
+        })
+    }
+
+    /// The exact target this adapter may exec in. Another container, or a boot
+    /// that moved on, is refused before any effect.
+    fn covers(&self, target: &WorkspaceContainerIdentity) -> bool {
+        target
+            .container_id
+            .eq_ignore_ascii_case(&self.target.container_id)
+            && target.vm_boot_id == self.target.vm_boot_id
+    }
+
+    /// The object this adapter executes: the first observation's, which every
+    /// later observation must repeat.
+    fn bind_object(&mut self, object: &GuestObject) -> Result<GuestObject, UnknownReason> {
+        if !object.path.starts_with('/') || object.digest == Digest([0; 32]) {
+            return Err(UnknownReason::Inconsistent(
+                "the staged guest probe was asked about no immutable object".into(),
+            ));
+        }
+        match &self.object {
+            Some(bound) if bound != object => Err(UnknownReason::Inconsistent(
+                "the staged guest probe was asked about another immutable object".into(),
+            )),
+            Some(bound) => Ok(bound.clone()),
+            None => {
+                self.object = Some(object.clone());
+                Ok(object.clone())
+            }
+        }
+    }
+
+    /// One bounded observation through the Compose exec path.
+    fn observe(
         &mut self,
-        args: &str,
+        target: &WorkspaceContainerIdentity,
+        object: &GuestObject,
+        args: Vec<String>,
         budget: std::time::Duration,
-    ) -> Result<crate::runner::workspace_client::guest_probe::GuestProbeReply, RunnerError> {
+        evidence: &str,
+    ) -> Observed<GuestProbeReply> {
+        if !self.covers(target) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the staged guest probe was asked about another container or boot".into(),
+            ));
+        }
+        let object = match self.bind_object(object) {
+            Ok(object) => object,
+            Err(reason) => return Observed::Unknown(reason),
+        };
         let started = std::time::Instant::now();
-        let deadline = started
+        let Some(deadline) = started
             .checked_add(budget)
             .filter(|deadline| *deadline > started)
-            .ok_or_else(|| RunnerError::task_invocation("staged guest probe budget expired"))?;
-        let mut budget = BoundedCommandBudget::new(started, deadline, 65536, 8192);
-        let mut guest = ComposeWorkspaceGuest::bounded(
-            self.repo_root,
-            self.policy,
-            &self.target.container_id,
-            &mut budget,
-        );
-        let script = format!("{} {args}", shell_quote(&self.object.path));
-        let captured = guest.run_script(&script, false)?;
-        if !captured.status.success() || std::time::Instant::now() >= deadline {
-            return Err(RunnerError::task_invocation(
-                "staged guest observation is unavailable",
+        else {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "staged guest observation".into(),
+            });
+        };
+        let script = staged_object_probe_script(&object, &args);
+        let mut command_budget =
+            BoundedCommandBudget::new(started, deadline, PROBE_STDOUT_BYTES, PROBE_STDERR_BYTES);
+        let captured = {
+            let mut guest = ComposeWorkspaceGuest::bounded(
+                self.repo_root,
+                self.policy,
+                &self.target.container_id,
+                &mut command_budget,
+            );
+            guest.run_script(&script, false)
+        };
+        // A capture that ended at the deadline is a timeout even when the
+        // process managed to print something first.
+        let expired = std::time::Instant::now() >= deadline;
+        let captured = match captured {
+            Ok(_) if expired => {
+                return Observed::Unknown(UnknownReason::TimedOut {
+                    phase: "staged guest observation".into(),
+                })
+            }
+            Ok(captured) => captured,
+            Err(_) if expired => {
+                return Observed::Unknown(UnknownReason::TimedOut {
+                    phase: "staged guest observation".into(),
+                })
+            }
+            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        };
+        match captured.status.code() {
+            Some(0) => {}
+            Some(EXIT_OBJECT_ABSENT) => {
+                return Observed::Absent(AbsenceProof::NoFile { name: object.path })
+            }
+            Some(EXIT_NO_HASH_TOOL) => {
+                return Observed::Unknown(UnknownReason::ToolUnavailable(
+                    "the guest has no SHA-256 utility, so the staged object cannot be pinned \
+                     before it runs"
+                        .into(),
+                ))
+            }
+            Some(EXIT_OBJECT_DIFFERS) => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "the staged object differs from the requested immutable digest".into(),
+                ))
+            }
+            code => {
+                let detail = String::from_utf8_lossy(&captured.stderr);
+                let detail = detail.trim();
+                return Observed::Unknown(UnknownReason::Inconsistent(format!(
+                    "the bounded staged guest probe ended with {}{}",
+                    code.map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
+                    if detail.is_empty() {
+                        " and reported nothing".to_owned()
+                    } else {
+                        format!(": {detail}")
+                    }
+                )));
+            }
+        }
+        let reply: GuestProbeReply = match serde_json::from_slice(&captured.stdout) {
+            Ok(reply) => reply,
+            Err(_) => {
+                return Observed::Unknown(UnknownReason::Unparsable(
+                    "the bounded staged guest probe returned no probe document".into(),
+                ))
+            }
+        };
+        if reply.schema != GUEST_PROBE_SCHEMA {
+            return Observed::Unknown(UnknownReason::Unparsable(
+                "the bounded staged guest probe returned another schema".into(),
             ));
         }
-        let reply: crate::runner::workspace_client::guest_probe::GuestProbeReply =
-            serde_json::from_slice(&captured.stdout).map_err(|_| {
-                RunnerError::task_invocation("staged guest observation is malformed")
-            })?;
-        if reply.schema != "effigy.guest-probe.v1" || reply.identity.compare(self.target).is_err() {
-            return Err(RunnerError::task_invocation(
-                "independent guest identity differs from the bound target",
-            ));
+        // The guest's independent identity must be this publication's target:
+        // full container id, VM boot, platform and libc. A mismatch is
+        // uncertainty about what was observed, never a value.
+        if let Err(refusal) = reply.identity.compare(target) {
+            return Observed::Unknown(UnknownReason::Inconsistent(format!(
+                "the staged guest reported another identity: {refusal}"
+            )));
         }
-        Ok(reply)
+        Observed::Verified(
+            reply,
+            Evidence::new(evidence.into(), None).expect("fixed evidence"),
+        )
     }
 
-    pub(super) fn identity(&mut self, budget: std::time::Duration) -> Result<(), RunnerError> {
-        self.probe("__guest-identity", budget).map(|_| ())
+    /// The object bound by the publication's first observation, for the channel
+    /// methods that receive only a target.
+    fn bound_object(&self) -> Result<GuestObject, UnknownReason> {
+        self.object.clone().ok_or_else(|| {
+            UnknownReason::Inconsistent(
+                "the staged guest probe has no bound object to execute".into(),
+            )
+        })
     }
 }
 
-impl crate::runner::workspace_transport::qualification::GuestChannelProbe for StagedGuestProbe<'_> {
+/// The shell that gates and then runs the staged object.
+///
+/// The digest is compared in the same process that `exec`s the path, so there
+/// is no window in which a replaced object can be read as the pinned one. The
+/// digest tool is the one `GuestReader::file_sha256` already requires of the
+/// image; a guest without one is an unavailable observation, never a pass.
+fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
+    let path = shell_quote(&object.path);
+    let digest = object.digest.hex();
+    let args = args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "p={path}\n\
+         [ -f \"$p\" ] || exit {absent}\n\
+         if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum \"$p\")\n\
+         elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 \"$p\")\n\
+         elif command -v openssl >/dev/null 2>&1; then h=$(openssl dgst -sha256 \"$p\")\n\
+         else exit {no_tool}\nfi\n\
+         found=\n\
+         for token in $h; do [ \"$token\" = {digest} ] && found=1; done\n\
+         [ \"$found\" = 1 ] || exit {differs}\n\
+         exec \"$p\" {args}",
+        absent = EXIT_OBJECT_ABSENT,
+        no_tool = EXIT_NO_HASH_TOOL,
+        differs = EXIT_OBJECT_DIFFERS,
+    )
+}
+
+/// A remaining budget the guest entry may spend on its own dial: never zero,
+/// never more than the guest entry's own ceiling.
+fn guest_dial_ms(budget: std::time::Duration) -> u128 {
+    budget.as_millis().clamp(1, GUEST_DIAL_CEILING_MS)
+}
+
+/// The guest entry's own argv for each observation. `effigy_cli::parse_command`
+/// is the contract these must satisfy, at the guest entry's `GuestProbeArgs`
+/// surface; the proofs feed these exact vectors back through it.
+fn identity_args() -> Vec<String> {
+    vec!["__guest-identity".to_owned()]
+}
+
+fn resolve_args() -> Vec<String> {
+    vec!["__guest-reach".to_owned(), "--resolve".to_owned()]
+}
+
+fn dial_args(endpoint: &str, pin: &Digest, budget: std::time::Duration) -> Vec<String> {
+    vec![
+        "__guest-reach".to_owned(),
+        "--dial".to_owned(),
+        "--endpoint".to_owned(),
+        endpoint.to_owned(),
+        "--pin".to_owned(),
+        format!("sha256:{}", pin.hex()),
+        "--timeout-ms".to_owned(),
+        guest_dial_ms(budget).to_string(),
+    ]
+}
+
+fn context_dial_args(context: &GuestObject, budget: std::time::Duration) -> Vec<String> {
+    vec![
+        "__guest-reach".to_owned(),
+        "--context-dial".to_owned(),
+        "--context".to_owned(),
+        context.path.clone(),
+        "--digest".to_owned(),
+        context.digest.hex(),
+        "--timeout-ms".to_owned(),
+        guest_dial_ms(budget).to_string(),
+    ]
+}
+
+impl GuestChannelProbe for StagedGuestProbe<'_> {
     fn resolve(
         &mut self,
         target: &WorkspaceContainerIdentity,
         alias: &str,
         budget: std::time::Duration,
-    ) -> Observed<crate::runner::workspace_transport::qualification::ResolvedAlias> {
-        let result = if target != self.target || alias != "effigy-host" {
-            Err(RunnerError::task_invocation(
-                "alias probe targets another guest",
-            ))
-        } else {
-            self.probe("__guest-reach --resolve", budget)
-                .and_then(|reply| {
-                    reply
-                        .address
-                        .map(|address| {
-                            crate::runner::workspace_transport::qualification::ResolvedAlias {
-                                target: target.clone(),
-                                address,
-                            }
-                        })
-                        .ok_or_else(|| {
-                            RunnerError::task_invocation("guest did not resolve the prepared alias")
-                        })
-                })
+    ) -> Observed<ResolvedAlias> {
+        if alias != PREPARED_ALIAS {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the alias probe was asked for an alias the host never prepared".into(),
+            ));
+        }
+        let object = match self.bound_object() {
+            Ok(object) => object,
+            Err(reason) => return Observed::Unknown(reason),
         };
-        observation(result)
+        match self.observe(
+            target,
+            &object,
+            resolve_args(),
+            budget,
+            "bounded exec of the staged digest object resolved the prepared alias",
+        ) {
+            Observed::Verified(reply, evidence) => match reply.address {
+                Some(address) => Observed::Verified(
+                    ResolvedAlias {
+                        target: target.clone(),
+                        address,
+                    },
+                    evidence,
+                ),
+                None => Observed::Unknown(UnknownReason::Inconsistent(
+                    "the alias probe reported no address".into(),
+                )),
+            },
+            Observed::Absent(proof) => Observed::Absent(proof),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
     }
+
     fn dial(
         &mut self,
         target: &WorkspaceContainerIdentity,
         endpoint: &str,
         pin: &Digest,
         budget: std::time::Duration,
-    ) -> Observed<crate::runner::workspace_transport::qualification::GuestDialEvidence> {
-        if target != self.target {
-            return observation(Err(RunnerError::task_invocation(
-                "dial probe targets another guest",
-            )));
+    ) -> Observed<GuestDialEvidence> {
+        // The prepared endpoint is the alias plus the assigned port; anything
+        // else is a dial the host never prepared.
+        let prepared = endpoint
+            .strip_prefix(&format!("{PREPARED_ALIAS}:"))
+            .and_then(|port| port.parse::<u16>().ok())
+            .is_some_and(|port| port != 0);
+        if !prepared || *pin == Digest([0; 32]) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the dial probe was asked for an endpoint or pin the host never prepared".into(),
+            ));
         }
-        let args = format!(
-            "__guest-reach --dial --endpoint {} --pin {} --timeout-ms {}",
-            shell_quote(endpoint),
-            shell_quote(&format!("sha256:{}", pin.hex())),
-            budget.as_millis().min(30000)
-        );
-        observation(self.probe(&args, budget).and_then(|reply| {
-            let peer = reply
-                .peer
-                .ok_or_else(|| RunnerError::task_invocation("guest TLS peer is absent"))?;
-            if reply.pin.as_deref() != Some(format!("sha256:{}", pin.hex()).as_str()) {
-                return Err(RunnerError::task_invocation("guest TLS pin differs"));
+        let expected = format!("sha256:{}", pin.hex());
+        let object = match self.bound_object() {
+            Ok(object) => object,
+            Err(reason) => return Observed::Unknown(reason),
+        };
+        let args = dial_args(endpoint, pin, budget);
+        match self.observe(
+            target,
+            &object,
+            args,
+            budget,
+            "bounded exec of the staged digest object dialled the session's pinned listener",
+        ) {
+            Observed::Verified(reply, evidence) => {
+                let Some(peer) = reply.peer.filter(|peer| peer.port() != 0) else {
+                    return Observed::Unknown(UnknownReason::Inconsistent(
+                        "the pinned dial reported no peer".into(),
+                    ));
+                };
+                if reply.pin.as_deref() != Some(expected.as_str()) {
+                    return Observed::Unknown(UnknownReason::Inconsistent(
+                        "the pinned dial observed another session pin".into(),
+                    ));
+                }
+                Observed::Verified(
+                    GuestDialEvidence {
+                        target: target.clone(),
+                        peer,
+                        pin: pin.clone(),
+                    },
+                    evidence,
+                )
             }
-            Ok(
-                crate::runner::workspace_transport::qualification::GuestDialEvidence {
-                    target: target.clone(),
-                    peer,
-                    pin: pin.clone(),
-                },
-            )
-        }))
+            Observed::Absent(proof) => Observed::Absent(proof),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
     }
 }
 
@@ -270,55 +548,66 @@ impl super::reserved_guest::WorkspaceGuestProbe for StagedGuestProbe<'_> {
     fn context_dial(
         &mut self,
         target: &WorkspaceContainerIdentity,
-        object: &GuestObject,
+        staged_binary: &GuestObject,
         context: &GuestObject,
         budget: std::time::Duration,
-    ) -> Observed<crate::runner::workspace_transport::qualification::GuestDialEvidence> {
-        if target != self.target || object != self.object {
-            return observation(Err(RunnerError::task_invocation(
-                "context probe targets another guest or executable",
-            )));
+    ) -> Observed<GuestDialEvidence> {
+        // The full-context dial runs the pinned executable, and the executable
+        // itself re-reads this exact document, hashes itself against the
+        // document's artifact digest and dials the document's pinned alias
+        // before any TLS byte leaves the guest.
+        let args = context_dial_args(context, budget);
+        match self.observe(
+            target,
+            staged_binary,
+            args,
+            budget,
+            "bounded exec of the staged digest object dialled the session's pinned alias",
+        ) {
+            Observed::Verified(reply, evidence) => {
+                let Some(peer) = reply.peer.filter(|peer| peer.port() != 0) else {
+                    return Observed::Unknown(UnknownReason::Inconsistent(
+                        "the full-context dial reported no peer".into(),
+                    ));
+                };
+                let Some(pin) = reply
+                    .pin
+                    .as_deref()
+                    .and_then(|pin| pin.strip_prefix("sha256:"))
+                    .and_then(Digest::parse_hex)
+                else {
+                    return Observed::Unknown(UnknownReason::Inconsistent(
+                        "the full-context dial reported no canonical pin".into(),
+                    ));
+                };
+                Observed::Verified(
+                    GuestDialEvidence {
+                        target: target.clone(),
+                        peer,
+                        pin,
+                    },
+                    evidence,
+                )
+            }
+            Observed::Absent(proof) => Observed::Absent(proof),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
         }
-        let args = format!(
-            "__guest-reach --context-dial --context {} --digest {} --timeout-ms {}",
-            shell_quote(&context.path),
-            shell_quote(&context.digest.hex()),
-            budget.as_millis().min(30000)
-        );
-        observation(self.probe(&args, budget).and_then(|reply| {
-            let peer = reply
-                .peer
-                .ok_or_else(|| RunnerError::task_invocation("full-context TLS peer is absent"))?;
-            let pin = reply
-                .pin
-                .as_deref()
-                .and_then(|pin| pin.strip_prefix("sha256:"))
-                .and_then(Digest::parse_hex)
-                .ok_or_else(|| RunnerError::task_invocation("full-context TLS pin is absent"))?;
-            Ok(
-                crate::runner::workspace_transport::qualification::GuestDialEvidence {
-                    target: target.clone(),
-                    peer,
-                    pin,
-                },
-            )
-        }))
     }
+
     fn identity(
         &mut self,
         target: &WorkspaceContainerIdentity,
         object: &GuestObject,
         budget: std::time::Duration,
     ) -> Observed<crate::runner::workspace_client::identity::GuestSelfObservation> {
-        if target != self.target || object != self.object {
-            return observation(Err(RunnerError::task_invocation(
-                "identity probe targets another immutable object or container",
-            )));
-        }
-        observation(
-            self.probe("__guest-identity", budget)
-                .map(|reply| reply.identity),
+        self.observe(
+            target,
+            object,
+            identity_args(),
+            budget,
+            "bounded exec of the staged digest object reported its own container identity",
         )
+        .map(|reply| reply.identity)
     }
 }
 
@@ -482,6 +771,10 @@ fn apply_switches(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "staged_probe_tests.rs"]
+mod staged_probe_tests;
 
 #[cfg(test)]
 mod tests {
