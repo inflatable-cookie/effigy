@@ -365,8 +365,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Gateway setup and operator steps show the phase they are in.** `gateway up`
   and `gateway down` show the supervisor admitting the run, then the daemon's
   own reported status and the blocker that status carries while it self-tests
-  or winds down. `gateway up` names each published route as it is read, with
-  its certificate state. `gateway setup` probes each low-port address in turn
+  or winds down. `gateway up` names each route in the existing route table as it is
+  read, with its certificate state. `gateway setup` probes each low-port address in turn
   and names it as its outcome lands (bound, already in use, denied); a refusal
   stops at that address. Each step names the exact port, record, route or
   suffix list it awaits, with elapsed time, and still ends with one line.

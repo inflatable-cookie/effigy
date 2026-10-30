@@ -625,7 +625,7 @@ fn run_private_gateway_up(
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = live_progress(
-        "reading the published routes",
+        "reading the route table",
         &format!("the route table at {}", config.route_table_path.display()),
         |progress| {
             let route_table = RouteTable::load(&config.route_table_path)
@@ -1725,7 +1725,7 @@ fn gateway_tls_summary(config: &GatewayConfig, route_table: &RouteTable) -> Gate
     summarize_published_routes(
         config,
         route_table,
-        &ProgressSource::waiting_for("the published routes"),
+        &ProgressSource::waiting_for("the route table"),
     )
 }
 
@@ -1909,7 +1909,7 @@ fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
     }
 }
 
-/// Read the published route table one route at a time. Each route is named as
+/// Read the existing route table one route at a time. Each route is named as
 /// it is read, with its position in the table and what its certificate state
 /// is. Returns the same summary the status and up renders always used.
 fn summarize_published_routes(
@@ -1956,7 +1956,7 @@ fn summarize_published_routes(
             }
         };
         progress.update(
-            format!("reading published route {}", route.domain),
+            format!("reading route {}", route.domain),
             Some(((index + 1) as u64, total)),
             Some(outcome),
         );

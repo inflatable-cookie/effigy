@@ -2029,7 +2029,7 @@ fn route_frames_name_each_route_as_it_is_read() {
     }
     let awaited = "the route table at /state/routes.json";
     let progress = ProgressSource::waiting_for(awaited);
-    progress.update("reading the published routes", None, None);
+    progress.update("reading the route table", None, None);
     let summary = summarize_published_routes(&config, &route_table, &progress);
     // No certificate store exists here, so both TLS routes are missing one.
     assert_eq!(summary.route_count, 2);
@@ -2037,6 +2037,6 @@ fn route_frames_name_each_route_as_it_is_read() {
     assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        format!("reading published route b.test (2/2); waiting for {awaited}; last: b.test has no certificate yet; 5s elapsed")
+        format!("reading route b.test (2/2); waiting for {awaited}; last: b.test has no certificate yet; 5s elapsed")
     );
 }
