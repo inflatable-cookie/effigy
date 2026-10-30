@@ -1625,15 +1625,30 @@ impl<T: Terminal> Streams for RetainedStreams<T> {
                 // nothing to publish here rather than invented output.
                 Observed::Absent(_) | Observed::Unknown(_) => continue,
             };
-            if read.bytes.is_empty() {
-                self.next[index] = read.end;
-                continue;
-            }
-            self.next[index] = read.from.saturating_add(read.bytes.len() as u64);
             let kind = match stream {
                 crate::custody::Stream::Stdout => StreamKind::Stdout,
                 crate::custody::Stream::Stderr => StreamKind::Stderr,
             };
+            if read.bytes.is_empty() {
+                if read.from > self.next[index] {
+                    // The log no longer holds the bytes between the client's
+                    // position and where it resumes, and this read returned
+                    // none of them — an empty kept segment still means the range
+                    // is gone. Publish the bounded gap on its own, so a run that
+                    // ends here does not leave the client believing it saw
+                    // everything.
+                    self.next[index] = read.from;
+                    return Some(StreamChunk {
+                        stream_id: index as u32,
+                        kind,
+                        cursor: Some(read.from),
+                        bytes: Vec::new(),
+                    });
+                }
+                self.next[index] = read.end;
+                continue;
+            }
+            self.next[index] = read.from.saturating_add(read.bytes.len() as u64);
             return Some(StreamChunk {
                 stream_id: index as u32,
                 kind,
@@ -1648,6 +1663,16 @@ impl<T: Terminal> Streams for RetainedStreams<T> {
 
     fn resume(&mut self, run: RunId, cursors: &Cursors) -> Option<StreamStart> {
         if run != self.run {
+            return None;
+        }
+        // A position for a stream this endpoint does not publish cannot be
+        // honoured, and ignoring it would open an attachment as if the client's
+        // resume had been served.
+        if cursors
+            .streams
+            .keys()
+            .any(|stream_id| *stream_id as usize >= self.plan.len())
+        {
             return None;
         }
         // Every stream this endpoint publishes is negotiated at its own
@@ -2631,6 +2656,47 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         state: &mut Served,
     ) -> Result<(), Refusal> {
         let mut attachment: Option<Attachment> = None;
+        let outcome = self.converse_frames(
+            transport,
+            cx,
+            observe,
+            root,
+            grant,
+            streams,
+            state,
+            &mut attachment,
+        );
+        // Every way a connection ends must account for the attachment it opened.
+        // A refused or malformed frame used to return before the end-of-stream
+        // release, so a second terminal's durable row stayed live and its slot
+        // was never reclaimed: eight rejected frames could exhaust the run's
+        // secondaries. This client's own row is released now, which for a
+        // secondary never stops, detaches or releases the owning client's run. An
+        // owning client is deliberately left attached — malformed traffic must
+        // not record the stop an owner's EOF means (§8.11), and its row is the
+        // run's own, reopened rather than reallocated.
+        if let Some(mut handle) = attachment.take() {
+            if outcome.is_err() && handle.client() == Client::Secondary && !handle.released() {
+                let _ = handle.release(cx, root, Release::Eof);
+            }
+        }
+        outcome
+    }
+
+    /// The frame loop of one authenticated connection, with the attachment it
+    /// opens owned by [`Server::converse`] so every exit accounts for it.
+    #[allow(clippy::too_many_arguments)]
+    fn converse_frames<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        cx: &EffectContext,
+        observe: &ObserveContext,
+        root: &StateRoot,
+        grant: Grant,
+        streams: &mut impl Streams,
+        state: &mut Served,
+        attachment: &mut Option<Attachment>,
+    ) -> Result<(), Refusal> {
         // A connection outlives as many frames as its session needs. Every
         // frame is bounded above, and the transport owns the lifetime; there
         // is no count at which the host would end a live run instead of the
@@ -2645,15 +2711,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             match frame {
                 Frame::Request(request) => {
                     state.responses += 1;
-                    let response = self.answer(
-                        cx,
-                        observe,
-                        root,
-                        &grant,
-                        &request,
-                        &mut attachment,
-                        streams,
-                    );
+                    let response =
+                        self.answer(cx, observe, root, &grant, &request, attachment, streams);
                     write_frame(transport, &Frame::Response(response))?;
                 }
                 Frame::Stream(stream) => {

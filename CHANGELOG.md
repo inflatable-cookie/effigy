@@ -288,11 +288,15 @@ During v0.x, MINOR bumps may include breaking changes.
   shorter stream or replaying them on a longer one. Negotiation covers every
   stream and is pure, so a reconnect resumes each retained stream at its own
   position and a replacement the host refuses leaves the working attachment's
-  reader where it was; a future cursor, a position on a stream with no retained
-  log, or an unreadable log refuses the attach, and a position the log rotated
-  past becomes one `gap` frame naming the first missing offset, ahead of the data
-  that resumes there — so every frame on a stream keeps a strictly increasing
-  sequence. The endpoint
+  reader where it was; a future cursor, a cursor for a stream the endpoint does
+  not carry, a position on a stream with no retained log, or an unreadable log
+  refuses the attach, and a position the log rotated past becomes one `gap`
+  frame naming the first missing offset, ahead of the data that resumes there —
+  even when the surviving segment is empty — so every frame on a stream keeps a
+  strictly increasing sequence. A connection that ends on a refused or malformed
+  frame releases its own secondary row, so a rejected frame cannot exhaust the
+  run's secondary slots or orphan one; an owning client is released only by its
+  own end of stream. The endpoint
   re-checks the connection's attachment on every read. `Terminal::input`
   receives one validated terminal input frame exactly once and
   `Terminal::resize` the newest size with no queue behind it, fenced on the

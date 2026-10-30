@@ -1978,10 +1978,12 @@ fn an_attachment_is_replaced_or_refused_and_never_orphaned() {
             )
             .expect("an attachment row")
     };
-    // The replaced secondary was released when it was replaced; the newest one
-    // is still attached for its client, and the owner row was never touched.
+    // The replaced secondary was released when it was replaced, and the newest
+    // one is released with the connection that owned it: a refused or malformed
+    // frame must not leave a terminal's slot unreclaimable, and the owner row is
+    // never touched.
     assert_eq!(state(first.attachment), "released");
-    assert_eq!(state(second.attachment), "attached");
+    assert_eq!(state(second.attachment), "released");
     let secondaries: i64 = reader
         .conn()
         .query_row(
@@ -1991,6 +1993,18 @@ fn an_attachment_is_replaced_or_refused_and_never_orphaned() {
         )
         .expect("count");
     assert_eq!(secondaries, 2, "the replace opened exactly one more row");
+    let live_secondaries: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
+            [first_run.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(
+        live_secondaries, 0,
+        "the closed connection left no attached secondary slot"
+    );
     let foreign: i64 = reader
         .conn()
         .query_row(
@@ -3286,6 +3300,151 @@ fn a_resume_without_a_retained_log_is_refused() {
             })
         )),
         "a fresh read of an uncaptured stream still opens"
+    );
+}
+
+/// The recorded state of every attachment row for `run`, by lifetime.
+fn attachment_states(root: &StateRoot, run: RunId) -> Vec<(String, String)> {
+    let reader = match Store::read(&observe_context(), root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("root {other:?}"),
+    };
+    let mut statement = reader
+        .conn()
+        .prepare(
+            "SELECT lifetime, state FROM run_attachments WHERE run_id=?1 ORDER BY lifetime, attachment_id",
+        )
+        .expect("query");
+    statement
+        .query_map([run.to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("states")
+}
+
+#[test]
+fn a_refused_stream_frame_releases_the_secondary_row() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-refusal-release");
+    let (_run, live) = admitted_run(&cx, &root, session, 90, &[170]);
+    let mut host = server(session, &[171]);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], None),
+            // A terminal frame whose sequence is not the stream's next one.
+            Frame::Stream(input_frame(1, 5, b"typed")),
+        ]),
+        peer(),
+    );
+    let mut terminal = RecordingTerminal::default();
+    // The refusal closes the connection, and the row this connection opened is
+    // released with it: a secondary's slot must stay reclaimable.
+    let refusal = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut terminal)
+        .expect_err("the invalid frame closes the connection");
+    assert_eq!(refusal.code, RefusalCode::InvalidRequest);
+    let states = attachment_states(&root, live);
+    assert_eq!(
+        states,
+        vec![
+            ("owner".to_string(), "attached".to_string()),
+            ("secondary".to_string(), "released".to_string()),
+        ],
+        "the refused connection released its own row and left the owner's alone"
+    );
+    assert_eq!(stops(&root, live), 0, "a secondary never stops the owner");
+    // The reclaimed slot takes a fresh terminal.
+    let mut again = run::attach_secondary(&cx, &root, session, live, AttachmentId::new([91; 16]))
+        .expect("the released slot is reclaimable");
+    again.release(&cx, &root, Release::Eof).expect("release");
+}
+
+#[test]
+fn an_empty_rotated_segment_still_reports_the_gap() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-empty-segment");
+    let (_run, live) = admitted_run(&cx, &root, session, 91, &[172]);
+    // Retention kept only an empty segment, starting at 100: the bytes the
+    // client asks for are gone even though no data follows them.
+    write_segment(&root, live, 1, Stream::Stdout, 100, b"");
+    let mut host = server(session, &[173]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], Some(8)),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    let gap = stream_frames(&frames)
+        .into_iter()
+        .find(|stream| stream.kind == StreamKind::Gap)
+        .expect("the missing range is reported without any data to carry it");
+    assert_eq!(gap.gap_range(), Some(StreamGap { from: 8, to: 100 }));
+    assert_eq!(gap.seq, 8);
+    assert!(
+        !stream_frames(&frames)
+            .iter()
+            .any(|stream| stream.kind.is_data()),
+        "an empty segment carries no data"
+    );
+}
+
+#[test]
+fn a_cursor_for_a_stream_the_endpoint_does_not_carry_is_refused() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-unknown-cursor");
+    let (_run, live) = admitted_run(&cx, &root, session, 92, &[174]);
+    let stdout_bytes: Vec<u8> = (0..40u32).map(|n| b'a' + (n % 26) as u8).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &stdout_bytes);
+    let mut host = server(session, &[175]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            // Stream 999 is not carried by this endpoint: ignoring the request
+            // would open as if the client's resume had been served.
+            attach_frame_cursors(
+                session,
+                live,
+                1,
+                vec![StreamKind::Stdout],
+                None,
+                BTreeMap::from([(999, 40)]),
+            ),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    assert!(
+        frames.iter().any(|frame| matches!(
+            frame,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Refused(Refusal {
+                    code: RefusalCode::InvalidRequest,
+                    ..
+                }),
+                ..
+            })
+        )),
+        "an unknown cursor id is refused: {frames:?}"
+    );
+    assert!(!stream_frames(&frames)
+        .iter()
+        .any(|stream| stream.kind.is_data()));
+    assert!(
+        !attachment_states(&root, live)
+            .iter()
+            .any(|(lifetime, _)| lifetime == "secondary"),
+        "a refused cursor opened no attachment"
     );
 }
 
