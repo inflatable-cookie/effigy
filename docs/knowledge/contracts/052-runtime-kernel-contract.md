@@ -3469,6 +3469,22 @@ ServingOwner::adopt_owned(
 ) -> Result<ServingOwner, AdoptError>
 ```
 
+**Remaining #452 integration scope (owner ruling, 2026-10-30).** With #482 and
+#504 merged, two adapters are this task's own work rather than another lane's:
+
+- A narrow production adapter for the kernel `Dispatcher<Admission, Resolver,
+  Observer, RunIds>` using the existing host engine: every `InvocationBody` is
+  re-resolved under host authority, the reserved `AdmissionTicket` is handed
+  unchanged to `EngineLaunch::admission` / `Run::begin_admitted`, observation
+  uses the host `ObserveContext` read-only, and run ids come from the engine. No
+  fabricated grant, second engine or generic command fallback.
+- A guest-local read adapter over the one strict canonical
+  `WorkspaceContextDocument` (`sources`, `paths`, `binary_path`), so
+  `LocalRead`/`GuestLocalReads` serve the pinned task list and checkout reads
+  from v2 with the same pinned-checkout verification, reads that never enrol,
+  and v1 still rejected. `detect()` binds to it only after the independent guest
+  identity observation and the pin check.
+
 **Guest entry (v2, binding when #482 lands).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a
 second seam:
