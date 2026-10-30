@@ -153,10 +153,14 @@ pub(in crate::runner) fn managed_gateway_up(
             record_managed_gateway_start(config);
             operator_up(config)
         }
-        Err(error) => {
+        // An ambiguous process state is reported, never claimed up.
+        Err(error @ effigy_gateway::GatewayError::ProcessStateUnknown { .. }) => {
             eprintln!("[gateway] cannot verify the running gateway ({error}); proceeding without starting or replacing it");
             Ok(())
         }
+        // Any other refusal, such as a legacy identity, stays the operator
+        // lifecycle's explicit refusal, as it was before this branch preflighted.
+        Err(_) => operator_up(config),
     }
 }
 
