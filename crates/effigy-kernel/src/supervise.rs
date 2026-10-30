@@ -1357,6 +1357,7 @@ pub struct EngineSession {
     events: std::os::fd::OwnedFd,
     channel: OwningChannel,
     output: Option<OutputCapture>,
+    output_disabled: bool,
     attachments: Vec<(run::Attachment, OwnerWatch)>,
 }
 impl std::fmt::Debug for EngineSession {
@@ -1388,6 +1389,7 @@ impl EngineSession {
                 detached: false,
             },
             output: None,
+            output_disabled: false,
             attachments: Vec::new(),
         })
     }
@@ -1504,11 +1506,36 @@ impl EngineSession {
     /// From now on this process's own stdout and stderr, and those of every
     /// child that inherits them, are the run's output log (sequence 0),
     /// redacted before the sink (K12). Readers use `run::read_log`.
-    pub fn capture_output(&mut self, run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<()> {
-        if self.output.is_none() {
-            self.output = Some(OutputCapture::start(run, secrets)?);
+    pub fn capture_output(
+        &mut self,
+        run: &mut Run<'_>,
+        secrets: Vec<Vec<u8>>,
+    ) -> io::Result<crate::custody::CaptureState> {
+        const REASON: &str = "sanitized supervisor output capture is unavailable; inspect log storage and the classified-secret replacement policy before restarting";
+        if self.output_disabled {
+            return Ok(crate::custody::CaptureState::Truncated(REASON.into()));
         }
-        Ok(())
+        if self.output.is_some() {
+            return Ok(crate::custody::CaptureState::Complete);
+        }
+        match OutputCapture::start(run, secrets) {
+            Ok(output) => {
+                self.output = Some(output);
+                Ok(crate::custody::CaptureState::Complete)
+            }
+            Err(_) => {
+                // Capture setup may have replaced only one descriptor, or
+                // created pipes before thread startup failed. No setup/workload
+                // runs until BOTH descriptors are known safe and failure is
+                // durably observable. No raw fallback is permitted.
+                null_onto(libc::STDOUT_FILENO)?;
+                null_onto(libc::STDERR_FILENO)?;
+                self.output_disabled = true;
+                run.record_capture_failure(REASON)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                Ok(crate::custody::CaptureState::Truncated(REASON.into()))
+            }
+        }
     }
     /// Announces the settled outcome after the captured output is flushed.
     pub fn closed(&mut self, outcome: &crate::outcome::Outcome<crate::run::Settled>) {
@@ -1595,6 +1622,9 @@ impl OutputCapture {
             .capture_log(OUTPUT_SEQUENCE, crate::custody::Stream::Stdout, &limits)?
             .ok_or_else(|| io::Error::other("managed supervisor output needs a durable log"))?;
         let output = crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?;
+        if let crate::custody::CaptureState::Truncated(reason) = output.capture_state() {
+            return Err(io::Error::other(reason));
+        }
         let [(stdout, out_write), (stderr, err_write)] = [
             crate::custody::spawn::pipe()?,
             crate::custody::spawn::pipe()?,
@@ -1607,10 +1637,14 @@ impl OutputCapture {
             if unsafe { libc::dup2(write.as_raw_fd(), target) } < 0 {
                 return Err(io::Error::last_os_error());
             }
+            if target == libc::STDOUT_FILENO {
+                crate::fault_point!(CaptureSetupAfterStdout)?;
+            }
         }
         let readers = [stdout, stderr];
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopping = done.clone();
+        crate::fault_point!(CaptureSetupBeforeThread)?;
         let thread = std::thread::Builder::new()
             .name("effigy-run-output".into())
             .spawn(move || pump_output(readers, output, stopping))?;

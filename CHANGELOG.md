@@ -19,11 +19,17 @@ During v0.x, MINOR bumps may include breaking changes.
   pre-upgrade followers after upgrading; already-open descriptors cannot be
   revoked. The bundled Underlay follower resets on inode change even when the
   replacement is larger than its previous byte offset.
+  Effigy readers honor a durable committed extent and hide failed or torn
+  appends; a poisoned log refuses restart for explicit operator recovery.
+  Direct file/Underlay presentation reads may show a safe line before sync
+  that is later lost on crash; they do not acknowledge durability.
 - Managed panes consume redacted typed style spans from a bounded tap after
   successful plain append. Managed Standard output remains merged plain text
   in its canonical stdout log; plain and JSON readers use those bytes directly.
   Text followers bound partial lines and report expired-byte gaps without
   joining text across them.
+  Host status uses owner/generation records rather than child log markers,
+  and clears readiness when a listener becomes unavailable.
   Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
   explicit colour preferences, NO_COLOR and CI.
 

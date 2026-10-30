@@ -64,6 +64,10 @@ when the real cause was two named services failing their health checks.
   review qualify the boundary. Host supervisor message appends and environment
   provenance still require that qualification; a child-pipe capture alone is
   insufficient.
+  Tom's same-day durability ruling distinguishes presentation from commit:
+  Effigy-owned readers honor the durable committed extent and hide failed or
+  torn suffixes; Underlay/direct file reads can show already-safe bytes awaiting
+  sync, acknowledge no durability and may show a line later lost on crash.
 - **A spinner must carry live state.** Tom confirmed on 2026-10-29 that a
   canned label fixed for the whole wait is noise. Show the current sub-step or
   object (service, image, dependency, layer or gate), known counts or ratios,

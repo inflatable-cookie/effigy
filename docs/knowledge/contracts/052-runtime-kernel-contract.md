@@ -1326,10 +1326,26 @@ only supervisor completion finishes the shared redactor. CR is removed from
 CRLF before redaction. Complete UTF-8 text is appended and synced before any
 live/tail fanout. A failed append poisons capture; no unwritten output is
 acknowledged. A partial failed append can leave an unacknowledged plain suffix.
+Effigy readers never expose that suffix. Host and managed journal writers
+publish a durable committed extent after syncing data. A synced pending record
+retains the prior extent until publication completes; a failed or interrupted
+append bounds reads to that prior extent and refuses a host restart for explicit
+operator recovery. Effigy reads use the existing nonblocking kernel file-lock
+boundary to avoid observing an in-flight publication. Writer lock acquisition
+is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
+Failure syncing removal of a pending record after data and extent are durable
+does not uncommit those bytes: capture reports truncation and stops further
+appends, while recovery may require handling a resurrected pending record.
 Managed Standard workloads opt into `Terminal::Styled`, which uses the same
 writer with a journal destination and persists merged plain output in stdout
 (the stderr log is empty). The managed supervisor's own sequence-0 pipe capture
 uses that same writer; it never filters the result back into separate streams.
+A sequence-0 setup failure nulls both descriptors and records a typed journal
+capture-truncation effect before setup may continue; its readers report
+`Truncated` with no payload. Failure to make descriptors safe or record that
+state refuses startup. A drain timeout poisons the shared writer, preventing a
+successor from inheriting unfinished CSI/OSC state. Unsupported redaction
+replacement disables Standard capture without changing the workload outcome.
 A producer restart frames an unfinished pane line as a generation boundary,
 so a new generation cannot complete an old partial value. Ordinary
 custody callers retain their existing separate-stream contract.
@@ -1338,19 +1354,29 @@ explicit gap, and stop a line exceeding 64 KiB with a diagnostic. They validate
 plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
 select the last nonempty contiguous child block without joining across owner
 messages or letting a later blank frame hide an earlier error.
+Multi-source log following keeps separate bounded partial lines and flushes
+them on closure. Pane lifecycle status comes from the owner journal and a
+listener record bound to the current run and custody nonce. Child text cannot
+forge it, and unavailable, failed, stopped or stale generations clear Ready.
 
 Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
 an untrusted historical prefix safe. Under the newly admitted host owner gate,
 with predecessors settled, an owned regular no-follow legacy log moves to the
 same runtime directory's private `.legacy-host-logs` quarantine. Its name ends
 in `.legacy`, not `.log`; discovery never includes it. A new 0600 canonical
-file is created exclusively at the same public path. Intent, file and parent
+inode is created exclusively in a private stage, bound to durable migration
+intent, then published with an atomic no-replace move at the same public path.
+A foreign empty file is never adopted. Intent, file and parent
 directory syncs precede producer admission. The durable private ready record
-`.<sha256(log basename)>.host-log-ready` is version 1, with an `owner` array of
-32 digest bytes and `canonical: {device, inode}`. A matching ready identity
+`.<sha256(log basename)>.host-log-ready` is version 2, with an `owner` array of
+32 digest bytes, `canonical: {device, inode}` and a `committed` byte extent.
+A matching ready identity
 allows subsequent generations to append without another cutover. Changed,
 foreign, symlinked or uncertain identities fail closed, preserving operator
-data. Crash retries retain the original intent and quarantined identity.
+data. Crash retries retain the original intent and quarantined identity and
+sync both rename directories even when the legacy entry was already moved.
+Exclusive rename plus moved-inode verification prevents destination clobbering;
+uncertain source or record replacements are retained privately and refused.
 
 Effigy readers require matching durable ready provenance before opening
 payload bytes and recheck identity before exposure. Bounded followers reset
@@ -1358,7 +1384,12 @@ both offset and partial text on inode replacement or shrink, reporting a gap;
 replacement is detected even when the new file grew beyond the old offset.
 The bundled Underlay presentation follower tracks device/inode and offset,
 resets on replacement/shrink and reports one gap. It does not enforce Effigy
-ready provenance. Before cutover its behavior remains the pre-existing owner
+ready provenance or committed extents. The owner's 2026-10-30 ruling keeps it
+presentation-only: it and an operator reading the file directly can see already
+sanitized/redacted bytes between write and sync. Those reads acknowledge no
+durability and can show a line later lost on crash. Effigy TUI, JSON, doctor,
+status, excerpts and Queue readers honor the committed extent. Before cutover
+Underlay's behavior remains the pre-existing owner
 file contract. An already-open pre-upgrade POSIX descriptor cannot be revoked
 by rename/chmod: stop and reopen older attached followers after upgrading.
 Continuity across that transition is not guaranteed, and numeric offsets are

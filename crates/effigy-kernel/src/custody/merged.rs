@@ -1,4 +1,5 @@
 //! The append destination installed before a captured child is released.
+pub(crate) mod atomic;
 mod migration;
 pub use migration::{FileIdentity, PlainLog, PlainRead};
 use std::fs::File;
@@ -15,6 +16,7 @@ pub struct MergedLog {
     file: File,
     failed: bool,
     committed: u64,
+    commit: migration::Commit,
     tap: Option<super::styled_tap::Tap>,
 }
 
@@ -40,7 +42,7 @@ impl MergedLog {
             required: false,
         })?;
         let file = migration::prepare(path, owner, &run.id().to_string(), |_| Ok(()))?;
-        let log = Self::from_file(file)?;
+        let log = Self::from_file(path, file)?;
         let identity = Self::identity(path)?;
         run.applied(
             &ticket,
@@ -54,22 +56,25 @@ impl MergedLog {
     /// Open only a previously published canonical identity, never a legacy file.
     #[cfg(test)]
     fn open(path: &Path) -> io::Result<Self> {
-        Self::from_file(migration::open(path)?)
+        Self::from_file(path, migration::open(path)?)
     }
 
-    fn from_file(file: File) -> io::Result<Self> {
-        let committed = file.metadata()?.len();
+    fn from_file(path: &Path, file: File) -> io::Result<Self> {
+        let commit = migration::Commit::open(path, &file)?;
+        let committed = commit.extent();
         Ok(Self {
             file,
             failed: false,
             committed,
+            commit,
             tap: None,
         })
     }
 
     #[cfg(test)]
     pub(super) fn prepare_test(path: &Path) -> io::Result<Self> {
-        let mut log = Self::from_file(migration::prepare(path, [7; 32], "test", |_| Ok(()))?)?;
+        let mut log =
+            Self::from_file(path, migration::prepare(path, [7; 32], "test", |_| Ok(()))?)?;
         log.tap = Some(migration::tap(path, Self::identity(path)?.identity)?);
         Ok(log)
     }
@@ -119,15 +124,33 @@ impl MergedLog {
         // Poison first: neither partial writes nor sync failures may be retried
         // as though they had written nothing, duplicating a follower's bytes.
         self.failed = true;
+        let _lock = self.commit.lock()?;
+        if self.file.metadata()?.len() != self.committed {
+            return Err(io::Error::other(
+                "canonical length changed outside its committed writer",
+            ));
+        }
+        self.commit.begin()?;
         for part in bytes.chunks(4096) {
             crate::fault_point!(CaptureWrite)?;
             self.file.write_all(part)?;
         }
         crate::fault_point!(CaptureSync)?;
         self.file.sync_data()?;
-        self.committed = self.file.metadata()?.len();
-        self.failed = false;
+        let next = self
+            .committed
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| io::Error::other("canonical extent overflow"))?;
+        if self.file.metadata()?.len() != next {
+            return Err(io::Error::other("canonical length changed during append"));
+        }
+        let cleanup_durable = self.commit.publish(next)?;
+        self.committed = next;
+        self.failed = !cleanup_durable;
         Ok(())
+    }
+    pub(super) fn incomplete(&self) -> bool {
+        self.failed
     }
 }
 
@@ -157,12 +180,9 @@ mod tests {
         let home = effigy_test_support::short_tempdir("ml-").unwrap();
         let path = home.path().join("host.log");
         std::fs::write(&path, b"old\n").unwrap();
-        let mut log = MergedLog {
-            file: File::open(&path).unwrap(), // a deterministic EBADF writer
-            failed: false,
-            committed: 4,
-            tap: None,
-        };
+        let mut log = MergedLog::prepare_test(&path).unwrap();
+        log.append(b"old\n").unwrap();
+        log.file = File::open(&path).unwrap(); // a deterministic EBADF writer
         assert!(log.append(b"unwritten\n").is_err());
         assert_eq!(log.committed_offset(), 4);
         log.file = OpenOptions::new().append(true).open(&path).unwrap();
@@ -179,5 +199,94 @@ mod tests {
         std::os::unix::fs::symlink(&path, &link).unwrap();
         assert!(MergedLog::open(&link).is_err());
         assert!(MergedLog::open(home.path()).is_err());
+    }
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn readers_and_restarts_exclude_valid_and_torn_unacknowledged_suffixes() {
+        use crate::fault::{self, Fault, Point};
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                fault::hook(None);
+                fault::arm(None);
+            }
+        }
+        for point in [
+            Point::CaptureSync,
+            Point::CaptureCommitAfterPublish,
+            Point::CapturePendingRemoval,
+        ] {
+            let home = effigy_test_support::short_tempdir("mc-").unwrap();
+            let path = home.path().join("app.log");
+            let mut log = MergedLog::prepare_test(&path).unwrap();
+            log.append(b"before\n").unwrap();
+            let probe = path.clone();
+            let seen = std::rc::Rc::new(std::cell::Cell::new(false));
+            let observed = seen.clone();
+            let _reset = Reset;
+            fault::hook(Some(Box::new(move |at| {
+                if at == Point::CaptureSync {
+                    observed.set(true);
+                    // This read is deliberately between write_all and failed
+                    // sync. A concurrent writer may refuse the read; it may never
+                    // expose the unacknowledged suffix.
+                    if let Ok(read) = MergedLog::read_plain(&probe, None, 0, 4096) {
+                        assert_eq!(read.bytes, b"before\n");
+                    }
+                }
+            })));
+            fault::arm_point(point, Fault::Enospc);
+            assert!(log.append(b"valid but unacknowledged\n").is_err());
+            assert!(seen.get() && fault::fired());
+            fault::hook(None);
+            fault::arm(None);
+            assert_eq!(log.committed_offset(), 7);
+            assert_eq!(
+                MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
+                b"before\n"
+            );
+            let retained = std::fs::read(&path).unwrap();
+            drop(log);
+            assert!(MergedLog::prepare_test(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), retained);
+        }
+        let home = effigy_test_support::short_tempdir("mt-").unwrap();
+        let path = home.path().join("app.log");
+        let mut log = MergedLog::prepare_test(&path).unwrap();
+        let mut bytes = vec![b'x'; 4095];
+        bytes.extend_from_slice("é tail".as_bytes());
+        let _reset = Reset;
+        fault::arm_nth(Point::CaptureWrite, 1, Fault::Enospc);
+        assert!(log.append(&bytes).is_err());
+        fault::arm(None);
+        let torn = std::fs::read(&path).unwrap();
+        assert_eq!(torn.len(), 4096);
+        assert!(std::str::from_utf8(&torn).is_err());
+        assert!(MergedLog::read_plain(&path, None, 0, 4096)
+            .unwrap()
+            .bytes
+            .is_empty());
+        drop(log);
+        assert!(MergedLog::prepare_test(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), torn);
+    }
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn durable_bytes_survive_uncertain_pending_cleanup_with_explicit_failure_state() {
+        use crate::fault::{self, Fault, Point};
+        let home = effigy_test_support::short_tempdir("mu-").unwrap();
+        let path = home.path().join("app.log");
+        let mut log = MergedLog::prepare_test(&path).unwrap();
+        fault::arm_point(Point::CapturePendingSync, Fault::Enospc);
+        let result = log.append(b"durable\n");
+        let fired = fault::fired();
+        fault::arm(None);
+        assert!(result.is_ok() && fired && log.incomplete());
+        assert_eq!(log.committed_offset(), 8);
+        assert_eq!(
+            MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
+            b"durable\n"
+        );
+        assert!(log.append(b"late").is_err());
     }
 }

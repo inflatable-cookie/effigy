@@ -46,6 +46,12 @@ impl Destination {
             log.mark_truncated();
         }
     }
+    fn incomplete(&self) -> bool {
+        match self {
+            Self::Host(log) => log.incomplete(),
+            Self::Run(log) => log.incomplete(),
+        }
+    }
 }
 struct Writer {
     log: Destination,
@@ -99,19 +105,23 @@ impl CanonicalOutput {
         queue_max: usize,
         tail_max: usize,
     ) -> io::Result<Self> {
-        Self::with_destination(Destination::Host(log), secrets, queue_max, tail_max)
+        Self::with_destination(Destination::Host(log), secrets, queue_max, tail_max, false)
     }
     pub(crate) fn for_run(
         mut log: super::capture::Log,
         secrets: Vec<Vec<u8>>,
         limits: &crate::ctx::Limits,
     ) -> io::Result<Self> {
-        log.enable_plain()?;
+        if let Err(error) = log.enable_plain() {
+            log.mark_truncated();
+            return Err(error);
+        }
         Self::with_destination(
             Destination::Run(log),
             secrets,
             limits.queue_bytes,
             limits.capture_tail,
+            true,
         )
     }
     fn with_destination(
@@ -119,20 +129,26 @@ impl CanonicalOutput {
         secrets: Vec<Vec<u8>>,
         queue_max: usize,
         tail_max: usize,
+        allow_disabled: bool,
     ) -> io::Result<Self> {
         if secrets
             .iter()
             .any(|value| std::str::from_utf8(value).is_err())
         {
+            log.mark_failed();
             return Err(io::Error::other(
                 "canonical output requires classified UTF-8 secrets",
             ));
         }
         let pipeline = OutputPipeline::for_capture(secrets.clone(), true);
-        if pipeline.redactor.blocked() {
-            return Err(io::Error::other(
-                "canonical output has no reader-safe redaction replacement",
-            ));
+        let blocked = pipeline.redactor.blocked();
+        if blocked {
+            log.mark_failed();
+            if !allow_disabled {
+                return Err(io::Error::other(
+                    "canonical output has no reader-safe redaction replacement",
+                ));
+            }
         }
         let line_start = log.committed_offset() == 0;
         Ok(Self(Arc::new(Mutex::new(Writer {
@@ -148,7 +164,7 @@ impl CanonicalOutput {
             queue_max,
             tail_max,
             truncated: false,
-            failed: false,
+            failed: blocked,
             finished: false,
         }))))
     }
@@ -229,7 +245,8 @@ impl CanonicalOutput {
         writer.log.mark_failed();
     }
     pub fn capture_state(&self) -> CaptureState {
-        if lock(&self.0).failed {
+        let writer = lock(&self.0);
+        if writer.failed || writer.log.incomplete() {
             CaptureState::Truncated("canonical capture failed".into())
         } else {
             CaptureState::Complete
@@ -240,7 +257,9 @@ impl CanonicalOutput {
         writer.styled_bytes = 0;
         StyledOutput {
             chunks: writer.styled.drain(..).collect(),
-            truncated: std::mem::take(&mut writer.truncated) || writer.failed,
+            truncated: std::mem::take(&mut writer.truncated)
+                || writer.failed
+                || writer.log.incomplete(),
         }
     }
     pub(super) fn take_output(&self) -> Vec<u8> {
@@ -252,7 +271,7 @@ impl CanonicalOutput {
 }
 impl Writer {
     fn check_finished(&self) -> io::Result<()> {
-        if self.failed {
+        if self.failed || self.log.incomplete() {
             Err(io::Error::other(
                 "canonical output failed; inspect capture state",
             ))

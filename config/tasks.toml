@@ -15,12 +15,15 @@
   { task = "test:managed:output:fronts" },
 ] }
 "test:managed:output:fronts" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise managed host/plain/TUI readers, bundled cutover and the reversible custody safety tripwire.", run = [
-  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib -E 'test(host_process::) | test(host_tabs::) | test(managed_color::) | test(managed_run::engine::) | test(managed_run::client::) | test(managed_run::control::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { task = "test:managed:output:host" },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib -E 'test(terminal_text::) | test(transcript::) | test(lifecycle::summary::) | test(render::panes::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-process --test integration -E 'test(supervisor_captures_output_and_exit_events)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { task = "test:managed:output:underlay" },
   { task = "test:managed:output:tripwire" },
   { task = "test:feedback:inventory" },
+] }
+"test:managed:output:host" = { durable = true, visibility = "internal", group = "Maintenance", description = "Exercise managed host/plain-reader status, colour, engine and follower behavior.", run = [
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib -E 'test(host_process::) | test(host_tabs::) | test(managed_color::) | test(managed_run::engine::) | test(managed_run::client::) | test(managed_run::control::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "test:managed:output:underlay" = { visibility = "internal", group = "Maintenance", run = [{ run = "PYTHONDONTWRITEBYTECODE=1 python3 external/bundles/underlay/scripts/dev/profile_env_test.py FollowLogTest", timeout_ms = 60000 }] }
 "test:managed:output:tripwire" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 scripts/test-managed-output-tripwire.py", timeout_ms = 600000 }] }

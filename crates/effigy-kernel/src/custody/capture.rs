@@ -46,6 +46,10 @@ pub(crate) struct Log {
     keep: u8,
     tap: super::styled_tap::Tap,
     durable: bool,
+    extent_identity: Option<FileIdentity>,
+    guard: Option<FileIdentity>,
+    committed: u64,
+    incomplete: bool,
 }
 impl Log {
     pub fn open(
@@ -73,6 +77,10 @@ impl Log {
         Ok(Self {
             tap,
             durable: false,
+            extent_identity: None,
+            guard: None,
+            committed: 0,
+            incomplete: false,
             dir,
             sequence,
             stream,
@@ -84,10 +92,26 @@ impl Log {
         })
     }
     pub fn committed_offset(&self) -> u64 {
-        self.bases.back().copied().unwrap_or(0) + self.written
+        self.committed
+    }
+    pub fn incomplete(&self) -> bool {
+        self.incomplete
     }
     pub fn enable_plain(&mut self) -> io::Result<()> {
         self.durable = true;
+        let (guard, stat) = self
+            .dir
+            .open_file(
+                &guard_name(self.sequence)?,
+                libc::O_RDWR | libc::O_EXCL,
+                Some(0o600),
+                Trust::Private,
+            )
+            .map_err(io::Error::other)?
+            .ok_or_else(|| io::Error::other("capture guard missing"))?;
+        crate::fs::fchmod(&guard, 0o600)?;
+        guard.sync_all()?;
+        self.guard = Some(FileIdentity::of(&stat));
         let name = plain_name(self.sequence)?;
         let (mut file, _) = self
             .dir
@@ -100,9 +124,21 @@ impl Log {
             .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("plain format record missing"))?;
         crate::fs::fchmod(&file, 0o600)?;
-        file.write_all(b"effigy.plain.v1\n")?;
+        file.write_all(b"effigy.plain.v2\n")?;
         file.sync_all()?;
-        self.dir.sync().map_err(io::Error::other)
+        self.dir.sync().map_err(io::Error::other)?;
+        self.extent_identity = Some(super::merged::atomic::publish(
+            &self.dir,
+            &extent_name(self.sequence)?,
+            &DurableExtent {
+                version: 1,
+                committed: 0,
+                guard: FileIdentity::of(&stat),
+            },
+            "initial",
+            None,
+        )?);
+        Ok(())
     }
     pub fn publish_styles(
         &mut self,
@@ -140,10 +176,58 @@ impl Log {
     /// Managed plain capture is acknowledged only after its bytes and any
     /// new segment entry are durable. Other capture modes retain their contract.
     pub fn append_durable(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let (guard, stat) = self
+            .dir
+            .open_file(
+                &guard_name(self.sequence)?,
+                libc::O_RDWR,
+                None,
+                Trust::Private,
+            )
+            .map_err(io::Error::other)?
+            .ok_or_else(|| io::Error::other("capture guard missing"))?;
+        let guard_id = FileIdentity::of(&stat);
+        if self.guard != Some(guard_id) {
+            return Err(io::Error::other("capture guard identity changed"));
+        }
+        let _lock = super::merged::atomic::FileLock::exclusive(guard)?;
+        super::merged::atomic::begin_append(
+            &self.dir,
+            &extent_name(self.sequence)?,
+            guard_id,
+            self.committed,
+        )?;
         self.append(bytes)?;
         crate::fault_point!(CaptureSync)?;
         self.file.sync_all()?;
-        self.dir.sync().map_err(io::Error::other)
+        self.dir.sync().map_err(io::Error::other)?;
+        let identity = self
+            .extent_identity
+            .ok_or_else(|| io::Error::other("durable extent is not initialized"))?;
+        let next = self.bases.back().copied().unwrap_or(0) + self.written;
+        self.extent_identity = Some(super::merged::atomic::publish(
+            &self.dir,
+            &extent_name(self.sequence)?,
+            &DurableExtent {
+                version: 1,
+                committed: next,
+                guard: guard_id,
+            },
+            "commit",
+            Some(identity),
+        )?);
+        crate::fault_point!(CaptureCommitAfterPublish)?;
+        let cleanup_durable =
+            super::merged::atomic::finish_append(&self.dir, &extent_name(self.sequence)?)?;
+        self.committed = next;
+        if !cleanup_durable {
+            self.incomplete = true;
+            self.mark_truncated();
+        }
+        Ok(())
     }
     /// Best effort: a failed write leaves a marker for readers. Failing to
     /// write the marker too loses only that report (K10).
@@ -154,6 +238,20 @@ impl Log {
                 .open_file(&name, libc::O_WRONLY, Some(0o600), Trust::Private);
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DurableExtent {
+    pub version: u8,
+    pub committed: u64,
+    pub guard: FileIdentity,
+}
+pub(crate) fn guard_name(sequence: i64) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.stdout.guard")).map_err(io::Error::other)
+}
+pub(crate) fn extent_name(sequence: i64) -> io::Result<FileName> {
+    FileName::new(&format!("{sequence}.stdout.committed")).map_err(io::Error::other)
 }
 
 fn create(dir: &DirFd, sequence: i64, stream: Stream, base: u64) -> io::Result<std::fs::File> {

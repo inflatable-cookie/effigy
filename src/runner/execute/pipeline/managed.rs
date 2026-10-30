@@ -2073,6 +2073,7 @@ working_dir = "/workspace"
     fn host(name: &str) -> HostProcessTab {
         HostProcessTab {
             name: name.to_owned(),
+            identity: None,
             log: std::path::PathBuf::from(format!("/repo/.effigy/{name}.log")),
             listener_state: None,
             restart: HostProcessRestart::Never,

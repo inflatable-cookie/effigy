@@ -2,7 +2,7 @@
 mod anchor;
 mod canonical_output;
 pub(crate) mod capture;
-mod merged;
+pub(crate) mod merged;
 mod styled_tap;
 pub use canonical_output::CanonicalOutput;
 pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
@@ -1261,6 +1261,18 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
+    fn abandon_capture(&mut self, reason: &str) {
+        self.capture = CaptureState::Truncated(reason.to_owned());
+        self.stdout = None;
+        self.stderr = None;
+        self.capture_eof_sent = true;
+        // Unobserved bytes may finish a held secret or terminal control.
+        // Poison the shared host writer rather than carrying that state into
+        // a successor generation or flushing a potentially joinable prefix.
+        if let Some(output) = &self.canonical_output {
+            output.fail();
+        }
+    }
     /// One sanitize-then-redact over both streams in arrival order, before any
     /// sink: per-stream work could reconstruct a secret split across streams
     /// wherever they are joined (a log reader, a tail, a terminal), and a
@@ -1565,9 +1577,7 @@ impl ProcessCore {
         while self.stdout.is_some() || self.stderr.is_some() {
             self.drain();
             if stopped.operation().check("capture drain").is_err() {
-                self.capture = CaptureState::Truncated("drain deadline".into());
-                self.stdout = None;
-                self.stderr = None;
+                self.abandon_capture("drain deadline");
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));

@@ -43,7 +43,7 @@ pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
     start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
-    HostProcessStopReport,
+    HostPaneIdentity, HostPaneObservation, HostProcessStopReport,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -123,6 +123,8 @@ struct HostProcessRuntimeSpec {
     state_home: PathBuf,
     #[serde(skip)]
     output: Option<effigy_kernel::custody::CanonicalOutput>,
+    #[serde(skip)]
+    run_id: Option<effigy_kernel::id::RunId>,
 }
 
 /// The stop report a supervisor writes after it settles its own run: the
@@ -150,6 +152,10 @@ struct HostProcessDependency {
 struct HostListenerState {
     schema: String,
     owner: String,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    custody_nonce: Option<String>,
     runtime_generation: String,
     generation: String,
     status: String,
@@ -616,7 +622,10 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     {
         return None;
     }
-    let len = metadata.len();
+    let len = proof.length;
+    if metadata.len() < len {
+        return None;
+    }
     let start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
     let read_from = start.saturating_sub(1);
     file.seek(SeekFrom::Start(read_from)).ok()?;
@@ -1220,6 +1229,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     // Admission retains Gate(HostProcess) after every predecessor settled.
+    spec.run_id = Some(run.id());
     // Publish a fresh canonical inode before the client can follow this run.
     let log =
         effigy_kernel::custody::MergedLog::prepare(&mut run, &spec.log_file).map_err(|error| {
@@ -1948,6 +1958,7 @@ struct ListenerGeneration<'a> {
     spec: &'a HostProcessRuntimeSpec,
     supervisor_pid: u32,
     generation: String,
+    custody_nonce: Option<String>,
     child: Option<ChildProcessIdentity>,
     address: Option<SocketAddr>,
     route_owner: Option<ManagedListenerRouteOwner>,
@@ -1964,6 +1975,7 @@ impl<'a> ListenerGeneration<'a> {
             spec,
             supervisor_pid,
             generation: generation.to_owned(),
+            custody_nonce: None,
             child: None,
             address: None,
             route_owner: None,
@@ -1993,6 +2005,8 @@ impl<'a> ListenerGeneration<'a> {
         HostListenerState {
             schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
             owner: self.spec.owner.clone(),
+            run: self.spec.run_id.map(|run| run.to_string()),
+            custody_nonce: self.custody_nonce.clone(),
             runtime_generation: self.spec.runtime_generation.clone(),
             generation: self.generation.clone(),
             status: status.to_owned(),
@@ -2139,6 +2153,7 @@ fn supervise_managed_host_listener(
     };
     activate_once(active, run, session)?;
     let pid = child.identity().identity.pid;
+    state.custody_nonce = Some(child.identity().nonce);
     // The leader's exact identity lets a stop that outlives this supervisor
     // settle the group it started. An identity that cannot be read here only
     // costs that guard; the generation still serves.
@@ -2818,6 +2833,36 @@ mod tests {
         })
     }
 
+    #[test]
+    fn pane_listener_observation_binds_the_owner_run_and_custody_generation() {
+        let run = effigy_kernel::id::RunId::new(1, [8; 10]).unwrap();
+        let nonce = format!("{run}:4");
+        let make = |status: &str| {
+            let mut value = published_listener_state("activation", status);
+            value["run"] = serde_json::json!(run.to_string());
+            value["custody_nonce"] = serde_json::json!(nonce);
+            value["public_url"] = serde_json::json!("https://api.test");
+            serde_json::from_value::<HostListenerState>(value).unwrap()
+        };
+        assert_eq!(
+            kernel_run::pane_listener(make("ready"), run, Some(&nonce)),
+            Some(("ready".into(), Some("https://api.test".into())))
+        );
+        assert!(kernel_run::pane_listener(make("ready"), run, Some("stale-child:3")).is_none());
+        assert!(kernel_run::pane_listener(
+            make("ready"),
+            effigy_kernel::id::RunId::new(1, [9; 10]).unwrap(),
+            Some(&nonce)
+        )
+        .is_none());
+        for status in ["unavailable", "failed", "stopped"] {
+            assert_eq!(
+                kernel_run::pane_listener(make(status), run, Some(&nonce)),
+                Some((status.into(), None))
+            );
+        }
+    }
+
     /// The activation record is the readiness barrier: a previous activation's
     /// terminal record never satisfies the wait for this activation.
     #[test]
@@ -3146,6 +3191,67 @@ mod tests {
             text.contains("boom from the child"),
             "the process log keeps the child's last lines: {text:?}"
         );
+    }
+
+    #[test]
+    fn host_pane_status_uses_the_kernel_owner_not_child_lines() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "printf '[effigy host-process] `app` exited (code 99)\\n'; exec /bin/sleep 60",
+                HostProcessRestart::Never,
+            )],
+        );
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let guard = Stop(&fixture.checkout, &policy);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let identity = HostPaneIdentity::new(&fixture.checkout, &policy, "app").unwrap();
+        wait_until("typed owner observation", || {
+            identity
+                .read(None)
+                .is_some_and(|view| view.live && view.phase == effigy_kernel::run::Phase::Active)
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        wait_until("forged child line was captured", || {
+            listener_output_tail(&log).is_some()
+                || fs::read(&log).is_ok_and(|bytes| {
+                    bytes
+                        .windows(b"exited (code 99)".len())
+                        .any(|part| part == b"exited (code 99)")
+                })
+        });
+        let running = identity.read(None).unwrap();
+        drop(guard);
+        let stopped = identity.read(None).unwrap();
+        assert!(running.live && running.exit.is_none(), "{running:?}");
+        assert_eq!(stopped.phase, effigy_kernel::run::Phase::Closed);
+        assert!(
+            stopped.exit.is_none(),
+            "an owner stop is not the child's forged exit: {stopped:?}"
+        );
+    }
+
+    #[test]
+    fn status_does_not_advertise_an_unbound_legacy_listener_as_ready() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process("app", "exit 0", HostProcessRestart::Never)],
+        );
+        let state = host_process_listener_state_path(&fixture.checkout, &policy, "app");
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        write_private_json(&state, &published_listener_state("old activation", "ready")).unwrap();
+        let rows = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(rows[0].state, "absent");
+        assert!(rows[0].listener.is_none(), "{rows:?}");
     }
 
     /// Real custody cutover, then the bundled direct inode/offset follower.
@@ -4593,6 +4699,7 @@ while True:
 
     fn runtime_spec(env: &[(&str, &str)]) -> HostProcessRuntimeSpec {
         HostProcessRuntimeSpec {
+            run_id: None,
             ansi_front: false,
             schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
             project_path: "/checkout".to_owned(),

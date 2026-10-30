@@ -5,9 +5,7 @@ use crate::fs::{DirFd, FileName, Trust};
 use effigy_core::terminal_text::{Style, StyledChunk, StyledSpan};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-static STAGE: AtomicU64 = AtomicU64::new(0);
+use std::io::{self, Read};
 const MAX_WIRE: usize = 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,7 +63,7 @@ impl Tap {
         if wire.is_empty() || wire.len() > MAX_WIRE {
             wire = serde_json::to_vec(&self.window).map_err(io::Error::other)?;
         }
-        if let Some((file, stat)) = self
+        let expected = if let Some((file, stat)) = self
             .dir
             .open_file(&self.name, libc::O_RDONLY, None, Trust::Private)
             .map_err(io::Error::other)?
@@ -82,34 +80,15 @@ impl Tap {
                     "unknown styled tap version; operator data retained",
                 ));
             }
+            Some(super::FileIdentity::of(&stat))
+        } else {
+            None
+        };
+        if wire.len() > MAX_WIRE {
+            return Err(io::Error::other("styled tap exceeds its wire bound"));
         }
-        let nonce = STAGE.fetch_add(1, Ordering::Relaxed);
-        let stage = self
-            .name
-            .with_suffix(&format!(".{}.{}.stage", std::process::id(), nonce))
-            .map_err(io::Error::other)?;
-        let (mut file, _) = self
-            .dir
-            .open_file(
-                &stage,
-                libc::O_WRONLY | libc::O_EXCL,
-                Some(0o600),
-                Trust::Private,
-            )
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::other("styled tap stage missing"))?;
-        let result = (|| {
-            crate::fs::fchmod(&file, 0o600)?;
-            file.write_all(&wire)?;
-            self.dir
-                .rename(&stage, &self.name)
-                .map_err(io::Error::other)
-        })();
-        // Only this call's successfully created private stage is removable.
-        if result.is_err() {
-            let _ = self.dir.remove(&stage, false);
-        }
-        result
+        super::merged::atomic::publish(&self.dir, &self.name, &self.window, "styles", expected)
+            .map(|_| ())
     }
 }
 /// Apply style metadata only where its text exactly matches this contiguous
@@ -199,6 +178,7 @@ pub(super) fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     #[test]
     fn styles_require_identity_offset_and_exact_canonical_text() {
         let home = effigy_test_support::short_tempdir("st-").unwrap();

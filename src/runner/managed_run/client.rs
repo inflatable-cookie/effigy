@@ -209,14 +209,14 @@ struct FollowedWorkload {
 }
 
 #[derive(Default)]
-struct FollowedLines {
-    offset: u64,
+pub(super) struct FollowedLines {
+    pub(super) offset: u64,
     partial: String,
     failed: bool,
     warned: bool,
 }
 impl FollowedLines {
-    fn render(
+    pub(super) fn render(
         &mut self,
         name: &str,
         read: Option<&effigy_kernel::run::LogRead>,
@@ -648,6 +648,21 @@ mod tests {
         assert!(text.contains("output gap") && text.ends_with("[api] secret\n"));
         assert!(!text.contains("supersecret") && lines.partial.is_empty());
         assert!(lines.render("api", Some(&read(107, "")), false).is_empty());
+    }
+    #[test]
+    fn independent_sources_keep_split_writes_in_one_line_and_flush_at_close() {
+        let mut api = FollowedLines::default();
+        let mut jobs = FollowedLines::default();
+        assert!(api.render("api", Some(&read(0, "hel")), false).is_empty());
+        assert_eq!(
+            jobs.render("jobs", Some(&read(0, "work\n")), false),
+            "[jobs] work\n"
+        );
+        assert_eq!(
+            api.render("api", Some(&read(3, "lo\nlast")), false),
+            "[api] hello\n"
+        );
+        assert_eq!(api.render("api", None, true), "[api] last\n");
     }
     #[test]
     fn headless_partial_lines_are_bounded_and_invalid_text_fails_closed_once() {

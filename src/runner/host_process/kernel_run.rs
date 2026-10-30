@@ -11,7 +11,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -180,6 +179,97 @@ pub(in crate::runner) struct HostProcessStatus {
     pub listener: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log: Option<String>,
+}
+
+/// A pane observes the owner's journal and generation-bound listener record.
+/// No child text is an authority for lifecycle status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct HostPaneIdentity {
+    repo: PathBuf,
+    resource: ResourceId,
+}
+#[derive(Debug)]
+pub(in crate::runner) struct HostPaneObservation {
+    pub phase: Phase,
+    pub live: bool,
+    pub exit: Option<i32>,
+    pub listener: Option<(String, Option<String>)>,
+}
+impl HostPaneIdentity {
+    pub(in crate::runner) fn new(
+        repo: &Path,
+        policy: &EffectiveContainerPolicy,
+        name: &str,
+    ) -> Option<Self> {
+        Some(Self {
+            repo: repo.to_owned(),
+            resource: host_process_resource(policy, name).ok()?,
+        })
+    }
+    pub(in crate::runner) fn read(&self, listener: Option<&Path>) -> Option<HostPaneObservation> {
+        let run = latest_run(&self.repo, &self.resource)?;
+        let root = match observe_root(&self.repo)? {
+            Observed::Verified(root, _) => root,
+            _ => return None,
+        };
+        let reader = match Store::read(&observe(), &root) {
+            Observed::Verified(reader, _) => reader,
+            _ => return None,
+        };
+        let effects = match effigy_kernel::run::effects(&reader, run.id) {
+            Observed::Verified(effects, _) => effects,
+            _ => return None,
+        };
+        let latest = effects
+            .iter()
+            .rev()
+            .find(|effect| effect.spec.kind == "kernel:process");
+        let nonce = latest.and_then(|effect| effect.receipt.as_ref()?.get("nonce")?.as_str());
+        let exit = latest
+            .and_then(|effect| effect.receipt.as_ref()?.get("exit")?.as_i64())
+            .and_then(|code| i32::try_from(code).ok());
+        let live = matches!(
+            effigy_kernel::gate::Gate::probe(&observe(), &root, &self.resource),
+            Observed::Verified(GateState::Held(_), _)
+        );
+        let listener = listener
+            .and_then(|path| read_private_json::<HostListenerState>(path).ok())
+            .and_then(|state| pane_listener(state, run.id, nonce));
+        let exit = if matches!(
+            run.workload,
+            Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. })
+        ) {
+            None
+        } else {
+            exit.or_else(|| run_exit(&run))
+        };
+        Some(HostPaneObservation {
+            phase: run.phase,
+            live,
+            exit,
+            listener,
+        })
+    }
+}
+
+pub(super) fn pane_listener(
+    state: HostListenerState,
+    run: RunId,
+    nonce: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    if state.schema != HOST_LISTENER_STATE_SCHEMA
+        || state.run.as_deref() != Some(run.to_string().as_str())
+        || state.custody_nonce.as_deref() != nonce
+        || (state.status == "ready" && nonce.is_none())
+    {
+        return None;
+    }
+    let url = if state.status == "ready" {
+        state.public_url.or(state.internal_url)
+    } else {
+        None
+    };
+    Some((state.status, url))
 }
 
 /// A host process's own resource: the environment's checkout scope, its own
@@ -800,6 +890,7 @@ fn start_host_processes_inner(
                 continue;
             }
             let spec = HostProcessRuntimeSpec {
+                run_id: None,
                 ansi_front: crate::runner::managed_color::initiating_ansi(),
                 schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
                 project_path: project_path.clone(),
@@ -1685,6 +1776,7 @@ fn custody_exit(repo_root: &Path, run: RunId) -> Option<i32> {
 struct ReceiptFacts {
     pid: Option<u32>,
     exit: Option<i32>,
+    nonce: Option<String>,
 }
 
 fn custody_effect(repo_root: &Path, run: RunId) -> Option<ReceiptFacts> {
@@ -1718,7 +1810,12 @@ fn custody_effect(repo_root: &Path, run: RunId) -> Option<ReceiptFacts> {
         .iter()
         .find_map(|receipt| receipt.get("exit").and_then(serde_json::Value::as_i64))
         .map(|exit| exit as i32);
-    Some(ReceiptFacts { pid, exit })
+    let nonce = custody
+        .first()
+        .and_then(|receipt| receipt.get("nonce"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    Some(ReceiptFacts { pid, exit, nonce })
 }
 
 /// `container status` rows: each declared host process's run, state and last
@@ -1733,11 +1830,6 @@ pub(in crate::runner) fn host_process_status(
         .iter()
         .map(|hp| {
             let state_file = host_process_state_path(&dir, &hp.name);
-            let listener = fs::read(&state_file)
-                .ok()
-                .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
-                .filter(|state| state.schema == HOST_LISTENER_STATE_SCHEMA)
-                .map(|state| state.status);
             let resource = match host_process_resource(policy, &hp.name) {
                 Ok(resource) => resource,
                 Err(error) => {
@@ -1748,7 +1840,7 @@ pub(in crate::runner) fn host_process_status(
                         phase: None,
                         pid: None,
                         last_exit: None,
-                        listener,
+                        listener: None,
                         log: Some(error.to_string()),
                     }
                 }
@@ -1761,7 +1853,7 @@ pub(in crate::runner) fn host_process_status(
                     phase: None,
                     pid: None,
                     last_exit: None,
-                    listener,
+                    listener: None,
                     log: None,
                 };
             };
@@ -1780,13 +1872,24 @@ pub(in crate::runner) fn host_process_status(
             } else {
                 "interrupted"
             };
+            let custody = custody_effect(repo_root, run.id).unwrap_or_default();
+            let listener = read_private_json::<HostListenerState>(&state_file)
+                .ok()
+                .and_then(|state| pane_listener(state, run.id, custody.nonce.as_deref()))
+                .map(|(status, _)| {
+                    if status == "ready" && (run.phase == Phase::Closed || !live) {
+                        "unavailable".to_owned()
+                    } else {
+                        status
+                    }
+                });
             HostProcessStatus {
                 name: hp.name.clone(),
                 run: Some(run.id.to_string()),
                 state: state.to_owned(),
                 phase: Some(phase_label(run.phase).to_owned()),
-                pid: custody_pid(repo_root, run.id),
-                last_exit: custody_exit(repo_root, run.id).or_else(|| run_exit(&run)),
+                pid: custody.pid,
+                last_exit: custody.exit.or_else(|| run_exit(&run)),
                 listener,
                 log: Some(
                     hp_log_path(repo_root, policy, &hp.name)

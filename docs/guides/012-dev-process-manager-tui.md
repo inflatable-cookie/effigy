@@ -50,6 +50,10 @@ respect `NO_COLOR`, CI and explicit colour preferences. Their canonical logs
 contain sanitized, redacted plain text; panes receive optional typed styles
 from the same writer result. A missing or expired style window renders plain
 text, and plain/JSON readers do not interpret terminal controls.
+Effigy readers show only the committed extent. A failed or interrupted append
+stops capture and can refuse restart; preserve its files for operator recovery.
+Underlay and direct file reads are presentation-only: they can show a safe line
+awaiting sync that is later lost on crash, and acknowledge no durability.
 
 On the first host-process start after upgrading from the raw-log writer,
 Effigy settles the prior owner, retains its old log in private

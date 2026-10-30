@@ -577,6 +577,46 @@ fn styled_pty_eof_preserves_safe_colour_and_completes_capture() {
 }
 
 #[test]
+fn styled_capture_replacement_exhaustion_does_not_stop_the_workload() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let secret = (0x20u8..=0x7e).collect::<Vec<_>>();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf 'safe setup output\\n'; exit 0".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Secret(SecretValue::new(secret).unwrap()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Styled { pty: false },
+            label: "capture disabled".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert!(matches!(report.capture, CaptureState::Truncated(_)));
+    assert!(child.tail().is_empty() && child.take_output().is_empty());
+}
+
+#[test]
 fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
     let home = home();
     let cx = cx();
@@ -2209,6 +2249,101 @@ fn merged_log_is_plain_redacted_and_committed_before_fanout() {
         MergedLog::identity(&path).unwrap().length,
         bytes.len() as u64
     );
+}
+
+#[test]
+fn timed_out_drain_poison_prevents_a_successor_from_inheriting_terminal_state() {
+    for partial in [b"super\x1b[".as_slice(), b"super\x1b]unfinished".as_slice()] {
+        let cx = cx();
+        let capture = FakeCapture::new(home(), &cx, vec![]);
+        let path = capture._home.path().join("canonical.log");
+        let output = CanonicalOutput::with_secrets(
+            MergedLog::prepare_test(&path).unwrap(),
+            vec![b"supersecret".to_vec()],
+            4096,
+            4096,
+        )
+        .unwrap();
+        lock(&capture.core).canonical_output = Some(output.clone());
+        capture.feed(STD, b"safe\n");
+        capture.feed(STD, partial);
+        lock(&capture.core).abandon_capture("drain deadline");
+        capture.feed(ERR, b"31msecret\nnext generation\n");
+        let next = ProcessSpec {
+            argv: vec!["/bin/true".into()],
+            cwd: capture._home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::ZERO,
+            lifetime: Lifetime::Finite(Duration::from_secs(1)),
+            terminal: Terminal::None,
+            label: "successor".into(),
+        };
+        assert!(output.validate(&next).is_err());
+        assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+        assert_eq!(
+            MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
+            b"safe\n"
+        );
+        assert_eq!(capture.merged(), b"safe\n");
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn managed_journal_readers_never_surface_a_failed_inflight_append() {
+    use crate::fault::{self, Fault, Point};
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            fault::hook(None);
+            fault::arm(None);
+        }
+    }
+    for point in [
+        Point::CaptureSync,
+        Point::CaptureCommitAfterPublish,
+        Point::CapturePendingRemoval,
+    ] {
+        let cx = cx();
+        let capture = FakeCapture::new(home(), &cx, vec![]);
+        {
+            let mut core = lock(&capture.core);
+            let log = core.logs[0].take().unwrap();
+            core.canonical_output =
+                Some(CanonicalOutput::for_run(log, vec![], cx.operation().limits()).unwrap());
+        }
+        capture.feed(STD, b"before\n");
+        let root = capture.root.clone();
+        let observed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = observed.clone();
+        let _reset = Reset;
+        fault::hook(Some(Box::new(move |at| {
+            if at == Point::CaptureSync {
+                seen.set(true);
+                let read = crate::run::read_log(
+                    &self::cx().operation().observe().unwrap(),
+                    &root,
+                    id(),
+                    1,
+                    Stream::Stdout,
+                    0,
+                    4096,
+                );
+                if let Observed::Verified(read, _) = read {
+                    assert_eq!(read.bytes, b"before\n");
+                }
+            }
+        })));
+        fault::arm_point(point, Fault::Enospc);
+        capture.feed(STD, b"unacknowledged\n");
+        let fired = fault::fired();
+        fault::hook(None);
+        fault::arm(None);
+        assert!(fired && observed.get());
+        assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+        assert_eq!(capture.log(&cx, STD), b"before\n");
+        assert_eq!(capture.merged(), b"before\n");
+    }
 }
 
 #[test]

@@ -10,16 +10,16 @@
 //! - where the supervisor writes the process's output
 //!   ([`crate::runner::host_process::host_process_log_path`]) and, for a
 //!   listener, the state file that says when it is ready;
-//! - the status line, derived from the supervisor's own log lines and that
-//!   state file, never from scraping a process tree;
+//! - the status line, derived from the owner journal and a generation-bound
+//!   listener record, never child log text or a process-tree scrape;
 //! - [`LogTail`], a bounded incremental reader for the log file, shared by the
 //!   TUI tabs and the `--headless` front end so both show the same lines.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::runner::host_process::{HostPaneIdentity, HostPaneObservation};
 use effigy_containers::{EffectiveContainerPolicy, HostProcessRestart};
-use serde::Deserialize;
 
 /// The most one log tail read returns, so a chatty process cannot stall a
 /// frame or a headless turn.
@@ -31,6 +31,7 @@ const LISTENER_POLL: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) name: String,
+    pub(in crate::runner) identity: Option<HostPaneIdentity>,
     pub(in crate::runner) log: PathBuf,
     /// The state file a listener publishes; `None` for a plain process.
     pub(in crate::runner) listener_state: Option<PathBuf>,
@@ -49,6 +50,7 @@ impl HostProcessTab {
             .iter()
             .map(|process| Self {
                 name: process.name.clone(),
+                identity: HostPaneIdentity::new(repo_root, policy, &process.name),
                 log: crate::runner::host_process::host_process_log_path(
                     repo_root,
                     policy,
@@ -88,6 +90,10 @@ pub(in crate::runner) enum HostStatus {
     LogTruncated,
     /// A generation is running; a listener that is not serving yet waits here.
     Running,
+    Unavailable,
+    Failed,
+    Stopped,
+    Stopping,
     /// A listener reported its route: its live URL.
     Ready(String),
     /// The last generation exited and the restart policy replaces it.
@@ -105,6 +111,10 @@ impl HostStatus {
             Self::LogReplaced => "output log replaced; reopened at byte zero (reopen older attached followers)".to_owned(),
             Self::LogTruncated => "output follow stopped: invalid text or line buffer exceeded; inspect the canonical log before reopening".to_owned(),
             Self::Running => "running".to_owned(),
+            Self::Unavailable => "unavailable: no current ready owner generation".to_owned(),
+            Self::Failed => "failed".to_owned(),
+            Self::Stopped => "stopped".to_owned(),
+            Self::Stopping => "stopping".to_owned(),
             Self::Ready(url) => format!("ready on {url}"),
             Self::Restarting => "restarting".to_owned(),
             Self::Exited(code) => format!("exited {code}"),
@@ -112,53 +122,48 @@ impl HostStatus {
     }
 }
 
-/// The status a supervisor log line reports, if it reports one. The lines are
-/// the supervisor's own (`host_process.rs` writes them into the same log the
-/// tab follows), so this reads a stable internal contract, never process
-/// output a user's program printed.
-pub(in crate::runner) fn status_from_log_line(
-    tab: &HostProcessTab,
-    line: &str,
-) -> Option<HostStatus> {
-    const MARKERS: &str = "[effigy host-process]";
-    let reported = line.trim();
-    if !reported.starts_with(MARKERS) {
-        return None;
+/// Only typed owner/journal observations can change a pane's status.
+fn observed_status(tab: &HostProcessTab, view: &HostPaneObservation) -> HostStatus {
+    use effigy_kernel::run::Phase;
+    if view.phase == Phase::Closed {
+        return view
+            .exit
+            .map(HostStatus::Exited)
+            .unwrap_or(HostStatus::Stopped);
     }
-    if reported.contains("started `") {
-        return Some(HostStatus::Running);
+    if view.phase == Phase::Stopping {
+        return HostStatus::Stopping;
     }
-    if reported.contains("failed to spawn") {
-        return Some(HostStatus::Exited(127));
+    if !view.live {
+        return HostStatus::Unavailable;
     }
-    let code = reported
-        .split("exited (code ")
-        .nth(1)
-        .and_then(|rest| rest.split(')').next())
-        .and_then(|code| code.trim().parse::<i32>().ok())?;
-    Some(if tab.restarts_after(code) {
-        HostStatus::Restarting
+    if let Some(code) = view.exit {
+        return if tab.restarts_after(code) {
+            HostStatus::Restarting
+        } else {
+            HostStatus::Exited(code)
+        };
+    }
+    if let Some((status, url)) = &view.listener {
+        match status.as_str() {
+            "ready" => {
+                return url
+                    .clone()
+                    .map(HostStatus::Ready)
+                    .unwrap_or(HostStatus::Unavailable)
+            }
+            "unavailable" => return HostStatus::Unavailable,
+            "failed" => return HostStatus::Failed,
+            "stopped" => return HostStatus::Stopped,
+            "starting" => return HostStatus::Starting,
+            _ => {}
+        }
+    }
+    if matches!(view.phase, Phase::Admitted | Phase::Starting) {
+        HostStatus::Starting
     } else {
-        HostStatus::Exited(code)
-    })
-}
-
-/// A listener's live URL, once its state file says it is ready. A state file
-/// that is absent, mid-write or for a failed generation is no observation.
-pub(in crate::runner) fn ready_url(tab: &HostProcessTab) -> Option<String> {
-    #[derive(Deserialize)]
-    struct ListenerState {
-        status: String,
-        internal_url: Option<String>,
-        public_url: Option<String>,
+        HostStatus::Running
     }
-    let path = tab.listener_state.as_ref()?;
-    let raw = std::fs::read(path).ok()?;
-    let state: ListenerState = serde_json::from_slice(&raw).ok()?;
-    if state.status != "ready" {
-        return None;
-    }
-    state.public_url.or(state.internal_url)
 }
 
 /// One host process's followed log and status, as a front end renders it.
@@ -200,12 +205,16 @@ impl HostFollower {
         let mut changed = None;
         if now >= self.next_poll {
             self.next_poll = now + LISTENER_POLL;
-            if let Some(url) = ready_url(&self.tab) {
-                let ready = HostStatus::Ready(url);
-                if ready != self.status {
-                    changed = Some(ready.clone());
-                    self.status = ready;
-                }
+            let status = self
+                .tab
+                .identity
+                .as_ref()
+                .and_then(|identity| identity.read(self.tab.listener_state.as_deref()))
+                .map(|view| observed_status(&self.tab, &view))
+                .unwrap_or(HostStatus::Unavailable);
+            if status != self.status {
+                changed = Some(status.clone());
+                self.status = status;
             }
         }
         if !self.announced || changed.is_some() {
@@ -226,12 +235,16 @@ impl HostFollower {
         }
         // Reject legacy paths before opening payload bytes. Identity is checked
         // again after the bounded read so a raced replacement publishes none.
-        let Ok(before) = effigy_kernel::custody::MergedLog::identity(&self.tab.log) else {
-            if !self.log_refused {
-                poll.statuses.push(HostStatus::LogUnavailable);
+        let before = match effigy_kernel::custody::MergedLog::identity(&self.tab.log) {
+            Ok(before) => before,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return poll,
+            Err(_) => {
+                if !self.log_refused {
+                    poll.statuses.push(HostStatus::LogUnavailable);
+                }
+                self.log_refused = true;
+                return poll;
             }
-            self.log_refused = true;
-            return poll;
         };
         if std::mem::take(&mut self.log_refused) {
             poll.statuses.push(self.status.clone());
@@ -240,9 +253,14 @@ impl HostFollower {
         let lines = self
             .tail
             .read_verified(&self.tab.log, Some(before.identity));
-        if !effigy_kernel::custody::MergedLog::identity(&self.tab.log)
-            .is_ok_and(|after| after.identity == before.identity)
-        {
+        let same = match effigy_kernel::custody::MergedLog::identity(&self.tab.log) {
+            Ok(after) => after.identity == before.identity,
+            // read_verified already checked the committed range and inode.
+            // A new append cannot invalidate that prefix or reset its cursor.
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
+            Err(_) => false,
+        };
+        if !same {
             self.tail = LogTail::new();
             poll.statuses.push(HostStatus::LogReplaced);
             return poll;
@@ -254,15 +272,7 @@ impl HostFollower {
         if self.tail.failed && !was_failed {
             poll.statuses.push(HostStatus::LogTruncated);
         }
-        for line in lines {
-            poll.lines.push(line.clone());
-            if let Some(status) = status_from_log_line(&self.tab, &line) {
-                if status != self.status {
-                    self.status = status.clone();
-                    poll.statuses.push(status);
-                }
-            }
-        }
+        poll.lines = lines;
         poll
     }
 }
@@ -395,6 +405,7 @@ mod tests {
     fn tab(restart: HostProcessRestart, listener_state: Option<PathBuf>) -> HostProcessTab {
         HostProcessTab {
             name: "api".to_owned(),
+            identity: None,
             log: PathBuf::from("/nonexistent/api.log"),
             listener_state,
             restart,
@@ -403,63 +414,48 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_log_lines_report_start_restart_and_exit() {
-        let always = tab(HostProcessRestart::Always, None);
+    fn typed_owner_status_clears_ready_for_unavailable_and_terminal_states() {
+        let tab = tab(HostProcessRestart::OnFailure, None);
+        let mut view = HostPaneObservation {
+            phase: effigy_kernel::run::Phase::Active,
+            live: true,
+            exit: None,
+            listener: Some(("ready".into(), Some("https://api.test".into()))),
+        };
         assert_eq!(
-            status_from_log_line(&always, "[effigy host-process] started `api` (pid 12)"),
-            Some(HostStatus::Running)
+            observed_status(&tab, &view),
+            HostStatus::Ready("https://api.test".into())
         );
+        view.listener = Some(("unavailable".into(), None));
+        assert_eq!(observed_status(&tab, &view), HostStatus::Unavailable);
+        view.listener = Some(("ready".into(), Some("https://api.test".into())));
         assert_eq!(
-            status_from_log_line(&always, "[effigy host-process] `api` exited (code 3)"),
-            Some(HostStatus::Restarting)
+            observed_status(&tab, &view),
+            HostStatus::Ready("https://api.test".into())
         );
-        let never = tab(HostProcessRestart::Never, None);
-        assert_eq!(
-            status_from_log_line(&never, "[effigy host-process] `api` exited (code 3)"),
-            Some(HostStatus::Exited(3))
-        );
-        let on_failure = tab(HostProcessRestart::OnFailure, None);
-        assert_eq!(
-            status_from_log_line(&on_failure, "[effigy host-process] `api` exited (code 0)"),
-            Some(HostStatus::Exited(0)),
-            "a clean exit is not a failure the policy replaces"
-        );
-        assert_eq!(
-            status_from_log_line(
-                &on_failure,
-                "[effigy host-process] failed to spawn `x`: nope"
-            ),
-            Some(HostStatus::Exited(127))
-        );
+        for (state, status) in [
+            ("failed", HostStatus::Failed),
+            ("stopped", HostStatus::Stopped),
+        ] {
+            view.listener = Some((state.into(), None));
+            assert_eq!(observed_status(&tab, &view), status);
+        }
+        view.listener = None;
+        assert_eq!(observed_status(&tab, &view), HostStatus::Running);
     }
-
     #[test]
-    fn a_programs_own_line_is_never_a_status() {
-        let tab = tab(HostProcessRestart::Never, None);
-        assert_eq!(status_from_log_line(&tab, "listening on :3000"), None);
+    fn child_owner_marker_spoofs_never_change_status() {
+        let mut follower = HostFollower::new(tab(HostProcessRestart::Never, None));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spoof.log");
+        std::fs::write(&path, "[effigy host-process] `api` exited (code 0)\n").unwrap();
+        // Log parsing returns display bytes only; lifecycle observation has no
+        // log-text input, including a forged marker at the beginning of a line.
         assert_eq!(
-            status_from_log_line(&tab, "my app: [effigy host-process] started `x`"),
-            None
+            follower.tail.read(&path),
+            ["[effigy host-process] `api` exited (code 0)"]
         );
-    }
-
-    #[test]
-    fn a_listener_state_file_names_its_ready_url() {
-        let dir = tempfile::tempdir().expect("state dir");
-        let state = dir.path().join("api.listener.json");
-        std::fs::write(&state, r#"{"status":"starting"}"#).expect("starting state");
-        let tab = tab(HostProcessRestart::Never, Some(state.clone()));
-        assert_eq!(ready_url(&tab), None, "a starting listener is not ready");
-
-        std::fs::write(
-            &state,
-            r#"{"status":"ready","public_url":"https://api.test","internal_url":"http://127.0.0.1:5000"}"#,
-        )
-        .expect("ready state");
-        assert_eq!(ready_url(&tab).as_deref(), Some("https://api.test"));
-
-        std::fs::write(&state, "{ truncated").expect("torn state");
-        assert_eq!(ready_url(&tab), None, "a torn state file is no observation");
+        assert_eq!(follower.status, HostStatus::Starting);
     }
 
     #[test]

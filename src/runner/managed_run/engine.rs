@@ -286,8 +286,15 @@ pub(in crate::runner) fn own<T>(
         .filter(|value| !value.is_empty())
         .map(|value| value.as_bytes().to_vec())
         .collect();
-    if let Err(error) = session.capture_output(&*run.run_mut()?, secrets) {
-        eprintln!("warning: run output is not logged: {error}");
+    if session
+        .capture_output(&mut *run.run_mut()?, secrets)
+        .is_err()
+    {
+        let message = "the managed run cannot establish safe output descriptors or record capture truncation; no setup or workload was started";
+        session.refused(Category::Unavailable, message);
+        let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
+        warn(&warnings);
+        return Err(RunnerError::task_invocation(message));
     }
     println!(
         "[managed] `{}` (profile `{}`): run {} supervised by pid {}",

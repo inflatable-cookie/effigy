@@ -3,47 +3,40 @@
 use crate::fs::{self, DirFd, FileName, Trust};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static STAGING: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileIdentity {
-    pub device: u64,
-    pub inode: u64,
-}
-impl FileIdentity {
-    // libc device/inode widths differ across supported Unix targets.
-    #[allow(clippy::unnecessary_cast)]
-    fn of(stat: &libc::stat) -> Self {
-        Self {
-            device: stat.st_dev as u64,
-            inode: stat.st_ino as u64,
-        }
-    }
-}
+use super::atomic::publish;
+pub use super::atomic::FileIdentity;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Intent {
     version: u8,
     owner: [u8; 32],
     legacy: Option<FileIdentity>,
+    canonical: FileIdentity,
+    stage: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Provenance {
     version: u8,
     owner: [u8; 32],
     canonical: FileIdentity,
+    committed: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Boundary {
     BeforeRename,
+    BeforeLegacyMove,
     AfterLegacyRename,
     AfterQuarantineSync,
     AfterRename,
+    BeforeCanonicalBind,
     AfterExclusiveCreate,
     AfterCanonicalSync,
     AfterCreate,
@@ -78,44 +71,26 @@ fn names(path: &Path) -> io::Result<(DirFd, FileName, FileName, FileName)> {
     ))
 }
 fn record<T: serde::de::DeserializeOwned>(dir: &DirFd, name: &FileName) -> io::Result<Option<T>> {
+    Ok(record_identity(dir, name)?.map(|(value, _)| value))
+}
+fn record_identity<T: serde::de::DeserializeOwned>(
+    dir: &DirFd,
+    name: &FileName,
+) -> io::Result<Option<(T, FileIdentity)>> {
     let Some((file, stat)) = dir
         .open_file(name, libc::O_RDONLY, None, Trust::Private)
         .map_err(io)?
     else {
         return Ok(None);
     };
-    if stat.st_size > 4096 {
+    if stat.st_size < 0 || stat.st_size > 4096 {
         return Err(refused("unbounded provenance record"));
     }
     let mut bytes = Vec::new();
     file.take(4097).read_to_end(&mut bytes)?;
     serde_json::from_slice(&bytes)
-        .map(Some)
+        .map(|value| Some((value, FileIdentity::of(&stat))))
         .map_err(|_| refused("invalid provenance record"))
-}
-fn publish(dir: &DirFd, name: &FileName, value: &impl Serialize, nonce: &str) -> io::Result<()> {
-    // A killed stage is private and ignored; it is retained for operator
-    // handling rather than removing a file whose creation was not observed.
-    let stage = name
-        .with_suffix(&format!(
-            ".{nonce}.{}",
-            STAGING.fetch_add(1, Ordering::Relaxed)
-        ))
-        .map_err(io)?;
-    let (mut file, _) = dir
-        .open_file(
-            &stage,
-            libc::O_WRONLY | libc::O_EXCL,
-            Some(0o600),
-            Trust::Private,
-        )
-        .map_err(io)?
-        .ok_or_else(|| refused("stage creation missing"))?;
-    fs::fchmod(&file, 0o600)?;
-    file.write_all(&serde_json::to_vec(value).map_err(io)?)?;
-    file.sync_all()?;
-    dir.rename(&stage, name).map_err(io)?;
-    dir.sync().map_err(io)
 }
 fn opened(dir: &DirFd, name: &FileName, trust: Trust) -> io::Result<Option<(File, libc::stat)>> {
     let result = dir
@@ -129,7 +104,7 @@ fn opened(dir: &DirFd, name: &FileName, trust: Trust) -> io::Result<Option<(File
 fn trusted(dir: &DirFd, name: &FileName, proof: &Provenance) -> io::Result<File> {
     let (file, stat) =
         opened(dir, name, Trust::Private)?.ok_or_else(|| refused("canonical log missing"))?;
-    if proof.version != 1 || FileIdentity::of(&stat) != proof.canonical {
+    if proof.version != 2 || FileIdentity::of(&stat) != proof.canonical {
         return Err(refused("canonical log identity changed"));
     }
     Ok(file)
@@ -156,6 +131,13 @@ pub(super) fn prepare(
             return Err(refused("canonical provenance belongs to another owner"));
         }
         let file = trusted(&dir, &name, &proof)?;
+        let _lock = super::atomic::FileLock::exclusive(trusted(&dir, &name, &proof)?)?;
+        if super::atomic::pending_extent(&dir, &ready, proof.canonical)?.is_some() {
+            return Err(refused("a failed or interrupted append remains pending; preserve the log and pending record for operator recovery"));
+        }
+        if file.metadata()?.len() != proof.committed {
+            return Err(refused("canonical log has a torn or unacknowledged suffix; producer refused, preserve the file for operator recovery"));
+        }
         file.sync_all()?;
         dir.sync().map_err(io)?;
         return Ok(file);
@@ -165,16 +147,38 @@ pub(super) fn prepare(
         None => {
             let legacy =
                 opened(&dir, &name, Trust::Operator)?.map(|(_, stat)| FileIdentity::of(&stat));
+            // Bind a freshly and exclusively created inode to durable intent
+            // BEFORE it can appear at the public name. A raced foreign empty
+            // public file cannot acquire sanitizer provenance on retry.
+            let stage = name
+                .with_suffix(&format!(
+                    ".canonical.{nonce}.{}",
+                    STAGING.fetch_add(1, Ordering::Relaxed)
+                ))
+                .map_err(io)?;
+            let (file, stat) = dir
+                .open_file(
+                    &stage,
+                    libc::O_RDWR | libc::O_APPEND | libc::O_EXCL,
+                    Some(0o600),
+                    Trust::Private,
+                )
+                .map_err(io)?
+                .ok_or_else(|| refused("canonical stage creation missing"))?;
+            fs::fchmod(&file, 0o600)?;
+            file.sync_all()?;
             let intent = Intent {
-                version: 1,
+                version: 2,
                 owner,
                 legacy,
+                canonical: FileIdentity::of(&stat),
+                stage: stage.as_str().to_owned(),
             };
-            publish(&dir, &intent_name, &intent, nonce)?;
+            publish(&dir, &intent_name, &intent, nonce, None)?;
             intent
         }
     };
-    if intent.version != 1 || intent.owner != owner {
+    if intent.version != 2 || intent.owner != owner {
         return Err(refused(
             "migration intent belongs to another owner or version",
         ));
@@ -187,11 +191,15 @@ pub(super) fn prepare(
         if quarantine.stat().map_err(io)?.st_dev != dir.stat().map_err(io)?.st_dev {
             return Err(refused("quarantine is on another filesystem"));
         }
+        // Persist the quarantine container itself before moving its only data
+        // into it. Repeat the syncs on recovery, even when rename already ran.
+        quarantine.sync().map_err(io)?;
+        dir.sync().map_err(io)?;
         let destination =
             FileName::new(&format!("{:x}-{:x}.legacy", legacy.device, legacy.inode)).map_err(io)?;
-        let retained = opened(&quarantine, &destination, Trust::Private)?;
-        match retained {
-            Some((_, stat)) if FileIdentity::of(&stat) == legacy => {
+        match opened(&quarantine, &destination, Trust::Private)? {
+            Some((file, stat)) if FileIdentity::of(&stat) == legacy => {
+                file.sync_all()?;
                 if dir
                     .entry(&name)
                     .map_err(io)?
@@ -224,34 +232,63 @@ pub(super) fn prepare(
                 {
                     return Err(refused("legacy identity changed before rename"));
                 }
-                dir.move_to(&name, &quarantine, &destination).map_err(io)?;
+                boundary(Boundary::BeforeLegacyMove)?;
+                super::atomic::rename(
+                    &dir,
+                    &name,
+                    &quarantine,
+                    &destination,
+                    super::atomic::Rename::Exclusive,
+                )?;
+                if quarantine
+                    .entry(&destination)
+                    .map_err(io)?
+                    .map(|stat| FileIdentity::of(&stat))
+                    != Some(legacy)
+                {
+                    // Never overwrite a new public entry while recovering a
+                    // raced source. The uncertain inode is retained privately.
+                    quarantine.sync().map_err(io)?;
+                    dir.sync().map_err(io)?;
+                    return Err(refused("moved legacy identity changed; uncertain data retained in private quarantine"));
+                }
                 boundary(Boundary::AfterLegacyRename)?;
-                quarantine.sync().map_err(io)?;
-                boundary(Boundary::AfterQuarantineSync)?;
-                dir.sync().map_err(io)?;
-                boundary(Boundary::AfterRename)?;
             }
         }
+        quarantine.sync().map_err(io)?;
+        boundary(Boundary::AfterQuarantineSync)?;
+        dir.sync().map_err(io)?;
+        boundary(Boundary::AfterRename)?;
     }
+    let stage = FileName::new(&intent.stage).map_err(io)?;
     let (file, stat) = match opened(&dir, &name, Trust::Private)? {
-        Some((file, stat)) if stat.st_size == 0 => (file, stat),
-        Some(_) => {
-            return Err(refused(
-                "unproven replacement contains data; left untouched",
-            ))
+        Some((file, stat)) if FileIdentity::of(&stat) == intent.canonical && stat.st_size == 0 => {
+            (file, stat)
         }
-        None => dir
-            .open_file(
-                &name,
-                libc::O_RDWR | libc::O_APPEND | libc::O_EXCL,
-                Some(0o600),
-                Trust::Private,
-            )
-            .map_err(io)?
-            .ok_or_else(|| refused("canonical creation missing"))?,
+        Some(_) => return Err(refused("unproven public replacement; left untouched")),
+        None => {
+            let (file, stat) = opened(&dir, &stage, Trust::Private)?
+                .ok_or_else(|| refused("bound canonical inode is missing"))?;
+            if FileIdentity::of(&stat) != intent.canonical || stat.st_size != 0 {
+                return Err(refused("bound canonical stage changed; left untouched"));
+            }
+            boundary(Boundary::BeforeCanonicalBind)?;
+            super::atomic::rename(&dir, &stage, &dir, &name, super::atomic::Rename::Exclusive)?;
+            if dir
+                .entry(&name)
+                .map_err(io)?
+                .map(|stat| FileIdentity::of(&stat))
+                != Some(intent.canonical)
+            {
+                dir.sync().map_err(io)?;
+                return Err(refused(
+                    "published canonical inode changed; no ready provenance granted",
+                ));
+            }
+            (file, stat)
+        }
     };
     boundary(Boundary::AfterExclusiveCreate)?;
-    fs::fchmod(&file, 0o600)?;
     file.sync_all()?;
     boundary(Boundary::AfterCanonicalSync)?;
     dir.sync().map_err(io)?;
@@ -261,14 +298,86 @@ pub(super) fn prepare(
         &dir,
         &ready,
         &Provenance {
-            version: 1,
+            version: 2,
             owner,
             canonical: FileIdentity::of(&stat),
+            committed: 0,
         },
         nonce,
+        None,
     )?;
     boundary(Boundary::AfterReady)?;
     Ok(file)
+}
+
+/// Durable extent publication. This is writer commit metadata, never terminal
+/// parser state or replay/checkpoint machinery. Readers must clamp to it.
+#[derive(Debug)]
+pub(super) struct Commit {
+    dir: DirFd,
+    ready: FileName,
+    name: FileName,
+    proof: Provenance,
+    record_identity: FileIdentity,
+}
+impl Commit {
+    pub(super) fn lock(&self) -> io::Result<super::atomic::FileLock> {
+        super::atomic::FileLock::exclusive(trusted(&self.dir, &self.name, &self.proof)?)
+    }
+    pub(super) fn open(path: &Path, file: &File) -> io::Result<Self> {
+        let (dir, name, _, ready) = names(path)?;
+        let (proof, record_identity) = record_identity::<Provenance>(&dir, &ready)?
+            .ok_or_else(|| refused("ready provenance missing"))?;
+        if proof.version != 2
+            || FileIdentity::of(&fs::fstat(file.as_raw_fd())?) != proof.canonical
+            || file.metadata()?.len() != proof.committed
+        {
+            return Err(refused(
+                "canonical extent or identity changed; producer refused",
+            ));
+        }
+        Ok(Self {
+            dir,
+            ready,
+            name,
+            proof,
+            record_identity,
+        })
+    }
+    pub(super) fn extent(&self) -> u64 {
+        self.proof.committed
+    }
+    pub(super) fn begin(&self) -> io::Result<()> {
+        super::atomic::begin_append(
+            &self.dir,
+            &self.ready,
+            self.proof.canonical,
+            self.proof.committed,
+        )
+    }
+    pub(super) fn publish(&mut self, extent: u64) -> io::Result<bool> {
+        if self
+            .dir
+            .entry(&self.name)
+            .map_err(io)?
+            .map(|stat| FileIdentity::of(&stat))
+            != Some(self.proof.canonical)
+        {
+            return Err(refused("canonical inode changed before commit"));
+        }
+        let mut proof = self.proof.clone();
+        proof.committed = extent;
+        self.record_identity = publish(
+            &self.dir,
+            &self.ready,
+            &proof,
+            "commit",
+            Some(self.record_identity),
+        )?;
+        self.proof = proof;
+        crate::fault_point!(CaptureCommitAfterPublish)?;
+        super::atomic::finish_append(&self.dir, &self.ready)
+    }
 }
 
 /// Identity and snapshot extent of a canonical file, without exposing a writer.
@@ -288,19 +397,27 @@ pub struct PlainRead {
 }
 fn readable(path: &Path) -> io::Result<(DirFd, FileName, File, PlainLog)> {
     let (dir, name, _, ready) = names(path)?;
-    let proof = record::<Provenance>(&dir, &ready)?.ok_or_else(|| {
-        refused("log has not completed canonical cutover; reopen after its host owner starts")
-    })?;
     let (file, stat) = dir
         .open_file(&name, libc::O_RDONLY, None, Trust::Private)
         .map_err(io)?
         .ok_or_else(|| refused("canonical log missing"))?;
-    if proof.version != 1 || proof.canonical != FileIdentity::of(&stat) || stat.st_nlink != 1 {
+    let _lock = super::atomic::FileLock::shared(&file)?;
+    let proof = record::<Provenance>(&dir, &ready)?.ok_or_else(|| {
+        refused("log has not completed canonical cutover; reopen after its host owner starts")
+    })?;
+    if proof.version != 2
+        || proof.canonical != FileIdentity::of(&stat)
+        || stat.st_nlink != 1
+        || stat.st_size < 0
+        || (stat.st_size as u64) < proof.committed
+    {
         return Err(refused("canonical read identity changed"));
     }
+    let committed = super::atomic::pending_extent(&dir, &ready, proof.canonical)?
+        .map_or(proof.committed, |before| before.min(proof.committed));
     let log = PlainLog {
         identity: proof.canonical,
-        length: stat.st_size as u64,
+        length: committed,
     };
     Ok((dir, name, file, log))
 }
@@ -404,14 +521,26 @@ pub(super) fn styles(path: &Path, read: &PlainRead) -> Vec<effigy_core::terminal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    fn write_committed(path: &Path, file: &mut File, bytes: &[u8]) {
+        let mut commit = Commit::open(path, file).unwrap();
+        let _lock = commit.lock().unwrap();
+        let next = commit.extent() + bytes.len() as u64;
+        commit.begin().unwrap();
+        file.write_all(bytes).unwrap();
+        file.sync_all().unwrap();
+        assert!(commit.publish(next).unwrap());
+    }
     #[test]
     fn cutover_quarantines_raw_prefix_and_retries_every_boundary() {
         for stop in [
             Boundary::BeforeRename,
+            Boundary::BeforeLegacyMove,
             Boundary::AfterLegacyRename,
             Boundary::AfterQuarantineSync,
             Boundary::AfterRename,
+            Boundary::BeforeCanonicalBind,
             Boundary::AfterExclusiveCreate,
             Boundary::AfterCanonicalSync,
             Boundary::AfterCreate,
@@ -434,8 +563,7 @@ mod tests {
                 assert!(open(&path).is_err());
             }
             let mut canonical = prepare(&path, [3; 32], "retry", |_| Ok(())).unwrap();
-            canonical.write_all(b"safe\n").unwrap();
-            canonical.sync_all().unwrap();
+            write_committed(&path, &mut canonical, b"safe\n");
             assert_ne!(canonical.metadata().unwrap().ino(), old.ino());
             assert_eq!(std::fs::read(&path).unwrap(), b"safe\n");
             assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
@@ -469,8 +597,7 @@ mod tests {
         assert!(read(&path, Some(old_identity), old.len(), 64 * 1024).is_err());
         let mut writer = prepare(&path, [3; 32], "cutover", |_| Ok(())).unwrap();
         let safe = "safe output\n".repeat(100);
-        writer.write_all(safe.as_bytes()).unwrap();
-        writer.sync_all().unwrap();
+        write_committed(&path, &mut writer, safe.as_bytes());
         let result = read(&path, Some(old_identity), old.len(), 64 * 1024).unwrap();
         assert!(result.cutover);
         assert_eq!(result.from, 0);
@@ -542,5 +669,102 @@ mod tests {
         assert!(prepare(&path, [3; 32], "unowned", |_| Ok(())).is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"operator data");
         assert!(!home.path().join(".legacy-host-logs").exists());
+    }
+    #[test]
+    fn legacy_retry_syncs_retained_entry_before_a_second_crash() {
+        let home = effigy_test_support::short_tempdir("l2-").unwrap();
+        let path = home.path().join("app.log");
+        std::fs::write(&path, b"legacy operator data").unwrap();
+        assert!(prepare(&path, [3; 32], "first", |at| {
+            if at == Boundary::AfterLegacyRename {
+                Err(io::Error::other("crash after rename"))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err());
+        let mut synced = false;
+        assert!(prepare(&path, [3; 32], "second", |at| {
+            if at == Boundary::AfterQuarantineSync {
+                synced = true;
+                Err(io::Error::other("second crash"))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err());
+        assert!(synced && identity(&path).is_err());
+        let retained = std::fs::read_dir(home.path().join(".legacy-host-logs"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(std::fs::read(retained).unwrap(), b"legacy operator data");
+        prepare(&path, [3; 32], "third", |_| Ok(())).unwrap();
+        assert!(identity(&path).is_ok());
+    }
+    #[test]
+    fn a_foreign_empty_replacement_never_gets_ready_provenance() {
+        for stop in [Boundary::AfterLegacyRename, Boundary::AfterExclusiveCreate] {
+            let home = effigy_test_support::short_tempdir("lf-").unwrap();
+            let path = home.path().join("app.log");
+            std::fs::write(&path, b"legacy").unwrap();
+            assert!(prepare(&path, [3; 32], "first", |at| if at == stop {
+                Err(io::Error::other("crash"))
+            } else {
+                Ok(())
+            })
+            .is_err());
+            let replacement = home.path().join("foreign");
+            let mut writer = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&replacement)
+                .unwrap();
+            std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let inode = writer.metadata().unwrap().ino();
+            std::fs::rename(&replacement, &path).unwrap();
+            assert!(prepare(&path, [3; 32], "retry", |_| Ok(())).is_err());
+            writer.write_all(b"\x1b[31mforeign-secret\n").unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+            assert!(read(&path, None, 0, 4096).is_err());
+            assert_eq!(std::fs::read(path).unwrap(), b"\x1b[31mforeign-secret\n");
+        }
+    }
+    #[test]
+    fn rename_races_keep_every_operator_inode_and_refuse_admission() {
+        for destination_race in [false, true] {
+            let home = effigy_test_support::short_tempdir("lx-").unwrap();
+            let path = home.path().join("app.log");
+            std::fs::write(&path, b"original operator data").unwrap();
+            let old = std::fs::metadata(&path).unwrap();
+            let target = home.path().join(".legacy-host-logs").join(format!(
+                "{:x}-{:x}.legacy",
+                old.dev(),
+                old.ino()
+            ));
+            let held = home.path().join("held-original");
+            let result = prepare(&path, [3; 32], "race", |at| {
+                if at == Boundary::BeforeLegacyMove {
+                    if destination_race {
+                        std::fs::write(&target, b"raced destination data")?;
+                        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))?;
+                    } else {
+                        std::fs::rename(&path, &held)?;
+                        std::fs::write(&path, b"raced source data")?;
+                    }
+                }
+                Ok(())
+            });
+            assert!(result.is_err() && identity(&path).is_err());
+            if destination_race {
+                assert_eq!(std::fs::read(&path).unwrap(), b"original operator data");
+                assert_eq!(std::fs::read(&target).unwrap(), b"raced destination data");
+            } else {
+                assert_eq!(std::fs::read(&held).unwrap(), b"original operator data");
+                assert_eq!(std::fs::read(&target).unwrap(), b"raced source data");
+            }
+        }
     }
 }

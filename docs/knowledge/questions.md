@@ -631,7 +631,11 @@ new-inode quarantine of an untrusted legacy prefix under the settled host
 owner gate, with durable ready provenance for subsequent Effigy reads. The
 Underlay follower remains a presentation reader with inode/offset gap handling;
 it does not enforce ready provenance. Stop/reopen older attached followers:
-POSIX cannot revoke their already-open descriptors. The manual hold remains
+POSIX cannot revoke their already-open descriptors.
+The owner clarified that Underlay/direct file reads are presentation, can show
+safe bytes awaiting sync and acknowledge no durability; Effigy-owned readers
+must honor the durable committed extent and hide failed/torn suffixes.
+The manual hold remains
 until combined writer, security, style and bundled follower proof and review.
 
 
