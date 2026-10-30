@@ -8,6 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Host-process children use custody-owned output pipes instead of inheriting
+  raw log descriptors. Their merged output is sanitized and redacted before
+  append to the existing plain follower path; failed appends stop capture
+  fanout rather than acknowledge unwritten output. Schema-sensitive and
+  unclassified application-specific inherited environment values are passed
+  to custody as secrets.
+
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
   PM, APC and the other non-printing bytes) *before* redaction, over merged
   stdout/stderr arrival order, so a value a child split with a control

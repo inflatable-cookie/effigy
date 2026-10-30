@@ -622,6 +622,12 @@ audit is recorded at
 `/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
 the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.
 
+Tom confirmed on 2026-10-30 that managed Cargo/Oxide colour is required for
+v0.15, reversing its earlier deferral. Qualification requires a single
+writer-side custody boundary for plain sanitized/redacted host logs and a
+redacted styled live tap, while preserving direct path/offset followers. See
+[the colour boundary ruling](architecture/product-guardrails.md#human-facing-feedback).
+
 ## Q-018: Primary Linux proof environment for v0.15
 
 Status: answered

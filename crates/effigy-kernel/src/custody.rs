@@ -1,6 +1,8 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 mod anchor;
 pub(crate) mod capture;
+mod merged;
+pub use merged::MergedLog;
 pub(crate) mod platform;
 mod terminal;
 /// Signal one external process only after the caller's fresh authority check.
@@ -237,6 +239,7 @@ pub(crate) struct ProcessCore {
     anchor: Option<ProcessIdentity>,
     /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
+    merged_log: Option<MergedLog>,
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
     /// Each is the redacted projection of its own stream over the merged,
@@ -277,6 +280,7 @@ struct OutputPipeline {
     /// terminal colour, exactly as before this seam existed.
     sanitizer: Option<terminal::TerminalSanitizer>,
     redactor: Redactor,
+    plain: bool,
     /// One redactor per stream, present only for a secret-bearing process.
     ///
     /// Splitting the merged result by origin stream is a byte removal, and a
@@ -292,9 +296,27 @@ struct OutputPipeline {
 }
 impl OutputPipeline {
     fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self::for_capture(secrets, false)
+    }
+    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool) -> Self {
+        if plain {
+            secrets.extend(
+                secrets
+                    .iter()
+                    .map(|secret| {
+                        terminal::visible(secret)
+                            .into_iter()
+                            .filter(|byte| *byte != b'\r')
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|secret| !secret.is_empty())
+                    .collect::<Vec<_>>(),
+            );
+        }
         let secret_bearing = !secrets.is_empty();
         Self {
-            sanitizer: secret_bearing.then(terminal::TerminalSanitizer::new),
+            sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
+            plain,
             projections: secret_bearing.then(|| {
                 [
                     Redactor::new(secrets.clone()),
@@ -309,7 +331,10 @@ impl OutputPipeline {
     fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
         match self.sanitizer.as_mut() {
             Some(sanitizer) => {
-                let visible = sanitizer.push_tagged(bytes, eof);
+                let mut visible = sanitizer.push_tagged(bytes, eof);
+                if self.plain {
+                    visible.retain(|(_, byte)| *byte != b'\r');
+                }
                 // Empty is not a no-op: EOF still flushes the redactor.
                 self.redactor.push_tagged(&visible, eof)
             }
@@ -634,6 +659,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
 
@@ -653,6 +679,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
 
@@ -668,6 +695,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
             None,
         )
@@ -689,6 +717,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -708,6 +737,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -723,6 +753,7 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
             None,
         )
@@ -746,6 +777,7 @@ impl Custody {
             required,
             None,
             handoff,
+            None,
         )
     }
     pub fn spawn_foreground_with_handoff(
@@ -764,6 +796,7 @@ impl Custody {
             required,
             None,
             handoff,
+            None,
         )
     }
     /// `spawn_foreground_with_handoff` with a gate between the recorded receipt
@@ -784,6 +817,33 @@ impl Custody {
             true,
             Some(gate),
             handoff,
+            None,
+        )
+    }
+    /// Capture both child pipes into one append-only plain log. The destination
+    /// is installed before the child passes its execution barrier; inherited
+    /// output descriptors are refused rather than bypassing custody.
+    pub fn spawn_logged_auxiliary(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        log: MergedLog,
+    ) -> Result<OwnedProcess, SpawnError> {
+        if !matches!(spec.terminal, Terminal::None | Terminal::Pipe) {
+            return Err(SpawnError::Refused(
+                "merged logs require captured pipes".into(),
+            ));
+        }
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            false,
+            None,
+            None,
+            Some(log),
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -798,6 +858,7 @@ impl Custody {
         required: bool,
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
+        merged_log: Option<MergedLog>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -882,17 +943,23 @@ impl Custody {
                 CaptureState::Truncated("log open failed".into())
             };
             let [stdout_log, stderr_log] = logs;
+            let pipeline = if merged_log.is_some() {
+                OutputPipeline::for_capture(secrets, true)
+            } else {
+                OutputPipeline::new(secrets)
+            };
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
                 anchor,
                 logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
+                merged_log,
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
                 stdin,
-                pipeline: OutputPipeline::new(secrets),
+                pipeline,
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -1050,6 +1117,15 @@ impl ProcessCore {
         }
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
         let clean = self.pipeline.push_tagged(&tagged, eof);
+        if let Some(log) = self.merged_log.as_mut() {
+            let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
+            if log.append(&bytes).is_err() {
+                self.capture = CaptureState::Truncated("merged log append failed".into());
+                // Never acknowledge an unwritten slice via a queue, tail or
+                // live consumer. A failed destination remains failed.
+                return;
+            }
+        }
         // A stream's own sink is a projection, so it is written from its own
         // redacted projection and never from a filtered merged slice: removing
         // the other stream's bytes there could join halves of a secret the

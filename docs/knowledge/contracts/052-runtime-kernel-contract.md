@@ -1318,6 +1318,18 @@ normalization path would recreate the split. A consumer that needs both
 streams reads the merged capture, never a concatenation of the projections,
 and a consumer that wants a bounded tail takes the merged tail.
 
+Host producers use `Custody::spawn_logged_auxiliary` with `Terminal::None`
+and an installed `MergedLog` before the child execution barrier opens. That
+capture always sanitizes, even without secrets, and removes CR from CRLF
+before redaction. The append-only destination does not replace or truncate the
+existing follower path. Each successful append syncs its bytes before any
+queue or diagnostic-tail fanout. A failed append poisons the destination and
+reports truncated capture; unwritten bytes are never acknowledged to those
+consumers. A partial failed append may leave an unacknowledged plain suffix on
+disk. This primitive does not by itself qualify supervisor message appends,
+secret provenance or live styled taps against the
+[managed producer colour boundary](../architecture/product-guardrails.md#human-facing-feedback).
+
 #### Failure model
 
 | Fault | Behavior |

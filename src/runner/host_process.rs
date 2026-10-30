@@ -1200,9 +1200,6 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     };
     session.admitted(&mut run)?;
     let supervisor_pid = std::process::id();
-    redirect_supervisor_output(&spec.log_file).map_err(|error| {
-        effigy_kernel::run::RunError::step_failed("supervisor output redirection", error)
-    })?;
     let watch = session.owner_watch().ok();
     let started = supervise_generations(
         &mut run,
@@ -1274,29 +1271,6 @@ fn stop_report_path_for(spec: &HostProcessRuntimeSpec) -> PathBuf {
         .parent()
         .map(|dir| dir.join(format!("{}.stop.json", sanitize(&spec.process_name))))
         .unwrap_or_else(|| spec.log_file.with_extension("stop.json"))
-}
-
-/// The supervisor's own stdout and stderr become the process log, so every
-/// child spawned with `Terminal::Inherit` writes where log following expects.
-fn redirect_supervisor_output(log_path: &Path) -> Result<(), RunnerError> {
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
-    }
-    use std::os::unix::io::AsRawFd as _;
-    let log = open_log(log_path)?;
-    let fd = log.as_raw_fd();
-    for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-        // SAFETY: dup2 of a live open log descriptor onto a standard
-        // descriptor; the log stays owned by `log` until both are copied.
-        if unsafe { libc::dup2(fd, target) } < 0 {
-            return Err(RunnerError::task_invocation_failed_write(
-                log_path,
-                std::io::Error::last_os_error(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// What one supervisor generation ended with.
@@ -1590,7 +1564,7 @@ fn stop_generation(
 }
 
 /// One kernel generation: argv, cwd, complete environment, grace and
-/// terminal. Output joins the process log through the supervisor's own fds.
+/// terminal. Custody appends parsed, redacted output to the follower path.
 fn spawn_generation(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
@@ -1608,6 +1582,7 @@ fn spawn_generation(
         dependency_env,
         listener,
     );
+    let environment = classify_child_environment(spec, environment)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1618,10 +1593,138 @@ fn spawn_generation(
         env: environment,
         grace: Duration::from_secs(spec.shutdown_grace_secs.max(1)),
         lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::DevServer),
-        terminal: Terminal::Inherit { capture: false },
+        terminal: Terminal::None,
         label: spec.process_name.clone(),
     };
-    Custody::spawn_auxiliary(run, process, cx)
+    let log = effigy_kernel::custody::MergedLog::open(&spec.log_file)?;
+    Custody::spawn_logged_auxiliary(run, process, cx, log)
+}
+
+/// Preserve schema provenance across the detached boundary by loading the
+/// producer's schema before spawn. A malformed schema refuses the producer.
+/// Ambient values without provenance are conservatively secret: a name that
+/// merely looks harmless cannot declassify a credential.
+fn classify_child_environment(
+    spec: &HostProcessRuntimeSpec,
+    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
+{
+    let mut declared = BTreeMap::new();
+    for root in [Path::new(&spec.project_path), spec.cwd.as_path()] {
+        let schema = effigy_env::load_env_schema_if_present(root).map_err(|_| {
+            effigy_kernel::custody::SpawnError::Refused(
+                "host-process environment provenance schema could not be read".into(),
+            )
+        })?;
+        if let Some(schema) = schema {
+            for entry in schema.entries {
+                // Sensitivity cannot be undone by a second schema.
+                let sensitive = declared.entry(entry.key).or_insert(false);
+                *sensitive |= entry.annotations.sensitive;
+            }
+        }
+    }
+    classify_environment(environment, &spec.env, &declared)
+}
+
+fn classify_environment(
+    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+    literals: &BTreeMap<String, String>,
+    schema: &BTreeMap<String, bool>,
+) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
+{
+    use effigy_kernel::custody::{EnvValue, SecretValue};
+    use std::os::unix::ffi::OsStrExt as _;
+    let secret_names = schema
+        .iter()
+        .filter(|(_, secret)| **secret)
+        .map(|(key, _)| key.as_str())
+        .collect::<BTreeSet<_>>();
+    let known: Vec<Vec<u8>> = environment
+        .iter()
+        .filter_map(|(key, value)| {
+            if !secret_names.contains(key.to_str()?) {
+                return None;
+            }
+            match value {
+                EnvValue::Plain(value) if !value.is_empty() => Some(value.as_bytes().to_vec()),
+                EnvValue::Secret(_) | EnvValue::Plain(_) => None,
+            }
+        })
+        .collect();
+    environment
+        .into_iter()
+        .map(|(key, value)| {
+            let EnvValue::Plain(value) = value else {
+                return Ok((key, value));
+            };
+            let name = key.to_str().unwrap_or("");
+            let contains_secret = known.iter().any(|secret| {
+                value
+                    .as_bytes()
+                    .windows(secret.len())
+                    .any(|bytes| bytes == secret)
+            });
+            let plain = schema
+                .get(name)
+                .map(|secret| !secret)
+                .unwrap_or_else(|| literals.contains_key(name) || nonsecret_host_environment(name));
+            let value = if value.is_empty() || (plain && !contains_secret) {
+                EnvValue::Plain(value)
+            } else {
+                EnvValue::Secret(SecretValue::new(value.as_bytes().to_vec())?)
+            };
+            Ok((key, value))
+        })
+        .collect()
+}
+
+/// Only transport/session facts with established non-secret meaning. All
+/// application-specific inherited names require schema provenance or stay secret.
+fn nonsecret_host_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "LC_ALL"
+            | "LC_CTYPE"
+            | "LC_MESSAGES"
+            | "LC_COLLATE"
+            | "LC_NUMERIC"
+            | "LC_TIME"
+            | "LC_MONETARY"
+            | "PATH"
+            | "HOME"
+            | "USER"
+            | "LOGNAME"
+            | "SHELL"
+            | "PWD"
+            | "OLDPWD"
+            | "SHLVL"
+            | "_"
+            | "LANG"
+            | "TMPDIR"
+            | "TMP"
+            | "TEMP"
+            | "TERM"
+            | "COLORTERM"
+            | "TERM_PROGRAM"
+            | "TERM_PROGRAM_VERSION"
+            | "CI"
+            | "NO_COLOR"
+            | "CARGO_TERM_COLOR"
+            | "CLICOLOR"
+            | "CLICOLOR_FORCE"
+            | "FORCE_COLOR"
+            | "EFFIGY_COLOR"
+            | "ANSI_COLORS_DISABLED"
+            | "NODE_DISABLE_COLORS"
+            | "HOST"
+            | "PORT"
+            | "EFFIGY_HOST_PROCESS_CONTAINER"
+            | "EFFIGY_HOST_PROCESS_NAME"
+            | "EFFIGY_HOST_PROCESS_LISTENER_BIND"
+            | "EFFIGY_HOST_PROCESS_LISTENER_REPORT"
+            | "EFFIGY_HOST_PROCESS_LISTENER_GENERATION"
+    )
 }
 
 /// The complete environment one generation receives, with its two inputs
@@ -2480,16 +2583,6 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Run
         .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
-fn open_log(path: &Path) -> Result<std::fs::File, RunnerError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|error| RunnerError::task_invocation_failed_write(path, error))
-}
-
 pub(in crate::runner) fn append_log_line(path: &Path, line: &str) {
     use std::os::unix::fs::OpenOptionsExt;
     if let Ok(mut f) = fs::OpenOptions::new()
@@ -2522,6 +2615,51 @@ fn wait_or_break(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_environment_provenance_preserves_secrets_and_plain_values() {
+        use effigy_kernel::custody::EnvValue;
+        let values = [
+            ("PATH", "/bin"),
+            ("TOKEN", "hidden-value"),
+            ("ALIAS", "prefix-hidden-value-suffix"),
+            ("UNKNOWN", "opaque"),
+            ("MODE", "dev"),
+            ("PUBLIC", "hello"),
+            ("LC_TOKEN", "opaque-too"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
+        .collect();
+        let literals = [
+            ("ALIAS".into(), "prefix-hidden-value-suffix".into()),
+            ("MODE".into(), "dev".into()),
+        ]
+        .into_iter()
+        .collect();
+        let schema = [("TOKEN".into(), true), ("PUBLIC".into(), false)]
+            .into_iter()
+            .collect();
+        let classified = super::classify_environment(values, &literals, &schema).unwrap();
+        for key in ["TOKEN", "ALIAS", "UNKNOWN", "LC_TOKEN"] {
+            assert!(
+                matches!(
+                    classified.get(std::ffi::OsStr::new(key)),
+                    Some(EnvValue::Secret(_))
+                ),
+                "{key}"
+            );
+        }
+        for key in ["PATH", "MODE", "PUBLIC"] {
+            assert!(
+                matches!(
+                    classified.get(std::ffi::OsStr::new(key)),
+                    Some(EnvValue::Plain(_))
+                ),
+                "{key}"
+            );
+        }
+    }
+
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
     use nix::sys::signal::kill;

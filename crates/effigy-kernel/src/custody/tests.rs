@@ -1291,6 +1291,7 @@ impl FakeCapture {
             receipt,
             anchor: None,
             logs,
+            merged_log: None,
             output: VecDeque::new(),
             streams: [VecDeque::new(), VecDeque::new()],
             queue_max: 4096,
@@ -2060,4 +2061,65 @@ fn redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with() {
     capture.feed(Stream::Stdout, b"name\tvalue\n");
     capture.close();
     assert_eq!(&capture.tail()[..], b"name\tvalue\n");
+}
+
+#[test]
+fn merged_log_is_plain_redacted_and_committed_before_fanout() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.merged_log = Some(MergedLog::open(&path).unwrap());
+        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
+    }
+    capture.feed(STD, b"\x1b[32mready\x1b[0m\r\nsuper\x1b[");
+    capture.feed(ERR, b"31msecret\x1b]title");
+    capture.feed(STD, b"\x07\n");
+    capture.close();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes, b"ready\n[REDACTED]\n");
+    assert_eq!(capture.merged(), bytes);
+    assert_eq!(capture.tail(), bytes);
+    let core = lock(&capture.core);
+    assert_eq!(
+        core.merged_log.as_ref().unwrap().committed_offset(),
+        bytes.len() as u64
+    );
+}
+
+#[test]
+fn merged_append_failure_withholds_all_capture_fanout() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.merged_log = Some(MergedLog::open(&path).unwrap());
+        core.pipeline = OutputPipeline::for_capture(vec![], true);
+    }
+    crate::fault::arm_point(
+        crate::fault::Point::CaptureWrite,
+        crate::fault::Fault::Enospc,
+    );
+    capture.feed(STD, b"must not acknowledge\n");
+    crate::fault::arm(None);
+    // The destination stays failed even if the filesystem would now accept
+    // the next chunk; no holes or duplicated retries enter live capture.
+    capture.feed(ERR, b"must not resume\n");
+    capture.close();
+    assert_eq!(std::fs::read(&path).unwrap(), b"");
+    assert!(capture.merged().is_empty());
+    assert!(capture.tail().is_empty());
+    let (stdout, stderr) = capture.streams();
+    assert!(stdout.is_empty() && stderr.is_empty());
+    assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+    assert_eq!(
+        lock(&capture.core)
+            .merged_log
+            .as_ref()
+            .unwrap()
+            .committed_offset(),
+        0
+    );
 }
