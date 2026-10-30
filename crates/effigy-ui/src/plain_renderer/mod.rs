@@ -3,20 +3,18 @@ use std::io::{IsTerminal, Write};
 use anstream::{AutoStream, ColorChoice};
 use anstyle::Style;
 
-use crate::renderer::{Renderer, SpinnerHandle, UiResult};
-use crate::theme::{is_ci_environment, resolve_color_enabled, OutputMode, Theme};
+use crate::renderer::{Renderer, UiResult};
+use crate::theme::{resolve_color_enabled, OutputMode, Theme};
 use effigy_core::widgets::{
     KeyValue, MessageBlock, NoticeLevel, StepState, SummaryCounts, TableSpec,
 };
 
 mod blocks;
 mod lists_tables;
-mod progress;
 
 pub struct PlainRenderer<W: Write> {
     writer: W,
     color_enabled: bool,
-    progress_enabled: bool,
     theme: Theme,
 }
 
@@ -25,14 +23,8 @@ impl<W: Write> PlainRenderer<W> {
         Self {
             writer,
             color_enabled,
-            progress_enabled: false,
             theme: Theme::default(),
         }
-    }
-
-    pub fn with_progress_enabled(mut self, enabled: bool) -> Self {
-        self.progress_enabled = enabled;
-        self
     }
 
     pub fn with_theme(mut self, theme: Theme) -> Self {
@@ -69,8 +61,7 @@ impl PlainRenderer<AutoStream<std::io::Stdout>> {
         };
         let stream = AutoStream::new(std::io::stdout(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stdout().is_terminal());
-        let progress_enabled = std::io::stdout().is_terminal() && !is_ci_environment();
-        Self::new(stream, color_enabled).with_progress_enabled(progress_enabled)
+        Self::new(stream, color_enabled)
     }
 }
 
@@ -83,8 +74,7 @@ impl PlainRenderer<AutoStream<std::io::Stderr>> {
         };
         let stream = AutoStream::new(std::io::stderr(), choice);
         let color_enabled = resolve_color_enabled(mode, std::io::stderr().is_terminal());
-        let progress_enabled = std::io::stderr().is_terminal() && !is_ci_environment();
-        Self::new(stream, color_enabled).with_progress_enabled(progress_enabled)
+        Self::new(stream, color_enabled)
     }
 }
 
@@ -131,10 +121,6 @@ impl<W: Write> Renderer for PlainRenderer<W> {
 
     fn table(&mut self, spec: &TableSpec) -> UiResult<()> {
         self.render_table(spec)
-    }
-
-    fn spinner(&mut self, label: &str) -> UiResult<Box<dyn SpinnerHandle>> {
-        self.render_spinner(label)
     }
 }
 

@@ -1,4 +1,8 @@
-# Progress bars are created only by the reviewed legacy sinks until migration.
+# There is one reviewed spinner sink: `Step`'s own bar construction in
+# `crates/effigy-ui/src/steps.rs`, which the feedback inventory exempts by
+# name. Every other `ProgressBar::new_spinner` in the workspace is a
+# fixed-label spinner the live-step API does not drive, so this disallows it
+# anywhere, including inside a wrapper.
 disallowed-methods = [
   { path = "indicatif::ProgressBar::new_spinner", reason = "feedback legacy spinner: migrate to a live progress source" },
 ]

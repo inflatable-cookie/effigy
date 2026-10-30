@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Contract tests for the feedback compiler-diagnostic ratchet."""
+"""Contract tests for the feedback compiler-diagnostic gate."""
 import importlib.util
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -20,16 +21,27 @@ def diagnostic(file, line, text):
 
 
 class InventoryTests(unittest.TestCase):
-    def test_new_literal_and_renamed_helper_are_reported(self):
+    def test_every_legacy_entry_point_is_reported_with_its_migration(self):
         observed = lint.entries([
             diagnostic('src/new.rs', 4, 'step("working...")'),
-            diagnostic('src/new.rs', 8, 'renamed_static_helper("working...")'),
+            diagnostic('src/new.rs', 8, 'let child = parent.step("working...");'),
+            diagnostic('src/new.rs', 12, 'let step = TimedStep::new("working...");'),
+            diagnostic('src/new.rs', 16, 'effigy_containers::exec::phase("working...")'),
         ])
-        errors = lint.check(observed, [], [])
-        self.assertEqual(len(errors), 2)
+        errors = lint.check(observed)
+        self.assertEqual(len(errors), 4)
         self.assertIn('src/new.rs:4', errors[0])
+        self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
+        self.assertIn('parent.live_step', errors[1])
+        self.assertIn('TimedStep::live', errors[2])
+        self.assertIn('runtime_wait', errors[3])
+
+    def test_there_is_no_allowlist_so_a_renamed_helper_still_fails(self):
+        observed = lint.entries([diagnostic('src/wrapped.rs', 21, 'renamed_static_helper("working...")')])
+        errors = lint.check(observed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('src/wrapped.rs:21', errors[0])
         self.assertIn('migrate to a live progress source', errors[0])
-        self.assertIn('src/new.rs:8', errors[1])
 
     def test_only_one_live_sink_is_exempt_after_a_line_shift(self):
         text = 'let bar = self.multi().add(ProgressBar::new_spinner());'
@@ -40,16 +52,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(lint.entries([moved]), [])
         self.assertEqual(len(lint.entries([moved, duplicate])), 2)
 
-    def test_relocated_site_passes_but_an_additional_site_fails(self):
-        relocated = [['src/a.rs', 6, 'step(label)', 1]]
-        observed = [('src/a.rs', 'step(label)', 6, 1)]
-        self.assertEqual(lint.check(observed, relocated, relocated), [])
-        errors = lint.check(observed + [('src/a.rs', 'step(label)', 7, 1)], relocated, relocated)
-        self.assertTrue(any('src/a.rs:7' in error for error in errors), errors)
-
-    def test_event_source_emits_no_legacy_diagnostic(self):
-        observed = lint.entries([{'reason': 'compiler-artifact'}])
-        self.assertEqual(lint.check(observed, [], []), [])
+    def test_a_clean_tree_reports_nothing(self):
+        self.assertEqual(lint.check(lint.entries([{'reason': 'compiler-artifact'}])), [])
 
     def test_compiler_resolves_a_renamed_static_helper(self):
         # Build a standalone fixture in an isolated directory through Oxide.
@@ -79,7 +83,7 @@ fn fixture() {
             messages = []
             for line in result.stderr.splitlines():
                 try:
-                    message = __import__('json').loads(line)
+                    message = json.loads(line)
                 except ValueError:
                     continue
                 if isinstance(message, dict):
@@ -90,13 +94,6 @@ fn fixture() {
             self.assertTrue(any('step(fixed)' in text for text in texts), texts)
             self.assertTrue(any('renamed_static_helper("waiting...")' in text for text in texts), texts)
             self.assertFalse(any('live_step(Source)' in text for text in texts), texts)
-
-    def test_baseline_cannot_grow_and_removed_sites_must_leave_it(self):
-        baseline = [['src/a.rs', 5, 'step(label)', 1]]
-        self.assertIn('grew', lint.check([], baseline, [])[0])
-        self.assertIn('removed sites', lint.check([], baseline, baseline)[0])
-        self.assertEqual(lint.check([('src/a.rs', 'step(label)', 5, 1)], baseline, baseline), [])
-        self.assertTrue(lint.check([('src/a.rs', 'step(label)', 6, 1)], baseline, baseline))
 
 
 if __name__ == '__main__':

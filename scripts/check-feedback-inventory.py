@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Ratchet compiler-resolved uses of legacy spinner entry points.
+"""Reject every fixed-label spinner entry point in production code.
 
-The dedicated cfg deprecates the old constructors and their existing wrappers
-only during this check. Rust resolves aliases and function references before
-emitting diagnostics, so renaming a helper does not hide a use.
+`effigy-ui` keeps its legacy step constructors as deprecated anchors. Any use
+of one is a compiler diagnostic at the call site, resolved by rustc before it
+is emitted, so aliasing or wrapping a helper does not hide it. This check
+collects those diagnostics and fails on every one of them: there is no
+allowlist, and a removed site leaves nothing behind to keep in step (Q-017,
+effigy#467).
+
+Each failure names the file and line and the exact migration: a step that can
+wait is driven by a live `ProgressSource`, and an immediate outcome is one
+`finish_line`. A suppression (`#[allow(deprecated)]` and friends) is itself a
+failure, so a site cannot be hidden instead of migrated.
 """
-import collections
 import json
 import os
 import pathlib
@@ -14,9 +21,31 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BASELINE = ROOT / 'config/feedback-spinner-baseline.json'
-CEILING = ROOT / 'config/feedback-spinner-ceiling.json'
 MARKER = 'feedback legacy spinner: migrate to a live progress source'
+# The one reviewed spinner sink: `Step::start_bar` builds the only
+# `ProgressBar::new_spinner` in the workspace. `config/feedback-lint/clippy.toml`
+# disallows every other one.
+SINK = ('crates/effigy-ui/src/steps.rs',
+        'let bar = self.multi().add(ProgressBar::new_spinner());', 36)
+
+# The migration each deprecated entry point needs, chosen from the call site
+# rustc reports. A renamed alias of one of these still lands on one of them.
+MIGRATIONS = (
+    ('.step(', 'use `parent.live_step(ProgressSource::waiting_for("the exact wait"))`'),
+    ('TimedStep::new', 'use `TimedStep::live(ProgressSource::waiting_for("the exact wait"))`'),
+    ('phase(', 'use `runtime_wait(label)` or a live `TimedStep`'),
+    ('steps::step(', 'use `steps::live_step(ProgressSource::waiting_for("the exact wait"))` for a '
+                     'wait, or `steps::finish_line(ok, summary)` for an immediate outcome'),
+)
+DEFAULT_MIGRATION = ('use `live_step(ProgressSource::waiting_for("the exact wait"))` for a wait, or '
+                     '`finish_line` for an immediate outcome')
+
+
+def migration(text):
+    for needle, action in MIGRATIONS:
+        if needle in text:
+            return action
+    return DEFAULT_MIGRATION
 
 
 def entries(messages):
@@ -35,37 +64,20 @@ def entries(messages):
             text = '\n'.join(line['text'].strip() for line in span.get('text', []))
             result.append((file, text, span['line_start'], span['column_start']))
     result = list(dict.fromkeys(result))
-    # Only the unique infrastructure sink is excluded. A duplicate makes
-    # every matching diagnostic visible to the ratchet.
-    sink = ('crates/effigy-ui/src/steps.rs',
-            'let bar = self.multi().add(ProgressBar::new_spinner());', 36)
-    matching = [entry for entry in result if (entry[0], entry[1], entry[3]) == sink]
+    # Only the unique infrastructure sink is exempt. A duplicate makes every
+    # matching diagnostic visible to the check.
+    matching = [entry for entry in result if (entry[0], entry[1], entry[3]) == SINK]
     if len(matching) == 1:
         result.remove(matching[0])
     return result
 
 
-def key(entry):
-    return (entry[0], entry[2], entry[1], entry[3])
-
-
-def check(observed, baseline, ceiling):
-    allowed = collections.Counter(map(tuple, baseline))
-    cap = collections.Counter(map(tuple, ceiling))
-    excess = allowed - cap
-    failures = []
-    if excess:
-        failures.append('feedback spinner baseline grew beyond the reviewed ceiling')
-    remaining = allowed.copy()
-    for entry in observed:
-        item = key(entry)
-        if remaining[item]:
-            remaining[item] -= 1
-        else:
-            failures.append(f'{entry[0]}:{entry[2]}: legacy spinner; migrate to a live progress source')
-    if +remaining:
-        failures.append('feedback spinner baseline contains removed sites; remove their entries')
-    return failures
+def check(observed):
+    return [
+        f'{file}:{line}: {text}; feedback legacy spinner: migrate to a live progress source: '
+        f'{migration(text)}'
+        for file, text, line, _ in observed
+    ]
 
 
 def suppression_errors():
@@ -83,9 +95,9 @@ def suppression_errors():
 def run():
     env = os.environ.copy()
     env['CLIPPY_CONF_DIR'] = str(ROOT / 'config/feedback-lint')
-    # Collect the inventory even if this unrelated Clippy lint fails; the
+    # Collect the inventory even if an unrelated Clippy lint fails; the
     # separate lint:feedback Clippy step still enforces it without this flag.
-    env['RUSTFLAGS'] = env.get('RUSTFLAGS', '') + ' --cfg effigy_feedback_lint --check-cfg=cfg(effigy_feedback_lint) -A clippy::never_loop'
+    env['RUSTFLAGS'] = env.get('RUSTFLAGS', '') + ' -A clippy::never_loop'
     command = ['sh', 'scripts/oxide-selector.sh', 'clippy', '-p', 'effigy', '-p', 'effigy-cli', '-p', 'effigy-ui', '-p', 'effigy-kernel', '-p', 'effigy-containers', '-p', 'effigy-runtime', '-p', 'effigy-doctor', '-p', 'effigy-manifest', '-p', 'effigy-release', '-p', 'effigy-secrets', '--all-targets', '--message-format=json', '--', '-W', 'deprecated', '-W', 'clippy::disallowed_methods']
     proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, text=True)
     messages = []
@@ -103,11 +115,11 @@ def run():
         print(f'feedback compiler check failed ({code})', file=sys.stderr)
         return code
     observed = entries(messages)
-    failures = suppression_errors() + check(observed, json.loads(BASELINE.read_text()), json.loads(CEILING.read_text()))
+    failures = suppression_errors() + check(observed)
     for failure in failures:
         print(failure, file=sys.stderr)
     if not failures:
-        print(f'feedback spinner inventory: {len(observed)} legacy uses; no growth')
+        print('feedback spinner inventory: no fixed-label spinner entry point in production')
     return bool(failures)
 
 
