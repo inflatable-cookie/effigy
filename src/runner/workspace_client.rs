@@ -57,6 +57,10 @@ pub(crate) mod host_dispatch;
 pub(crate) mod identity;
 pub(crate) mod serving;
 pub(crate) mod serving_facts;
+// #507's durable servicing supervision: the owner that keeps a committed
+// session's listener, key, grants and admitted clients after the call that
+// selected it returns.
+pub(crate) mod supervisor;
 
 pub(crate) use serving_facts::ServingFacts;
 

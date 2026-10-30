@@ -205,6 +205,22 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- **A committed workspace session's service outlives the call that selected it.**
+  `workspace_client::supervisor` binds the container-up handoff to a durable
+  owner: `ServingHandoff` accepts only the committed selected session (the
+  launch must have published exactly the lease its `SelectionReceipt` froze,
+  for that session, with its key still in custody) and moves the adopted
+  supervisor, prepared listener, validated facts and admitted clients into
+  `ServiceOwner`, which keeps them across the selecting call's return and
+  serves until the session stops, its owner is lost or its custody refuses.
+  `ServiceOwner::retire` stops the listener, wipes the key and settles the
+  session through its own close transaction exactly once; an interrupted
+  handoff closes its prepared candidate and reports it instead of claiming
+  custody, and `discover` names the environment's session, its durable phase
+  and any unfinished commit's lease from the checkout journal alone, so a
+  recovery or down driver in another command finds the same session with no
+  process-local registry.
+
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
 - **A workspace activation is decided, selected and served by one owner.**

@@ -30,7 +30,7 @@ const ENVIRONMENT_GENERATION: &str = "4";
 const CONTAINER_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const VM_BOOT: &str = "b007-1";
 const SESSION_MARKER: u8 = 200;
-const GUEST_CHECKOUT: &str = "/workspace";
+pub(super) const GUEST_CHECKOUT: &str = "/workspace";
 const MANIFEST: &[u8] = b"[tasks]\nbuild = \"cargo build\"\nseed = \"cargo run -- seed\"\n";
 
 fn running_binary() -> RunningBinary {
@@ -680,7 +680,7 @@ fn observation() -> ObserveContext {
     .expect("an observation context")
 }
 
-fn cleanup(cx: &EffectContext) -> CleanupContext {
+pub(super) fn cleanup(cx: &EffectContext) -> CleanupContext {
     cx.operation()
         .cleanup(Duration::from_secs(10))
         .expect("cleanup")
@@ -719,8 +719,9 @@ fn next_argv() -> Invocation {
     Invocation::validated(vec!["run".into()], |args| args == ["run"]).expect("invocation")
 }
 
+/// #507's supervision proofs settle the same session with the same adapter.
 #[derive(Debug)]
-struct NoEffects;
+pub(super) struct NoEffects;
 
 impl SettlementAdapter for NoEffects {
     fn observe(&mut self, _: &Effect, _: &CleanupContext) -> Observed<effigy_kernel::run::Fence> {
@@ -1630,7 +1631,7 @@ impl GuestChannelProbe for PrivateGuest {
 }
 
 /// Prepare the exact channel the environment publishes, on this run.
-fn prepare_owned_channel(
+pub(super) fn prepare_owned_channel(
     supervisor: &mut SessionSupervisor<'_>,
     session: &SessionRef,
 ) -> PreparedHostChannel {
@@ -1905,7 +1906,7 @@ fn with_admitted_session<T>(
 }
 
 /// The same fixture, already adopted by an independent supervisor.
-fn with_serving_session<T>(
+pub(super) fn with_serving_session<T>(
     test: impl for<'a> FnOnce(
         SessionSupervisor<'a>,
         SessionRef,
