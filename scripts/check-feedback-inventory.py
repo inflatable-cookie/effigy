@@ -24,7 +24,10 @@ file (the reviewed step sink), and that file may build exactly one
 spinner built through another constructor (`ProgressBar::no_length`,
 `ProgressBar::new`, `ProgressBar::with_draw_target`, `ProgressStyle::
 default_spinner`, `enable_steady_tick`) is therefore reported at its own file
-and line, whether it is written directly or hidden behind a wrapper.
+and line, whether it is written directly or hidden behind a wrapper. Comments
+and literal contents are blanked before the scan, with every newline kept, so a
+message or fixture that names a constructor is not read as one and the line
+numbers stay exact.
 """
 import collections
 import json
@@ -152,13 +155,24 @@ def _char_literal_end(text, index):
     return None
 
 
-def strip_comments(text):
-    """Drop comments while keeping every newline, so line numbers are exact.
+def _blank(fragment):
+    """A same-length fragment with every column but the newlines blanked."""
+    return ''.join('\n' if char == '\n' else ' ' for char in fragment)
 
-    This is a small Rust lexer, not a regular expression: a `//` or `/*` inside
-    a string, raw string or char literal is data, and a block comment keeps its
-    own newlines. So a term after a multiline comment is reported at its real
-    line, and code can never be hidden behind a comment delimiter in a literal.
+
+def code_only(text):
+    """Return `text` with comments and literal contents blanked out.
+
+    This is a small Rust lexer, not a regular expression, and it keeps every
+    newline, so a reported line is the real source line. Two things follow:
+
+    - a `//` or `/*` inside a string, raw string or char literal is data, not a
+      comment, so a literal can never hide the code after it;
+    - a literal's contents are blanked, so a message, fixture or doc string that
+      names a constructor is not read as one, while code after the literal
+      stays visible.
+
+    Nested block comments are handled too.
     """
     kept = []
     index = 0
@@ -166,10 +180,13 @@ def strip_comments(text):
     while index < length:
         char = text[index]
         if char == '/' and text.startswith('//', index):
-            while index < length and text[index] != '\n':
-                index += 1
+            end = text.find('\n', index)
+            end = length if end < 0 else end
+            kept.append(_blank(text[index:end]))
+            index = end
             continue
         if char == '/' and text.startswith('/*', index):
+            start = index
             depth = 1
             index += 2
             while index < length and depth:
@@ -180,9 +197,8 @@ def strip_comments(text):
                     depth -= 1
                     index += 2
                 else:
-                    if text[index] == '\n':
-                        kept.append('\n')
                     index += 1
+            kept.append(_blank(text[start:index]))
             continue
         raw = _raw_string_start(text, index)
         if raw:
@@ -190,22 +206,21 @@ def strip_comments(text):
             terminator = '"' + '#' * hashes
             end = text.find(terminator, quote + 1)
             end = length if end < 0 else end + len(terminator)
-            kept.append(text[index:end])
+            kept.append(_blank(text[index:end]))
             index = end
             continue
         if char == '"':
-            kept.append(char)
+            start = index
             index += 1
             while index < length:
                 if text[index] == '\\':
-                    kept.append(text[index:index + 2])
                     index += 2
                     continue
-                kept.append(text[index])
                 if text[index] == '"':
                     index += 1
                     break
                 index += 1
+            kept.append(_blank(text[start:index]))
             continue
         if char == "'":
             end = _char_literal_end(text, index)
@@ -213,12 +228,18 @@ def strip_comments(text):
                 kept.append(char)
                 index += 1
             else:
-                kept.append(text[index:end])
+                kept.append(_blank(text[index:end]))
                 index = end
             continue
         kept.append(char)
         index += 1
     return ''.join(kept)
+
+
+def source_line(text, number):
+    """The original line `number`, for a message about the code around it."""
+    lines = text.splitlines()
+    return lines[number - 1].strip() if 0 < number <= len(lines) else ''
 
 
 def source_files(root, *directories):
@@ -237,10 +258,10 @@ def indicatif_errors(root):
         relative = source.relative_to(root).as_posix()
         if relative == SINK_FILE:
             continue
-        text = strip_comments(source.read_text())
-        for number, line in enumerate(text.splitlines(), 1):
+        text = source.read_text()
+        for number, line in enumerate(code_only(text).splitlines(), 1):
             if any(term in line for term in INDICATIF_TERMS):
-                errors.append(f'{relative}:{number}: {line.strip()}; {SPINNER_MIGRATION}')
+                errors.append(f'{relative}:{number}: {source_line(text, number)}; {SPINNER_MIGRATION}')
     return errors
 
 
@@ -251,14 +272,14 @@ def sink_errors(root):
         return [f'{SINK_FILE}: the reviewed step sink is missing; restore it before gating progress']
     errors = []
     seen = collections.Counter()
-    text = strip_comments(source.read_text())
-    for number, line in enumerate(text.splitlines(), 1):
+    text = source.read_text()
+    for number, line in enumerate(code_only(text).splitlines(), 1):
         stripped = line.strip()
         names_indicatif = 'indicatif' in stripped
         plain_import = stripped.startswith('use indicatif::')
         if names_indicatif and not plain_import and stripped not in SINK_INDICATIF_LINES:
             errors.append(
-                f'{SINK_FILE}:{number}: {stripped}; {SPINNER_MIGRATION} '
+                f'{SINK_FILE}:{number}: {source_line(text, number)}; {SPINNER_MIGRATION} '
                 '(the sink may not re-export the spinner crate)'
             )
             continue
@@ -268,11 +289,11 @@ def sink_errors(root):
             seen[stripped] += 1
             if seen[stripped] > SINK_LINES.count(stripped):
                 errors.append(
-                    f'{SINK_FILE}:{number}: {stripped}; {SPINNER_MIGRATION} '
+                    f'{SINK_FILE}:{number}: {source_line(text, number)}; {SPINNER_MIGRATION} '
                     '(the reviewed construction appears once)'
                 )
             continue
-        errors.append(f'{SINK_FILE}:{number}: {stripped}; {SPINNER_MIGRATION}')
+        errors.append(f'{SINK_FILE}:{number}: {source_line(text, number)}; {SPINNER_MIGRATION}')
     return errors
 
 

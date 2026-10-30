@@ -170,6 +170,32 @@ fn show() {
             errors = lint.indicatif_errors(root)
         self.assertTrue(any('src/strings.rs:5:' in error for error in errors), errors)
 
+    def test_a_string_literal_that_names_a_constructor_is_not_a_use(self):
+        # A required gate must not fail on a message, fixture or doc string.
+        source = """pub const HELP: &str = "Use indicatif to draw a ProgressBar";
+
+pub fn message() -> &'static str {
+    "call ProgressBar::no_length() and enable_steady_tick"
+}
+
+pub fn raw() -> &'static str {
+    r#"indicatif ProgressStyle "quoted" /* not a comment */"#
+}
+
+fn show() {
+    let bar = ProgressBar::no_length();
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'messages.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('src/messages.rs:12:', errors[0])
+        self.assertIn('let bar = ProgressBar::no_length();', errors[0])
+        self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
+
     def test_commented_code_is_not_a_use(self):
         source = """fn show() {
     // let bar = ProgressBar::no_length();
