@@ -28,7 +28,7 @@ pub(in crate::runner) use gateway_registration::{
 };
 pub(in crate::runner) use hosts::scoped_host_map;
 pub(in crate::runner) use lifecycle::{
-    release_managed_environment, run_container_exec_capture_with_options,
+    release_managed_environment, run_container_exec_capture_with_credentials,
     run_container_exec_operation_capture, run_container_exec_stream,
 };
 pub(in crate::runner) use liveness::{
@@ -40,6 +40,7 @@ mod bounded_exec;
 mod cache;
 mod closeout;
 mod data;
+pub(in crate::runner) mod data_credentials;
 mod gateway_registration;
 mod handover;
 mod hosts;

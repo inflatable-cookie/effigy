@@ -15,13 +15,13 @@ use effigy_containers::ContainerDataOperation;
 use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
     select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,
-    DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseService,
-    DatabaseServiceSelectionError, ResolvedDataTarget,
+    DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseCommandPlan,
+    DatabaseService, DatabaseServiceSelectionError, ResolvedDataTarget,
 };
 use effigy_manifest::TASK_MANIFEST_FILE;
 
 use super::gateway_registration::register_gateway_routes_for_container;
-use super::lifecycle::run_container_exec_capture;
+use super::lifecycle::run_container_exec_capture_with_credentials;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use super::{runtime_error_from_runner, runtime_volume_capture};
@@ -343,8 +343,15 @@ pub(super) fn run_container_data_dump(
         db_dumps,
         push,
         output_json,
-        |repo_root, container_name, service, argv| {
-            run_container_exec_capture(repo_root, container_name, service, argv)
+        |repo_root, container_name, plan| {
+            run_container_exec_capture_with_credentials(
+                repo_root,
+                container_name,
+                Some(&plan.service),
+                &plan.argv,
+                &plan.credential_env,
+                None,
+            )
         },
         |source, destination, repo_root, push| {
             capture_artifact_report(
@@ -373,12 +380,8 @@ fn run_container_data_dump_with_hooks<ExecFn, CaptureFn>(
     capture_artifact: CaptureFn,
 ) -> Result<String, RunnerError>
 where
-    ExecFn: Fn(
-        &Path,
-        Option<&str>,
-        Option<&str>,
-        &[String],
-    ) -> Result<std::process::Output, RunnerError>,
+    ExecFn:
+        Fn(&Path, Option<&str>, &DatabaseCommandPlan) -> Result<std::process::Output, RunnerError>,
     CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
 {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
@@ -420,12 +423,7 @@ where
             })?;
         }
 
-        let output = exec_capture(
-            repo_root,
-            Some(&policy.name),
-            Some(&plan.command.service),
-            &plan.command.argv,
-        )?;
+        let output = exec_capture(repo_root, Some(&policy.name), &plan.command)?;
         fs::write(&write_path, &output.stdout).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to write SQL dump {}: {error}",
@@ -899,7 +897,7 @@ databases = ["app"]
             }],
             false,
             true,
-            |_, _, _, _| {
+            |_, _, _| {
                 Ok(Output {
                     status: std::os::unix::process::ExitStatusExt::from_raw(0),
                     stdout: b"select 1;".to_vec(),
@@ -960,7 +958,7 @@ databases = ["app"]
             }],
             true,
             true,
-            |_, _, _, _| {
+            |_, _, _| {
                 Ok(Output {
                     status: std::os::unix::process::ExitStatusExt::from_raw(0),
                     stdout: b"select 1;".to_vec(),
@@ -991,6 +989,80 @@ databases = ["app"]
             dump["artifact_capture"]["destination"]["digest"],
             "sha256:pushdigest"
         );
+    }
+
+    /// effigy#487: the database password travels by variable name, never in a
+    /// spawned argv, and never in the JSON or text report.
+    #[test]
+    fn run_container_data_dump_keeps_the_password_out_of_argv_and_reports() {
+        const PASSWORD: &str = "synthetic-487-dump-password";
+        let root = temp_repo("data-dump-credential");
+        let home = temp_repo("data-dump-credential-home");
+        let _home = GatewayHomeGuard::set(&home);
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "db"
+project_name = "data-dump-credential-dev"
+
+[containers.stack.services.db]
+catalog = "mariadb"
+version = "10.11"
+database = "acowtancy"
+password = "synthetic-487-dump-password"
+
+[data.targets.acowtancy]
+service = "db"
+database = "acowtancy"
+"#,
+        )
+        .expect("write manifest");
+
+        for output_json in [true, false] {
+            let rendered = run_container_data_dump_with_hooks(
+                &root,
+                None,
+                &[ContainerDbDumpInput {
+                    target: Some("acowtancy".to_owned()),
+                    path: root.join("acowtancy.sql"),
+                }],
+                false,
+                output_json,
+                |_, _, plan| {
+                    assert_eq!(
+                        plan.credential_env.get("MYSQL_PWD").map(String::as_str),
+                        Some(PASSWORD),
+                        "the credential must travel by name: {:?}",
+                        plan.credential_env_names()
+                    );
+                    assert!(
+                        !plan.argv.iter().any(|arg| arg.contains(PASSWORD)),
+                        "a spawned argument carried the password: {:?}",
+                        plan.argv
+                    );
+                    assert!(
+                        !plan.argv.iter().any(|arg| arg.starts_with("MYSQL_PWD=")),
+                        "the value must never be an argv assignment: {:?}",
+                        plan.argv
+                    );
+                    Ok(Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                        stdout: b"select 1;".to_vec(),
+                        stderr: Vec::new(),
+                    })
+                },
+                |_, _, _, _| Ok(serde_json::Value::Null),
+            )
+            .expect("dump");
+            assert!(
+                !rendered.contains(PASSWORD),
+                "the report carried the password: {rendered}"
+            );
+        }
     }
 
     #[test]

@@ -21,7 +21,7 @@ use effigy_state::artifact::{
 };
 use serde_json::json;
 
-use crate::runner::container_command::run_container_exec_capture_with_options;
+use crate::runner::container_command::run_container_exec_capture_with_credentials;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
@@ -836,6 +836,38 @@ fn run_builtin_db_seed_task(
     manifest: &effigy_manifest::TaskManifest,
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<(), RunnerError> {
+    let mut exec = |repo_root: &Path,
+                    container_name: Option<&str>,
+                    command: &effigy_data::DatabaseCommandPlan,
+                    stdin_file: Option<&Path>| {
+        run_container_exec_capture_with_credentials(
+            repo_root,
+            container_name,
+            Some(&command.service),
+            &command.argv,
+            &command.credential_env,
+            stdin_file,
+        )
+    };
+    run_builtin_db_seed_task_with(repo_root, manifest, env_overrides, &mut exec)
+}
+
+/// The builtin seed body with the exec step injected, so the plan's argv and
+/// credential custody can be proven without a live runtime (effigy#487).
+fn run_builtin_db_seed_task_with<ExecFn>(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    env_overrides: &BTreeMap<String, String>,
+    exec: &mut ExecFn,
+) -> Result<(), RunnerError>
+where
+    ExecFn: FnMut(
+        &Path,
+        Option<&str>,
+        &effigy_data::DatabaseCommandPlan,
+        Option<&Path>,
+    ) -> Result<std::process::Output, RunnerError>,
+{
     let metadata_json = env_overrides
         .get(DB_SEEDS_JSON_ENV)
         .or_else(|| env_overrides.get(LEGACY_BOOTSTRAP_DB_SEEDS_JSON_ENV))
@@ -906,13 +938,7 @@ fn run_builtin_db_seed_task(
             .reset_command
             .as_ref()
             .expect("builtin seed plan should include reset command");
-        let reset_output = run_container_exec_capture_with_options(
-            repo_root,
-            Some(container_name),
-            Some(&reset_command.service),
-            &reset_command.argv,
-            None,
-        )?;
+        let reset_output = exec(repo_root, Some(container_name), reset_command, None)?;
         if !reset_output.status.success() {
             let stderr = String::from_utf8_lossy(&reset_output.stderr)
                 .trim()
@@ -928,11 +954,10 @@ fn run_builtin_db_seed_task(
             .command
             .as_ref()
             .expect("builtin seed plan should include import command");
-        let output = run_container_exec_capture_with_options(
+        let output = exec(
             repo_root,
             Some(container_name),
-            Some(&command.service),
-            &command.argv,
+            command,
             command.stdin.as_deref(),
         )?;
         if !output.status.success() {
@@ -1340,5 +1365,161 @@ database = "acowtancy"
         }
         found.sort();
         found
+    }
+}
+
+/// Proof for effigy#487: a builtin database seed keeps the password out of every
+/// spawned argv, forwards it by variable name only, and never prints it.
+#[cfg(test)]
+mod credential_seed_tests {
+    use super::{run_builtin_db_seed_task_with, DB_SEEDS_JSON_ENV};
+    use effigy_data::DatabaseCommandPlan;
+    use effigy_manifest::TaskManifest;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::os::unix::process::ExitStatusExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Output;
+
+    const PASSWORD: &str = "synthetic-487-seed-password";
+    const STAGED_PATH: &str = ".effigy/local/db-seeds/acowtancy.sql";
+
+    const MANIFEST: &str = r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "db"
+project_name = "seed-credential"
+working_dir = "/workspace"
+
+[containers.stack.services.db]
+catalog = "mariadb"
+version = "10.11"
+database = "acowtancy"
+password = "synthetic-487-seed-password"
+
+[data.targets.acowtancy]
+service = "db"
+database = "acowtancy"
+"#;
+
+    fn repo() -> (tempfile::TempDir, PathBuf, TaskManifest) {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join(".effigy/local/db-seeds")).expect("mkdir staging");
+        fs::write(repo.join("effigy.toml"), MANIFEST).expect("write manifest");
+        fs::write(repo.join(STAGED_PATH), "select 1;\n").expect("write staged seed");
+        let manifest = crate::runner::manifest::load_task_manifest(&repo.join("effigy.toml"))
+            .expect("load manifest");
+        (temp, repo, manifest)
+    }
+
+    fn seed_env() -> BTreeMap<String, String> {
+        BTreeMap::from([(
+            DB_SEEDS_JSON_ENV.to_owned(),
+            format!(r#"[{{"target":"acowtancy","staged_path":"{STAGED_PATH}"}}]"#),
+        )])
+    }
+
+    fn success() -> Output {
+        Output {
+            status: ExitStatusExt::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn assert_credential_custody(command: &DatabaseCommandPlan) {
+        assert_eq!(
+            command.credential_env.get("MYSQL_PWD").map(String::as_str),
+            Some(PASSWORD),
+            "the seed credential must travel by name: {:?}",
+            command.credential_env_names()
+        );
+        assert!(
+            !command.argv.iter().any(|arg| arg.contains(PASSWORD)),
+            "a spawned argument carried the password: {:?}",
+            command.argv
+        );
+        assert!(
+            !command.argv.iter().any(|arg| arg.starts_with("MYSQL_PWD=")),
+            "the value must never be an argv assignment: {:?}",
+            command.argv
+        );
+    }
+
+    #[test]
+    fn a_builtin_seed_passes_the_password_by_name_only() {
+        let (_temp, repo, manifest) = repo();
+        let mut commands = Vec::new();
+
+        run_builtin_db_seed_task_with(
+            &repo,
+            &manifest,
+            &seed_env(),
+            &mut |_: &Path,
+                  container_name: Option<&str>,
+                  command: &DatabaseCommandPlan,
+                  stdin_file: Option<&Path>| {
+                assert_eq!(container_name, Some("stack"));
+                assert_credential_custody(command);
+                commands.push((command.argv.join(" "), stdin_file.map(Path::to_path_buf)));
+                Ok(success())
+            },
+        )
+        .expect("seed");
+
+        assert_eq!(commands.len(), 2, "reset then import");
+        assert!(
+            commands[0].0.starts_with("mysql -uroot -e DROP DATABASE"),
+            "{}",
+            commands[0].0
+        );
+        assert_eq!(commands[0].1, None, "the reset carries no stdin file");
+        assert!(
+            commands[1].0.starts_with("mysql -uroot acowtancy"),
+            "{}",
+            commands[1].0
+        );
+        assert_eq!(
+            commands[1].1,
+            Some(repo.join(STAGED_PATH)),
+            "the import keeps its staged seed stdin"
+        );
+    }
+
+    #[test]
+    fn a_refused_builtin_seed_import_reports_without_the_password() {
+        let (_temp, repo, manifest) = repo();
+        let mut calls = 0;
+
+        let error = run_builtin_db_seed_task_with(
+            &repo,
+            &manifest,
+            &seed_env(),
+            &mut |_: &Path, _: Option<&str>, command: &DatabaseCommandPlan, _: Option<&Path>| {
+                assert_credential_custody(command);
+                calls += 1;
+                Ok(if calls == 1 {
+                    success()
+                } else {
+                    Output {
+                        status: ExitStatusExt::from_raw(2),
+                        stdout: Vec::new(),
+                        stderr: b"import refused".to_vec(),
+                    }
+                })
+            },
+        )
+        .expect_err("a failed import fails the seed");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("SQL import failed"), "{rendered}");
+        assert!(rendered.contains("import refused"), "{rendered}");
+        assert!(
+            !rendered.contains(PASSWORD),
+            "the failure carried the password: {rendered}"
+        );
     }
 }

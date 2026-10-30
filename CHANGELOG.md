@@ -727,6 +727,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Database seed and dump keep the database password out of every spawned
+  command's arguments. The reset, import and dump clients (`mysql`, `psql`,
+  `mysqldump`, `pg_dump`) receive it by variable name, sourced from a private
+  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
+  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
+  receipt or a diagnostic. Target resolution, the selected Compose project,
+  seed/dump results, reports and cleanup are unchanged.
+
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
   libraries or linkers refuse the build before it can attest an artifact.

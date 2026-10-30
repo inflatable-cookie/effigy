@@ -20,9 +20,13 @@ use effigy_containers::{
 use effigy_containers::{
     BackendId, ContainerBackendDetection, ContainerComposeInvocationPlan, ContainerManager,
 };
+use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spec, ProbeResult};
 
+use crate::runner::container_command::data_credentials::{
+    wrap_credential_bootstrap, DataCredentialFile,
+};
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT;
@@ -306,6 +310,123 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
     run_owned_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
+}
+
+/// Run one database data exec whose client credential travels by variable name
+/// only. The value lives in a private file the bootstrap sources, so no value
+/// reaches the spawned argv, the report or a diagnostic.
+///
+/// A backend that cannot source the value without argv exposure fails here
+/// instead of running the client without a credential (effigy#487).
+pub(in crate::runner) fn run_compose_exec_plan_with_credentials(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    stdin_file: Option<&Path>,
+    credential_env: &BTreeMap<String, String>,
+) -> Result<Output, RunnerError> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or_else(|| {
+        RunnerError::task_invocation(
+            "`HOME` is not set; cannot place the private database credential file a data exec sources",
+        )
+    })?;
+    let credential = DataCredentialFile::write(&home, credential_env)?;
+    let output = run_credential_bootstrap_exec(policy, plan, &credential, stdin_file);
+    // The file is worthless after this exec; a failed removal never masks the
+    // command's own result.
+    if let Err(error) = credential.remove() {
+        eprintln!(
+            "[warn] could not remove the private database credential file {}: {error}",
+            credential.path().display()
+        );
+    }
+    output
+}
+
+fn run_credential_bootstrap_exec(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    credential: &DataCredentialFile,
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    let binding = crate::runner::container_runtime_prep::verify_service_binding(
+        &plan.repo_root,
+        policy,
+        &parsed.service,
+        None,
+    )?;
+    let (program, args) =
+        verified_native_exec_invocation(policy, plan, &binding, stdin_file.is_some(), None)?;
+    let colima = plan.backend_id == BackendId::colima_nerdctl();
+    let (program, args) = credential_bootstrap_invocation(&program, &args, credential, colima)?;
+    run_command_capture_until(&plan.repo_root, &program, &args, stdin_file, None)
+}
+
+/// Wrap the verified runtime exec in a bootstrap that sources the private
+/// credential file first. The bootstrap and the file path are public; the value
+/// is only ever read from the file by the shell that then execs the client.
+fn credential_bootstrap_invocation(
+    program: &OsStr,
+    args: &[OsString],
+    credential: &DataCredentialFile,
+    colima: bool,
+) -> Result<(OsString, Vec<OsString>), RunnerError> {
+    let quote_args = |args: &[OsString]| {
+        args.iter()
+            .map(|arg| shell_quote(&arg.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let command = if colima {
+        // `colima nerdctl --profile P -- …`: the client runs in the VM, so the
+        // value is sourced from the VM-readable home and preserved into
+        // nerdctl by name, exactly as managed task secrets travel.
+        let (Some(prefix), Some(inside)) = (args.get(..4), args.get(4..)) else {
+            return Err(RunnerError::task_invocation(
+                "database data exec has no nerdctl arguments to run in the VM",
+            ));
+        };
+        if prefix[0] != "nerdctl" || prefix[1] != "--profile" || prefix[3] != "--" {
+            return Err(RunnerError::task_invocation(
+                "database data exec did not resolve a nerdctl VM invocation",
+            ));
+        }
+        let profile = &prefix[2];
+        let bootstrap = wrap_credential_bootstrap(&format!(
+            "exec sudo --preserve-env={names} nerdctl {args}",
+            names = credential.names().join(","),
+            args = quote_args(inside)
+        ));
+        return Ok((
+            program.to_os_string(),
+            vec![
+                OsString::from("ssh"),
+                OsString::from("--profile"),
+                profile.clone(),
+                OsString::from("--"),
+                OsString::from("sh"),
+                OsString::from("-c"),
+                OsString::from(bootstrap),
+                OsString::from("sh"),
+                credential.path().as_os_str().to_os_string(),
+            ],
+        ));
+    } else {
+        wrap_credential_bootstrap(&format!(
+            "exec {} {}",
+            shell_quote(&program.to_string_lossy()),
+            quote_args(args)
+        ))
+    };
+    Ok((
+        OsString::from("sh"),
+        vec![
+            OsString::from("-c"),
+            OsString::from(command),
+            OsString::from("sh"),
+            credential.path().as_os_str().to_os_string(),
+        ],
+    ))
 }
 
 pub(in crate::runner) fn run_managed_compose_exec_plan(
@@ -1090,5 +1211,177 @@ mod capture_deadline_tests {
         assert!(started.elapsed() < Duration::from_secs(2));
         thread::sleep(Duration::from_secs(2));
         assert!(!marker.exists(), "legacy writer survived cancellation");
+    }
+}
+
+/// Proof for effigy#487: a database password travels by variable name in the
+/// spawned argv and by value only inside a private file the bootstrap sources.
+#[cfg(test)]
+mod credential_bootstrap_tests {
+    use super::*;
+    use crate::runner::container_command::data_credentials::DataCredentialFile;
+
+    const PASSWORD: &str = "synthetic-487-password";
+
+    fn credential(name: &str) -> (tempfile::TempDir, DataCredentialFile) {
+        let home = tempfile::tempdir().expect("home");
+        let credential = DataCredentialFile::write(
+            home.path(),
+            &BTreeMap::from([(name.to_owned(), PASSWORD.to_owned())]),
+        )
+        .expect("credential");
+        (home, credential)
+    }
+
+    fn build(
+        program: &str,
+        args: &[&str],
+        credential: &DataCredentialFile,
+    ) -> (String, Vec<String>) {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let colima = program.ends_with("colima");
+        let (program, args) =
+            credential_bootstrap_invocation(OsStr::new(program), &args, credential, colima)
+                .expect("bootstrap");
+        (
+            program.to_string_lossy().into_owned(),
+            args.iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+        )
+    }
+
+    fn assert_no_value(program: &str, args: &[String]) {
+        assert!(!program.contains(PASSWORD), "program: {program}");
+        for arg in args {
+            assert!(
+                !arg.contains(PASSWORD),
+                "a spawned argument carried the password: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_backend_spawn_passes_the_credential_by_file_only() {
+        let (_home, credential) = credential("MYSQL_PWD");
+        let (program, args) = build(
+            "docker",
+            &[
+                "exec",
+                "-i",
+                "-e",
+                "MYSQL_PWD",
+                "abcdef",
+                "mysqldump",
+                "-uroot",
+                "legacy",
+            ],
+            &credential,
+        );
+
+        assert_eq!(program, "sh");
+        assert_eq!(args[0], "-c");
+        assert!(
+            args[1].contains(
+                "exec 'docker' 'exec' '-i' '-e' 'MYSQL_PWD' 'abcdef' 'mysqldump' '-uroot' 'legacy'"
+            ),
+            "{}",
+            args[1]
+        );
+        assert!(args[1].contains(". \"$1\""), "{}", args[1]);
+        assert_eq!(args[2], "sh", "{}", args[1]);
+        assert_eq!(args[3], credential.path().to_string_lossy());
+        assert!(
+            !args[1].contains("MYSQL_PWD="),
+            "the value must travel by name only: {}",
+            args[1]
+        );
+        assert_no_value(&program, &args);
+    }
+
+    #[test]
+    fn colima_backend_spawn_passes_the_credential_by_file_only() {
+        let (_home, credential) = credential("PGPASSWORD");
+        let (program, args) = build(
+            "colima",
+            &[
+                "nerdctl",
+                "--profile",
+                "effigy-487",
+                "--",
+                "exec",
+                "-i",
+                "-e",
+                "PGPASSWORD",
+                "abcdef",
+                "pg_dump",
+                "-U",
+                "postgres",
+                "-d",
+                "app",
+            ],
+            &credential,
+        );
+
+        assert_eq!(program, "colima");
+        assert_eq!(
+            &args[..6],
+            ["ssh", "--profile", "effigy-487", "--", "sh", "-c"]
+        );
+        assert!(
+            args[6].contains(
+                "exec sudo --preserve-env=PGPASSWORD nerdctl 'exec' '-i' '-e' 'PGPASSWORD' \
+                 'abcdef' 'pg_dump' '-U' 'postgres' '-d' 'app'"
+            ),
+            "{}",
+            args[6]
+        );
+        assert!(args[6].contains(". \"$1\""), "{}", args[6]);
+        assert_eq!(args[7], "sh", "{}", args[6]);
+        assert_eq!(args[8], credential.path().to_string_lossy());
+        assert!(
+            !args[6].contains("PGPASSWORD="),
+            "the value must travel by name only: {}",
+            args[6]
+        );
+        assert_no_value(&program, &args);
+    }
+
+    #[test]
+    fn a_backend_without_a_credential_bootstrap_refuses_instead_of_leaking() {
+        let (_home, credential) = credential("MYSQL_PWD");
+
+        let error = credential_bootstrap_invocation(
+            OsStr::new("colima"),
+            &[OsString::from("nerdctl")],
+            &credential,
+            true,
+        )
+        .expect_err("a VM exec without nerdctl arguments must refuse");
+        assert!(
+            error.to_string().contains("no nerdctl arguments"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains(PASSWORD), "{error}");
+
+        let error = credential_bootstrap_invocation(
+            OsStr::new("colima"),
+            &[
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from("p"),
+                OsString::from("ps"),
+            ],
+            &credential,
+            true,
+        )
+        .expect_err("a malformed VM exec must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("did not resolve a nerdctl VM invocation"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains(PASSWORD), "{error}");
     }
 }
