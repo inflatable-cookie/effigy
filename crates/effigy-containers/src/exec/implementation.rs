@@ -220,7 +220,9 @@ pub fn run_docker_capture(
     run_compose_capture(repo_root, policy, args, label)
 }
 
-/// Ask the runtime for a restart policy on these containers. This is a runtime
+/// Ask the runtime for a restart policy on these containers, named by verified
+/// full ID only. The caller proves ownership first (`restart::apply_after_start`).
+/// This is a runtime
 /// configuration change on the containers Compose created, not a start of
 /// anything, so it cannot race Compose's own create/start (effigy#383).
 pub fn set_restart_policy(

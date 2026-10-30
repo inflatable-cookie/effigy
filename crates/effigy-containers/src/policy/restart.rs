@@ -12,12 +12,17 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use crate::exec::{ContainerExecError, RunningComposeContainer};
 use crate::EffectiveContainerPolicy;
 
 /// The restart policy a service gets when its stack declares none.
 pub const RESTART_POLICY: &str = "unless-stopped";
+
+/// The owned-binding budget for each listed container when the caller shares
+/// no deadline. It matches the bring-up's own owned-binding window.
+const OWNED_UPDATE_VERIFICATION_BUDGET: Duration = Duration::from_secs(15);
 
 /// One stage of the post-start restart-policy apply, in the order it runs.
 ///
@@ -56,6 +61,12 @@ impl RestartPolicyStage {
 /// declare. A file or container list that cannot be read, and an update the
 /// runtime refuses, are each named and the activation proceeds: the stack is
 /// running either way, and the next `up` applies the policy again.
+///
+/// Each container is update-eligible only after its full ID, project, declared
+/// service, canonical checkout and scope verify against the current policy, and
+/// the update targets that verified ID. A foreign, replaced or unknown container
+/// — a same-name impostor or a sibling of another owner — receives no update and
+/// is named as refused.
 ///
 /// `deadline` bounds the inventory read that names those containers. A
 /// bring-up passes the one deadline it shares with its readiness wait, so a
@@ -98,7 +109,7 @@ pub fn apply_after_start_observed(
         return;
     }
     stage(RestartPolicyStage::RuntimeInventory);
-    let containers = match crate::exec::list_running_compose_containers_for_project_with_deadline(
+    let rows = match crate::exec::list_running_compose_containers_for_project_with_deadline(
         repo_root,
         policy,
         project_name,
@@ -111,24 +122,61 @@ pub fn apply_after_start_observed(
                     .as_deref()
                     .is_some_and(|service| services.contains(service))
             })
-            .map(|row| row.container_name)
             .collect::<Vec<_>>(),
         Err(error) => {
             eprintln!("[warn] cannot list the running `{project_name}` containers: {error}");
             return;
         }
     };
-    if containers.is_empty() {
+    if rows.is_empty() {
         return;
     }
     stage(RestartPolicyStage::Apply);
-    if let Err(error) =
-        crate::exec::set_restart_policy(repo_root, policy, &containers, RESTART_POLICY)
-    {
-        eprintln!(
-            "[warn] cannot ask the runtime to keep `{project_name}` running with `restart: {RESTART_POLICY}`: {error}"
-        );
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + OWNED_UPDATE_VERIFICATION_BUDGET);
+    for row in &rows {
+        if let Err(error) = update_verified_container(repo_root, policy, row, deadline) {
+            eprintln!(
+                "[warn] cannot ask the runtime to keep `{}` running with `restart: {RESTART_POLICY}`: {error}",
+                row.container_name
+            );
+        }
     }
+}
+
+/// Send the restart-policy update to one listed container, and only after its
+/// owned binding is proven against the current policy. The update names the
+/// verified full ID, never the listed name, and a second strict inspection runs
+/// right before it so a replacement or ownership change in between sends
+/// nothing. A row that fails either check is refused with its reason and
+/// receives no update; the caller's own owned-binding check still decides
+/// whether the selected service is usable.
+fn update_verified_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    row: &RunningComposeContainer,
+    deadline: Instant,
+) -> Result<(), ContainerExecError> {
+    let binding = crate::exec::verify_owned_running_compose_identities(
+        repo_root,
+        policy,
+        std::slice::from_ref(row),
+        deadline,
+    )?
+    .pop()
+    .ok_or_else(|| ContainerExecError::Failure {
+        command: "inspect owned binding".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "binding unavailable: the listed container is not an owned service container"
+            .to_owned(),
+    })?;
+    binding.reverify(repo_root, policy, deadline)?;
+    crate::exec::set_restart_policy(
+        repo_root,
+        policy,
+        &[binding.id().to_owned()],
+        RESTART_POLICY,
+    )
 }
 
 /// The services these Compose files define without declaring `restart:`,

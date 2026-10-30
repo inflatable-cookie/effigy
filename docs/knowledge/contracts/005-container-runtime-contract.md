@@ -213,7 +213,14 @@ log tail is the same kind of bounded runtime read, so it too runs under its own
 live step, naming the container it reads and reporting when the runtime does
 not answer it; the refusal then carries no tail rather than an unread one. The restart-policy apply after Compose names its own
 stages as they start: the Compose declaration read, the runtime inventory read,
-then the update, which may not be sent at all when no service qualifies. A service's declared
+then the update, which may not be sent at all when no service qualifies. Each
+listed container is updated only after its full ID, project, declared service,
+canonical checkout and scope verify against the current policy, and a strict
+inspection re-verifies it immediately before the update; the update names the
+verified full ID, never the listed name. A foreign, replaced or unknown listed
+container, including a sibling of another owner, receives no update and is named
+in a warning; the selected service's own owned-binding check still refuses it
+separately. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays
