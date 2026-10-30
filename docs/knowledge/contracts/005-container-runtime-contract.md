@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-28
+Last Updated: 2026-10-29
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -281,9 +281,95 @@ tls = true
 ```
 
 `readiness.timeout_secs` bounds only the wait after the listener's port first
-answers; a child still building has not opened its port, so the supervisor and
-the `up` that waits on it carry no deadline and the child's own exit is the
-failure that ends the wait.
+answers; a child still building has not opened its port, and the supervisor's
+own readiness budget starts when it does. The `up` that waits on it is bounded
+by that bring-up's runtime-observation budget instead (see
+[Per-route exposure](#per-route-exposure)): a port that never opens withholds
+that listener's route and never holds the activation open. The wait still
+reports what it observed: while the
+port is closed it prints progress at a fixed interval and carries the child's
+own output tail, bounded and with secret-shaped values redacted, so a long
+start is never a silent count. Progress and activation-budget refusals use the
+supervisor's last probe observation. A socket that accepted a connection but supplied no HTTP status is
+reported as waiting for the declared HTTP status, with its readiness clock
+running. A later connection failure does not reset that clock. A record with no
+probe observation makes no closed-port claim. A listener that answers the
+declared readiness request with a different status is refused as soon as that
+answer is observed.
+The refusal names the status it answered, the status the manifest required and
+the same bounded child-output tail, and the declared budget is not spent on a
+question the child has already answered: a `500` where `200` is required ends
+the start, it does not wait out `timeout_secs`.
+
+## Per-route exposure
+
+Exposure is decided per declared route target, not per activation. `up`
+registers the container's own verified routes first, then starts host
+listeners in `depends_on` order, and each listener publishes only its own route
+after its own readiness. A listener that never reaches readiness withholds
+exactly its own route: the container's published routes, and every other
+listener that did publish, stay exposed, and no unrelated route is withdrawn
+with it.
+
+A detached `up` still fails when a listener is withheld, and it reports the
+partial exposure instead of one blanket verdict: the text and JSON name the
+routes that are published, the listener whose route is not, its observed status
+where there was one, and the bounded, redacted child-output tail. That tail's
+window starts on a line boundary whenever the line begins within a bounded
+context read behind it; a line whose `key=` marker sits outside that context is
+dropped whole rather than printed with a value the redactor can no longer
+recognise. The failure
+is never phrased as an activation whose readiness and exposure are unverified,
+because the activation settled. A process whose `depends_on` listener was
+withheld does not start and withholds its own route too, naming the dependency
+that never became ready. That decision is this activation's own: a dependent
+reads it before any listener state file, so a chain `A -> B -> C` settles with
+every route withheld instead of waiting for a record a skipped process never
+wrote, and a non-listener at the end of the chain is not started either. A retry
+after the listener recovers publishes that listener's own route and leaves the
+container's routes exactly as they were: a route is replaced only by its own
+owner, so a retry never duplicates another target's route. An uncertain
+container identity still publishes no route at all, because the readiness wait
+refuses before any route write.
+
+The current dependency declaration takes precedence over reconciliation of a
+previous generation, including after the activation budget expires. If this
+activation withholds a dependency, it settles the dependent's exact owned run
+before reporting its route withheld, even when that run started without the
+dependency. A dependent without a listener also has its previous run stopped.
+An incomplete stop remains a settlement refusal; it cannot become a claim that
+the route was withheld.
+
+The wait itself is bounded by the activation, not by the child's build. Host
+listener startup shares the bring-up's one runtime-observation budget
+(effigy#411). A listener still starting when that budget is spent withholds its
+own route and the command stops waiting for the remaining declared listeners,
+so `up` cannot hang on a listener that never binds. The timed-out generation is
+**settled before the command returns**, under the same fenced kernel stop `down`
+uses, so no route can be published after the activation reported that route
+withheld. `effigy container <NAME> restart <process>` starts it again, and
+`readiness.timeout_secs` still bounds only the wait after a listener's port
+first opens.
+
+This settlement also applies to definite listener failures with a restart
+policy. A supervisor that failed before spawning its first child cannot be
+detached while waiting for an `Active` event it never emitted. A withheld
+supervisor is stopped, so a retry cannot publish after the partial-exposure
+report; an explicit restart or a later `up` retries that listener.
+
+A listener that a later activation does not start is never taken on trust
+either: it is reconciled against its own published generation and route first,
+so a healthy generation this activation never touched stays exposed and is
+named in `exposed_routes`. Reconciliation compares that generation with the
+**current declaration** — route domain, TLS mode, bind and the declared
+readiness request, which is probed live — and withholds the current route when
+they differ, because the declared target is not the one that generation serves.
+A generation that fails those checks is settled under the same fenced stop
+before the report, so a route the report withholds is withdrawn from the
+endpoint store instead of being left served by the generation that failed it;
+a definite status the live probe observed is named in the refusal. Only a
+listener with nothing verified against its current declaration is reported
+withheld.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
@@ -1563,7 +1649,8 @@ While that stage is `preparation`, `preparation_step` identifies the checked
 boundary: `declaration`, `policy`, `admission`, `validation`, `runtime`, `mounts`,
 `inventory`, `refresh`, or `dispatch`; it is null outside preparation.
 `failure_kind` is one of `endpoint_observation_unknown`, `endpoint_store_refusal`,
-`invocation_refusal`, `managed_readiness`, `gateway_route_refusal`, or `other`;
+`invocation_refusal`, `managed_readiness`, `managed_listener_exposure`,
+`gateway_route_refusal`, or `other`;
 `identity` names the requested environment and checkout. These closed codes do
 not turn an unavailable observation into absence or stop authority. `cause`
 carries the underlying refusal itself — for example the gateway claim or
@@ -1629,6 +1716,19 @@ and the environment/checkout identity, alongside its unavailable state, failure
 kind and recovery advice. Secret-shaped `key=value` details in the cause
 are redacted and the cause is bounded; the generic reconciliation advice never
 replaces the actionable cause.
+
+A settled activation whose exposure is partial is not an unavailable
+activation, and it reports differently. Its state is `partial`, its phase is
+`listener_exposure`, its `failure_kind` is `managed_listener_exposure`, its
+`readiness` is `verified` and its `exposure` is `partial`. It carries
+`exposed_routes` (`domain -> target` for every route this activation published)
+and `withheld_routes`, one entry per failed listener with its `listener`,
+`route_domain`, `status`, `observed_status`, bounded `detail`, bounded
+`output_tail`, `log` and its own `restart` recovery. `activation_stage` keeps
+the stage the activation reached, and the text form names the same published
+and withheld routes. A host listener that answers the wrong status withholds
+only its own route; it never withdraws an unrelated verified container route
+(effigy#455).
 
 ## Handoff contract
 

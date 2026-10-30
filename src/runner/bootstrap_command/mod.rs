@@ -10,7 +10,7 @@ use effigy_bootstrap::{
 };
 use effigy_cli::{BootstrapArgs, TaskInvocation};
 use effigy_execution::ExecutionSurface;
-use effigy_ui::steps::Step;
+use effigy_ui::steps::{ProgressSource, Step};
 
 use crate::runner::execute::api::run_manifest_task_with_surface;
 use crate::runner::manifest::load_task_manifest;
@@ -166,12 +166,38 @@ pub(in crate::runner) fn starting_label(selector: &str) -> String {
     format!("starting {selector}")
 }
 
+/// What a `setup` or `start` phase waits on: its selector's own run, which
+/// draws its own steps and ends when the selector finishes.
+pub(in crate::runner) fn task_awaiting(selector: &str) -> String {
+    format!("`{selector}` to finish")
+}
+
+/// What a root checkout waits on: the checkout at its destination.
+pub(in crate::runner) fn checkout_awaiting(destination: &Path) -> String {
+    format!("the checkout at {}", destination.display())
+}
+
+/// The live state of one phase: its current action, then what it waits on.
+pub(in crate::runner) fn phase_progress(label: &str, awaiting: String) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(awaiting);
+    progress.update(label, None, None);
+    progress
+}
+
+/// One running phase: its live step, and the label it started with. A phase
+/// that never finishes ends as `✗ <label> failed`, so the label is kept apart
+/// from the frames the step draws while it runs.
+struct RunningPhase {
+    step: Step,
+    label: String,
+}
+
 /// Draws bootstrap's phases as live steps: one spinner for the phase that is
-/// running, labelled with what is happening (`running setup record-one`), and
-/// one line when it ends. `--json`, pipes and CI draw nothing, which is what
-/// the step sink decides.
+/// running, with its current action, the exact thing it waits on and elapsed
+/// time, and one line when it ends. `--json`, pipes and CI draw nothing, which
+/// is what the step sink decides.
 struct BootstrapProgressReporter {
-    running: Option<Step>,
+    running: Option<RunningPhase>,
     enabled: bool,
 }
 
@@ -193,7 +219,10 @@ impl BootstrapProgressReporter {
                 destination,
             } => {
                 let repo_url = repo_url.unwrap_or_else(|| "(existing checkout)".to_owned());
-                self.start(format!("pulling {repo_url} into {}", destination.display()));
+                self.start(
+                    format!("pulling {repo_url} into {}", destination.display()),
+                    checkout_awaiting(&destination),
+                );
             }
             BootstrapProgressEvent::RootCheckoutFinished {
                 repo_state,
@@ -223,13 +252,13 @@ impl BootstrapProgressReporter {
                 ));
             }
             BootstrapProgressEvent::SetupTaskStarted { selector, .. } => {
-                self.start(running_setup_label(&selector));
+                self.start(running_setup_label(&selector), task_awaiting(&selector));
             }
             BootstrapProgressEvent::SetupTaskFinished { selector, .. } => {
                 self.finish(format!("setup complete ({selector})"));
             }
             BootstrapProgressEvent::StartTaskStarted { selector, .. } => {
-                self.start(starting_label(&selector));
+                self.start(starting_label(&selector), task_awaiting(&selector));
             }
             BootstrapProgressEvent::StartTaskFinished { selector, .. } => {
                 self.finish(format!("start task complete ({selector})"));
@@ -237,14 +266,19 @@ impl BootstrapProgressReporter {
         }
     }
 
-    fn start(&mut self, label: String) {
+    /// Start a phase whose current action is `label` and which is waiting on
+    /// `awaiting`. The step shows both, and the elapsed wait, until it ends.
+    fn start(&mut self, label: String, awaiting: String) {
         self.fail_unfinished();
-        self.running = Some(effigy_ui::steps::step(&label));
+        self.running = Some(RunningPhase {
+            step: effigy_ui::steps::live_step(phase_progress(&label, awaiting)),
+            label,
+        });
     }
 
     fn finish(&mut self, summary: String) {
         match self.running.take() {
-            Some(step) => step.succeed(&summary),
+            Some(phase) => phase.step.succeed(&summary),
             None => self.note(summary),
         }
     }
@@ -252,11 +286,8 @@ impl BootstrapProgressReporter {
     /// A phase that has no spinner: its one line is the whole story.
     fn note(&mut self, summary: String) {
         match self.running.take() {
-            Some(step) => step.succeed(&summary),
-            None => {
-                let step = effigy_ui::steps::step(&summary);
-                step.succeed(&summary);
-            }
+            Some(phase) => phase.step.succeed(&summary),
+            None => effigy_ui::steps::finish_line(true, &summary),
         }
     }
 
@@ -264,8 +295,8 @@ impl BootstrapProgressReporter {
     /// finish. It ends as ✗ with its own label, so a failure never vanishes
     /// from the terminal. The error the command returns carries the cause.
     fn fail_unfinished(&mut self) {
-        if let Some(step) = self.running.take() {
-            step.fail(&format!("{} failed", step.label()));
+        if let Some(phase) = self.running.take() {
+            phase.step.fail(&format!("{} failed", phase.label));
         }
     }
 }

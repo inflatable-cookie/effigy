@@ -580,6 +580,17 @@ impl Attachment {
             .map_err(|_| RunError::refused("this context cannot observe an attachment"))?;
         self.attached_now(&observed, root)
     }
+    /// Whether this attachment is still attached, from a context that already
+    /// observes the journal. This is the check [`Attachment::attached`] makes
+    /// after deriving one, for a caller — the channel's retained reader — that
+    /// holds an [`ObserveContext`] and must re-check the row on every read.
+    pub fn attached_observed(
+        &self,
+        cx: &ObserveContext,
+        root: &StateRoot,
+    ) -> Result<bool, RunError> {
+        self.attached_now(cx, root)
+    }
     fn attached_now(&self, cx: &ObserveContext, root: &StateRoot) -> Result<bool, RunError> {
         match Store::read(cx, root) {
             Observed::Verified(reader, _) => {

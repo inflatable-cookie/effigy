@@ -29,6 +29,13 @@ use crate::runner::workspace_command::provisioning::{
 };
 
 const ENTRY_PATH: &str = "/usr/local/bin/effigy";
+
+mod workspace_client_matrix {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/workspace_client/provisioning.rs"
+    ));
+}
 const HOST_CONTAINER_ID: &str = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
 
 fn fixture(label: &str) -> PathBuf {
@@ -2121,12 +2128,10 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
 
 #[test]
 fn the_identity_probe_reports_the_image_c_library() {
-    let musl = format!(
-        "cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n\
-         libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n"
-    );
+    let musl = "cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n\
+         libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n";
     assert_eq!(
-        parse_container_identity(&musl, HOST_CONTAINER_ID)
+        parse_container_identity(musl, HOST_CONTAINER_ID)
             .expect("musl identity")
             .libc,
         "musl"

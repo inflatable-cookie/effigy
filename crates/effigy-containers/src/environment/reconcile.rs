@@ -5,17 +5,22 @@
 //! so they serialise on the one gate. Every backend mutation goes through a
 //! `TransitionPermit`: it is journalled before the adapter runs (K3) and
 //! refused while any holder other than a settling exempt run remains (R4).
+//!
+//! One transition is one live step (effigy#461): the wait names the gate and
+//! the holder its own body records, the reconcile names the phase now running,
+//! and the frame always carries the last thing this run observed.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Read;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_kernel::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, EffectContext, Limits, OperationContext,
     Placement,
 };
-use effigy_kernel::gate::{GateError, HolderDiag, Wait};
+use effigy_kernel::gate::{Gate, GateError, GateState, HolderDiag, Wait};
 use effigy_kernel::id::{
     CheckoutId, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId, Route, RunId,
     Surface, TaskId,
@@ -26,9 +31,10 @@ use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, RequiredObligation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{
-    AttachMode, Attachments, Effect, EffectSpec, Fence, Holder, Reconciled, Run, RunError,
-    Settlement, SettlementAdapter, TransitionPermit,
+    AttachMode, Attachments, Effect, EffectSpec, Fence, Holder, Liveness, Reconciled, Run,
+    RunError, Settlement, SettlementAdapter, TransitionPermit,
 };
+use effigy_ui::steps::{ProgressSource, Step};
 use serde_json::{json, Value};
 
 use super::backend::{BackendError, BackendSelection};
@@ -42,6 +48,10 @@ pub const STOP_EFFECT: &str = "environment:stop";
 
 /// How long a transition waits for `Gate(Env)` held by another one.
 pub const GATE_WAIT: Duration = Duration::from_secs(600);
+/// How often the gate-wait probe reads the held gate's own body. The kernel's
+/// wait is a blocking poll with no callback, so this is what makes the wait
+/// live without touching gate authority or its timeout (effigy#461).
+const GATE_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 /// Every environment run is bounded (K8); bring-up includes image builds.
 pub const RUN_BUDGET: Duration = Duration::from_secs(2 * 60 * 60);
 /// Each settlement is bounded on its own clock: the cleanup context is made
@@ -224,7 +234,25 @@ pub(super) fn busy_text(
     holder: &Observed<HolderDiag>,
     waited: Option<Duration>,
 ) -> String {
-    let owner = match holder {
+    let owner = describe_gate_holder(holder);
+    let mut text = format!("environment `{env}` is busy: {owner} is transitioning it");
+    if let Some(waited) = waited {
+        text.push_str(&format!(
+            ", and the wait ended after {:.1}s",
+            waited.as_secs_f64()
+        ));
+    }
+    text.push_str(&format!(
+        ". Nothing was changed and no backend was contacted; inspect it with `effigy container {env} status`, then retry"
+    ));
+    text
+}
+
+/// What the gate's own body says about its holder: the run, pid, task and the
+/// holder's current process state. Diagnostics only (I-G2), and the same words
+/// whether they are read during a wait or in the refusal that ends it.
+fn describe_gate_holder(holder: &Observed<HolderDiag>) -> String {
+    match holder {
         Observed::Verified(diag, _) => {
             let mut facts = vec![format!("pid {}", diag.pid)];
             if let Some(foreground) = &diag.foreground {
@@ -249,18 +277,137 @@ pub(super) fn busy_text(
             "a run whose gate body is unreadable ({})",
             unknown_label(reason)
         ),
-    };
-    let mut text = format!("environment `{env}` is busy: {owner} is transitioning it");
-    if let Some(waited) = waited {
-        text.push_str(&format!(
-            ", and the wait ended after {:.1}s",
-            waited.as_secs_f64()
-        ));
     }
-    text.push_str(&format!(
-        ". Nothing was changed and no backend was contacted; inspect it with `effigy container {env} status`, then retry"
-    ));
-    text
+}
+
+/// One gate observation as the live wait's latest event: the exact holder the
+/// gate names, or that it is free. The wait subject is the environment, so the
+/// frame reads `waiting for Gate(Env) on `stack`; last: run … still holds it`.
+fn publish_gate_state(source: &ProgressSource, env: &str, state: &Observed<GateState>) {
+    let event = match state {
+        Observed::Verified(GateState::Free, _) => "the gate is free".to_owned(),
+        Observed::Verified(GateState::Held(holder), _) => {
+            format!("{} still holds it", describe_gate_holder(holder))
+        }
+        Observed::Absent(_) => "the gate has no holder yet".to_owned(),
+        Observed::Unknown(reason) => {
+            format!("the gate state is unreadable ({})", unknown_label(reason))
+        }
+    };
+    source.update(
+        format!("waiting for Gate(Env) on `{env}`"),
+        None,
+        Some(event),
+    );
+}
+
+/// Reads `Gate(Env)` with a momentary shared lock: no create, no authority and
+/// nothing retained.
+fn observe_gate(root: &StateRoot, resource: &ResourceId) -> Observed<GateState> {
+    let cx = operation(
+        EffectClass::Observe,
+        CancelToken::default(),
+        Duration::from_secs(10),
+    )
+    .observe()
+    .expect("observe context");
+    Gate::probe(&cx, root, resource)
+}
+
+/// The wake-up between gate probes: an admission that ends at once wakes the
+/// probe instead of leaving it to notice after a poll interval.
+#[derive(Default)]
+struct GateProbeSignal {
+    stopped: Mutex<bool>,
+    wake: Condvar,
+}
+
+impl GateProbeSignal {
+    fn publish_stopped(&self) {
+        *self.stopped.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.wake.notify_all();
+    }
+
+    /// Whether the admission has finished, waiting at most one probe interval.
+    fn stopped(&self) -> bool {
+        let stopped = self.stopped.lock().unwrap_or_else(PoisonError::into_inner);
+        let (stopped, _) = self
+            .wake
+            .wait_timeout_while(stopped, GATE_PROBE_INTERVAL, |stopped| !*stopped)
+            .unwrap_or_else(PoisonError::into_inner);
+        *stopped
+    }
+}
+
+/// Stops the gate-wait probe, including when the admission it watches never
+/// returns because the caller unwound.
+struct GateProbeStop(Arc<GateProbeSignal>);
+
+impl Drop for GateProbeStop {
+    fn drop(&mut self) {
+        self.0.publish_stopped();
+    }
+}
+
+/// Runs `admit` under a live probe of `Gate(Env)` (effigy#461).
+///
+/// The probe only reads: it takes the gate's momentary shared lock, publishes
+/// what the body records, and stops when the admission returns.
+fn admit_under_gate_probe<T>(
+    root: &StateRoot,
+    env: &EnvRef,
+    source: &ProgressSource,
+    admit: impl FnOnce() -> T,
+) -> T {
+    let signal = Arc::new(GateProbeSignal::default());
+    std::thread::scope(|scope| {
+        scope.spawn(|| loop {
+            publish_gate_state(source, &env.name, &observe_gate(root, &env.resource));
+            if signal.stopped() {
+                return;
+            }
+        });
+        let _stop = GateProbeStop(Arc::clone(&signal));
+        admit()
+    })
+}
+
+/// The record's holder rows in the operator's words: how many runs are
+/// attached and which of them are live, so a deferral or refusal names its
+/// blocker before it happens. Diagnostics only.
+fn attached_summary(holders: &[Holder]) -> String {
+    if holders.is_empty() {
+        return "no run is attached to it".to_owned();
+    }
+    let live: Vec<String> = holders
+        .iter()
+        .filter(|holder| matches!(holder.liveness, Observed::Verified(Liveness::Live, _)))
+        .map(|holder| holder.run.to_string())
+        .collect();
+    if live.is_empty() {
+        return format!("{} attached run(s) are interrupted", holders.len());
+    }
+    const NAMED: usize = 3;
+    let mut names = live
+        .iter()
+        .take(NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if live.len() > NAMED {
+        names.push_str(&format!(" and {} more", live.len() - NAMED));
+    }
+    format!("{} live run(s) hold it: {names}", live.len())
+}
+
+/// The backend effect's own names, from the payload every transition journals.
+fn backend_event(payload: &Value) -> String {
+    format!(
+        "engine {}, context `{}`, project `{}`",
+        payload["engine"].as_str().unwrap_or("unnamed"),
+        payload["context"].as_str().unwrap_or("unnamed"),
+        payload["project"].as_str().unwrap_or("unnamed"),
+    )
 }
 
 /// Closed vocabulary: the category only, never the free-form detail, which
@@ -421,6 +568,10 @@ pub struct EnvRun<'r> {
     failed: bool,
     /// A backend effect was journalled: the run changed the environment.
     transitioned: bool,
+    /// The operator's live view of this transition: the phase now running,
+    /// how far through it is and the last thing it observed (effigy#461).
+    progress: ProgressSource,
+    step: Step,
 }
 
 impl<'r> EnvRun<'r> {
@@ -479,29 +630,33 @@ impl<'r> EnvRun<'r> {
             provenance: BTreeMap::new(),
         })
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
-        // The operator watches the gate wait: a transition can queue behind
-        // another one for up to ten minutes, and silence reads as a hang.
-        let waiting = effigy_ui::steps::step(&format!(
-            "waiting for environment `{}` to be free",
-            env.name
-        ));
+        let id = new_run_id()?;
+        let next = op.next(&env.name)?;
+        // The operator watches one step per transition. The gate wait can last
+        // up to ten minutes behind another transition, and silence reads as a
+        // hang, so the wait names the gate and the probe reads the holder its
+        // body records (effigy#461).
+        let progress =
+            ProgressSource::waiting_for(format!("environment `{}` to be free", env.name));
+        let step = effigy_ui::steps::live_step(progress.clone());
         // The original deadline, kept for the refusal's own report.
         let started = Instant::now();
         // Admission settles an interrupted predecessor under a window this
         // call makes once the gate is held, so the wait above (up to ten
         // minutes) cannot spend it (effigy#447).
-        let admitted = match claim {
+        let options = effigy_kernel::run::BeginOpts {
+            id,
+            wait,
+            acknowledge: vec![],
+            next,
+            custody: None,
+        };
+        let admitted = admit_under_gate_probe(ctx.root, env, &progress, || match claim {
             Some(claim) => Run::begin_claimed(
                 &ctx.cx,
                 ctx.root,
                 &invocation,
-                effigy_kernel::run::BeginOpts {
-                    id: new_run_id()?,
-                    wait,
-                    acknowledge: vec![],
-                    next: op.next(&env.name)?,
-                    custody: None,
-                },
+                options,
                 || {
                     ctx.cleanup()
                         .map_err(|error| RunError::broken(error.to_string()))
@@ -513,28 +668,26 @@ impl<'r> EnvRun<'r> {
                 &ctx.cx,
                 ctx.root,
                 &invocation,
-                effigy_kernel::run::BeginOpts {
-                    id: new_run_id()?,
-                    wait,
-                    acknowledge: vec![],
-                    next: op.next(&env.name)?,
-                    custody: None,
-                },
+                options,
                 || {
                     ctx.cleanup()
                         .map_err(|error| RunError::broken(error.to_string()))
                 },
                 &mut EnvSettlement,
             ),
-        }
+        })
         .map_err(|error| admission_error(env, wait, started, error));
         let run = match admitted {
             Ok(run) => {
-                waiting.succeed(&format!("environment `{}` is free", env.name));
+                progress.update(
+                    "reading the environment record",
+                    None,
+                    Some(format!("run {} holds the environment gate", run.id())),
+                );
                 run
             }
             Err(error) => {
-                waiting.fail(&format!("environment `{}` was not entered", env.name));
+                step.fail(&format!("environment `{}` was not entered", env.name));
                 return Err(error);
             }
         };
@@ -549,6 +702,10 @@ impl<'r> EnvRun<'r> {
                 if let Ok(cleanup) = ctx.cleanup() {
                     let _ = run.settle(&cleanup, &mut EnvSettlement);
                 }
+                step.fail(&format!(
+                    "environment `{}` record is unreadable after admission",
+                    env.name
+                ));
                 return Err(EnvError::Invalid(format!(
                     "environment record unreadable after admission: {reason}"
                 )));
@@ -564,6 +721,8 @@ impl<'r> EnvRun<'r> {
             published: false,
             failed: false,
             transitioned: false,
+            progress,
+            step,
         })
     }
 
@@ -590,12 +749,21 @@ impl<'r> EnvRun<'r> {
 
     /// Publishes the environment's render as the object it points at.
     pub fn publish_desired(&mut self, closure: &Closure) -> Result<String, EnvError> {
+        self.phase("publishing the desired render", None);
         let result = Objects::publish_desired(&mut self.run, closure);
-        self.kernel(result)
+        let id = self.kernel(result)?;
+        self.progress.event(format!("published render {id}"));
+        Ok(id)
     }
 
     /// Replaces the engine's fields on the record.
     pub fn write_record(&mut self, record: &EngineRecord) -> Result<(), EnvError> {
+        self.phase("writing the environment record", None);
+        self.progress.event(format!(
+            "retention: {}, project `{}`",
+            record.retention.label(),
+            record.project
+        ));
         let value =
             serde_json::to_value(record).map_err(|error| EnvError::Invalid(error.to_string()))?;
         let result = self.run.set_engine_record(&value);
@@ -616,11 +784,29 @@ impl<'r> EnvRun<'r> {
         )
         .observe()
         .expect("observe context");
-        match EnvRecord::read(&cx, self.root, &self.env.resource) {
+        let observed = match EnvRecord::read(&cx, self.root, &self.env.resource) {
             Observed::Verified(record, _) => record.holders,
             Observed::Absent(proof) => Observed::Absent(proof),
             Observed::Unknown(reason) => Observed::Unknown(reason),
-        }
+        };
+        // The attach check is the refusal's own evidence: the operator sees a
+        // live holder named here before the permit refuses (effigy#461).
+        let event = match &observed {
+            Observed::Verified(holders, _) => attached_summary(holders),
+            Observed::Absent(_) => "no environment record names a holder".to_owned(),
+            Observed::Unknown(reason) => {
+                format!("the holder list is unreadable ({})", unknown_label(reason))
+            }
+        };
+        self.phase(
+            format!(
+                "checking the runs attached to environment `{}`",
+                self.env.name
+            ),
+            None,
+        );
+        self.progress.event(event);
+        observed
     }
 
     /// Settles every interrupted holder as this transition's gate holder
@@ -641,13 +827,25 @@ impl<'r> EnvRun<'r> {
             Observed::Verified(reader, _) => reader,
             _ => return Ok(()),
         };
-        for holder in holders {
-            if !matches!(
-                holder.liveness,
-                Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _)
-            ) {
-                continue;
-            }
+        let interrupted = holders
+            .into_iter()
+            .filter(|holder| {
+                matches!(
+                    holder.liveness,
+                    Observed::Verified(Liveness::Interrupted, _)
+                )
+            })
+            .collect::<Vec<_>>();
+        let total = interrupted.len();
+        for (index, holder) in interrupted.into_iter().enumerate() {
+            self.phase(
+                format!(
+                    "settling interrupted run {} ({} of {total})",
+                    holder.run,
+                    index + 1
+                ),
+                Some((index as u64, total as u64)),
+            );
             let Observed::Verified(summary, _) = effigy_kernel::run::summary(&reader, holder.run)
             else {
                 continue;
@@ -701,7 +899,14 @@ impl<'r> EnvRun<'r> {
             "context": selection.context,
             "project": project,
         });
-        self.transition(APPLY_EFFECT, payload, Settlement::Retain, None, effect)
+        self.transition(
+            APPLY_EFFECT,
+            "reconciling the backend",
+            payload,
+            Settlement::Retain,
+            None,
+            effect,
+        )
     }
 
     /// The one backend stop: journalled under a permit, then published
@@ -720,6 +925,7 @@ impl<'r> EnvRun<'r> {
         });
         self.transition(
             STOP_EFFECT,
+            "stopping the backend",
             payload,
             Settlement::Irreversible,
             exempt,
@@ -736,9 +942,11 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn transition(
         &mut self,
         kind: &str,
+        phase: &str,
         payload: Value,
         settlement: Settlement,
         exempt: Option<RunId>,
@@ -746,10 +954,13 @@ impl<'r> EnvRun<'r> {
     ) -> Result<(), EnvError> {
         let env = self.env.name.clone();
         self.settle_interrupted_holders()?;
+        // The permit is the attach check: a refusal keeps the live holder the
+        // attach check just named, so the frame and the refusal agree.
         let mut permit = permit(&mut self.run, exempt).map_err(|error| {
             self.failed = true;
             EnvError::from_run(&env, error)
         })?;
+        let event = backend_event(&payload);
         let spec = EffectSpec {
             target: permit.fence().clone(),
             kind: kind.to_owned(),
@@ -763,6 +974,10 @@ impl<'r> EnvRun<'r> {
         let ticket = match ticket {
             Ok(ticket) => {
                 self.transitioned = true;
+                // The permit's borrow of the run ended with `intend`; the
+                // phase publishes once the effect is journalled.
+                self.phase(phase, None);
+                self.progress.event(event);
                 ticket
             }
             Err(error) => {
@@ -784,6 +999,17 @@ impl<'r> EnvRun<'r> {
         };
         // The permit's borrow of the run ends with its last use above;
         // callbacks go through the run itself.
+        self.phase(phase, None);
+        self.progress.event(match &outcome {
+            Ok(()) if kind == STOP_EFFECT => "the backend stopped".to_owned(),
+            Ok(()) => "the backend converged".to_owned(),
+            Err(BackendError::NotStarted(message)) => {
+                format!("the backend was never contacted: {message}")
+            }
+            Err(BackendError::Uncertain(message)) => {
+                format!("the backend's answer is unproven: {message}")
+            }
+        });
         let recorded = match &outcome {
             Ok(()) => self
                 .run
@@ -884,9 +1110,17 @@ impl<'r> EnvRun<'r> {
 
     /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
+        self.phase_with_count("activating the environment", (0, holders.len() as u64));
+        self.progress
+            .event(format!("attaching {} run(s)", holders.len()));
         let result = Attachments::publish_active_for(&mut self.run, holders);
         self.kernel(result)?;
         self.published = true;
+        self.phase_with_count(
+            "activating the environment",
+            (holders.len() as u64, holders.len() as u64),
+        );
+        self.progress.event("the environment is active");
         Ok(())
     }
 
@@ -935,21 +1169,44 @@ impl<'r> EnvRun<'r> {
         // outlived the budget handed to the run's opening still gets the whole
         // of it (effigy#447). It is bounded, and it dispatches no backend
         // effect, so it neither extends the owner gate nor acts after a stop.
-        let cleanup = self.cleanup()?;
-        let settling = effigy_ui::steps::step(&format!("settling environment `{env}`"));
+        self.phase(format!("settling run {}", self.run.id()), None);
+        let cleanup = match self.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                self.step
+                    .fail(&format!("environment `{env}` could not settle: {error}"));
+                return Err(error);
+            }
+        };
         let outcome = match self.run.settle(&cleanup, &mut EnvSettlement) {
             Ok(outcome) => {
-                settling.succeed(&format!("environment `{env}` settled"));
+                self.step.succeed(&format!("environment `{env}` settled"));
                 Ok(outcome)
             }
             Err(error) => {
-                settling.fail(&format!(
+                self.step.fail(&format!(
                     "settling environment `{env}` did not complete: {error}"
                 ));
                 Err(EnvError::from_run(&env, error))
             }
         }?;
         Ok(outcome.cleanup())
+    }
+
+    /// The phase this transition is in now.
+    pub(super) fn phase(&self, phase: impl Into<String>, count: Option<(u64, u64)>) {
+        self.progress.update(phase, count, None);
+    }
+
+    /// Publish the last thing this transition observed, for a phase a sibling
+    /// module of this one drives (the reset's own object drop).
+    pub(super) fn publish_event(&self, event: impl Into<String>) {
+        self.progress.event(event);
+    }
+
+    /// The same, with a known count or ratio.
+    fn phase_with_count(&self, phase: impl Into<String>, count: (u64, u64)) {
+        self.progress.update(phase, Some(count), None);
     }
 
     /// A fresh bounded cleanup context for this run's own settlement work.
@@ -998,4 +1255,134 @@ pub(crate) fn new_run_id() -> Result<RunId, EnvError> {
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0);
     RunId::new(milliseconds, entropy).map_err(|error| EnvError::Invalid(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::record::Retention;
+    use super::super::tests::{bring_up, closure, env, holder, home, root, Fake};
+    use super::*;
+
+    #[test]
+    fn claimed_admission_keeps_the_reserved_fence_under_the_live_gate_probe() {
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("environment context");
+        let stack = env("reserved-probe");
+        let reservation =
+            effigy_kernel::workspace_session::WorkspaceActivationReservation::reserve(
+                &ctx.cx,
+                &state,
+                &stack.resource,
+                Wait::FailFast,
+            )
+            .expect("reserved environment generation");
+        assert!(EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).is_err());
+        let run = EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
+            .expect("claimed admission under the progress probe");
+        assert_eq!(run.fence().generation, reservation.generation());
+        run.finish(false).expect("settle claimed admission");
+        reservation
+            .cancel(&ctx.cx, &state, Wait::FailFast)
+            .expect("release the settled reservation");
+    }
+
+    /// effigy#461: at a fake clock, the frames an operator sees name the held
+    /// gate and the holder its body records, each reconcile phase, and the
+    /// live holder behind the refusal. Nothing here waits for wall-clock time.
+    #[test]
+    fn fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal() {
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("environment context");
+        let stack = env("stack");
+        let fake = Fake::new();
+        let task = holder(&ctx, "dev", 1);
+        bring_up(
+            &ctx,
+            &stack,
+            &fake,
+            &closure("one"),
+            Retention::Held,
+            &[(
+                task.id(),
+                AttachMode::Exclusive {
+                    stop_on_release: true,
+                },
+            )],
+        )
+        .expect("the first bring-up attaches the holder");
+        let held = task.id().to_string();
+        let mut run =
+            EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).expect("gate admitted");
+
+        // A held gate: the probe reads the body the kernel wrote for this run.
+        let waiting = ProgressSource::waiting_for("environment `stack` to be free");
+        publish_gate_state(
+            &waiting,
+            &stack.name,
+            &observe_gate(&state, &stack.resource),
+        );
+        let frame = waiting.frame_at(Duration::from_secs(4));
+        for needle in [
+            "waiting for Gate(Env) on `stack`".to_owned(),
+            format!("run {}", run.id()),
+            format!("pid {}", std::process::id()),
+            "still holds it".to_owned(),
+            "4s elapsed".to_owned(),
+        ] {
+            assert!(frame.contains(&needle), "{needle}: {frame}");
+        }
+
+        // The reconcile advances: the render is published, then the record.
+        run.publish_desired(&closure("two")).expect("publish");
+        let frame = run.progress.frame_at(Duration::from_secs(9));
+        assert!(
+            frame.starts_with("publishing the desired render"),
+            "{frame}"
+        );
+        assert!(frame.contains("last: published render "), "{frame}");
+        assert!(frame.ends_with("; 9s elapsed"), "{frame}");
+
+        let mut record = run
+            .engine_record()
+            .cloned()
+            .unwrap_or_else(|| EngineRecord::new(Retention::Held, "acme-stack"));
+        record.retention = Retention::Persistent;
+        run.write_record(&record).expect("record");
+        let frame = run.progress.frame_at(Duration::from_secs(11));
+        assert!(
+            frame.starts_with("writing the environment record"),
+            "{frame}"
+        );
+        assert!(frame.contains("retention: persistent"), "{frame}");
+        assert!(frame.contains("project `acme-stack`"), "{frame}");
+
+        // The refusal's own evidence: the attach check names the live holder,
+        // and the permit refuses without reaching the backend.
+        let holders = run.holders();
+        assert!(
+            matches!(&holders, Observed::Verified(rows, _) if rows.len() == 1),
+            "{holders:?}"
+        );
+        let refused = run.apply_with(&super::super::tests::selection(), "acme-stack", || {
+            panic!("a refused transition never reaches the backend")
+        });
+        assert!(
+            matches!(refused, Err(EnvError::HeldBy { .. })),
+            "{refused:?}"
+        );
+        let frame = run.progress.frame_at(Duration::from_secs(12));
+        assert!(
+            frame.starts_with("checking the runs attached to environment `stack`"),
+            "{frame}"
+        );
+        assert!(
+            frame.contains(&format!("1 live run(s) hold it: {held}")),
+            "{frame}"
+        );
+        assert!(frame.ends_with("; 12s elapsed"), "{frame}");
+
+        run.finish(false).expect("the run settles");
+    }
 }

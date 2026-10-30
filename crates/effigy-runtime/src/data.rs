@@ -1,5 +1,6 @@
 mod cache;
 mod planning;
+mod progress;
 mod report;
 mod transfer;
 mod volume_io;
@@ -33,6 +34,7 @@ pub use planning::{
     cache_operation_plan, data_operation_plan, global_cache_operation_plan,
     global_volume_operation_plan,
 };
+use progress::{CacheVolumeProgress, PROBE_VOLUME_INSPECT, PROBE_VOLUME_REMOVE};
 pub use report::RegisteredGatewayRoute;
 use report::{
     annotate_registered_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
@@ -93,6 +95,32 @@ pub fn run_container_cache_list<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        list_cache_for_repo(
+            repo_root,
+            name,
+            output_json,
+            &run_runtime_volume_capture,
+            progress,
+        )
+    })
+}
+
+fn list_cache_for_repo<F>(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: &F,
+    progress: &CacheVolumeProgress,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    progress.update(
+        format!("inspecting cache volumes for `{}`", repo_root.display()),
+        None,
+        None,
+    );
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _operation_plan = cache_operation_plan(
@@ -111,11 +139,16 @@ where
         repo_root,
         &policy,
         colima_running,
-        &run_runtime_volume_capture,
+        run_runtime_volume_capture,
     )?
     .into_iter()
     .filter_map(cache_volume_entry)
     .collect::<Vec<_>>();
+    progress.update(
+        format!("inspecting cache volumes for `{}`", repo_root.display()),
+        Some((caches.len() as u64, caches.len() as u64)),
+        Some(format!("listed {} cache volumes", caches.len())),
+    );
 
     Ok(render_container_report(
         cache_list_report(&policy, colima_running, &caches),
@@ -132,22 +165,42 @@ pub fn run_container_cache_list_under_path<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError> + Copy,
 {
-    let mut rendered = Vec::new();
-    for repo_root in crate::read::discover_effigy_repos_under(scope_root) {
-        match run_container_cache_list(&repo_root, name, output_json, run_runtime_volume_capture) {
-            Ok(output) => rendered.push(output),
-            Err(error) => {
-                rendered.push(format!("[warn] skipped `{}`: {error}", repo_root.display()))
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        let repos = crate::read::discover_effigy_repos_under(scope_root);
+        let total = repos.len() as u64;
+        progress.update(
+            "inspecting cache volumes",
+            Some((0, total)),
+            Some(format!("found {total} repos")),
+        );
+        let mut rendered = Vec::new();
+        for (index, repo_root) in repos.into_iter().enumerate() {
+            progress.update(
+                format!("inspecting cache volumes for `{}`", repo_root.display()),
+                Some((index as u64 + 1, total)),
+                None,
+            );
+            match list_cache_for_repo(
+                &repo_root,
+                name,
+                output_json,
+                &run_runtime_volume_capture,
+                progress,
+            ) {
+                Ok(output) => rendered.push(output),
+                Err(error) => {
+                    rendered.push(format!("[warn] skipped `{}`: {error}", repo_root.display()))
+                }
             }
         }
-    }
-    if rendered.is_empty() {
-        return Ok(format!(
-            "[info] no Effigy repos found under {}",
-            scope_root.display()
-        ));
-    }
-    Ok(rendered.join("\n"))
+        if rendered.is_empty() {
+            return Ok(format!(
+                "[info] no Effigy repos found under {}",
+                scope_root.display()
+            ));
+        }
+        Ok(rendered.join("\n"))
+    })
 }
 
 pub fn run_container_cache_list_all<F>(
@@ -161,30 +214,40 @@ pub fn run_container_cache_list_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let resolved_profile = effigy_containers::backend::global_endpoint(profile);
-    let _operation_plan = global_cache_operation_plan(
-        cwd,
-        &resolved_profile,
-        ContainerCacheOperation::list(
-            true,
-            project_filter.map(str::to_owned),
-            kind_filter.map(str::to_owned),
-        ),
-    );
-    let caches = collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
-        .into_iter()
-        .filter(|cache| {
-            project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
-                && kind_filter.is_none_or(|kind| cache.kind == kind)
-        })
-        .collect::<Vec<_>>();
-    let scope_label =
-        cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update("inspecting cache volumes", None, None);
+        let resolved_profile = effigy_containers::backend::global_endpoint(profile);
+        let _operation_plan = global_cache_operation_plan(
+            cwd,
+            &resolved_profile,
+            ContainerCacheOperation::list(
+                true,
+                project_filter.map(str::to_owned),
+                kind_filter.map(str::to_owned),
+            ),
+        );
+        let caches =
+            collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
+                .into_iter()
+                .filter(|cache| {
+                    project_filter
+                        .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                        && kind_filter.is_none_or(|kind| cache.kind == kind)
+                })
+                .collect::<Vec<_>>();
+        progress.update(
+            "inspecting cache volumes",
+            Some((caches.len() as u64, caches.len() as u64)),
+            Some(format!("listed {} cache volumes", caches.len())),
+        );
+        let scope_label =
+            cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
-    Ok(render_container_report(
-        cache_list_global_report(&resolved_profile, &scope_label, &caches),
-        output_json,
-    ))
+        Ok(render_container_report(
+            cache_list_global_report(&resolved_profile, &scope_label, &caches),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_cache_prune<F>(
@@ -196,67 +259,102 @@ pub fn run_container_cache_prune<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let policy = load_container_policy(repo_root, name)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let _operation_plan = cache_operation_plan(
-        repo_root,
-        &policy,
-        ContainerCacheOperation::prune(false, None, None, false),
-    );
-    validate_container_policy(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update("inspecting cache volumes", None, None);
+        let policy = load_container_policy(repo_root, name)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        let _operation_plan = cache_operation_plan(
+            repo_root,
+            &policy,
+            ContainerCacheOperation::prune(false, None, None, false),
+        );
+        validate_container_policy(repo_root, &policy)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        validate_compose_backend_runtime(repo_root, &policy)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
 
-    ensure_cache_prune_target_is_stopped(
-        &policy.name,
-        project_is_running(repo_root, &policy.project_name)?,
-    )?;
+        ensure_cache_prune_target_is_stopped(
+            &policy.name,
+            project_is_running(repo_root, &policy.project_name)?,
+        )?;
 
-    let volumes = hydrate_managed_volumes(repo_root, &policy, false, &run_runtime_volume_capture)?;
-    let endpoint = volume_io::policy_endpoint(repo_root, &policy)?;
-    let caches = volumes
-        .iter()
-        .filter(|volume| volume.cache_kind().is_some())
-        .map(|volume| volume.name.clone())
-        .collect::<Vec<_>>();
-    let identities = volume_identities(
-        repo_root,
-        &endpoint,
-        &policy.project_name,
-        &caches,
-        &run_runtime_volume_capture,
-    )?;
-    let mut entries = Vec::new();
-    let mut warnings = Vec::new();
-    for volume in volumes {
-        let Some(kind) = volume.cache_kind() else {
-            continue;
-        };
-        match identities.get(&volume.name) {
-            Some(VolumeIdentity::Owned) => {}
-            Some(VolumeIdentity::Lookalike(reason)) => {
-                warnings.push(format!(
-                    "left {reason}; it was not created for this environment"
-                ));
+        let volumes =
+            hydrate_managed_volumes(repo_root, &policy, false, &run_runtime_volume_capture)?;
+        let endpoint = volume_io::policy_endpoint(repo_root, &policy)?;
+        let caches = volumes
+            .iter()
+            .filter(|volume| volume.cache_kind().is_some())
+            .map(|volume| volume.name.clone())
+            .collect::<Vec<_>>();
+        let identities = volume_identities(
+            repo_root,
+            &endpoint,
+            &policy.project_name,
+            &caches,
+            &run_runtime_volume_capture,
+        )?;
+        let cache_total = caches.len() as u64;
+        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
+        progress.update(
+            "removing cache volumes",
+            Some((0, cache_total)),
+            Some(format!("listed {cache_total} cache volumes")),
+        );
+        let mut entries = Vec::new();
+        let mut warnings = Vec::new();
+        let mut done = 0u64;
+        for volume in volumes {
+            let Some(kind) = volume.cache_kind() else {
                 continue;
+            };
+            done += 1;
+            match identities.get(&volume.name) {
+                Some(VolumeIdentity::Owned) => {}
+                Some(VolumeIdentity::Lookalike(reason)) => {
+                    warnings.push(format!(
+                        "left {reason}; it was not created for this environment"
+                    ));
+                    progress.update(
+                        format!("skipping cache volume `{}`", volume.name),
+                        Some((done, cache_total)),
+                        Some(format!("left {reason}")),
+                    );
+                    continue;
+                }
+                Some(VolumeIdentity::Absent) | None => {
+                    progress.update(
+                        format!("skipping cache volume `{}`", volume.name),
+                        Some((done, cache_total)),
+                        Some("volume absent".to_owned()),
+                    );
+                    continue;
+                }
             }
-            Some(VolumeIdentity::Absent) | None => continue,
+            progress.update(
+                format!("removing cache volume `{}`", volume.name),
+                Some((done, cache_total)),
+                None,
+            );
+            run_runtime_volume_capture(repo_root, &endpoint, &remove_volume_command(&volume.name))?;
+            progress.update(
+                format!("removing cache volume `{}`", volume.name),
+                Some((done, cache_total)),
+                Some(format!("removed `{}`", volume.name)),
+            );
+            entries.push(ContainerCachePruneEntry {
+                name: volume.name,
+                kind: cache_kind_label(kind).to_owned(),
+                size_bytes: volume.size_bytes,
+                project_name: Some(policy.project_name.clone()),
+                removed: true,
+                in_use: false,
+            });
         }
-        run_runtime_volume_capture(repo_root, &endpoint, &remove_volume_command(&volume.name))?;
-        entries.push(ContainerCachePruneEntry {
-            name: volume.name,
-            kind: cache_kind_label(kind).to_owned(),
-            size_bytes: volume.size_bytes,
-            project_name: Some(policy.project_name.clone()),
-            removed: true,
-            in_use: false,
-        });
-    }
 
-    let mut report = cache_prune_report(&format!("container `{}`", policy.name), &entries);
-    annotate_warning_lines(&mut report, &warnings);
-    Ok(render_container_report(report, output_json))
+        let mut report = cache_prune_report(&format!("container `{}`", policy.name), &entries);
+        annotate_warning_lines(&mut report, &warnings);
+        Ok(render_container_report(report, output_json))
+    })
 }
 
 pub fn run_container_cache_prune_all<F>(
@@ -270,52 +368,83 @@ pub fn run_container_cache_prune_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let resolved_profile = effigy_containers::backend::global_endpoint(profile);
-    let _operation_plan = global_cache_operation_plan(
-        cwd,
-        &resolved_profile,
-        ContainerCacheOperation::prune(
-            true,
-            project_filter.map(str::to_owned),
-            kind_filter.map(str::to_owned),
-            false,
-        ),
-    );
-    let caches = collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
-        .into_iter()
-        .filter(|cache| {
-            project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
-                && kind_filter.is_none_or(|kind| cache.kind == kind)
-        })
-        .collect::<Vec<_>>();
-    let mut entries = Vec::new();
-    for cache in caches {
-        let removed = if cache.in_use {
-            false
-        } else {
-            run_runtime_volume_capture(
-                cwd,
-                &resolved_profile,
-                &remove_volume_command(&cache.name),
-            )?;
-            true
-        };
-        entries.push(ContainerCachePruneEntry {
-            name: cache.name,
-            kind: cache.kind,
-            size_bytes: cache.size_bytes,
-            project_name: cache.project_name,
-            removed,
-            in_use: cache.in_use,
-        });
-    }
-    let scope_label =
-        cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update("inspecting cache volumes", None, None);
+        let resolved_profile = effigy_containers::backend::global_endpoint(profile);
+        let _operation_plan = global_cache_operation_plan(
+            cwd,
+            &resolved_profile,
+            ContainerCacheOperation::prune(
+                true,
+                project_filter.map(str::to_owned),
+                kind_filter.map(str::to_owned),
+                false,
+            ),
+        );
+        let caches =
+            collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
+                .into_iter()
+                .filter(|cache| {
+                    project_filter
+                        .is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                        && kind_filter.is_none_or(|kind| cache.kind == kind)
+                })
+                .collect::<Vec<_>>();
+        let total = caches.len() as u64;
+        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
+        progress.update(
+            "removing cache volumes",
+            Some((0, total)),
+            Some(format!("listed {total} cache volumes")),
+        );
+        let mut entries = Vec::new();
+        for (index, cache) in caches.into_iter().enumerate() {
+            let done = index as u64 + 1;
+            let name = cache.name.clone();
+            if cache.in_use {
+                progress.update(
+                    format!("skipping cache volume `{name}`"),
+                    Some((done, total)),
+                    Some(format!("`{name}` in use")),
+                );
+                entries.push(ContainerCachePruneEntry {
+                    name: cache.name,
+                    kind: cache.kind,
+                    size_bytes: cache.size_bytes,
+                    project_name: cache.project_name,
+                    removed: false,
+                    in_use: true,
+                });
+                continue;
+            }
+            progress.update(
+                format!("removing cache volume `{name}`"),
+                Some((done, total)),
+                None,
+            );
+            run_runtime_volume_capture(cwd, &resolved_profile, &remove_volume_command(&name))?;
+            progress.update(
+                format!("removing cache volume `{name}`"),
+                Some((done, total)),
+                Some(format!("removed `{name}`")),
+            );
+            entries.push(ContainerCachePruneEntry {
+                name: cache.name,
+                kind: cache.kind,
+                size_bytes: cache.size_bytes,
+                project_name: cache.project_name,
+                removed: true,
+                in_use: false,
+            });
+        }
+        let scope_label =
+            cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
-    Ok(render_container_report(
-        cache_prune_report(&scope_label, &entries),
-        output_json,
-    ))
+        Ok(render_container_report(
+            cache_prune_report(&scope_label, &entries),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_volume_list<F>(
@@ -327,21 +456,30 @@ pub fn run_container_volume_list<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-    let _operation_plan = global_volume_operation_plan(
-        cwd,
-        &profile,
-        ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
-    );
-    let volumes = collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
-    Ok(render_container_report(
-        volume_list_report(
-            "global runtime volume inventory",
-            orphans_only.then_some("orphans"),
-            &volumes,
-        ),
-        output_json,
-    ))
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update("inspecting managed volumes", None, None);
+        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+        let _operation_plan = global_volume_operation_plan(
+            cwd,
+            &profile,
+            ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
+        );
+        let volumes =
+            collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
+        progress.update(
+            "inspecting managed volumes",
+            Some((volumes.len() as u64, volumes.len() as u64)),
+            Some(format!("listed {} volumes", volumes.len())),
+        );
+        Ok(render_container_report(
+            volume_list_report(
+                "global runtime volume inventory",
+                orphans_only.then_some("orphans"),
+                &volumes,
+            ),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_volume_list_for_repo<F>(
@@ -353,22 +491,34 @@ pub fn run_container_volume_list_for_repo<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-    let _operation_plan = global_volume_operation_plan(
-        repo_root,
-        &profile,
-        ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
-    );
-    let volumes =
-        collect_repo_volume_entries(repo_root, orphans_only, &run_runtime_volume_capture)?;
-    Ok(render_container_report(
-        volume_list_report(
-            &format!("repo volume inventory for {}", repo_root.display()),
-            orphans_only.then_some("dormant"),
-            &volumes,
-        ),
-        output_json,
-    ))
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update(
+            format!("inspecting volumes for `{}`", repo_root.display()),
+            None,
+            None,
+        );
+        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+        let _operation_plan = global_volume_operation_plan(
+            repo_root,
+            &profile,
+            ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
+        );
+        let volumes =
+            collect_repo_volume_entries(repo_root, orphans_only, &run_runtime_volume_capture)?;
+        progress.update(
+            format!("inspecting volumes for `{}`", repo_root.display()),
+            Some((volumes.len() as u64, volumes.len() as u64)),
+            Some(format!("listed {} volumes", volumes.len())),
+        );
+        Ok(render_container_report(
+            volume_list_report(
+                &format!("repo volume inventory for {}", repo_root.display()),
+                orphans_only.then_some("dormant"),
+                &volumes,
+            ),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_volume_prune_global<F>(
@@ -379,36 +529,71 @@ pub fn run_container_volume_prune_global<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-    let _operation_plan = global_volume_operation_plan(
-        cwd,
-        &profile,
-        ContainerVolumeOperation::prune(true, Some(profile.clone())),
-    );
-    let volumes = collect_global_volume_entries(cwd, true, &run_runtime_volume_capture)?;
-    let mut entries = Vec::new();
-    for volume in volumes {
-        let removed = if volume.in_use {
-            false
-        } else {
-            run_runtime_volume_capture(cwd, &volume.profile, &remove_volume_command(&volume.name))?;
-            true
-        };
-        entries.push(ContainerVolumePruneEntry {
-            name: volume.name,
-            backend: volume.backend,
-            profile: volume.profile,
-            project_name: volume.project_name,
-            size_bytes: volume.size_bytes,
-            removed,
-            in_use: volume.in_use,
-            orphan_reason: volume.orphan_reason,
-        });
-    }
-    Ok(render_container_report(
-        volume_prune_report("global runtime volume inventory", "orphans", &entries),
-        output_json,
-    ))
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update("inspecting managed volumes", None, None);
+        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+        let _operation_plan = global_volume_operation_plan(
+            cwd,
+            &profile,
+            ContainerVolumeOperation::prune(true, Some(profile.clone())),
+        );
+        let volumes = collect_global_volume_entries(cwd, true, &run_runtime_volume_capture)?;
+        let total = volumes.len() as u64;
+        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
+        progress.update(
+            "removing volumes",
+            Some((0, total)),
+            Some(format!("listed {total} volumes")),
+        );
+        let mut entries = Vec::new();
+        for (index, volume) in volumes.into_iter().enumerate() {
+            let done = index as u64 + 1;
+            let name = volume.name.clone();
+            if volume.in_use {
+                progress.update(
+                    format!("skipping volume `{name}`"),
+                    Some((done, total)),
+                    Some(format!("`{name}` in use")),
+                );
+                entries.push(ContainerVolumePruneEntry {
+                    name: volume.name,
+                    backend: volume.backend,
+                    profile: volume.profile,
+                    project_name: volume.project_name,
+                    size_bytes: volume.size_bytes,
+                    removed: false,
+                    in_use: true,
+                    orphan_reason: volume.orphan_reason,
+                });
+                continue;
+            }
+            progress.update(
+                format!("removing volume `{name}`"),
+                Some((done, total)),
+                None,
+            );
+            run_runtime_volume_capture(cwd, &volume.profile, &remove_volume_command(&name))?;
+            progress.update(
+                format!("removing volume `{name}`"),
+                Some((done, total)),
+                Some(format!("removed `{name}`")),
+            );
+            entries.push(ContainerVolumePruneEntry {
+                name: volume.name,
+                backend: volume.backend,
+                profile: volume.profile,
+                project_name: volume.project_name,
+                size_bytes: volume.size_bytes,
+                removed: true,
+                in_use: false,
+                orphan_reason: volume.orphan_reason,
+            });
+        }
+        Ok(render_container_report(
+            volume_prune_report("global runtime volume inventory", "orphans", &entries),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_volume_prune_for_repo<F>(
@@ -419,44 +604,79 @@ pub fn run_container_volume_prune_for_repo<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
-    let _operation_plan = global_volume_operation_plan(
-        repo_root,
-        &profile,
-        ContainerVolumeOperation::prune(true, Some(profile.clone())),
-    );
-    let volumes = collect_repo_volume_entries(repo_root, true, &run_runtime_volume_capture)?;
-    let mut entries = Vec::new();
-    for volume in volumes {
-        let removed = if volume.in_use {
-            false
-        } else {
-            run_runtime_volume_capture(
-                repo_root,
-                &volume.profile,
-                &remove_volume_command(&volume.name),
-            )?;
-            true
-        };
-        entries.push(ContainerVolumePruneEntry {
-            name: volume.name,
-            backend: volume.backend,
-            profile: volume.profile,
-            project_name: volume.project_name,
-            size_bytes: volume.size_bytes,
-            removed,
-            in_use: volume.in_use,
-            orphan_reason: volume.orphan_reason,
-        });
-    }
-    Ok(render_container_report(
-        volume_prune_report(
-            &format!("repo volume inventory for {}", repo_root.display()),
-            "dormant",
-            &entries,
-        ),
-        output_json,
-    ))
+    CacheVolumeProgress::run(PROBE_VOLUME_INSPECT, |progress| {
+        progress.update(
+            format!("inspecting volumes for `{}`", repo_root.display()),
+            None,
+            None,
+        );
+        let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+        let _operation_plan = global_volume_operation_plan(
+            repo_root,
+            &profile,
+            ContainerVolumeOperation::prune(true, Some(profile.clone())),
+        );
+        let volumes = collect_repo_volume_entries(repo_root, true, &run_runtime_volume_capture)?;
+        let total = volumes.len() as u64;
+        progress.now_waiting_for(PROBE_VOLUME_REMOVE);
+        progress.update(
+            "removing volumes",
+            Some((0, total)),
+            Some(format!("listed {total} volumes")),
+        );
+        let mut entries = Vec::new();
+        for (index, volume) in volumes.into_iter().enumerate() {
+            let done = index as u64 + 1;
+            let name = volume.name.clone();
+            if volume.in_use {
+                progress.update(
+                    format!("skipping volume `{name}`"),
+                    Some((done, total)),
+                    Some(format!("`{name}` in use")),
+                );
+                entries.push(ContainerVolumePruneEntry {
+                    name: volume.name,
+                    backend: volume.backend,
+                    profile: volume.profile,
+                    project_name: volume.project_name,
+                    size_bytes: volume.size_bytes,
+                    removed: false,
+                    in_use: true,
+                    orphan_reason: volume.orphan_reason,
+                });
+                continue;
+            }
+            progress.update(
+                format!("removing volume `{name}`"),
+                Some((done, total)),
+                None,
+            );
+            run_runtime_volume_capture(repo_root, &volume.profile, &remove_volume_command(&name))?;
+            progress.update(
+                format!("removing volume `{name}`"),
+                Some((done, total)),
+                Some(format!("removed `{name}`")),
+            );
+            entries.push(ContainerVolumePruneEntry {
+                name: volume.name,
+                backend: volume.backend,
+                profile: volume.profile,
+                project_name: volume.project_name,
+                size_bytes: volume.size_bytes,
+                removed: true,
+                in_use: false,
+                orphan_reason: volume.orphan_reason,
+            });
+        }
+        Ok(render_container_report(
+            volume_prune_report(
+                &format!("repo volume inventory for {}", repo_root.display()),
+                "dormant",
+                &entries,
+            ),
+            output_json,
+        ))
+    })
 }
 
 pub fn run_container_data_export<F>(

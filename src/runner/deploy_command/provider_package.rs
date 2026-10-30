@@ -7,6 +7,7 @@ use effigy_core::git_exec::run_git_output;
 use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
 use effigy_rhai::RhaiSecretPolicy;
 use effigy_rhai::RhaiSecretTarget;
+use effigy_ui::steps::ProgressSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -235,9 +236,10 @@ impl DeployProviderCheckStatus {
     }
 }
 
-/// Resolve a provider package, drawing the resolution as one live step:
-/// `resolving deploy provider acme (offline)`. A fetch can take seconds on a
-/// cold cache, and its failure is what a deploy refuses on.
+/// Resolve a provider package. A git source can fetch for seconds on a cold
+/// cache, so it draws a live step: `resolving deploy provider acme (offline)`,
+/// waiting on the exact source and pin. A path source resolves at once and
+/// ends in one line. Its failure is what a deploy refuses on.
 pub(super) fn resolve_provider_package(
     repo_root: &Path,
     provider_name: &str,
@@ -248,23 +250,67 @@ pub(super) fn resolve_provider_package(
     let Some(config) = providers.get(provider_name) else {
         return Ok(None);
     };
-    let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));
-    match resolve_provider_package_inner(repo_root, provider_name, config, fetch) {
-        Ok(package) => {
-            step.succeed(&provider_resolved_summary(
+    let step = match &config.source {
+        DeployProviderSource::Git { url, r#ref, rev } => {
+            let progress = provider_fetch_progress(
                 provider_name,
-                &package.provenance,
-            ));
-            Ok(Some(package))
+                url,
+                r#ref.as_deref(),
+                rev.as_deref(),
+                fetch,
+            );
+            Some(effigy_ui::steps::live_step(progress))
         }
-        Err(error) => {
-            step.fail(&format!(
+        DeployProviderSource::Path { .. } | DeployProviderSource::Oci { .. } => None,
+    };
+    let result = resolve_provider_package_inner(repo_root, provider_name, config, fetch);
+    let (ok, summary) = match &result {
+        Ok(package) => (
+            true,
+            provider_resolved_summary(provider_name, &package.provenance),
+        ),
+        Err(error) => (
+            false,
+            format!(
                 "could not resolve deploy provider `{provider_name}`: {}",
                 error.human_error().what_failed()
-            ));
-            Err(error)
-        }
+            ),
+        ),
+    };
+    match step {
+        Some(step) if ok => step.succeed(&summary),
+        Some(step) => step.fail(&summary),
+        None => effigy_ui::steps::finish_line(ok, &summary),
     }
+    result.map(Some)
+}
+
+/// The live state of a git provider fetch: the current action names the
+/// policy in force, and the wait names the exact source and pin.
+fn provider_fetch_progress(
+    provider_name: &str,
+    url: &str,
+    reference: Option<&str>,
+    rev: Option<&str>,
+    fetch: DeployProviderFetch,
+) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(provider_source_awaiting(url, reference, rev));
+    progress.update(resolving_provider_label(provider_name, fetch), None, None);
+    progress
+}
+
+/// What a git provider fetch waits on: `git source <url> at rev <sha>`, or the
+/// ref, or the default branch when the source names neither.
+fn provider_source_awaiting(url: &str, reference: Option<&str>, rev: Option<&str>) -> String {
+    let pin = match (
+        rev,
+        reference.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
+        (Some(rev), _) => format!("rev {rev}"),
+        (None, Some(reference)) => format!("ref {reference}"),
+        (None, None) => "the default branch".to_owned(),
+    };
+    format!("git source {url} at {pin}")
 }
 
 /// `resolving deploy provider acme (offline)`: the label says which source
@@ -1044,9 +1090,10 @@ impl Drop for ScopedProviderEnvOverride {
 #[cfg(test)]
 mod tests {
     use super::{
-        provider_resolved_summary, resolving_provider_label, DeployProviderFetch,
-        DeployProviderProvenance,
+        provider_fetch_progress, provider_resolved_summary, resolving_provider_label,
+        DeployProviderFetch, DeployProviderProvenance,
     };
+    use std::time::Duration;
 
     #[test]
     fn provider_resolution_names_the_provider_and_the_source_policy() {
@@ -1073,6 +1120,33 @@ mod tests {
         assert_eq!(
             provider_resolved_summary("acme", &provenance),
             "resolved deploy provider `acme` from cached checkout at commit 1a2b3c4d"
+        );
+    }
+
+    #[test]
+    fn a_fetch_frame_names_the_exact_source_and_pin_as_time_passes() {
+        let url = "https://example.test/acme.git";
+        let pinned = provider_fetch_progress(
+            "acme",
+            url,
+            Some("main"),
+            Some("1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d"),
+            DeployProviderFetch::Offline,
+        );
+        assert_eq!(
+            pinned.frame_at(Duration::from_secs(5)),
+            "resolving deploy provider acme (offline); waiting for git source https://example.test/acme.git at rev 1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d; 5s elapsed"
+        );
+        let floating = provider_fetch_progress(
+            "acme",
+            url,
+            Some(" main "),
+            None,
+            DeployProviderFetch::Online,
+        );
+        assert_eq!(
+            floating.frame_at(Duration::from_secs(2)),
+            "resolving deploy provider acme (online); waiting for git source https://example.test/acme.git at ref main; 2s elapsed"
         );
     }
 }
