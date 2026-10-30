@@ -167,10 +167,7 @@ pub fn wait_for_ready(
     // A health wait is exactly the work the operator needs to watch: the frame
     // names the probe now in flight and its attempt, and keeps the last answer
     // the check gave, with elapsed time (effigy#460, Q-017).
-    let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
-        "`{check}` to report {subject} healthy"
-    ));
-    let step = effigy_ui::steps::live_step(progress.clone());
+    let (progress, step) = health_wait_progress(subject, check);
     let mut attempts = 0_u32;
     while started.elapsed() <= timeout {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -217,6 +214,20 @@ pub fn wait_for_ready(
         check: check.to_owned(),
         timeout_secs,
     })
+}
+
+/// One health wait's live state: the probe now in flight, its attempt, the last
+/// answer and the elapsed wait. `wait_for_ready` starts from this and moves it
+/// on every attempt.
+fn health_wait_progress(
+    subject: &str,
+    check: &str,
+) -> (effigy_ui::steps::ProgressSource, effigy_ui::steps::Step) {
+    let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
+        "`{check}` to report {subject} healthy"
+    ));
+    let step = effigy_ui::steps::live_step(progress.clone());
+    (progress, step)
 }
 
 /// Parse an HTTP health check URL.

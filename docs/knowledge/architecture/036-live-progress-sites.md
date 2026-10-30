@@ -223,6 +223,39 @@ These keep their disposition under the gate, with current evidence.
 | `crates/effigy-manifest/src/bundles/source/progress.rs` | Supplies the `SourceProgress` Started/Finished events the bundle command projects (`bundle_command.rs:380`); it constructs no step | no step |
 | `crates/effigy-ui` and TUI spinner constructors | One sink remains (`steps.rs` `start_bar`); the renderer's `spinner` path is deleted | removed |
 
+## Fake-clock frame coverage
+
+Every plane proves its frames on a fake clock: the same operation's frames move
+as its object, sub-step, count, event or elapsed wait moves, and each names the
+exact thing awaited. A glyph that only animates is not evidence, and no test
+reads the wall clock.
+
+| Plane | Fake-clock proof |
+| --- | --- |
+| Cache and volumes (`effigy-runtime`) | `data::progress::tests::cleanup_frames_name_the_volume_count_elapsed_and_last_event` |
+| Container up and integrations | `container_command::lifecycle::tests::activation_frames_name_the_compose_call_and_the_last_runtime_line` and `a_policy_load_frame_names_the_preparation_stage_now_running` |
+| Container readiness | `container_command::readiness::tests::the_probe_frame_names_the_runtime_read_in_flight_and_its_subjects` |
+| Primary container, health-log reads, shared services | `container_command::support::tests::the_primary_container_read_names_the_runtime_row_it_waits_on`, `the_declared_health_log_read_names_the_container_and_its_elapsed_wait`, `each_shared_service_names_its_own_wait` |
+| Health wait (`effigy-containers`) | `health::tests::a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer` |
+| Colima profile | `container_command::profile::tests::fake_clock_frames_name_the_profile_operation_and_its_state` |
+| Environment gate and settle | `environment::reconcile::tests::fake_clock_frames_name_the_gate_the_reconcile_phase_and_the_refusal` |
+| Doctor | `effigy-doctor progress::tests::live_frames_name_the_probe_count_elapsed_and_check_transitions` |
+| Bootstrap | `bootstrap_command::tests::a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes` (one phase read at two times) |
+| Deploy provider fetch | `deploy_command::provider_package::tests::a_fetch_frame_names_the_exact_source_and_pin_as_time_passes` (one fetch read at two times) |
+| Release | `release_command::tests::release_gate_steps_name_the_gate_and_its_outcome`, `a_release_run_step_names_the_stage_the_gate_and_the_next_stage`, `a_paused_release_run_names_what_it_waits_on` |
+| Bundle sources | `bundle_command::tests::source_frames_name_each_source_and_its_elapsed_wait` |
+| Secrets | `secrets_command::tests::unlock_frames_name_sub_steps_elapsed_and_never_secrets` and `lock_frames_count_removed_files_and_never_paths` |
+| Workspace | `workspace_command::tests::download_frames_name_artifact_checksum_and_cache_waits` |
+| Gateway setup and platform phases | `gateway_command::tests::platform_phase_frames_name_the_operation_while_the_child_runs` |
+| Gateway up, down and status | `gateway_command::tests::operator_start_frames_follow_the_supervisor_then_the_self_test`, `operator_stop_frames_follow_the_request_then_the_daemon_winding_down`, `bind_probe_frames_name_each_address_as_it_is_probed`, `route_frames_name_each_route_as_it_is_read`, `listener_readiness_frames_keep_the_listener_address_as_blockers_arrive` |
+| Task sequence | `execute::sequence_run::tests::a_sequence_step_frame_moves_with_elapsed_and_names_the_child_it_waits_for` |
+| Heavy admission | `task_engine::admission::tests::an_admission_wait_frame_names_its_probe_the_hook_progress_and_elapsed` |
+| State apply and capture | `state_command::live_progress_tests::an_apply_layer_frame_names_its_place_and_the_source_it_waits_on`, `a_capture_artifact_frame_names_the_destination_it_pushes_to`, `the_artifact_phase_after_a_capture_task_keeps_the_destination_and_the_last_event` (the sticky last event never costs the frame its destination) |
+| Compose steps (`effigy-containers`) | `exec::compose_steps::tests::a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait` |
+| Silent teardown (`effigy-runtime`) | `write::tests::a_silent_runtime_teardown_step_names_the_command_it_awaits_and_its_elapsed_wait` |
+| TUI panes | `multiprocess::render::panes::tests::output_tests::a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph`, `an_entry_with_its_own_state_does_not_borrow_the_session_clock`, and `frame_tests::waiting_tabs_name_their_own_dependency_and_phase` |
+| TUI shutdown | `multiprocess::lifecycle::progress::tests::shutdown_frames_have_one_current_label` and `the_completion_frame_counts_the_processes_and_the_forced_ones` |
+
 ## A new site
 
 A step that can wait starts from `ProgressSource::waiting_for(the exact thing
