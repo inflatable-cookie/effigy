@@ -3439,9 +3439,13 @@ second seam:
   Result<VerifiedWorkspaceContext, ContextRefusal>` takes the shared identity
   trait `workspace_client::identity::GuestIdentity { fn observe(&mut self) ->
   Result<GuestSelfObservation, GuestIdentityRefusal> }`, whose production
-  implementation is `ProcGuestIdentity::process()`. The observation carries the
-  full container id, VM boot, platform and libc and compares them itself
-  (`GuestSelfObservation::compare`), so no guest trusts the context's own claim.
+  implementation is `ProcGuestIdentity::process() -> Self` — infallible, stateless
+  and zero-sized, and not `Clone`. One mutable instance is held for one command and
+  handed to `verify` as `&mut`; `verify` re-observes independently before it grants
+  a `VerifiedWorkspaceContext`, so nothing is cached, retained or reused between
+  commands. The observation carries the full container id, VM boot, platform and
+  libc and compares them itself (`GuestSelfObservation::compare`), so no guest
+  trusts the context's own claim.
 - The verified value carries `session_run_id: String` and a nonzero exact
   `session_generation: u64`, the admitted session's own S, distinct from the
   environment generation and the context generation. A direct terminal's
