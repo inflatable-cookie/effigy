@@ -1336,6 +1336,10 @@ impl FakeCapture {
             core.streams[1].iter().copied().collect(),
         )
     }
+    /// The capture state a stop report reads.
+    fn capture(&self) -> CaptureState {
+        lock(&self.core).capture.clone()
+    }
     /// The bounded stderr excerpt a settle or doctor report quotes.
     fn excerpt(&self) -> String {
         diagnostic_tail(&self.core)
@@ -1370,6 +1374,25 @@ impl FakeCapture {
     }
 }
 
+/// The bytes the managed TUI's `sanitize_log_text` drops *and joins across*.
+/// The CR of a line ending is excluded: a reader drops it too, but the LF beside
+/// it stays a separator, so nothing is joined there.
+fn is_reader_removed(byte: u8) -> bool {
+    matches!(
+        byte,
+        0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
+    )
+}
+
+/// The reader's view of a sink: the filter the front end applies, CR included.
+fn reader_view(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .iter()
+        .copied()
+        .filter(|byte| *byte != b'\r' && !is_reader_removed(*byte))
+        .collect()
+}
+
 /// A failing proof names the sink and the pattern's length, never its bytes.
 fn assert_absent(what: &str, bytes: &[u8], secret: &[u8]) {
     assert!(
@@ -1377,9 +1400,18 @@ fn assert_absent(what: &str, bytes: &[u8], secret: &[u8]) {
         "{what} carries a known secret ({} bytes)",
         secret.len()
     );
+    // A control a reader drops is a join it makes: a redaction replacement of
+    // that shape rebuilds the very secret it removed.
     assert!(
-        !bytes.contains(&0x1b),
-        "{what} still carries a terminal control"
+        !bytes.iter().any(|byte| is_reader_removed(*byte)),
+        "{what} still carries a control a reader drops"
+    );
+    assert!(
+        !reader_view(bytes)
+            .windows(secret.len())
+            .any(|window| window == secret),
+        "{what} carries a known secret once a reader drops its controls ({} bytes)",
+        secret.len()
     );
     // A carriage return survives only as part of a line ending: a lone one
     // erases what a display covers or joins the runs either side of it.
@@ -1784,5 +1816,86 @@ fn redaction_drops_a_lone_carriage_return_and_keeps_a_line_ending() {
     assert_eq!(&capture.tail()[..], b"[REDACTED]\n");
     for (what, bytes) in capture.sinks(&cx) {
         assert_absent(&what, &bytes, b"cr-inside");
+    }
+}
+
+#[test]
+fn redaction_replaces_a_reformed_secret_with_a_byte_no_reader_drops() {
+    // A secret can contain the display marker, or a marker can join adjacent
+    // bytes into another secret. The second streaming pass removes that
+    // occurrence, and what it removes it with must survive a reader: a NUL is
+    // dropped by the managed TUI, which joins the bytes either side of it and
+    // rebuilds the secret this pass took out.
+    let cx = cx();
+    // A marker-substring secret, a secret that a marker joins, and a secret
+    // set whose join only appears after replacement.
+    let cases: [(&str, Vec<Vec<u8>>, &[u8]); 3] = [
+        ("marker substring", vec![b"R".to_vec()], b"R"),
+        ("marker joins", vec![b"ab[".to_vec(), b"X".to_vec()], b"abX"),
+        (
+            "marker substring and join",
+            vec![b"A".to_vec(), b"RED".to_vec(), b"[ACTED]".to_vec()],
+            b"A",
+        ),
+    ];
+    for (name, secrets, input) in cases {
+        let capture = FakeCapture::new(home(), &cx, secrets.clone());
+        capture.feed(Stream::Stdout, input);
+        capture.close();
+        let tail = capture.tail();
+        for secret in &secrets {
+            for (what, bytes) in capture.sinks(&cx) {
+                assert_absent(&format!("{name}: {what}"), &bytes, secret);
+            }
+        }
+        // What the pass removed is replaced by a printable byte, so the sink
+        // holds nothing a reader drops, and the reader's view is the sink.
+        assert!(
+            tail.iter().any(|byte| (0x20..=0x7e).contains(byte)),
+            "{name}: the replacement stays printable"
+        );
+        assert_eq!(reader_view(&tail), tail, "{name}");
+    }
+    // The chosen replacement is one byte value no secret contains, so it can
+    // neither hold a secret nor be spanned by one.
+    let secrets = vec![b"R".to_vec(), b"A".to_vec()];
+    let mut redactor = Redactor::new(secrets.clone());
+    let mut captured = redactor.push(b"RA", false);
+    captured.extend(redactor.push(&[], true));
+    assert!(
+        captured
+            .iter()
+            .all(|byte| !secrets.iter().any(|secret| secret.contains(byte))),
+        "no emitted byte can be part of a secret"
+    );
+}
+
+#[test]
+fn redaction_stops_capture_when_no_reader_safe_replacement_exists() {
+    // Every replacement byte a reader keeps is a byte some secret contains, so
+    // no replacement could be both readable and unjoinable: the capture stops
+    // rather than emit one a reader would drop.
+    let cx = cx();
+    let secrets = (0x20..=0x7e)
+        .map(|byte| vec![byte])
+        .chain(std::iter::once(vec![b'\t']))
+        .collect::<Vec<_>>();
+    assert!(final_replacement(&secrets).is_none());
+    let capture = FakeCapture::new(home(), &cx, secrets.clone());
+    capture.feed(Stream::Stdout, b"[REDACTED] A R\n");
+    capture.close();
+    assert_eq!(&capture.tail()[..], b"");
+    assert_eq!(&capture.merged()[..], b"");
+    assert_eq!(capture.streams(), (Vec::new(), Vec::new()));
+    assert!(matches!(
+        capture.capture(),
+        CaptureState::Truncated(ref reason) if reason.contains("reader-safe")
+    ));
+    // Every stored sink is empty, so the JSON envelope carries nothing either.
+    for (what, bytes) in capture.sinks(&cx) {
+        if what == "json" {
+            continue;
+        }
+        assert!(bytes.is_empty(), "{what} must hold nothing when blocked");
     }
 }

@@ -338,8 +338,11 @@ impl OutputPipeline {
     }
 }
 pub(crate) struct Redactor {
-    display: RedactionPass,
-    final_check: RedactionPass,
+    /// `None` when no reader-safe byte is absent from every secret, so no
+    /// replacement can be emitted that a reader cannot join across: nothing is
+    /// redacted and the capture stops (`blocked`) rather than leak.
+    display: Option<RedactionPass>,
+    final_check: Option<RedactionPass>,
 }
 impl std::fmt::Debug for Redactor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -378,14 +381,25 @@ impl Redactor {
         );
         secrets.sort();
         secrets.dedup();
+        // A secret can itself contain the display marker, or a replacement can
+        // join adjacent bytes into another secret. A second streaming pass
+        // replaces such an occurrence with one byte: a byte *no reader drops*
+        // and no secret contains. Both halves matter. A control byte (a NUL,
+        // say) is dropped by a reader, which joins the bytes either side of it
+        // and can rebuild the very secret this pass removed; a byte a secret
+        // contains could be part of one. With a byte in neither class, the
+        // replacement can neither hold a secret nor be spanned by one.
+        let replacement = final_replacement(&secrets);
         Self {
-            display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
-            // A secret can itself contain the display marker, or a replacement
-            // can join adjacent bytes into another secret. A second streaming
-            // pass uses NUL, which SecretValue forbids, so its replacement can
-            // neither contain a secret nor create one across its boundaries.
-            final_check: RedactionPass::new(secrets, b"\0"),
+            display: replacement
+                .map(|_| RedactionPass::new(secrets.clone(), b"[REDACTED]".to_vec())),
+            final_check: replacement.map(|byte| RedactionPass::new(secrets, vec![byte])),
         }
+    }
+    /// Whether no reader-safe replacement byte exists for this secret set, so
+    /// nothing can be emitted at all.
+    pub(crate) fn blocked(&self) -> bool {
+        self.display.is_none()
     }
     pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
@@ -398,17 +412,37 @@ impl Redactor {
     /// the stream of the secret's first byte, so a secret split across
     /// stdout and stderr is redacted whole and attributed to one stream.
     pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
-        let display = self.display.push(bytes, eof);
-        self.final_check.push(&display, eof)
+        let (Some(display), Some(final_check)) = (self.display.as_mut(), self.final_check.as_mut())
+        else {
+            return Vec::new();
+        };
+        let shown = display.push(bytes, eof);
+        final_check.push(&shown, eof)
     }
+}
+
+/// The byte a re-formed secret is replaced with: the first value a reader keeps
+/// and no secret contains, preferred in an order that keeps output readable.
+/// Every reader Effigy has drops the C0 controls and DEL and interprets ESC, so
+/// only printable ASCII and TAB are candidates. `None` when the secrets cover
+/// them all: no replacement could then be both safe and readable.
+fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
+    const PREFERRED: &[u8] = b"~`^|\\{}<>$&*?!;:+=@%#/\"',()[]";
+    let absent = |byte: u8| !secrets.iter().any(|secret| secret.contains(&byte));
+    PREFERRED
+        .iter()
+        .copied()
+        .chain((0x20..=0x7e).filter(|byte| !PREFERRED.contains(byte)))
+        .chain(std::iter::once(b'\t'))
+        .find(|byte| absent(*byte))
 }
 struct RedactionPass {
     secrets: Vec<Vec<u8>>,
     pending: Vec<(u8, u8)>,
-    replacement: &'static [u8],
+    replacement: Vec<u8>,
 }
 impl RedactionPass {
-    fn new(mut secrets: Vec<Vec<u8>>, replacement: &'static [u8]) -> Self {
+    fn new(mut secrets: Vec<Vec<u8>>, replacement: Vec<u8>) -> Self {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         Self {
             secrets,
@@ -1005,6 +1039,16 @@ impl ProcessCore {
     /// terminal control inside a known secret could hide it from redaction
     /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
+        // Nothing can be redacted into a form a reader cannot join across, so
+        // the capture stops instead of emitting a joinable marker (K12). The
+        // workload itself is untouched: this is capture state only.
+        if self.pipeline.redactor.blocked() {
+            if self.capture == CaptureState::Complete {
+                self.capture =
+                    CaptureState::Truncated("no reader-safe redaction replacement".into());
+            }
+            return;
+        }
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
         let clean = self.pipeline.push_tagged(&tagged, eof);
         // A stream's own sink is a projection, so it is written from its own

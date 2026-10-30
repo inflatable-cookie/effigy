@@ -593,6 +593,16 @@ fn managed_tui_vt_display(stdout: &[u8]) -> String {
         .join("\n")
 }
 
+/// Every byte the front end's `sanitize_log_text` drops *and joins across*: a
+/// sink holding one hands the reader a join it will make. The CR of a line
+/// ending is not one of them, because the LF beside it stays a separator.
+fn reader_removed(byte: u8) -> bool {
+    matches!(
+        byte,
+        0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
+    )
+}
+
 fn shell_spec(root: &Path, script: String, secret: Option<&str>) -> ProcessSpec {
     let mut env = BTreeMap::from([(
         "PATH".into(),
@@ -668,7 +678,10 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
                 "{what} carries a known secret ({} bytes)",
                 SECRET.len()
             );
-            assert!(!bytes.contains(&0x1b), "{what} still carries a control");
+            assert!(
+                !bytes.iter().any(|byte| reader_removed(*byte)),
+                "the {what} still carries a control a reader drops"
+            );
         }
         assert!(
             String::from_utf8_lossy(&tail).contains("[REDACTED]"),
@@ -721,7 +734,10 @@ fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_t
                 .any(|(index, byte)| *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')),
             "the {what} still carries a lone carriage return"
         );
-        assert!(!bytes.contains(&0x1b), "the {what} still carries a control");
+        assert!(
+            !bytes.iter().any(|byte| reader_removed(*byte)),
+            "the {what} still carries a control a reader drops"
+        );
     }
     assert!(
         tail_text.contains("[REDACTED]"),

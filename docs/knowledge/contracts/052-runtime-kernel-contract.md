@@ -398,7 +398,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output drops terminal controls, then redacts, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a retained lone carriage return that hides a split from redaction; a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output drops terminal controls, then redacts, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. A redaction replacement is a byte readers keep and no secret contains, so no reader can join across it. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a retained lone carriage return that hides a split from redaction; a redaction replacement a reader drops (a NUL or other control); a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1283,6 +1283,19 @@ skips both the sanitizer and the projection pass and keeps its colour. A
 secret whose own bytes hold a control is also matched in its visible form, so
 stripping the control from it cannot leave an unredacted remainder.
 
+Redaction's own replacement has the same rule (effigy#486). A secret can itself
+contain the display marker, or a marker can join adjacent bytes into another
+secret, so a second streaming pass removes that occurrence. What it removes it
+*with* must survive a reader: a control byte (a NUL, say) is dropped by the
+front end's `sanitize_log_text`, which joins the bytes either side of it and
+rebuilds the secret the pass took out. The replacement is therefore one byte
+value that every reader keeps and no secret contains — printable ASCII in a
+fixed preference order, then TAB — so it can neither hold a secret nor be
+spanned by one. When the secret set covers every such byte, no replacement is
+both safe and readable: the capture then stops and reports `Truncated` with the
+reason, emitting nothing, rather than write a marker a reader would join across.
+The workload itself is unaffected; this is capture state only.
+
 Every reader draws from that one result: the per-stream rotating logs, the
 per-stream queues, the merged output queue, the bounded merged arrival-order
 tail (`tail()`, the canonical captured tail), the bounded diagnostic excerpt a
@@ -1398,6 +1411,14 @@ and a consumer that wants a bounded tail takes the merged tail.
   halves reach redaction as one value and no sink holds a lone CR; a `CR LF`
   line ending keeps its CR, and a secret that itself carries a CR is matched
   in the CR-free form a display shows.
+- `redaction_replaces_a_reformed_secret_with_a_byte_no_reader_drops` puts a
+  secret that is a substring of the display marker, and a marker that joins
+  adjacent bytes into another secret, through the shipping pipeline: every sink
+  is free of the value, holds no byte the front end drops, and the reader's own
+  filter of the sink is the sink.
+- `redaction_stops_capture_when_no_reader_safe_replacement_exists` covers the
+  corner where the secrets cover every kept replacement byte: every stored sink
+  is empty and the capture reports `Truncated`.
 - `redaction_keeps_terminal_colour_for_a_process_without_secrets` and
   `redaction_covers_the_visible_form_of_a_secret_that_carries_a_control`
   keep ordinary colour intact and redact a secret that itself holds a

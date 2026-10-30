@@ -16,7 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
   cannot erase or join what a display shows after redaction, while a `CR LF`
   line ending keeps its CR. Each stream's log and queue is redacted again over
   its own bytes, because keeping the streams apart can join halves that arrival
-  order separated. Output for those processes is plain; ordinary processes keep
+  order separated. A redaction replacement is a byte readers keep and no secret
+  contains, so no reader can join across it; if no such byte exists for a
+  secret set, captured output stops rather than write a joinable marker. Output for those processes is plain; ordinary processes keep
   their colour. The merged redacted arrival-order tail is the canonical
   captured tail.
 - Require the release secret audit to scan the committed candidate tree and
