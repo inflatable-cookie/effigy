@@ -5276,6 +5276,47 @@ fn assert_host_process_stopped(pid_file: &Path, report: &dyn Fn() -> String) {
         "host process {pid} outlived its session: {}",
         report()
     );
+    println!(
+        "[fixture] host process {pid} (from {}) exited",
+        pid_file.display()
+    );
+}
+
+/// Report the exact fixture PIDs the session's own log recorded — its
+/// supervisor and every workload start — and prove each exited once the session
+/// settled (effigy#493). Host processes are covered by their own pid files, so a
+/// borrowed environment's still-running processes are never asserted stopped.
+fn report_session_processes_absent(log: &Path, scope: &str) {
+    let shown = fs::read_to_string(log).unwrap_or_default();
+    let mut pids = Vec::new();
+    for line in shown.lines() {
+        let recorded = line
+            .split_once("supervised by pid ")
+            .map(|(_, rest)| rest.split_whitespace().next().unwrap_or_default())
+            .or_else(|| {
+                line.contains("[managed] started `")
+                    .then(|| line.split_once("(pid ").map(|(_, rest)| rest))
+                    .flatten()
+                    .map(|rest| rest.split(')').next().unwrap_or_default())
+            });
+        if let Some(pid) = recorded
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .filter(|pid| !pids.contains(pid))
+        {
+            pids.push(pid);
+        }
+    }
+    for pid in pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(pid),
+            "{scope}: fixture pid {pid} outlived its session"
+        );
+        println!("[fixture] {scope}: pid {pid} exited");
+    }
 }
 
 /// effigy#322 acceptance, through the real binary: a plain `[tasks.dev]`
@@ -5345,6 +5386,7 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         "the stopped session did not exit cleanly: {}",
         report()
     );
+    report_session_processes_absent(&output_path, "plain environment");
 
     for pid_file in [&plain.api_pid, &plain.worker_pid] {
         assert_host_process_stopped(pid_file, &report);
@@ -5435,6 +5477,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "the stopped session did not exit cleanly: {}",
         fs::read_to_string(&output_path).unwrap_or_default()
     );
+    report_session_processes_absent(&output_path, "borrowed plain environment");
 
     let api: u32 = fs::read_to_string(&plain.api_pid)
         .expect("recorded host process pid")

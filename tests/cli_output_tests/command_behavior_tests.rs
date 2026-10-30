@@ -4655,8 +4655,15 @@ detach_timeout_secs = 1
                 })
     };
     let start_deadline = Instant::now() + Duration::from_secs(120);
+    // The supervisor's own pid, recorded while the run is live: the status
+    // projection publishes it only then, and it is the exact process the
+    // settle must reap (effigy#493).
+    let mut owner_supervisor: Option<u32> = None;
     loop {
         let owner_status = status("devc");
+        if owner_supervisor.is_none() {
+            owner_supervisor = owner_status["run"]["pid"].as_u64().map(|pid| pid as u32);
+        }
         if owner_ready(&owner_status) {
             break;
         }
@@ -4711,7 +4718,6 @@ detach_timeout_secs = 1
     );
 
     let owner_state = status("devc");
-    let owner_pid = owner_state["run"]["pid"].as_u64().unwrap_or_default() as u32;
     assert_eq!(owner_state["run"]["phase"], "closed", "{owner_state}");
     assert_eq!(owner_state["state"], "stopped", "{owner_state}");
     assert_eq!(owner_state["run"]["cleanup"], "complete", "{owner_state}");
@@ -4727,11 +4733,13 @@ detach_timeout_secs = 1
         }
         assert!(
             Instant::now() < exit_deadline,
-            "the ended owner's supervisor ({owner_pid}) is still running"
+            "the ended owner's supervisor ({}) is still running",
+            owner_supervisor
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "not recorded".to_owned())
         );
         std::thread::sleep(Duration::from_millis(100));
     };
-    let _ = owner_pid;
 
     // Behaviour proof: the losing environment is downed by the owner's own
     // cascade and the handover races no second conflicting down. Every
@@ -4775,6 +4783,25 @@ detach_timeout_secs = 1
         process["exit"], 0,
         "child `api` did not run on the handed-over environment: {incoming_state}"
     );
+
+    // Every fixture process this run started is proved gone, with the exact PID
+    // each session recorded (effigy#493): the owner's supervisor and its host
+    // child, and the incoming session's supervisor and fake-container child.
+    let owner_output = owner.wait_with_output().expect("owner output");
+    let owner_reported = supervised_pid(&owner_output.stdout);
+    if let (Some(recorded), Some(reported)) = (owner_supervisor, owner_reported) {
+        assert_eq!(
+            recorded, reported,
+            "the owner's live supervisor is the one its own output names"
+        );
+    }
+    let mut owner_pids: Vec<u32> = owner_supervisor.into_iter().chain(owner_reported).collect();
+    owner_pids.dedup();
+    assert_fixture_processes_absent("owner `devc` supervisor", &owner_pids);
+    assert_fixture_processes_absent("owner `devc`", &started_pids(&owner_output.stdout));
+    let incoming_pids: Vec<u32> = supervised_pid(&incoming_exit.stdout).into_iter().collect();
+    assert_fixture_processes_absent("incoming `devh` supervisor", &incoming_pids);
+    assert_fixture_processes_absent("incoming `devh`", &started_pids(&incoming_exit.stdout));
 }
 
 #[test]
@@ -5401,6 +5428,8 @@ struct FixturePrivateGateway {
     mkcert: PathBuf,
     ca: PathBuf,
     path: String,
+    /// The daemon's own recorded pid: the exact identity teardown proves gone.
+    pid: Option<u32>,
 }
 
 impl FixturePrivateGateway {
@@ -5414,12 +5443,13 @@ impl FixturePrivateGateway {
         private_fixture_directory(&ca);
         let mkcert = root.join("fixture-mkcert");
         write_fixture_mkcert(&mkcert);
-        let gateway = Self {
+        let mut gateway = Self {
             root: gateway_root,
             home: home.to_path_buf(),
             mkcert,
             ca,
             path: path.to_owned(),
+            pid: None,
         };
         let tls = gateway.run("setup-tls", &[]);
         assert!(tls.status.success(), "private gateway setup-tls: {tls:?}");
@@ -5435,7 +5465,49 @@ impl FixturePrivateGateway {
             ],
         );
         assert!(up.status.success(), "private gateway up: {up:?}");
+        gateway.pid = Some(private_gateway_recorded_pid(&gateway.root));
+        println!(
+            "[fixture] private gateway daemon pid {}",
+            gateway.pid.expect("recorded gateway pid")
+        );
         gateway
+    }
+
+    /// Stop the owned daemon through its own control path and prove the exact
+    /// process it recorded has exited. A discarded `down` result would let a
+    /// detached daemon outlive the fixture (effigy#493).
+    fn stop(&self) -> Result<(), String> {
+        let down = self.run("down", &[]);
+        let mut problems = Vec::new();
+        if !down.status.success() {
+            problems.push(format!(
+                "`gateway down` exited {}: {}",
+                down.status,
+                String::from_utf8_lossy(&down.stderr).trim()
+            ));
+        }
+        let Some(pid) = self.pid else {
+            return if problems.is_empty() {
+                Ok(())
+            } else {
+                Err(problems.join("; "))
+            };
+        };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        if effigy_process::process_is_running(pid) {
+            problems.push(format!(
+                "private gateway daemon {pid} outlived `gateway down`; stop that exact pid"
+            ));
+        }
+        if problems.is_empty() {
+            println!("[fixture] private gateway daemon {pid} exited");
+            Ok(())
+        } else {
+            Err(problems.join("; "))
+        }
     }
 
     fn run(&self, subcommand: &str, extra: &[&str]) -> std::process::Output {
@@ -5473,9 +5545,28 @@ impl FixturePrivateGateway {
 
 impl Drop for FixturePrivateGateway {
     fn drop(&mut self) {
-        // Stop the daemon while its private root and pid record still exist.
-        let _ = self.run("down", &[]);
+        // Stop the daemon while its private root and pid record still exist, and
+        // fail the test if the owned process did not exit: a leak is not a
+        // passing cleanup.
+        if let Err(problem) = self.stop() {
+            if std::thread::panicking() {
+                eprintln!("[fixture] private gateway cleanup: {problem}");
+            } else {
+                panic!("private gateway cleanup: {problem}");
+            }
+        }
     }
+}
+
+/// The pid the private gateway recorded for its own daemon, which is the exact
+/// identity teardown proves gone.
+fn private_gateway_recorded_pid(root: &std::path::Path) -> u32 {
+    let path = root.join("gateway.pid");
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()));
+    raw.trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()))
 }
 
 /// A fixture directory with a stated mode rather than one inherited from the
@@ -5572,4 +5663,44 @@ fn write_quiet_listener_probe(path: &std::path::Path) {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .expect("make quiet listener probe executable");
+}
+
+/// The PIDs a managed session's own output recorded when it started a workload
+/// or a host child: the exact fixture processes its settle must stop.
+fn started_pids(output: &[u8]) -> Vec<u32> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter(|line| {
+            line.contains("[managed] started `") || line.contains("[effigy host-process] started `")
+        })
+        .filter_map(|line| {
+            let rest = line.split("(pid ").nth(1)?;
+            rest.split(')').next()?.trim().parse().ok()
+        })
+        .collect()
+}
+
+/// Prove and report that each recorded fixture process has exited, by its exact
+/// PID (effigy#493's no-leak invariant).
+fn assert_fixture_processes_absent(scope: &str, pids: &[u32]) {
+    for pid in pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(*pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(*pid),
+            "{scope}: fixture pid {pid} outlived its session"
+        );
+        println!("[fixture] {scope}: pid {pid} exited");
+    }
+}
+
+/// The supervisor pid a managed session's own output reported for its run.
+fn supervised_pid(output: &[u8]) -> Option<u32> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .find_map(|line| line.split_once("supervised by pid ").map(|(_, rest)| rest))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|raw| raw.parse().ok())
 }

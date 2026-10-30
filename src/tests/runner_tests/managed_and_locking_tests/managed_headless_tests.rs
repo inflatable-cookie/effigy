@@ -64,6 +64,7 @@ fn assert_gone(root: &std::path::Path, files: &[&str]) {
             !effigy_process::process_is_running(pid),
             "`{file}` pid {pid} survived the settle"
         );
+        println!("[fixture] `{file}`: pid {pid} exited");
     }
 }
 
