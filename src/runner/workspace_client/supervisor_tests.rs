@@ -499,7 +499,7 @@ fn the_session_is_discovered_from_durable_identity_alone() {
         // a later command in another process would read.
         let facility = match discover(observe, root, session.environment()) {
             Observed::Verified(Some(facility), _) => facility,
-            other => panic!("the committed session is discoverable: {other:?}"),
+            _ => panic!("the committed session is not discoverable from its own journal"),
         };
         assert_eq!(facility.session.run(), session.run());
         assert_eq!(facility.session.generation(), session.generation());
@@ -511,7 +511,7 @@ fn the_session_is_discovered_from_durable_identity_alone() {
         service.stop();
         let facility = match discover(observe, root, session.environment()) {
             Observed::Verified(Some(facility), _) => facility,
-            other => panic!("a stopped session keeps its custody record: {other:?}"),
+            _ => panic!("a stopped but unsettled session loses its custody record"),
         };
         assert!(
             facility.live(),
@@ -527,8 +527,7 @@ fn the_session_is_discovered_from_durable_identity_alone() {
         match discover(observe, root, session.environment()) {
             Observed::Verified(Some(facility), _) => assert!(
                 !facility.live(),
-                "a settled session is not the live one: {:?}",
-                facility.phase
+                "a settled session is not the live one"
             ),
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => panic!("settlement leaves a readable journal: {reason}"),
@@ -549,7 +548,7 @@ fn a_pending_selection_is_only_completed_by_positive_evidence() {
     ))));
     assert!(
         matches!(refused, RecoveryOutcome::Disproven(_)),
-        "a refusal disproves the selection: {refused:?}"
+        "a refusal disproves the selection: {refused}"
     );
 
     for pending in [
@@ -560,7 +559,7 @@ fn a_pending_selection_is_only_completed_by_positive_evidence() {
         let outcome = RecoveryOutcome::classify(Err(pending));
         assert!(
             matches!(outcome, RecoveryOutcome::Pending(_)),
-            "an unproven fact leaves the selection pending: {outcome:?}"
+            "an unproven fact leaves the selection pending: {outcome}"
         );
     }
 
@@ -612,10 +611,78 @@ fn a_down_is_answered_by_the_kernel_coordination() {
                     "the fixture session started no child run of its own"
                 );
             }
-            Observed::Verified(DownStart::Refused { holders }, _) => {
-                panic!("the session is the environment's own holder here: {holders:?}")
+            Observed::Verified(DownStart::Refused { .. }, _) => {
+                panic!("the session is the environment's own holder here, so nothing refuses it")
             }
-            other => panic!("a down of this session is readable: {other:?}"),
+            _ => panic!("a down of this session is not readable from its journal"),
         }
     });
+}
+
+/// Only a selection that switched and was read back may be served. A pending
+/// commit published nothing a guest can rely on, and an abandoned one was
+/// revoked: both refuse before anything is adopted.
+#[test]
+fn handoff_requires_a_switched_selection() {
+    use effigy_kernel::workspace_session::SelectionState;
+
+    assert!(
+        super::committed_state(SelectionState::Switched).is_ok(),
+        "a switched and read-back selection is servable"
+    );
+    for state in [SelectionState::Pending, SelectionState::Abandoned] {
+        let refused = super::committed_state(state)
+            .expect_err("a selection that has not switched is never served");
+        assert!(
+            matches!(refused, HandoffRefusal::Unswitched(named) if named == state.as_str()),
+            "the refusal names the durable state it found: {refused}"
+        );
+    }
+}
+
+/// The entry that opens the first terminal hands it its own capability, 0600 in
+/// guest-private storage, and that terminal's later commands authenticate from
+/// it: no shared file, and no second enrolment.
+#[test]
+fn a_first_terminal_keeps_the_capability_the_entry_handed_it() {
+    use crate::runner::workspace_client::guest_fake::FakeGuest;
+    use crate::runner::workspace_client::supervisor::stage_first_terminal_capability;
+
+    let context = super::super::tests::workspace_document(Some(super::super::tests::session_run()), None);
+    let mut guest = FakeGuest::new();
+    super::super::tests::publish(&mut guest, &context, None);
+    let secret = host::Secret::new([0x5a; 32]);
+    let generation = Generation::new(context.session.generation);
+
+    let handed = stage_first_terminal_capability(
+        &mut guest,
+        "terminal-1",
+        generation,
+        &secret,
+        "app",
+    )
+    .expect("the entry hands the terminal its capability");
+    assert_eq!(
+        handed.path,
+        format!("{}/capabilities/terminal-1", super::super::context::CLIENT_ROOT)
+    );
+    assert_eq!(guest.mode(&handed.path), Some(0o600), "the record is owner-only");
+    assert_eq!(guest.owner(&handed.path).as_deref(), Some("app"));
+
+    // The terminal's later command presents it, with no enrolment credential
+    // anywhere: the handoff is the terminal's own authority.
+    match super::super::load_auth(&mut guest, &context, "terminal-1")
+        .expect("the handed-over capability is presented")
+    {
+        super::super::GuestAuth::Capability(presented) => {
+            assert!(presented.matches(&secret), "the capability the entry handed over")
+        }
+        _ => panic!("a handed-over capability is presented, not re-enrolled"),
+    }
+
+    // Another terminal does not see it.
+    assert!(
+        super::super::load_auth(&mut guest, &context, "terminal-2").is_err(),
+        "a capability belongs to one client"
+    );
 }

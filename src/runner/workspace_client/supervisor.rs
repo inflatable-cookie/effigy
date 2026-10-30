@@ -110,7 +110,7 @@ use effigy_kernel::store::Store;
 use effigy_kernel::workspace_channel::Streams;
 use effigy_kernel::workspace_session::{
     phase, unfinished_selection, DownCoordination, DownStart, SelectionObligation,
-    SelectionReceipt, ServingLease, ServingProbe, SessionRef, TargetProbe,
+    SelectionReceipt, SelectionState, ServingLease, ServingProbe, SessionRef, TargetProbe,
 };
 
 use super::host_dispatch::HostDispatch;
@@ -130,6 +130,46 @@ pub(crate) type ChannelOwner<'a> = ServingOwner<
     HostDispatch,
 >;
 
+/// The first terminal's own capability, handed over by the entry that opened it
+/// (§8.8).
+///
+/// The capability is scoped to one client and one session generation and lives
+/// in guest-private storage, 0600, at that client's own path. A terminal that
+/// holds it never presents the session-wide enrolment credential again; a
+/// terminal that does not enrols once and keeps what the host issued.
+#[derive(Debug, Clone)]
+pub(crate) struct FirstTerminalCapability {
+    /// The guest-private path the record belongs at.
+    pub(crate) path: String,
+    /// The record body, 0600: the capability and the generation it binds.
+    pub(crate) body: String,
+}
+
+/// Stage one terminal's capability into guest-private storage at the entry that
+/// opened it, before that terminal runs anything.
+///
+/// This is the host-side half of the first-terminal handoff: the entry that
+/// creates the terminal owns the guest writer and the user it runs as, and the
+/// capability is issued for that client alone. Nothing here is a shared file or
+/// a second authority: the record is the one the terminal's own commands read,
+/// and the host still fences every request on its own grant.
+pub(crate) fn stage_first_terminal_capability(
+    guest: &mut dyn super::context::GuestWorkspace,
+    client: &str,
+    generation: effigy_kernel::id::Generation,
+    secret: &effigy_kernel::workspace_channel::Secret,
+    owner: &str,
+) -> Result<FirstTerminalCapability, crate::runner::error::RunnerError> {
+    let path = super::client_capability_path(client);
+    let body = super::render_capability(&super::StoredCapability {
+        generation,
+        secret: secret.clone(),
+    });
+    guest.write_file(&path, body.as_bytes(), 0o600)?;
+    guest.set_owner(&path, owner)?;
+    Ok(FirstTerminalCapability { path, body })
+}
+
 /// Why a session's custody was not handed to service.
 #[derive(Debug)]
 pub(crate) enum HandoffRefusal {
@@ -141,6 +181,24 @@ pub(crate) enum HandoffRefusal {
     WrongSession,
     /// The launch no longer holds the session's key, so it cannot serve.
     KeyReleased,
+    /// The commit has not switched: a pending or abandoned selection is never
+    /// served. Only a selection whose every selector and object read back at its
+    /// committed value may hand off (§8.11).
+    Unswitched(&'static str),
+}
+
+/// Whether a durable selection state may be served.
+///
+/// Only a selection that switched *and* was read back is servable: a `Pending`
+/// commit has published nothing the guest can rely on, and an `Abandoned` one
+/// was revoked. Serving either would resurrect authority the kernel ended.
+pub(crate) fn committed_state(state: SelectionState) -> Result<(), HandoffRefusal> {
+    match state {
+        SelectionState::Switched => Ok(()),
+        SelectionState::Pending | SelectionState::Abandoned => {
+            Err(HandoffRefusal::Unswitched(state.as_str()))
+        }
+    }
 }
 
 impl std::fmt::Display for HandoffRefusal {
@@ -153,6 +211,9 @@ impl std::fmt::Display for HandoffRefusal {
                 "the committed selection belongs to another workspace session than this custody"
             }
             Self::KeyReleased => "the workspace session no longer holds its serving key",
+            Self::Unswitched(_) => {
+                "the workspace selection has not switched and been read back"
+            }
         })
     }
 }
@@ -193,6 +254,10 @@ impl ServingHandoff<'static> {
         if obligation.session_run() != owner.session.run() {
             return Err(HandoffRefusal::WrongSession);
         }
+        // A commit is not a selection until it has switched: the publication is
+        // only servable once every selector and object read back at its
+        // committed value, which is what `Switched` records (§8.11).
+        committed_state(obligation.state())?;
         Self::published(owner, obligation.receipt())
     }
 
@@ -283,6 +348,16 @@ pub(crate) enum RecoveryOutcome {
     /// A fact disproved the selection. It must be abandoned or settled by its
     /// owner; it is never served, and a fresh key never resurrects it.
     Disproven(String),
+}
+
+impl std::fmt::Display for RecoveryOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Completed => formatter.write_str("the selection completed and may serve"),
+            Self::Pending(reason) => write!(formatter, "the selection stays pending: {reason}"),
+            Self::Disproven(reason) => write!(formatter, "the selection is disproven: {reason}"),
+        }
+    }
 }
 
 impl RecoveryOutcome {

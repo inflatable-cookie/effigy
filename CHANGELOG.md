@@ -211,7 +211,12 @@ until the host-log writer has a safe secret-handling boundary.
   named by `EFFIGY_WORKSPACE_CLIENT_ID` or the process's own id) instead of one
   shared file, so no terminal can present or overwrite another's authority; the
   capability an enrolment mints is kept once the host accepts it, and a record
-  from another session generation is never presented. `recover_before_service`
+  from another session generation is never presented, and the entry that opens
+  the first terminal can stage that terminal's own 0600 record in guest-private
+  storage so it never re-enrols. A session's custody may only hand off when its
+  durable selection is *switched* (every selector and object read back at its
+  committed value): a pending or abandoned commit refuses before anything is
+  adopted. `recover_before_service`
   completes a Pending selection through the kernel's own `recover_selection`
   before custody serves (completed, still unproven or disproven, with only
   positive evidence completing it), `ServiceOwner::down` answers a down with the

@@ -37,7 +37,7 @@ fn running_binary() -> RunningBinary {
     RunningBinary::observe().expect("the test binary's own identity")
 }
 
-fn session_run() -> RunId {
+pub(super) fn session_run() -> RunId {
     RunId::new(1, [SESSION_MARKER; 10]).expect("run id")
 }
 
@@ -77,7 +77,7 @@ fn manifest_pin() -> WorkspacePinnedSource {
 
 /// The strict v2 document a container-mode workspace publishes, built from the
 /// same host facts `WorkspaceContextV2::prepared` renders and cross-parsed.
-fn workspace_document(session: Option<RunId>, pin: Option<String>) -> WorkspaceContextV2 {
+pub(super) fn workspace_document(session: Option<RunId>, pin: Option<String>) -> WorkspaceContextV2 {
     let binary = running_binary();
     let run = session.unwrap_or_else(session_run);
     let credential = enrolment_body();
@@ -147,7 +147,7 @@ fn published(document: &WorkspaceContextV2) -> PublishedGuestContext {
 
 /// Publish one context generation, its manifest snapshot and (optionally) a
 /// capability into a fake guest, exactly as Prepare would.
-fn publish(guest: &mut FakeGuest, document: &WorkspaceContextV2, capability: Option<&Secret>) {
+pub(super) fn publish(guest: &mut FakeGuest, document: &WorkspaceContextV2, capability: Option<&Secret>) {
     guest.put_file(
         context::CONTEXT_CURRENT_PATH,
         document.context_generation.to_string(),
