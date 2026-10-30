@@ -6,9 +6,10 @@
 //! The replay-safe admission record, the durable attachments and the bounded
 //! stream cursor belong to the kernel workspace seam (`crate::run::workspace`)
 //! and are proven there; a session consumes them. No engine, container,
-//! gateway, socket server or live supervisor is involved: the "fake owner" is a
-//! real kernel `Run` in a fixture journal, and the "fake runtime" is a
-//! settlement adapter that records nothing.
+//! gateway or socket server is involved: the "fake owner" is a real kernel
+//! `Run` in a fixture journal, and the "fake runtime" records nothing. The
+//! detached-custody regression re-execs a disposable sentinel to prove lifecycle
+//! registration with the actual custody plan.
 
 use super::*;
 use crate::ctx::{
@@ -2351,6 +2352,7 @@ fn cancellation_waits_for_stopping_and_incomplete_runs_to_settle() {
         .expect("cancel after complete settlement");
 }
 
+#[cfg(feature = "fault-injection")]
 #[test]
 fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot() {
     let cx = context();
