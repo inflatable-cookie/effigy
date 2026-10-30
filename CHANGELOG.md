@@ -913,7 +913,17 @@ until the host-log writer has a safe secret-handling boundary.
 
 - A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
 
+- A direct foreground task stays in memory custody and records no `latest` or
+  `history` entry, even when the user config declares a `[programs]` block.
+  Only a block that puts a shim on the run's `PATH` (program absent, or
+  `force = true`) moves the run to durable custody, since foreground runs
+  carry no shims. `effigy tasks status` for such a task now reports
+  `not-recorded` again.
 - `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
+- A floating Git bundle source updates on `dev` again. The remote check read
+  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
+  so every check kept the old pin without a warning. The check now reads the
+  object id and ref name with or without that TAB.
 
 - Database seed and dump keep the database password out of every spawned
   command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by

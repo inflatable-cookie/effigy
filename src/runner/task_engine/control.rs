@@ -3,7 +3,7 @@
 //! while custody holds a gate. Reads are pure (R2). Foreground stop never
 //! opens a journal or reconstructs signalling authority from old gate bytes.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use effigy_kernel::custody::Stream;
@@ -221,16 +221,6 @@ fn lookup_key_in(checkout: &Path, key: &RunKey) -> Lookup {
     }
 }
 
-/// The checkout a query with no explicit root runs in.
-fn query_checkout() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    Ok(
-        effigy_core::resolver::resolve_target_root(cwd.clone(), None)
-            .map(|resolved| resolved.resolved_root)
-            .unwrap_or(cwd),
-    )
-}
-
 /// A caller already resolved the owning checkout. Absence or uncertainty
 /// there never falls through to another checkout or the machine store.
 pub(in crate::runner) fn lookup_checkout(checkout: &Path, id: RunId) -> Lookup {
@@ -239,29 +229,6 @@ pub(in crate::runner) fn lookup_checkout(checkout: &Path, id: RunId) -> Lookup {
         Observed::Verified(root, _) => lookup_at(&cx, &root, id),
         Observed::Absent(_) => Lookup::NotFound,
         Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason}", checkout.display())),
-    }
-}
-
-pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
-    lookup_within(&kernel::observe(), id)
-}
-
-/// A lookup bounded by the caller's own observation context, in the checkout
-/// the query runs in: one read of that journal, never a scan of its peers. An
-/// unreadable cwd journal is `Unknown`, not permission to look elsewhere
-/// (effigy#339, Q-011).
-pub(in crate::runner) fn lookup_within(
-    cx: &effigy_kernel::ctx::ObserveContext,
-    id: RunId,
-) -> Lookup {
-    let current = match query_checkout() {
-        Ok(checkout) => checkout,
-        Err(reason) => return Lookup::Unknown(reason),
-    };
-    match kernel::observe_root(cx, &current) {
-        Observed::Verified(root, _) => lookup_at(cx, &root, id),
-        Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason}", current.display())),
     }
 }
 

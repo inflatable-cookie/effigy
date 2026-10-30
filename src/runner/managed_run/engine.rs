@@ -386,6 +386,7 @@ impl Owner {
     ) -> Result<(), End> {
         self.watch = self.session.owner_watch().ok();
         let id = run.id();
+        let checkout = plan.target.root.as_path();
         // A blocking setup step reads stop requests on its parent run; the
         // owning client's death becomes such a request.
         let filed = std::sync::atomic::AtomicBool::new(false);
@@ -395,7 +396,7 @@ impl Owner {
             let stop_filer = scope.spawn(move || {
                 while !filed_ref.load(std::sync::atomic::Ordering::Acquire) {
                     if watch.is_some_and(OwnerWatch::lost) {
-                        let _ = task_engine::request_run_stop(id);
+                        let _ = task_engine::request_run_stop(checkout, id);
                         return true;
                     }
                     std::thread::sleep(Duration::from_millis(50));
