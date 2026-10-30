@@ -60,6 +60,7 @@ mod uninstall_command;
 mod util;
 mod workspace_client;
 mod workspace_command;
+mod workspace_transport;
 
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;

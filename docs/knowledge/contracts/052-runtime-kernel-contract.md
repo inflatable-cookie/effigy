@@ -2967,6 +2967,17 @@ struct TlsChannelTransport { /* workspace_channel::Transport */ } struct PinnedC
 impl ChannelOpener for PinnedChannelOpener { fn open(&mut self, context: &VerifiedWorkspaceContext) -> Result<Box<dyn Transport>, ChannelError>; }
 ```
 
+The socket adapter in `src/runner/workspace_transport` implements TLS 1.3 with
+an exact SHA-256 DER-SPKI pin, leaf validity checks and ECDSA P-256 handshake
+signature verification. It returns `TlsChannelTransport` only after the full
+handshake. It accepts an already resolved socket address and a known pin; it
+performs no DNS, context publication, credential exchange or admission. Its
+absolute per-operation deadlines cover connect, handshake, read, write and
+close; reconnect constructs new TLS state. This adapter alone does **not**
+qualify a backend, implement `ChannelOpener`, or install a session-owned TLS
+listener. Those remain requirements of the host handoff below. The bounded
+private-listener proof is `test:workspace:transport:tls`.
+
 A session owns one memory-only ECDSA P-256 key/leaf and listener. The TLS verifier checks the SPKI pin and handshake signature
 (key possession); copying a leaf is insufficient. `Transport::verified_peer` reports the verified identity, and
 `WorkspaceClient::connect` calls the existing `check_server_pin` before its first frame, including Hello. Missing/wrong pin or
