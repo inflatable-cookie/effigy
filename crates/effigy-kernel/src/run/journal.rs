@@ -60,6 +60,45 @@ pub(super) fn check_fence(conn: &Connection, fence: &Fence) -> Result<(), RunErr
     }
     Ok(())
 }
+/// Workspace overlap authenticates a *run*, never a generic resource target.
+/// Its immutable admission record survives mapping replacement, so an older
+/// session can still receive controls and finish its own journal.
+pub(super) fn check_run_fence(conn: &Connection, id: RunId, fence: &Fence) -> Result<(), RunError> {
+    match check_fence(conn, fence) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let authorized: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_session_runs s \
+                 JOIN runs r ON r.run_id=s.run_id \
+                 LEFT JOIN workspace_activation_reservations a ON a.reservation_id=s.reservation_id \
+                 WHERE s.run_id=?1 AND s.owner=?2 AND s.generation=?3 \
+                 AND r.owner=s.owner AND r.generation=s.generation AND r.phase<>'closed' \
+                 AND (s.reservation_id IS NULL OR a.state IN ('reserved','committed')))",
+                params![id.to_string(), fence.resource.name().to_string(), fence.generation.get() as i64],
+                |row| row.get(0),
+            )?;
+            if authorized {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+pub(super) fn check_run_target(
+    conn: &Connection,
+    id: RunId,
+    owner: &Fence,
+    effect: &Effect,
+) -> Result<(), RunError> {
+    if effect.spec.target == *owner {
+        check_run_fence(conn, id, owner)
+    } else {
+        check_target(conn, effect)
+    }
+}
+
 /// A callback's target check. A remote workload is bound to its environment
 /// at intent; afterwards its acknowledgement and completion check that the
 /// environment still exists, not its transition generation. Every bring-up

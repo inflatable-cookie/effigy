@@ -840,6 +840,48 @@ impl<'r> EnvRun<'r> {
         }
     }
 
+    /// Publish the exact frozen successor session and record the guest's
+    /// acknowledgement before `commit_activation`. The callback returns the
+    /// identity actually published; the host never fills it into a generic
+    /// receipt after publication.
+    pub fn publish_workspace_guest_with(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+        publish: impl FnOnce(
+            &effigy_kernel::workspace_session::ActivationPlan,
+        ) -> Result<
+            effigy_kernel::workspace_session::WorkspacePublicationReceipt,
+            BackendError,
+        >,
+    ) -> Result<(), EnvError> {
+        if plan.environment_run() != Some(self.run.id()) || plan.fence() != *self.run.fence() {
+            return self.kernel(Err(RunError::refused(
+                "workspace publication plan names another activation",
+            )));
+        }
+        let intent = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(intent)?;
+        self.transitioned = true;
+        match publish(plan) {
+            Ok(receipt) => {
+                let recorded = plan.validate_receipt(&receipt).and_then(|()| {
+                    Attachments::workspace_guest_published(&mut self.run, &ticket, receipt)
+                });
+                self.kernel(recorded)
+            }
+            Err(error) => {
+                self.failed = true;
+                let recorded = Attachments::guest_publication_unknown(
+                    &mut self.run,
+                    &ticket,
+                    UnknownReason::Inconsistent(error.to_string()),
+                );
+                self.kernel(recorded)?;
+                Err(EnvError::Backend(error))
+            }
+        }
+    }
+
     /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
         let result = Attachments::publish_active_for(&mut self.run, holders);

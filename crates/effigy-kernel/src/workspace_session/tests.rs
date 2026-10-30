@@ -805,6 +805,20 @@ fn admit_staged<'a>(
     admit_frozen(cx, root, reservation, run)
 }
 
+fn publication_for(
+    cx: &EffectContext,
+    root: &StateRoot,
+    reservation: &WorkspaceActivationReservation,
+    run: &Run<'_>,
+) -> WorkspacePublicationReceipt {
+    let plan = plan_of(reservation, &read_journal(cx, root)).expect("admitted staged plan");
+    WorkspacePublicationReceipt {
+        publication: receipt(&plan.fence()),
+        activation_run: run.id(),
+        session: plan.binding().clone(),
+    }
+}
+
 /// The environment activation run at the generation the reservation names, with
 /// its required guest publication applied — exactly the state a commit
 /// requires, and nothing more.
@@ -826,8 +840,9 @@ fn admit_activation<'a>(
     )
     .expect("activation run");
     let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
-    let fence = run.fence().clone();
-    Attachments::guest_published(&mut run, &ticket, receipt(&fence)).expect("publication receipt");
+    let receipt = publication_for(cx, root, reservation, &run);
+    Attachments::workspace_guest_published(&mut run, &ticket, receipt)
+        .expect("publication receipt");
     run
 }
 
@@ -1143,6 +1158,12 @@ fn staging_freezes_one_successor_identity_for_the_workspace_owner() {
         .stage_session_binding(&cx, &root, &other, run_id(32))
         .expect_err("a competing owner never stages this reservation");
     assert!(matches!(error, RunError::Refused(_)));
+    assert!(
+        reservation
+            .stage_session_binding(&cx, &root, &workspace_entry(), run_id(31))
+            .is_err(),
+        "another unadmitted contender cannot replace the winner"
+    );
     // The frozen run admits, and a competing Task run cannot then replace it.
     let (session_run, _session) = admit_frozen(&cx, &root, &reservation, run_id(30));
     assert!(is_live(&session_run));
@@ -1260,14 +1281,30 @@ fn a_receipt_is_validated_against_the_frozen_plan_before_the_commit() {
 
     // The reversible failing safety assertion: a receipt naming the session's
     // own generation S is refused, and the same receipt naming E is accepted.
-    let mut wrong = receipt(&plan.fence());
-    wrong.environment.generation = plan.session_generation();
+    let mut wrong = publication_for(&cx, &root, &reservation, &environment_run);
+    wrong.publication.environment.generation = plan.session_generation();
     assert_ne!(plan.session_generation(), plan.environment_generation());
     assert!(
         plan.validate_receipt(&wrong).is_err(),
         "a receipt for S must not validate a commit at E"
     );
-    assert!(plan.validate_receipt(&receipt(&plan.fence())).is_ok());
+    assert!(plan
+        .validate_receipt(&publication_for(&cx, &root, &reservation, &environment_run))
+        .is_ok());
+    for field in ["owner", "run", "S", "activation"] {
+        let mut wrong = publication_for(&cx, &root, &reservation, &environment_run);
+        match field {
+            "owner" => wrong.session.owner = task("another-workspace"),
+            "run" => wrong.session.run = run_id(200),
+            "S" => wrong.session.generation = Generation::new(200),
+            "activation" => wrong.activation_run = run_id(201),
+            _ => unreachable!(),
+        }
+        assert!(
+            plan.validate_receipt(&wrong).is_err(),
+            "receipt must authenticate {field}"
+        );
+    }
     // And a frozen plan is what the commit validates the recorded receipt with.
     let committed = reservation
         .commit(&cx, &root, &environment_run)
@@ -1323,9 +1360,23 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
         Some(ActivationReservationState::Reserved),
         "a refused commit changes no reservation state"
     );
+    for field in ["owner", "run", "S", "activation"] {
+        let mut wrong = publication_for(&cx, &root, &reservation, &environment_run);
+        match field {
+            "owner" => wrong.session.owner = task("wrong-owner"),
+            "run" => wrong.session.run = run_id(202),
+            "S" => wrong.session.generation = Generation::new(202),
+            "activation" => wrong.activation_run = run_id(203),
+            _ => unreachable!(),
+        }
+        assert!(
+            Attachments::workspace_guest_published(&mut environment_run, &ticket, wrong).is_err(),
+            "recording refuses a receipt with the wrong {field}"
+        );
+    }
     // The same run can still commit once its publication is complete.
-    let fence = environment_run.fence().clone();
-    Attachments::guest_published(&mut environment_run, &ticket, receipt(&fence))
+    let receipt = publication_for(&cx, &root, &reservation, &environment_run);
+    Attachments::workspace_guest_published(&mut environment_run, &ticket, receipt)
         .expect("publication receipt");
     let committed = reservation
         .commit(&cx, &root, &environment_run)
@@ -1360,8 +1411,8 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
         .expect("first publication intent");
     let _second = Attachments::intend_guest_publication(&mut environment_run)
         .expect("a second required publication");
-    let fence = environment_run.fence().clone();
-    Attachments::guest_published(&mut environment_run, &first, receipt(&fence))
+    let receipt = publication_for(&cx, &root, &reservation, &environment_run);
+    Attachments::workspace_guest_published(&mut environment_run, &first, receipt)
         .expect("publication receipt");
     let error = reservation
         .commit(&cx, &root, &environment_run)
@@ -1553,22 +1604,8 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     let reader = read_journal(&cx, &root);
     authoritative(&reader);
     assert_eq!(plan_of(&reservation, &reader), None, "still not ready");
-    // A successor admission refuses while the predecessor is live, and never
-    // stops the predecessor to take its place.
-    match SessionRef::admit_reserved(
-        &cx,
-        &root,
-        &inv(workspace_entry(), "workspace"),
-        opts(run_id(72)),
-        &cleanup(&cx),
-        &mut adapter(),
-        &reservation,
-        Placement::Detached,
-    ) {
-        Err(RunError::Gate(_)) => {}
-        Err(other) => panic!("expected the predecessor's owner gate, got {other:?}"),
-        Ok(_) => panic!("a second session must not be admitted while one is live"),
-    }
+    let (staged_run, _staged_session) = admit_frozen(&cx, &root, &reservation, run_id(72));
+    assert!(is_live(&predecessor));
     let reader = read_journal(&cx, &root);
     authoritative(&reader);
     assert_eq!(
@@ -1615,6 +1652,17 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
         &mut adapter(),
     )
     .expect("the crashed activation run settles");
+    drop(staged_run);
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        run_id(72),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("recover successor without stopping predecessor");
     let cancelled = recovered
         .cancel(&cx, &root, Wait::FailFast)
         .expect("the reservation is releasable");
@@ -1630,19 +1678,6 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
             .expect("the next generation");
     assert_eq!(next_reservation.generation(), Generation::new(3));
     let next_binding = stage_successor(&cx, &root, &next_reservation, run_id(74));
-    let mut predecessor = predecessor;
-    predecessor
-        .interrupt(
-            &cleanup(&cx),
-            WorkloadOutcome::Cancelled {
-                cause: StopCause::Requested,
-                signal: None,
-            },
-        )
-        .expect("the predecessor ends");
-    predecessor
-        .settle(&cleanup(&cx), &mut adapter())
-        .expect("the predecessor settles");
     let (successor_run, successor) = admit_frozen(&cx, &root, &next_reservation, next_binding.run);
     let environment_run = admit_activation(&cx, &root, &next_reservation, run_id(75));
     let committed = next_reservation
@@ -1716,21 +1751,7 @@ fn a_successor_preserves_a_live_holder_and_the_predecessor_session_contract() {
     );
     assert!(is_live(&predecessor));
 
-    // The predecessor ends on its own terms; then the successor admits and its
-    // commit moves the mapping in one step.
-    let mut predecessor = predecessor;
-    predecessor
-        .interrupt(
-            &cleanup(&cx),
-            WorkloadOutcome::Cancelled {
-                cause: StopCause::Requested,
-                signal: None,
-            },
-        )
-        .expect("stop the predecessor session");
-    predecessor
-        .settle(&cleanup(&cx), &mut adapter())
-        .expect("settle the predecessor session");
+    // The admitted successor commits while the predecessor remains live.
     let (successor_session_run, successor_session) =
         admit_frozen(&cx, &root, &successor_reservation, binding.run);
     let environment_run = admit_activation(&cx, &root, &successor_reservation, run_id(84));
@@ -1760,56 +1781,463 @@ fn a_successor_preserves_a_live_holder_and_the_predecessor_session_contract() {
         attachment_row(&reader, &environment, successor_session_run.id()),
         Some((2, "\"Borrow\"".to_owned(), "attached".to_owned()))
     );
-    // The predecessor settled, so it released its own attachment and is no
-    // longer the environment's session.
+    assert!(is_live(&predecessor));
     assert_eq!(
-        SessionRef::of_run(&reader, first.run())
-            .verified()
-            .cloned()
-            .flatten(),
-        None
+        attachment_row(&reader, &environment, first.run()),
+        Some((1, "\"Borrow\"".to_owned(), "attached".to_owned()))
+    );
+    assert_eq!(stop_requests(&cx, &root, first.run()), 0);
+    // Earlier sessions keep run-bound lifecycle authority after the Task fence
+    // advanced, and explicit recovery cannot take a living private slot.
+    assert!(run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        first.run(),
+        next(),
+        &cleanup(&cx),
+        &mut adapter()
+    )
+    .is_err());
+    end_run(
+        &cx,
+        predecessor,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
     );
 }
 
-/// Every activation crossing is an armed fault point, in the order a crash
-/// window opens: reserve, stage, commit. The kernel's fault driver can therefore
-/// arm any of them, and the crash test above drives the same boundaries by hand.
+/// Fail each durable crossing, then lose both successor handles as in a crash.
+/// The predecessor's selected bytes/listener receipt and attachment must survive;
+/// publication/mapping/attachment is all committed or none is committed.
 #[cfg(feature = "fault-injection")]
 #[test]
-fn every_activation_boundary_is_an_armed_fault_point() {
-    use crate::fault::{arm, trace, Point};
+fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() {
+    use crate::fault::{arm, arm_nth, fired, Fault, Point};
+    let boundaries = [
+        (Point::ReservationBefore, 0),
+        (Point::ReservationAfter, 0),
+        (Point::SessionStageBefore, 0),
+        (Point::SessionStageAfter, 0),
+        (Point::BeginAdmitted, 0),
+        (Point::BeginAdmitted, 1),
+        (Point::AppliedBefore, 0),
+        (Point::AppliedAfter, 0),
+        (Point::ActivationCommitBefore, 0),
+        (Point::ActivationMappingBefore, 0),
+        (Point::ActivationAttachmentBefore, 0),
+        (Point::ActivationCommitAfter, 0),
+    ];
+    for (point, nth) in boundaries {
+        let cx = context();
+        let fixture = home();
+        let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+        let environment = pending_environment(&cx, &root);
+        let (_, mut predecessor, first, first_activation) =
+            activate(&cx, &root, &environment, run_id(100), run_id(101));
+        end_run(
+            &cx,
+            first_activation,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        );
+        let ticket = predecessor.intend(run::EffectSpec {
+            target: predecessor.fence().clone(), kind: "fake.selected-session".into(),
+            payload: serde_json::json!({"bytes": "immutable-v1", "listener": "original-socket"}),
+            settlement: run::Settlement::Retain, required: false,
+        }).expect("selected bytes/listener intent");
+        predecessor
+            .applied(
+                &ticket,
+                serde_json::json!({"selected": "v1", "listener": "original-socket"}),
+            )
+            .expect("selected receipt");
+        let selected_path = fixture.path().join("selected-bytes");
+        std::fs::write(&selected_path, b"immutable-v1").expect("selected bytes");
+        let listener_path = fixture.path().join("predecessor.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&listener_path).expect("predecessor listener");
+        listener.set_nonblocking(true).expect("bounded accept");
+        use std::os::unix::fs::MetadataExt;
+        let listener_inode = std::fs::metadata(&listener_path)
+            .expect("listener inode")
+            .ino();
+        let selected = serde_json::to_value(predecessor.effects().expect("predecessor effects"))
+            .expect("snapshot");
+        let mut staged_run = None;
+        let mut activation_run = None;
+        arm_nth(point, nth, Fault::Enospc);
+        let result = (|| -> Result<(), RunError> {
+            let reservation =
+                WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)?;
+            reservation.stage_session_binding(&cx, &root, &workspace_entry(), run_id(102))?;
+            let (run, _) = SessionRef::admit_reserved(
+                &cx,
+                &root,
+                &inv(workspace_entry(), "workspace"),
+                opts(run_id(102)),
+                &cleanup(&cx),
+                &mut adapter(),
+                &reservation,
+                Placement::Detached,
+            )?;
+            staged_run = Some(run);
+            let run = Run::begin_claimed(
+                &cx,
+                &root,
+                &inv(environment.clone(), "environment:up"),
+                opts(run_id(103)),
+                || Ok(cleanup(&cx)),
+                &mut adapter(),
+                reservation.claim()?,
+            )?;
+            activation_run = Some(run);
+            let run = activation_run.as_mut().expect("activation run");
+            let ticket = Attachments::intend_guest_publication(run)?;
+            let receipt = publication_for(&cx, &root, &reservation, run);
+            Attachments::workspace_guest_published(run, &ticket, receipt)?;
+            reservation.commit(&cx, &root, run)?;
+            Ok(())
+        })();
+        assert!(fired(), "fault {point:?}/{nth} must fire");
+        assert!(
+            result.is_err(),
+            "fault {point:?}/{nth} must not report success"
+        );
+        arm(None);
+        drop(activation_run);
+        drop(staged_run);
+        let reader = read_journal(&cx, &root);
+        let committed = point == Point::ActivationCommitAfter;
+        assert_eq!(
+            mapping(&reader, &environment).map(|r| r.0),
+            Some(if committed { run_id(102) } else { first.run() }.to_string()),
+            "{point:?}"
+        );
+        assert_eq!(
+            attachment_effects(&reader, run_id(102)),
+            if committed { 1 } else { 0 },
+            "{point:?}"
+        );
+        assert_eq!(
+            attachment_row(&reader, &environment, first.run()),
+            Some((1, "\"Borrow\"".to_owned(), "attached".to_owned())),
+            "{point:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(predecessor.effects().expect("effects")).expect("snapshot"),
+            selected,
+            "fault {point:?} never reselects bytes or listener"
+        );
+        assert!(
+            predecessor.requests().is_ok(),
+            "predecessor lifecycle authority survives {point:?}"
+        );
+        assert_eq!(stop_requests(&cx, &root, first.run()), 0);
+        assert!(matches!(
+            reader.run_owner_state(&observe(&cx), &root, &first.run()),
+            Observed::Verified(OwnerState::Held, _)
+        ));
+        if !committed {
+            assert_eq!(
+                resolved(&reader, &environment),
+                Some(first.clone()),
+                "{point:?}"
+            );
+            assert_eq!(
+                resource_row(&reader, &workspace_entry()).0,
+                1,
+                "Task fence must not advance before atomic commit at {point:?}"
+            );
+        } else {
+            assert_eq!(resource_row(&reader, &workspace_entry()).0, 2);
+            assert_eq!(
+                resource_row(&reader, &environment),
+                (2, Some("active".into()), Some("2".into()))
+            );
+        }
+        // No replay of guest publication: recover and settle the exact dead
+        // runs, then release only the still-reserved fence.
+        for (owner, id) in [
+            (environment.clone(), run_id(103)),
+            (workspace_entry(), run_id(102)),
+        ] {
+            if run::summary(&reader, id).verified().is_some() {
+                run::settle_interrupted(
+                    &cx,
+                    &root,
+                    &owner,
+                    id,
+                    next(),
+                    &cleanup(&cx),
+                    &mut adapter(),
+                )
+                .unwrap_or_else(|e| panic!("recover {id} after {point:?}: {e}"));
+            }
+        }
+        assert_eq!(
+            std::fs::read(&selected_path).expect("selected bytes"),
+            b"immutable-v1"
+        );
+        assert_eq!(
+            std::fs::metadata(&listener_path)
+                .expect("same listener")
+                .ino(),
+            listener_inode
+        );
+        let _client = std::os::unix::net::UnixStream::connect(&listener_path)
+            .expect("predecessor still accepts");
+        let (_accepted, _) = listener
+            .accept()
+            .expect("same listener accepts after fault and recovery");
+        let recovered =
+            WorkspaceActivationReservation::recover(&read_journal(&cx, &root), &environment)
+                .verified()
+                .cloned()
+                .flatten()
+                .expect("durable reservation");
+        if recovered.state() == ActivationReservationState::Reserved {
+            recovered
+                .cancel(&cx, &root, Wait::FailFast)
+                .expect("release failed activation");
+        }
+        let (_, successor_run, successor, _) =
+            activate(&cx, &root, &environment, run_id(104), run_id(105));
+        assert_eq!(
+            resolved(&read_journal(&cx, &root), &environment),
+            Some(successor)
+        );
+        assert!(predecessor.requests().is_ok());
+        assert!(is_live(&successor_run));
+    }
+}
+
+#[test]
+fn three_overlapping_sessions_keep_their_exact_liveness_and_lifecycle_fences() {
     let cx = context();
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let environment = pending_environment(&cx, &root);
-    arm(None);
-    let (_reservation, _session_run, _session, _environment_run) =
-        activate(&cx, &root, &environment, run_id(90), run_id(91));
-    let crossed = trace();
-    let position = |point: Point| {
-        crossed
-            .iter()
-            .position(|crossed| *crossed == point)
-            .unwrap_or_else(|| panic!("the activation crosses {point:?}"))
-    };
-    // Publication's pointer crossings are the run's own applied-receipt points.
-    let boundaries = [
-        Point::ReservationBefore,
-        Point::ReservationAfter,
-        Point::SessionStageBefore,
-        Point::SessionStageAfter,
-        Point::AppliedBefore,
-        Point::AppliedAfter,
-        Point::ActivationCommitBefore,
-        Point::ActivationCommitAfter,
-    ];
-    for window in boundaries.windows(2) {
+    let mut sessions = Vec::new();
+    for (session_id, activation_id) in [(110, 111), (112, 113), (114, 115)] {
+        let (_, run, session, activation) = activate(
+            &cx,
+            &root,
+            &environment,
+            run_id(session_id),
+            run_id(activation_id),
+        );
+        end_run(
+            &cx,
+            activation,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        );
+        sessions.push((run, session));
+        for (run, session) in &sessions {
+            assert!(
+                run.requests().is_ok(),
+                "each admitted session retains its own lifecycle authority"
+            );
+            assert!(matches!(
+                read_journal(&cx, &root).run_owner_state(&observe(&cx), &root, &session.run()),
+                Observed::Verified(OwnerState::Held, _)
+            ));
+            assert!(
+                run::settle_interrupted(
+                    &cx,
+                    &root,
+                    &workspace_entry(),
+                    session.run(),
+                    next(),
+                    &cleanup(&cx),
+                    &mut adapter()
+                )
+                .is_err(),
+                "recovery cannot settle any live private slot"
+            );
+        }
         assert!(
-            position(window[0]) < position(window[1]),
-            "{:?} is crossed before {:?}",
-            window[0],
-            window[1]
+            Run::begin(
+                &cx,
+                &root,
+                &inv(workspace_entry(), "workspace"),
+                opts(run_id(116)),
+                &cleanup(&cx),
+                &mut adapter()
+            )
+            .is_err(),
+            "ordinary K5 never admits around private sessions"
         );
     }
-    arm(None);
+    let (oldest, oldest_session) = sessions.remove(0);
+    drop(oldest);
+    run::settle_interrupted(
+        &cx,
+        &root,
+        &workspace_entry(),
+        oldest_session.run(),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("recover oldest private slot after mapping replacement");
+    for (run, _) in sessions {
+        end_run(
+            &cx,
+            run,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        );
+    }
+}
+
+#[test]
+fn staged_and_retired_sessions_cannot_create_shared_owner_effects() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let (_, mut predecessor, _, activation) =
+        activate(&cx, &root, &environment, run_id(120), run_id(121));
+    end_run(
+        &cx,
+        activation,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reserve");
+    let (mut staged, _) = admit_staged(&cx, &root, &reservation, run_id(122));
+    let new_effect = |run: &Run<'_>| run::EffectSpec {
+        target: run.fence().clone(),
+        kind: "fake.shared-owner-mutation".into(),
+        payload: serde_json::Value::Null,
+        settlement: run::Settlement::Retain,
+        required: false,
+    };
+    assert!(
+        staged.intend(new_effect(&staged)).is_err(),
+        "a staged run cannot act on its future Task fence"
+    );
+    assert!(staged.effects().expect("effects").is_empty());
+    end_run(
+        &cx,
+        staged,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("release failed staging");
+    let (_, _successor, _, _activation) =
+        activate(&cx, &root, &environment, run_id(123), run_id(124));
+    let effects_before = predecessor.effects().expect("existing effects").len();
+    assert!(
+        predecessor.intend(new_effect(&predecessor)).is_err(),
+        "a retired session cannot create new shared-owner effects"
+    );
+    assert_eq!(
+        predecessor.effects().expect("existing effects").len(),
+        effects_before
+    );
+    assert!(
+        predecessor.requests().is_ok(),
+        "run-bound lifecycle still works"
+    );
+    end_run(
+        &cx,
+        predecessor,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+}
+
+#[test]
+fn an_older_activation_table_migrates_its_session_owner_on_write() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let (environment, fence) = active_environment(&cx, &root);
+    let (session_run, session) = admit_session(&cx, &root, &fence);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reserve");
+    let mut store = Store::open(&cx, &root).expect("store");
+    store.transaction(&cx, |txn| {
+        txn.conn().execute("UPDATE workspace_activation_reservations SET session_run=?1,session_generation=?2 WHERE reservation_id=?3",
+            params![session.run().to_string(), session.generation().get() as i64, reservation.id().to_string()])?;
+        txn.conn().execute_batch("ALTER TABLE workspace_activation_reservations DROP COLUMN session_owner")?;
+        Ok::<_, RunError>(())
+    }).expect("old activation schema");
+    drop(store);
+    drop(session_run);
+    Store::open(&cx, &root).expect("migrate old schema");
+    let recovered =
+        WorkspaceActivationReservation::recover(&read_journal(&cx, &root), &environment)
+            .verified()
+            .cloned()
+            .flatten()
+            .expect("recovered record");
+    assert_eq!(
+        recovered.record().session.as_ref().expect("binding").owner,
+        workspace_entry()
+    );
+}
+
+#[test]
+fn checkout_aliases_and_other_runs_cannot_consume_a_frozen_workspace_identity() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = pending_environment(&cx, &root);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reserve");
+    stage_successor(&cx, &root, &reservation, run_id(140));
+    let alias = workspace_entry()
+        .with_checkout(CheckoutId::new(CheckoutKind::Primary, [8; 16]))
+        .expect("alias");
+    assert!(
+        Run::begin(
+            &cx,
+            &root,
+            &inv(alias, "workspace"),
+            opts(run_id(141)),
+            &cleanup(&cx),
+            &mut adapter()
+        )
+        .is_err(),
+        "a checkout spelling cannot bypass exclusive staging"
+    );
+    assert!(
+        Run::begin(
+            &cx,
+            &root,
+            &inv(task("other-task"), "other-task"),
+            opts(run_id(140)),
+            &cleanup(&cx),
+            &mut adapter()
+        )
+        .is_err(),
+        "a different owner cannot consume the frozen RunId"
+    );
+    assert!(run::summary(&read_journal(&cx, &root), run_id(140))
+        .verified()
+        .is_none());
 }

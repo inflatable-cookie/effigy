@@ -44,6 +44,26 @@ pub struct GuestPublicationReceipt {
     pub context_generation: u64,
 }
 
+fn check_guest_receipt(run: &Run<'_>, receipt: &GuestPublicationReceipt) -> Result<(), RunError> {
+    let hex = receipt
+        .artifact_digest
+        .strip_prefix("sha256:")
+        .unwrap_or("");
+    if receipt.environment != run.owner
+        || receipt.container_id.len() != 64
+        || !receipt.container_id.bytes().all(|b| b.is_ascii_hexdigit())
+        || receipt.vm_boot_id.trim().is_empty()
+        || hex.len() != 64
+        || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+        || receipt.context_generation == 0
+    {
+        return Err(RunError::refused(
+            "invalid workspace guest publication receipt",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Attachments;
 
@@ -252,20 +272,46 @@ impl Attachments {
         ticket: &GuestPublicationTicket,
         receipt: GuestPublicationReceipt,
     ) -> Result<(), RunError> {
-        let hex = receipt
-            .artifact_digest
-            .strip_prefix("sha256:")
-            .unwrap_or("");
-        if receipt.environment != run.owner
-            || receipt.container_id.len() != 64
-            || !receipt.container_id.bytes().all(|b| b.is_ascii_hexdigit())
-            || receipt.vm_boot_id.trim().is_empty()
-            || hex.len() != 64
-            || !hex.bytes().all(|b| b.is_ascii_hexdigit())
-            || receipt.context_generation == 0
-        {
+        let reserved: bool = run.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_activation_reservations WHERE environment_run=?1)",
+            [run.id.to_string()], |row| row.get(0),
+        )?;
+        if reserved {
             return Err(RunError::refused(
-                "invalid workspace guest publication receipt",
+                "a workspace activation requires its session-bound publication receipt",
+            ));
+        }
+        check_guest_receipt(run, &receipt)?;
+        run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
+        run.completed(&ticket.0, crate::outcome::RequiredObligation::Applied)
+    }
+
+    /// Record the guest's acknowledgement of the exact frozen workspace
+    /// session, before its atomic activation commit. The generic publication
+    /// receipt alone cannot authenticate a workspace session mapping.
+    pub fn workspace_guest_published(
+        run: &mut Run<'_>,
+        ticket: &GuestPublicationTicket,
+        receipt: crate::workspace_session::WorkspacePublicationReceipt,
+    ) -> Result<(), RunError> {
+        check_guest_receipt(run, &receipt.publication)?;
+        if receipt.activation_run != run.id {
+            return Err(RunError::refused(
+                "workspace publication names another activation run",
+            ));
+        }
+        let binding = &receipt.session;
+        let matches: bool = run.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_activation_reservations \
+             WHERE environment=?1 AND environment_generation=?2 AND environment_run=?3 AND state='reserved' \
+             AND session_owner=?4 AND session_run=?5 AND session_generation=?6)",
+            params![run.owner.resource.name().to_string(), run.owner.generation.get() as i64,
+                run.id.to_string(), binding.owner.name().to_string(), binding.run.to_string(), binding.generation.get() as i64],
+            |row| row.get(0),
+        )?;
+        if !matches {
+            return Err(RunError::from(
+                crate::workspace_session::ActivationRefusal::ReceiptMismatch,
             ));
         }
         run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
@@ -322,7 +368,7 @@ impl Attachments {
         let result = (|| {
             crate::fault_point!(AttachBefore)?;
             let sequence = run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                journal::check_fence(txn.conn(),&run.owner)?;
+                journal::check_fence(txn.conn(), &run.owner)?;
                 journal::check_fence(txn.conn(),env)?;
                 let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
                     [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);

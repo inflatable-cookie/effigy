@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the existing workspace session and its holders authoritative until a
+  reserved successor activation commits its session mapping atomically.
+
 ### Security
 
 - Require the release secret audit to scan the committed candidate tree and

@@ -830,6 +830,7 @@ impl Store {
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
             && has_session_owner(&self.conn)?
+            && has_activation_session_owner(&self.conn)?
             && !stale_build
             && !adds_index
             && !adds_table
@@ -851,6 +852,11 @@ impl Store {
                 if !has_table(txn.conn, name)? {
                     txn.conn.execute_batch(sql)?;
                 }
+            }
+            if !has_activation_session_owner(txn.conn)? {
+                txn.conn.execute_batch("ALTER TABLE workspace_activation_reservations ADD COLUMN session_owner TEXT;
+                    UPDATE workspace_activation_reservations SET session_owner=(SELECT owner FROM runs WHERE run_id=session_run)
+                    WHERE session_run IS NOT NULL")?;
             }
             if !has_session_owner(txn.conn)? {
                 txn.conn.execute_batch(
@@ -1225,13 +1231,17 @@ impl StoreReader {
         let phase = self.run_phase(run);
         let gate = match &phase {
             Observed::Verified(RunPhaseFact::NonClosed, _) => {
-                let owner: Observed<(String, String)> = self.row(
-                    "resources",
-                    "SELECT r.scope, r.name FROM runs JOIN resources r ON r.name=runs.owner \
-                     WHERE runs.run_id=?1",
-                    [run.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                );
+                let sql = match has_table(&self.conn, "workspace_session_runs") {
+                    Ok(true) => "SELECT r.scope, coalesce(s.gate_key, r.name) FROM runs \
+                        JOIN resources r ON r.name=runs.owner \
+                        LEFT JOIN workspace_session_runs s ON s.run_id=runs.run_id WHERE runs.run_id=?1",
+                    Ok(false) => "SELECT r.scope,r.name FROM runs JOIN resources r ON r.name=runs.owner WHERE runs.run_id=?1",
+                    Err(error) => return Observed::Unknown(read_unknown(&error.into())),
+                };
+                let owner: Observed<(String, String)> =
+                    self.row("resources", sql, [run.to_string()], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    });
                 match owner {
                     Observed::Verified((scope, name), _) => {
                         gate::probe_names(cx, root, &scope, &name)
@@ -1495,6 +1505,10 @@ fn has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
         |r| r.get(0),
     )
 }
+fn has_activation_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_activation_reservations') WHERE name='session_owner')",
+        [], |row| row.get(0))
+}
 fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
@@ -1562,7 +1576,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 5] = [
+const ADDITIVE_TABLES: [(&str, &str); 6] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1662,6 +1676,18 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
   ON workspace_activation_reservations(session_run)",
+    ),
+    (
+        "workspace_session_runs",
+        "CREATE TABLE IF NOT EXISTS workspace_session_runs (
+  run_id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  reservation_id TEXT,
+  base_generation INTEGER NOT NULL,
+  gate_key TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_runs(owner)",
     ),
 ];
 

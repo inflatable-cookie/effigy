@@ -77,6 +77,8 @@ points! {
     SessionStageBefore,
     SessionStageAfter,
     ActivationCommitBefore,
+    ActivationMappingBefore,
+    ActivationAttachmentBefore,
     ActivationCommitAfter,
     RunAttachBefore,
     RunAttachAfter,
