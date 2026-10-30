@@ -895,12 +895,15 @@ impl<'r> EnvRun<'r> {
     /// plan, and then `active(E)`, the environment's session mapping and the
     /// session's `Borrow` attachment commit in one transaction (§8.7, §8.11).
     /// The live holders of a predecessor generation are left attached: a
-    /// successor never stops a predecessor or rebinds its listener.
+    /// successor never stops a predecessor or rebinds its listener. The caller
+    /// retains the owning session Run from Task admission through this commit;
+    /// its borrowed private slot closes the session-death/publication race.
     pub fn commit_activation(
         &mut self,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session_run: &effigy_kernel::run::Run<'_>,
     ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
-        let result = reservation.commit(&self.cx, self.root, &self.run);
+        let result = reservation.commit(&self.cx, self.root, &self.run, session_run);
         let committed = self.kernel(result)?;
         self.published = true;
         Ok(committed.session())

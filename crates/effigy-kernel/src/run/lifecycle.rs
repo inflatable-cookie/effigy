@@ -42,7 +42,7 @@ impl Run<'_> {
         if self.sentinel.is_some() {
             return Err(RunError::broken("sentinel already registered"));
         }
-        if !self.guard.covers(&self.owner.resource) {
+        if !self.holds_owner_gate()? {
             return Err(RunError::broken("registration needs owner gate"));
         }
         let identity = ident::process_identity(std::process::id())

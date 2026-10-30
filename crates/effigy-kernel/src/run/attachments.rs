@@ -369,10 +369,14 @@ impl Attachments {
             crate::fault_point!(AttachBefore)?;
             let sequence = run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;
-                journal::check_fence(txn.conn(),env)?;
-                let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
-                    [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);
-                if !active { return Err(RunError::EnvNotActive); }
+                let preserved = matches!(mode, AttachMode::Borrow)
+                    && crate::workspace_session::preserved_environment(txn.conn(), env)?;
+                if !preserved {
+                    journal::check_fence(txn.conn(),env)?;
+                    let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
+                        [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);
+                    if !active { return Err(RunError::EnvNotActive); }
+                }
                 let spec = EffectSpec { target:env.clone(),kind:KIND.into(),payload:serde_json::to_value(mode)?,settlement:Settlement::Reconcile(Value::Null),required:true };
                 let sequence=journal::insert_effect(txn,run.id,&spec)?;
                 txn.conn().execute("INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached')",

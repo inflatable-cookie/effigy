@@ -14,6 +14,7 @@ use super::*;
 use crate::ctx::{
     CancelToken, Deadline, EffectClass, EffectContext, Limits, OperationContext, StopCause,
 };
+use crate::gate::OwnerState;
 use crate::id::{CheckoutId, CheckoutKind, ExecutionTarget, Route, Surface, TaskId};
 use crate::observe::Observed;
 use crate::outcome::{Invocation, WorkloadOutcome};
@@ -861,7 +862,7 @@ fn activate<'a>(
     let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let environment_run = admit_activation(cx, root, &reservation, activation_id);
     reservation
-        .commit(cx, root, &environment_run)
+        .commit(cx, root, &environment_run, &session_run)
         .expect("activation commit");
     (reservation, session_run, session, environment_run)
 }
@@ -1008,7 +1009,7 @@ fn the_first_activation_commits_mapping_active_and_borrow_together() {
     let environment_run = admit_activation(&cx, &root, &reservation, run_id(11));
     assert_eq!(environment_run.fence().generation, Generation::new(2));
     let committed = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect("commit");
     assert_eq!(committed.session(), session);
 
@@ -1235,7 +1236,7 @@ fn a_frozen_staging_is_never_replaced_after_publication() {
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reservation");
     let binding = stage_successor(&cx, &root, &reservation, run_id(50));
-    let (_session_run, _session) = admit_frozen(&cx, &root, &reservation, binding.run);
+    let (session_run, _session) = admit_frozen(&cx, &root, &reservation, binding.run);
     // The activation run claims E and publishes the guest pointer.
     let environment_run = admit_activation(&cx, &root, &reservation, run_id(51));
     let reader = read_journal(&cx, &root);
@@ -1258,7 +1259,7 @@ fn a_frozen_staging_is_never_replaced_after_publication() {
     }
     // The frozen identity still commits.
     let committed = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect("the frozen activation commits");
     assert_eq!(committed.session().run(), binding.run);
 }
@@ -1307,7 +1308,7 @@ fn a_receipt_is_validated_against_the_frozen_plan_before_the_commit() {
     }
     // And a frozen plan is what the commit validates the recorded receipt with.
     let committed = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect("the activation commits at E");
     assert_eq!(committed.session(), session);
 }
@@ -1337,7 +1338,7 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
     let ticket =
         Attachments::intend_guest_publication(&mut environment_run).expect("publication intent");
     let error = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect_err("an intended publication is not a receipt");
     assert!(matches!(error, RunError::Refused(_)));
     let reader = read_journal(&cx, &root);
@@ -1379,7 +1380,7 @@ fn a_commit_without_an_applied_publication_writes_nothing() {
     Attachments::workspace_guest_published(&mut environment_run, &ticket, receipt)
         .expect("publication receipt");
     let committed = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect("commit after the receipt");
     assert_eq!(committed.session(), session);
 }
@@ -1395,7 +1396,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
     let reservation =
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reservation");
-    let (_session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(57));
+    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(57));
     let claim = reservation.claim().expect("claim");
     let mut environment_run = Run::begin_claimed(
         &cx,
@@ -1415,7 +1416,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
     Attachments::workspace_guest_published(&mut environment_run, &first, receipt)
         .expect("publication receipt");
     let error = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect_err("a required effect is still unresolved");
     match &error {
         RunError::Refused(text) => assert!(
@@ -1440,7 +1441,7 @@ fn a_commit_refuses_an_activation_run_that_cannot_publish() {
         )
         .expect("interrupt the activation");
     let error = reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect_err("a settling run publishes nothing");
     assert!(matches!(error, RunError::Refused(_)));
     let reader = read_journal(&cx, &root);
@@ -1453,7 +1454,7 @@ fn a_commit_is_idempotent_for_the_run_that_made_it() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (reservation, _session_run, session, environment_run) =
+    let (reservation, session_run, session, environment_run) =
         activate(&cx, &root, &environment, run_id(60), run_id(61));
     let reader = read_journal(&cx, &root);
     let recovered = WorkspaceActivationReservation::recover(&reader, &environment)
@@ -1462,7 +1463,7 @@ fn a_commit_is_idempotent_for_the_run_that_made_it() {
         .flatten()
         .expect("the committed reservation");
     let again = recovered
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &session_run)
         .expect("a retried commit answers with the same session");
     assert_eq!(again.session(), session);
     assert_eq!(
@@ -1700,7 +1701,7 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     let (successor_run, successor) = admit_frozen(&cx, &root, &next_reservation, next_binding.run);
     let environment_run = admit_activation(&cx, &root, &next_reservation, run_id(75));
     let committed = next_reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &successor_run)
         .expect("the successor commits");
     assert_eq!(committed.session(), successor);
     let reader = read_journal(&cx, &root);
@@ -1775,7 +1776,7 @@ fn a_successor_preserves_a_live_holder_and_the_predecessor_session_contract() {
         admit_frozen(&cx, &root, &successor_reservation, binding.run);
     let environment_run = admit_activation(&cx, &root, &successor_reservation, run_id(84));
     successor_reservation
-        .commit(&cx, &root, &environment_run)
+        .commit(&cx, &root, &environment_run, &successor_session_run)
         .expect("successor commit");
 
     let reader = read_journal(&cx, &root);
@@ -1919,7 +1920,12 @@ fn every_activation_boundary_recovers_without_displacing_the_live_predecessor() 
             let ticket = Attachments::intend_guest_publication(run)?;
             let receipt = publication_for(&cx, &root, &reservation, run);
             Attachments::workspace_guest_published(run, &ticket, receipt)?;
-            reservation.commit(&cx, &root, run)?;
+            reservation.commit(
+                &cx,
+                &root,
+                run,
+                staged_run.as_ref().expect("owning successor"),
+            )?;
             Ok(())
         })();
         assert!(fired(), "fault {point:?}/{nth} must fire");
@@ -2343,4 +2349,300 @@ fn cancellation_waits_for_stopping_and_incomplete_runs_to_settle() {
     reservation
         .cancel(&cx, &root, Wait::FailFast)
         .expect("cancel after complete settlement");
+}
+
+#[test]
+fn a_reserved_successor_registers_real_detached_custody_under_its_private_slot() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let (_, predecessor, first, activation) =
+        activate(&cx, &root, &environment, run_id(140), run_id(141));
+    end_run(
+        &cx,
+        activation,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("successor reservation");
+    stage_successor(&cx, &root, &reservation, run_id(142));
+    let mut options = opts(run_id(142));
+    options.custody = Some(crate::supervise::LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .expect("custody fixture"),
+        placement: Placement::Detached,
+    });
+    let (session_run, session) = SessionRef::admit_reserved(
+        &cx,
+        &root,
+        &inv(workspace_entry(), "workspace"),
+        options,
+        &cleanup(&cx),
+        &mut adapter(),
+        &reservation,
+        Placement::Detached,
+    )
+    .expect("actual detached successor admission");
+    let metadata = run::metadata(&observe(&cx), &root, session_run.id());
+    let metadata = metadata.verified().expect("registered lifecycle");
+    assert_eq!(metadata.placement, "detached");
+    assert!(metadata.owner.is_some());
+    assert!(metadata.supervisor.is_some());
+    assert_eq!(metadata.sentinel_status, run::SentinelStatus::Live);
+    assert_eq!(
+        resolved(&read_journal(&cx, &root), &environment),
+        Some(first)
+    );
+    let activation = admit_activation(&cx, &root, &reservation, run_id(143));
+    assert!(
+        reservation
+            .commit(&cx, &root, &activation, &predecessor)
+            .is_err(),
+        "a different owning Run cannot stand in for the frozen successor"
+    );
+    reservation
+        .commit(&cx, &root, &activation, &session_run)
+        .expect("commit with owned slot");
+    assert_eq!(
+        resolved(&read_journal(&cx, &root), &environment),
+        Some(session)
+    );
+    end_run(
+        &cx,
+        activation,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    end_run(
+        &cx,
+        session_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    end_run(
+        &cx,
+        predecessor,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+}
+
+#[test]
+fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let (_, predecessor, first, activation) =
+        activate(&cx, &root, &environment, run_id(150), run_id(151));
+    end_run(
+        &cx,
+        activation,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reservation");
+    let (successor, _) = admit_staged(&cx, &root, &reservation, run_id(152));
+    let mut activation = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(153)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("successor Env admission advances transition fence");
+    let ticket =
+        Attachments::intend_guest_publication(&mut activation).expect("publication intent");
+    Attachments::guest_publication_unknown(&mut activation, &ticket, UnknownReason::Injected)
+        .expect("uncertain publication");
+    drop(activation); // crash before commit; the successor never becomes active
+    let fence = Fence {
+        resource: environment.clone(),
+        generation: first.environment_generation(),
+    };
+    let mut holder = Run::begin(
+        &cx,
+        &root,
+        &inv(task("predecessor-operation"), "predecessor-operation"),
+        opts(run_id(154)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("new predecessor operation");
+    Attachments::attach(&mut holder, &fence, AttachMode::Borrow, Wait::FailFast)
+        .expect("published predecessor remains usable after failed activation");
+    let remote = holder
+        .intend_remote(EffectSpec {
+            target: fence.clone(),
+            kind: crate::remote::KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Retain,
+            required: false,
+        })
+        .expect("borrowed remote intent uses the predecessor's applied fence");
+    holder
+        .applied(&remote, serde_json::Value::Null)
+        .expect("remote callback");
+    assert_eq!(
+        resolved(&read_journal(&cx, &root), &environment),
+        Some(first)
+    );
+    // Borrowing authority never authorizes an environment transition, nor
+    // the unpublished E. A distinct holder tests each refusal without poison reuse.
+    for (id, mode, generation) in [
+        (
+            155,
+            AttachMode::Exclusive {
+                stop_on_release: true,
+            },
+            fence.generation,
+        ),
+        (156, AttachMode::Borrow, reservation.generation()),
+    ] {
+        let mut other = Run::begin(
+            &cx,
+            &root,
+            &inv(task(&format!("other-{id}")), "other"),
+            opts(run_id(id)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("other holder");
+        assert!(Attachments::attach(
+            &mut other,
+            &Fence {
+                resource: environment.clone(),
+                generation
+            },
+            mode,
+            Wait::FailFast
+        )
+        .is_err());
+    }
+    drop(successor);
+    drop(predecessor);
+}
+
+/// The staged owner is borrowed through commit, so its process cannot die
+/// independently of that commit. Kill it at the former probe/transaction gap.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn successor_death_at_the_commit_boundary_cannot_publish_a_dead_session() {
+    const CHILD_HOME: &str = "EFFIGY_WORKSPACE_COMMIT_DEATH_HOME";
+    let cx = context();
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        let root = StateRoot::effects(&cx, std::path::Path::new(&home)).expect("child state root");
+        let reservation =
+            WorkspaceActivationReservation::reserve(&cx, &root, &environment(), Wait::FailFast)
+                .expect("child reservation");
+        let (session_run, _) = admit_staged(&cx, &root, &reservation, run_id(162));
+        let activation = admit_activation(&cx, &root, &reservation, run_id(163));
+        crate::fault::arm_point(
+            crate::fault::Point::ActivationCommitBefore,
+            crate::fault::Fault::Kill,
+        );
+        let _ = reservation.commit(&cx, &root, &activation, &session_run);
+        panic!("the owner must die before committing");
+    }
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let (_, predecessor, first, activation) =
+        activate(&cx, &root, &environment, run_id(160), run_id(161));
+    end_run(
+        &cx,
+        activation,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", "workspace_session::tests::successor_death_at_the_commit_boundary_cannot_publish_a_dead_session", "--nocapture"])
+        .env(CHILD_HOME, fixture.path())
+        .status().expect("re-exec owner");
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(status.signal(), Some(libc::SIGKILL)); // status() reaps this exact child
+    let reader = read_journal(&cx, &root);
+    assert_eq!(resolved(&reader, &environment), Some(first.clone()));
+    assert_eq!(resource_row(&reader, &workspace_entry()).0, 1);
+    assert_eq!(attachment_row(&reader, &environment, run_id(162)), None);
+    assert!(matches!(
+        reader.run_owner_state(&observe(&cx), &root, &run_id(162)),
+        Observed::Verified(OwnerState::Interrupted, _)
+    ));
+    let reservation = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("recover dead activation");
+    // Both successor owners died before commit; the predecessor still works.
+    let mut holder = Run::begin(
+        &cx,
+        &root,
+        &inv(task("after-owner-death"), "after-owner-death"),
+        opts(run_id(164)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("predecessor operation");
+    Attachments::attach(
+        &mut holder,
+        &Fence {
+            resource: environment.clone(),
+            generation: first.environment_generation(),
+        },
+        AttachMode::Borrow,
+        Wait::FailFast,
+    )
+    .expect("predecessor works after successor death");
+    for (owner, run) in [(environment, run_id(163)), (workspace_entry(), run_id(162))] {
+        run::settle_interrupted(
+            &cx,
+            &root,
+            &owner,
+            run,
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("recover exact dead run");
+    }
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("release dead reservation");
+    assert_eq!(stop_requests(&cx, &root, first.run()), 0);
+    end_run(
+        &cx,
+        holder,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    end_run(
+        &cx,
+        predecessor,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
 }

@@ -761,6 +761,22 @@ impl<'a> Run<'a> {
         Ok(self.guard.covers(&gate))
     }
 
+    /// Borrowing this exact owner keeps its Task-ranked liveness slot held
+    /// through activation commit. A cross-process probe cannot provide this
+    /// guarantee: the probed process may die before the transaction starts.
+    pub(crate) fn owns_workspace_session(
+        &self,
+        root: &StateRoot,
+        binding: &crate::workspace_session::SessionBinding,
+    ) -> Result<bool, RunError> {
+        self.can_effect()?;
+        Ok(self.root.path() == root.path()
+            && self.id == binding.run
+            && self.owner.resource == binding.owner
+            && self.owner.generation == binding.generation
+            && self.holds_owner_gate()?)
+    }
+
     pub(crate) fn capture_log(
         &self,
         sequence: i64,
@@ -895,7 +911,7 @@ impl<'a> Run<'a> {
                 |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
                     if spec.target != self.owner {
-                        journal::check_fence(txn.conn(), &spec.target)?;
+                        journal::check_intent_target(txn.conn(), self.id, &spec)?;
                     }
                     journal::insert_effect(txn, self.id, &spec)
                 },

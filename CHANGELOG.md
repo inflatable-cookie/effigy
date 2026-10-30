@@ -620,8 +620,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
-- Keep the existing workspace session and its holders authoritative until a
-  reserved successor activation commits its session mapping atomically.
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication.
 
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target

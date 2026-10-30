@@ -2626,14 +2626,26 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   engine's typed handoff. The host never fills the session into a generic receipt
   after publication.
   `WorkspaceActivationReservation::commit` checks the frozen admitted session,
-  exact Env run, its ability to act and all required effects. One transaction
-  compares the Task's preceding generation, advances it to S, and writes active(E),
+  exact Env run, its ability to act and all required effects. Commit takes the
+  owning successor `Run` by reference, retaining its Task-ranked private slot
+  throughout the transaction; a read-only liveness probe is insufficient. The
+  session owner must perform the commit with that held handle, and
+  `EnvRun::commit_activation(reservation, session_run)` carries it into the kernel.
+  Detached custody registration authenticates this same run-specific owner slot.
+  One transaction compares the Task's preceding generation, advances it to S,
+  and writes active(E),
   the session mapping and its Borrow attachment. No Task gate wait happens under
   Env. Private liveness identities remain durable across later mapping changes;
   recovery takes the exact dead run's slot and never substitutes the shared Task
   gate. Ordinary admission refuses reserved, live or unsettled private sessions,
   including checkout-equivalent owner spellings. A failed or crashed pre-commit
-  activation leaves the predecessor authoritative. Immutable orphan publication
+  activation leaves the predecessor authoritative: new Borrow attachments and
+  their remote intents may still use its exact mapped environment generation
+  while that generation remains `last_applied` and the state is active or pending.
+  Exclusive attachment and transition authority retain the current generation
+  check. The predecessor exception ends when the atomic mapping changes or the
+  applied environment stops; it never authorizes the unpublished successor.
+  Immutable orphan publication
   is retained without replay; recovery settles the failed successor and cancels
   its reservation, then rolls forward. Both reserve and recover prefer the oldest
   unfinished reservation, including a claimed fence after a crash; a later empty

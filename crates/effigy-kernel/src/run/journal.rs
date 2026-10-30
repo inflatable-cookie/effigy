@@ -99,6 +99,39 @@ pub(super) fn check_run_target(
     }
 }
 
+/// New remote work may use the still-published predecessor's exact Borrow
+/// attachment. Generic targets and environment mutations keep strict fencing.
+pub(super) fn check_intent_target(
+    conn: &Connection,
+    id: RunId,
+    spec: &EffectSpec,
+) -> Result<(), RunError> {
+    match check_fence(conn, &spec.target) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let borrowing: bool = if spec.kind == crate::remote::KIND {
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM attachments WHERE run_id=?1 AND environment=?2 \
+                     AND env_generation=?3 AND mode='\"Borrow\"' AND state='attached')",
+                    params![
+                        id.to_string(),
+                        spec.target.resource.name().to_string(),
+                        spec.target.generation.get() as i64
+                    ],
+                    |row| row.get(0),
+                )?
+            } else {
+                false
+            };
+            if borrowing && crate::workspace_session::preserved_environment(conn, &spec.target)? {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
 /// A callback's target check. A remote workload is bound to its environment
 /// at intent; afterwards its acknowledgement and completion check that the
 /// environment still exists, not its transition generation. Every bring-up

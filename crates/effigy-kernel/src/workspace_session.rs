@@ -44,7 +44,7 @@ mod tests;
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
-use crate::gate::{Gate, OwnerState, Wait};
+use crate::gate::{Gate, Wait};
 use crate::id::{Generation, ResolvedInvocation, ResourceId, ResourceKind, RunId};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::StateRoot;
@@ -1030,40 +1030,29 @@ fn run_needs_settlement(
     }
 }
 
-/// Whether a staged binding names a session run that is *live*: open at its
-/// staged generation and holding its own owner gate. An interrupted run is not
-/// live — its gate is free — so a successor settles it (K5) and stages its own
-/// session, which is the recovery path. A liveness this kernel cannot establish
-/// stays `Unknown`, and `Unknown` never displaces anything (R3).
-fn binding_is_live(
-    cx: &ObserveContext,
-    root: &StateRoot,
-    reader: &StoreReader,
-    binding: &SessionBinding,
-) -> Observed<bool> {
-    match run_generation(reader.conn(), binding.run) {
-        Ok(Some(generation)) if generation == binding.generation => {}
-        Ok(_) => return Observed::Verified(false, activation_evidence()),
-        Err(error) => return Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
+/// The published predecessor's applied fence remains usable while an additive
+/// successor activation is pending or has failed. This grants only borrowing,
+/// never transition authority, and stops matching at the atomic mapping commit.
+pub(crate) fn preserved_environment(
+    conn: &rusqlite::Connection,
+    fence: &Fence,
+) -> Result<bool, RunError> {
+    let Some(session) = live_session_row(conn, &fence.resource)? else {
+        return Ok(false);
+    };
+    if session.environment_generation != fence.generation {
+        return Ok(false);
     }
-    match reader.run_owner_state(cx, root, &binding.run) {
-        Observed::Verified(OwnerState::Held, _) => Observed::Verified(true, activation_evidence()),
-        Observed::Verified(OwnerState::Interrupted, _)
-        | Observed::Verified(OwnerState::Closed, _)
-        | Observed::Absent(_) => Observed::Verified(false, activation_evidence()),
-        Observed::Unknown(reason) => Observed::Unknown(reason),
-    }
-}
-
-fn run_generation(conn: &rusqlite::Connection, run: RunId) -> Result<Option<Generation>, RunError> {
-    let generation: Option<i64> = conn
+    Ok(conn
         .query_row(
-            "SELECT generation FROM runs WHERE run_id=?1",
-            [run.to_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(generation.map(|generation| Generation::new(generation as u64)))
+            "SELECT state IN ('active','pending') AND last_applied=?2 FROM resources WHERE name=?1",
+            params![
+                fence.resource.name().to_string(),
+                fence.generation.get().to_string()
+            ],
+            |row| row.get::<_, Option<bool>>(0),
+        )?
+        .unwrap_or(false))
 }
 
 /// A reserved session uses a private liveness slot, not another Task owner.
@@ -1704,15 +1693,16 @@ impl WorkspaceActivationReservation {
     ///
     /// A commit that has already happened for this reservation answers with the
     /// same session, so a retry after a lost answer is not a second commit. A
-    /// crash before it leaves the reservation durable and the workspace
-    /// unavailable: no mapping and no `active` state exist, so nothing can
-    /// resolve the uncommitted session, and the next activation publishes a
-    /// complete generation instead of replaying guest I/O.
+    /// borrowed successor Run must stay in this caller through the commit,
+    /// retaining its Task slot from admission before Env was acquired. A
+    /// crash before commit leaves the predecessor authoritative and the
+    /// reservation recoverable; the successor is never advertised halfway.
     pub fn commit(
         &self,
         cx: &EffectContext,
         root: &StateRoot,
         environment_run: &Run<'_>,
+        session_run: &Run<'_>,
     ) -> Result<CommittedActivation, RunError> {
         let fence = environment_run.fence().clone();
         if fence.resource != self.record.environment {
@@ -1723,7 +1713,10 @@ impl WorkspaceActivationReservation {
         }
         // The plan is the frozen staging plus the environment run that claims
         // it, validated by reading everything the commit will use: the frozen
-        // successor identity, the admitted run, and that run's liveness.
+        // successor identity and its owning Run. The borrowed Run retains its
+        // private Task slot across this entire commit; death of its process
+        // necessarily aborts this transaction too. No Task gate is probed or
+        // acquired while the environment run holds Env.
         let plan = {
             let observe = activation_observe(cx)?;
             let reader = activation_reader(&observe, root)?;
@@ -1740,16 +1733,8 @@ impl WorkspaceActivationReservation {
             }
             let plan = activation_plan(reader.conn(), &stored)?
                 .ok_or_else(|| RunError::from(ActivationRefusal::NotStaged))?;
-            match binding_is_live(&observe, root, &reader, &plan.session) {
-                Observed::Verified(true, _) => {}
-                Observed::Absent(_) | Observed::Verified(false, _) => {
-                    return Err(RunError::from(ActivationRefusal::SessionGone))
-                }
-                Observed::Unknown(reason) => {
-                    return Err(RunError::unavailable(format!(
-                        "the staged workspace session could not be observed: {reason}"
-                    )))
-                }
+            if !session_run.owns_workspace_session(root, &plan.session)? {
+                return Err(ActivationRefusal::SessionGone.into());
             }
             plan
         };
