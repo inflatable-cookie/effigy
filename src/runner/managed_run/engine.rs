@@ -24,11 +24,16 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
+use effigy_tui::waits::{should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
 
 use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
+use crate::runner::host_process::{
+    attributed_environment_failure, begin_environment_phase, HostWaitGraph,
+};
+use crate::runner::managed_wait::WaitLedger;
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
 /// TERM to KILL for a workload's group.
@@ -194,6 +199,9 @@ pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) scratch: bool,
     /// Secret values this run's output must never show (K12).
     pub(in crate::runner) secrets: Vec<String>,
+    /// The resolved ordering graph of the run's workloads: each entry's own
+    /// wait is derived from it, never from the tab bar (effigy#458).
+    pub(in crate::runner) workload_order: SessionOrder,
 }
 
 struct Workload {
@@ -294,9 +302,27 @@ pub(in crate::runner) fn own<T>(
         run.id(),
         std::process::id()
     );
+    let repo_root = plan.target.root.clone();
+    let wait_ledger = WaitLedger::task(&repo_root, &plan.task, &plan.profile);
+    wait_ledger.clear();
+    let environment_name = plan
+        .environment
+        .as_ref()
+        .map(|environment| environment.name.clone());
+    let now = Instant::now();
     let mut owner = Owner {
         session,
         workloads: Vec::new(),
+        waits: EntryWaits::new(
+            plan.workload_order.clone(),
+            environment_name.as_deref(),
+            now,
+        ),
+        wait_ledger,
+        published: BTreeMap::new(),
+        published_at: BTreeMap::new(),
+        probe_since: None,
+        host_waits: None,
         holds_environment: plan.environment.is_some(),
         source_manifest: plan.source_manifest.clone(),
         container_repo_root: plan.container_repo_root.clone(),
@@ -332,6 +358,19 @@ struct Owner {
     lost_while_blocked: bool,
     /// `health_wait` routes still to answer once every workload has started.
     health: Option<RouteHealth>,
+    /// Every workload's own wait, and the record it is published in.
+    waits: EntryWaits,
+    wait_ledger: WaitLedger,
+    /// The last state published per entry, and when, so the wire and the
+    /// record carry transitions and live elapsed time without repeating
+    /// themselves every turn.
+    published: BTreeMap<String, EntryState>,
+    published_at: BTreeMap<String, Instant>,
+    /// When the run's own readiness probe wait started.
+    probe_since: Option<Instant>,
+    /// The environment's host processes while the run's own phase owns them:
+    /// they wait for the environment before the planner can start them.
+    host_waits: Option<crate::runner::host_process::HostWaitGraph>,
 }
 
 impl Owner {
@@ -382,12 +421,93 @@ impl Owner {
         if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
             return Err(End::Stopped(self.cause(cause)));
         }
+        // Every workload's wait is named before anything starts, so a front
+        // end never has to guess from the tab order (effigy#458).
+        self.publish_waits(Instant::now());
+        // The environment's host processes are managed entries too: they wait
+        // for the phase before the planner can start them, so the run's owner
+        // publishes them now, while the environment is still coming up. Their
+        // planner takes the same records over once the phase is ready.
         if let Some(environment) = &plan.environment {
-            let mut stop = |run: &mut TaskRun| pending_stop(run, self.watch.as_ref());
-            match environment::bring_up(run, environment, &plan.token, &mut stop) {
-                Ok(()) => self.health = Some(RouteHealth::new(environment)),
+            self.wait_ledger
+                .publish_environment_identity(&environment.name);
+            // Every named environment — with or without host processes — begins
+            // its phase settled and count-free here, before this run polls it,
+            // so an interrupted prior run's container counts never reach a
+            // workload's wait (effigy#458).
+            begin_environment_phase(&environment.repo, &environment.name);
+            if matches!(environment.binding, Binding::Named { .. }) {
+                if let Ok(policy) = settlement::policy(&environment.repo, &environment.binding) {
+                    if !policy.host_processes.is_empty() {
+                        self.host_waits = Some(HostWaitGraph::for_environment_phase(
+                            &environment.repo,
+                            &policy,
+                            Instant::now(),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(environment) = &plan.environment {
+            // The watch is held locally while the phase runs: the stop probe
+            // and the phase's own progress both borrow this owner.
+            let watch = self.watch.take();
+            let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
+            let mut progress = |counts: Option<(u32, u32)>| {
+                if let Some((healthy, total)) = counts {
+                    self.waits.environment_progress(healthy, total);
+                }
+                let now = Instant::now();
+                self.waits.refresh(now);
+                self.publish_waits(now);
+                if let Some(hosts) = self.host_waits.as_mut() {
+                    match counts {
+                        Some((healthy, total)) => {
+                            hosts.environment_progress(healthy, total, now);
+                        }
+                        None => hosts.publish_all(now),
+                    }
+                }
+            };
+            let brought_up =
+                environment::bring_up(run, environment, &plan.token, &mut stop, &mut progress);
+            self.watch = watch;
+            match brought_up {
+                Ok(()) => {
+                    let now = Instant::now();
+                    self.waits.environment_ready(now);
+                    self.waits.refresh(now);
+                    self.publish_waits(now);
+                    if let Some(hosts) = self.host_waits.as_mut() {
+                        hosts.environment_ready(now);
+                    }
+                    self.health = Some(RouteHealth::new(environment));
+                }
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
-                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
+                Err(NotReady::Failed(reason)) => {
+                    let now = Instant::now();
+                    self.waits.environment_failed(&reason, now);
+                    self.publish_waits(now);
+                    // A host planner that took the scope over published the
+                    // failing entry and its report itself: its records stay,
+                    // and the run names that failure instead of the generic
+                    // `up` exit (effigy#458).
+                    let reason = match self.host_waits.as_mut() {
+                        Some(hosts) if !hosts.is_visible() => attributed_environment_failure(
+                            &reason,
+                            &crate::runner::managed_wait::WaitLedger::environment(
+                                &environment.repo,
+                                &environment.name,
+                            ),
+                        ),
+                        Some(hosts) => {
+                            hosts.environment_failed_if_owned(&reason, now);
+                            reason
+                        }
+                        None => reason,
+                    };
+                    return Err(End::StartFailed(reason, None));
+                }
             }
         }
         self.lost_while_blocked |= self.watch.as_ref().is_some_and(OwnerWatch::lost);
@@ -440,11 +560,35 @@ impl Owner {
                 return End::StartFailed(error.to_string(), None);
             }
             while next < self.workloads.len() && Instant::now() >= next_at {
+                let name = self.workloads[next].spec.name.clone();
+                // The delay this entry declared has elapsed: it was the only
+                // thing this entry itself still waited for.
+                self.waits.delay_elapsed(&name, Instant::now());
+                // A dependent never starts while the graph says it waits: its
+                // prerequisite failed or has not started (effigy#458).
+                if !self.waits.may_start(&name) {
+                    if let Some(state) = self.waits.state(&name, Instant::now()) {
+                        if matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
+                            // Nothing else can start this entry: the run ends
+                            // with the attribution rather than waiting for a
+                            // process that will never exist.
+                            return End::StartFailed(state.status_line(), None);
+                        }
+                    }
+                    break;
+                }
                 if let Err(error) = self.spawn(run, next) {
                     // A setup is a blocking phase too: a stop during it is a
                     // stop, not a failed start.
+                    let now = Instant::now();
+                    self.waits.failed(&name, error.to_string(), now);
+                    self.publish_waits(now);
                     return start_failure_end(error, self.lost_while_blocked);
                 }
+                let now = Instant::now();
+                self.waits.started(&name, now);
+                self.waits.refresh(now);
+                self.publish_waits(now);
                 next += 1;
                 next_at = Instant::now()
                     + Duration::from_millis(
@@ -453,6 +597,16 @@ impl Owner {
                             .map_or(0, |workload| workload.spec.start_after_ms),
                     );
             }
+            // The accepted legacy delay names what remains of itself, never
+            // another entry's label.
+            let now = Instant::now();
+            if next < self.workloads.len() && now < next_at {
+                let name = self.workloads[next].spec.name.clone();
+                // Restated every turn: the wait says what remains of it.
+                self.waits.delaying(&name, next_at - now, now);
+            }
+            self.waits.refresh(now);
+            self.publish_waits(now);
             if !active && next == self.workloads.len() {
                 if let Err(error) = run.run_mut().and_then(|mut run| {
                     run.advance(effigy_kernel::run::Phase::Active)
@@ -469,10 +623,18 @@ impl Owner {
                 active = true;
             }
             if active {
-                match self.health.as_mut().map(RouteHealth::poll) {
-                    Some(Health::Ready) => self.health = None,
+                let health = self.health.as_mut().map(RouteHealth::poll);
+                match health {
+                    Some(Health::Ready) => {
+                        self.health = None;
+                        self.publish_probe_wait(None, Instant::now());
+                    }
                     Some(Health::Failed(reason)) => return End::StartFailed(reason, None),
-                    Some(Health::Pending) | None => {}
+                    Some(Health::Pending) => {
+                        let probe = self.health.as_ref().and_then(RouteHealth::probe_label);
+                        self.publish_probe_wait(probe, Instant::now());
+                    }
+                    None => {}
                 }
             }
             let routed = task_engine::routed_signals();
@@ -726,7 +888,84 @@ impl Owner {
             process: name.clone(),
             code: exit.code,
         });
+        let now = Instant::now();
+        self.waits.exited(&name, exit.code, now);
+        self.publish_waits(now);
         shutdown.then_some(End::ShutdownOnExit(name))
+    }
+
+    /// Publishes every entry's wait that changed, or whose elapsed time is
+    /// due for a refresh, to the run's clients and its status record.
+    fn publish_waits(&mut self, now: Instant) {
+        let states = self.waits.states(now);
+        for state in states {
+            self.publish_state(&state, now);
+        }
+    }
+
+    /// The run's own readiness probe, attributed to its own tab: it names the
+    /// request being awaited and the elapsed wait, and nothing else.
+    fn publish_probe_wait(&mut self, probe: Option<String>, now: Instant) {
+        let entry = super::OUTPUT_LOG;
+        match probe {
+            Some(probe) => {
+                let since = *self.probe_since.get_or_insert(now);
+                let state = EntryState {
+                    entry: entry.to_owned(),
+                    phase: EntryPhase::Starting,
+                    waiting_on: Some(WaitOn::Probe { probe }),
+                    not_started_because: None,
+                    detail: None,
+                    elapsed_ms: u64::try_from(now.duration_since(since).as_millis())
+                        .unwrap_or(u64::MAX),
+                };
+                self.publish_state(&state, now);
+            }
+            None => {
+                self.probe_since = None;
+                if self.published.remove(entry).is_some() {
+                    self.wait_ledger.settle(entry);
+                    self.published_at.remove(entry);
+                    self.event(&EngineEvent::Entry {
+                        state: EntryState {
+                            entry: entry.to_owned(),
+                            phase: EntryPhase::Ready,
+                            waiting_on: None,
+                            not_started_because: None,
+                            detail: None,
+                            elapsed_ms: 0,
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    fn publish_state(&mut self, state: &EntryState, now: Instant) {
+        // A settled entry only ages after its transition, so it is written
+        // once: comparing the meaning, not the elapsed time, keeps the owner
+        // loop from rewriting and re-emitting every 20 ms (effigy#458).
+        let due = should_publish(
+            self.published.get(&state.entry),
+            self.published_at.get(&state.entry).copied(),
+            state,
+            now,
+        );
+        if !due {
+            return;
+        }
+        if state.holds_a_wait() {
+            self.wait_ledger.publish(state);
+        } else {
+            self.wait_ledger.settle(&state.entry);
+        }
+        // Every change reaches the clients, so their view never keeps a wait
+        // the entry has left behind.
+        self.event(&EngineEvent::Entry {
+            state: state.clone(),
+        });
+        self.published.insert(state.entry.clone(), state.clone());
+        self.published_at.insert(state.entry.clone(), now);
     }
 
     fn frame(&mut self, run: &mut TaskRun, frame: ClientFrame) {
@@ -798,6 +1037,19 @@ impl Owner {
         end: End,
     ) -> Result<Option<String>, RunnerError> {
         self.event(&EngineEvent::Stopping);
+        // A wait that ends with the run is not a live wait: drop it, and keep
+        // the entries that failed or never started, which are the run's
+        // terminal, attributed result (effigy#458).
+        let now = Instant::now();
+        for state in self.waits.states(now) {
+            if !matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
+                self.wait_ledger.settle(&state.entry);
+            }
+        }
+        self.wait_ledger.settle(super::OUTPUT_LOG);
+        if let Some(hosts) = self.host_waits.as_mut() {
+            hosts.settle_all(now);
+        }
         let non_zero = self
             .workloads
             .iter()

@@ -11,6 +11,7 @@ mod diagnostics;
 mod events;
 mod lifecycle;
 mod render;
+pub use render::{render_snapshot_frame, FrameSnapshot};
 mod runtime_loop;
 mod setup;
 mod state;
@@ -42,6 +43,12 @@ pub struct MultiProcessTuiOutcome {
 /// the workloads of a run another process supervises. The TUI reads events
 /// and sends input and stop requests; it never changes what runs.
 pub trait SessionProcesses {
+    /// Each entry's own wait, when another process supervises the entries.
+    /// A session that supervises its own processes leaves this empty: it has
+    /// no resolved ordering graph to derive a wait from.
+    fn entry_waits(&self) -> Vec<crate::waits::EntryState> {
+        Vec::new()
+    }
     fn close_requested(&self) -> bool {
         false
     }

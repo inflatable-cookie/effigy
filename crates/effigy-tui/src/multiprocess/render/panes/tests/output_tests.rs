@@ -69,8 +69,13 @@ fn output_lines_skip_runtime_meta_for_shell_processes() {
 
 #[test]
 fn waiting_for_output_lines_uses_spinner_frame_and_message() {
-    let lines =
-        waiting_for_output_lines(3, Duration::from_secs(1), 0, ProcessStartupState::Running);
+    let lines = waiting_for_output_lines(
+        3,
+        Duration::from_secs(1),
+        0,
+        ProcessStartupState::Running,
+        None,
+    );
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0].spans[0].content.as_ref(), "started: ");
     assert_eq!(lines[1].spans[0].content.as_ref(), "⠸");

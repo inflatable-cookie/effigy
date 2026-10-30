@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 
 use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::state::ProcessStartupState;
+use crate::waits::{EntryPhase, EntryState};
 
 use super::super::super::terminal_text::{ansi_line, runtime_meta_line};
 
@@ -27,7 +28,20 @@ pub(super) fn waiting_for_output_lines(
     active_elapsed: Duration,
     active_restart_count: usize,
     startup_state: ProcessStartupState,
+    entry_wait: Option<&EntryState>,
 ) -> Vec<Line<'static>> {
+    // A managed entry has its own authoritative state: the wait names exactly
+    // what is happening, so the pane shows it without a generic spinner and
+    // never borrows another entry's label (effigy#458, Q-017).
+    if let Some(entry) = entry_wait.filter(|entry| names_its_wait(entry)) {
+        return vec![
+            entry_meta_line(entry),
+            Line::from(Span::styled(
+                entry.status_line(),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+    }
     let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let spinner = spinner_frames[spinner_tick % spinner_frames.len()];
     vec![
@@ -40,6 +54,28 @@ pub(super) fn waiting_for_output_lines(
             ),
         ]),
     ]
+}
+
+/// Whether this entry's own state says more than the generic spinner would:
+/// it has not started, or it is starting against a named readiness probe.
+fn names_its_wait(entry: &EntryState) -> bool {
+    matches!(
+        entry.phase,
+        EntryPhase::Waiting | EntryPhase::NotStarted | EntryPhase::Failed
+    ) || (entry.phase == EntryPhase::Starting && entry.waiting_on.is_some())
+}
+
+fn entry_meta_line(entry: &EntryState) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("startup: ", Style::default().fg(Color::LightBlue)),
+        Span::styled(
+            entry.phase.as_str().replace('_', " "),
+            match entry.phase {
+                EntryPhase::NotStarted | EntryPhase::Failed => Style::default().fg(Color::Red),
+                _ => Style::default().fg(Color::DarkGray),
+            },
+        ),
+    ])
 }
 
 fn startup_meta_line(

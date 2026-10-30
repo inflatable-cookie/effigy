@@ -128,10 +128,10 @@ fn same_shared_identity(
 
 /// One shared data command, resolved but not yet run.
 ///
-/// `command` is the in-container argv. A credential assignment in the plan's
-/// `env` prefix becomes a named `compose exec -e NAME`, with the value carried
-/// separately by the private credential transport, so the value never appears
-/// in this plan's Composes command line or in a report.
+/// `command` is the in-container argv. The plan's credential names become a
+/// named `compose exec -e NAME`, with the values carried separately by the
+/// private credential transport, so no value appears in this plan, the Compose
+/// command line, a report or a diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct SharedDataExecPlan {
     pub service: String,
@@ -145,6 +145,7 @@ pub(in crate::runner) fn plan_shared_data_exec(
     binding: &SharedServiceBinding,
     service: &str,
     command: &[String],
+    credential_env: &BTreeMap<String, String>,
     stdin_file: Option<&Path>,
 ) -> Result<SharedDataExecPlan, RunnerError> {
     if service != binding.service_name {
@@ -153,58 +154,40 @@ pub(in crate::runner) fn plan_shared_data_exec(
             binding.service_name
         )));
     }
-    let (env, command) = split_command_env(command)?;
+    for name in credential_env.keys() {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return Err(RunnerError::task_invocation(format!(
+                "shared {service} data command declares `{name}`, which is not a portable environment name",
+                service = binding.service_name
+            )));
+        }
+    }
     Ok(SharedDataExecPlan {
         service: binding.service_name.clone(),
-        command,
-        env,
+        command: command.to_vec(),
+        env: credential_env.clone(),
         stdin_file: stdin_file.map(Path::to_path_buf),
     })
-}
-
-/// Split a leading `env NAME=value ...` prefix from the in-container command.
-fn split_command_env(
-    command: &[String],
-) -> Result<(BTreeMap<String, String>, Vec<String>), RunnerError> {
-    if command.first().map(String::as_str) != Some("env") {
-        return Ok((BTreeMap::new(), command.to_vec()));
-    }
-    let mut env = BTreeMap::new();
-    let mut index = 1;
-    while let Some(entry) = command.get(index) {
-        let Some((name, value)) = entry.split_once('=') else {
-            break;
-        };
-        let valid = !name.is_empty()
-            && name
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || character == '_');
-        if !valid {
-            break;
-        }
-        env.insert(name.to_owned(), value.to_owned());
-        index += 1;
-    }
-    if env.is_empty() {
-        return Ok((BTreeMap::new(), command.to_vec()));
-    }
-    let argv = command[index..].to_vec();
-    if argv.is_empty() {
-        return Err(RunnerError::task_invocation(
-            "shared data command has an `env` prefix but no command to run",
-        ));
-    }
-    Ok((env, argv))
 }
 
 /// Run one reset, import or logical dump in the declared shared project.
 pub(in crate::runner) fn run_shared_data_command(
     policy: &EffectiveContainerPolicy,
     binding: &SharedServiceBinding,
-    command: &[String],
+    command: &effigy_data::DatabaseCommandPlan,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    let plan = plan_shared_data_exec(binding, &binding.service_name, command, stdin_file)?;
+    let plan = plan_shared_data_exec(
+        binding,
+        &command.service,
+        &command.argv,
+        &command.credential_env,
+        stdin_file,
+    )?;
     verify_shared_data_target(policy, binding)?;
     let mut tail = vec!["exec".to_owned(), "-T".to_owned()];
     for name in plan.env.keys() {
@@ -819,14 +802,19 @@ shared = true
     fn plan_forwards_the_credential_by_name_only() {
         let binding = binding_fixture();
         let command = vec![
-            "env".to_owned(),
-            "MYSQL_PWD=secret".to_owned(),
             "mysql".to_owned(),
             "-uroot".to_owned(),
             "acowtancy".to_owned(),
         ];
-        let plan = plan_shared_data_exec(&binding, "mysql", &command, Some(Path::new("/seed.sql")))
-            .expect("plan");
+        let credential_env = BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())]);
+        let plan = plan_shared_data_exec(
+            &binding,
+            "mysql",
+            &command,
+            &credential_env,
+            Some(Path::new("/seed.sql")),
+        )
+        .expect("plan");
 
         assert_eq!(
             plan.env.get("MYSQL_PWD").map(String::as_str),
@@ -839,6 +827,27 @@ shared = true
             plan.command
         );
         assert_eq!(plan.stdin_file.as_deref(), Some(Path::new("/seed.sql")));
+    }
+
+    #[test]
+    fn plan_refuses_an_unportable_credential_name() {
+        let binding = binding_fixture();
+        let credential_env = BTreeMap::from([("MYSQL PWD=1".to_owned(), "secret".to_owned())]);
+        let error = plan_shared_data_exec(
+            &binding,
+            "mysql",
+            &["mysql".to_owned()],
+            &credential_env,
+            None,
+        )
+        .expect_err("an unusable name must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("not a portable environment name"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("secret"), "{error}");
     }
 
     fn container(
@@ -1055,7 +1064,7 @@ shared = true
                 }],
                 false,
                 true,
-                |_, _, _, _| unreachable!("a shared target must not exec locally"),
+                |_, _, _| unreachable!("a shared target must not exec locally"),
                 |policy, binding, command, stdin_file| {
                     run_shared_data_command(policy, binding, command, stdin_file)
                 },
@@ -1701,14 +1710,18 @@ run = "true"
             &binding.render_digest,
             "Up 2 minutes",
         );
-        let command = vec![
-            "env".to_owned(),
-            "MYSQL_PWD=secret".to_owned(),
-            "mysql".to_owned(),
-            "-uroot".to_owned(),
-            "-e".to_owned(),
-            "DROP DATABASE IF EXISTS `acowtancy`; CREATE DATABASE `acowtancy`;".to_owned(),
-        ];
+        let command = effigy_data::DatabaseCommandPlan::new(
+            "mysql",
+            effigy_data::DatabaseServiceKind::MariaDb,
+            "acowtancy",
+            vec![
+                "mysql".to_owned(),
+                "-uroot".to_owned(),
+                "-e".to_owned(),
+                "DROP DATABASE IF EXISTS `acowtancy`; CREATE DATABASE `acowtancy`;".to_owned(),
+            ],
+        )
+        .credential("MYSQL_PWD", "secret");
         let handles = (0..4)
             .map(|_| {
                 let policy = stack.clone();
@@ -1764,7 +1777,7 @@ run = "true"
             }],
             false,
             true,
-            |_, _, _, _| unreachable!("a shared target must not exec locally"),
+            |_, _, _| unreachable!("a shared target must not exec locally"),
             |policy, binding, command, stdin_file| {
                 run_shared_data_command(policy, binding, command, stdin_file)
             },
@@ -1814,8 +1827,8 @@ database = "acowtancy"
             }],
             false,
             true,
-            |_, _, service, _| {
-                assert_eq!(service, Some("mysql"));
+            |_, _, plan| {
+                assert_eq!(plan.service, "mysql");
                 Ok(Output {
                     status: std::os::unix::process::ExitStatusExt::from_raw(0),
                     stdout: b"local-body\n".to_vec(),

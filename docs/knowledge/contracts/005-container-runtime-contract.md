@@ -1256,8 +1256,9 @@ before it runs — on the host for a host backend, and through `colima ssh` insi
 the VM for the VM-hosted backend, the same transport managed task secrets use.
 The file is 0600 inside a 0700 directory, created exclusively, never rewritten
 and removed when the call returns, so concurrent data commands never share a
-credential path. No value reaches a command line, the Compose invocation, or a
-report.
+credential path. The checkout-local route uses the same transport, so an
+unshared target does not regress to an `env NAME=value` prefix in argv. No value
+reaches a command line, the Compose invocation, a report or a diagnostic.
 
 Every shared Compose call carries one absolute deadline: 15 minutes for a
 control call and one hour for a data exec. Expiry terminates the owned process

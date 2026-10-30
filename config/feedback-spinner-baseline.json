@@ -67,49 +67,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    253,
+    263,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    876,
+    886,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1050,
+    1060,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1053,
+    1063,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1055,
+    1065,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1057,
+    1067,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1074,
+    1084,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1076,
+    1086,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -118,162 +118,6 @@
     471,
     "let step = effigy_ui::steps::step(&progress);",
     38
-  ],
-  [
-    "src/runner/feedback.rs",
-    20,
-    "use effigy_ui::steps::{step, Step};",
-    24
-  ],
-  [
-    "src/runner/feedback.rs",
-    34,
-    "let step = step(label);",
-    16
-  ],
-  [
-    "src/runner/feedback.rs",
-    54,
-    "live(\"reading gateway state\", |step| {",
-    13
-  ],
-  [
-    "src/runner/feedback.rs",
-    66,
-    "live::<()>(\"starting the gateway\", |_| {",
-    13
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    27,
-    "use super::feedback::live;",
-    22
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    638,
-    "let result = live(\"starting the gateway\", |step| {",
-    22
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    664,
-    "let existing = live(\"reading gateway state\", |step| {",
-    20
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    679,
-    "live(\"replacing the running gateway\", |step| {",
-    13
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    688,
-    "live(\"starting the gateway\", |step| {",
-    5
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    715,
-    "let result = live(\"stopping the gateway\", |step| {",
-    22
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    734,
-    "let status = live(\"reading gateway state\", |step| {",
-    18
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    752,
-    "live(\"stopping the gateway\", |step| {",
-    9
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    782,
-    "live(\"removing the gateway record\", |step| {",
-    9
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    940,
-    "let result = live(\"reading gateway state\", |_| {",
-    22
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    967,
-    "let probed = live(\"reading gateway state\", |step| {",
-    18
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    1918,
-    "let step = effigy_ui::steps::step(label);",
-    34
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    1947,
-    "let (uid, home) = setup_step(\"verifying the operator account\", |_| {",
-    31
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    1958,
-    "return setup_step(\"removing the platform setup (DNS, trust, broker)\", |_| {",
-    28
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    1962,
-    "setup_step(\"migrating root-owned gateway state\", |_| {",
-    17
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    1968,
-    "setup_step(",
-    17
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2009,
-    "setup_step(\"stopping the gateway\", |_| operator::down(&config))?;",
-    17
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2018,
-    "setup_step(",
-    17
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2030,
-    "setup_step(",
-    13
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2039,
-    "return setup_step(\"removing the setup receipt\", |_| {",
-    24
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2045,
-    "setup_step(\"recording the setup receipt\", |_| {",
-    13
-  ],
-  [
-    "src/runner/gateway_command/mod.rs",
-    2092,
-    "let result = setup_step(\"starting the gateway\", |step| {",
-    22
   ],
   [
     "src/runner/task_engine/admission.rs",

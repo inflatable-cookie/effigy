@@ -50,6 +50,7 @@ impl SessionState {
             observed_non_zero: HashMap::new(),
             exit_states: HashMap::new(),
             startup_states,
+            entry_waits: HashMap::new(),
             startup_failed: false,
             pending_startup: 0,
             shutdown_on_exit_processes: HashSet::new(),

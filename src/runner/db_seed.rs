@@ -22,8 +22,8 @@ use effigy_state::artifact::{
 use serde_json::json;
 
 use crate::runner::container_command::{
-    resolve_shared_data_binding, run_container_exec_capture_with_options, run_shared_data_command,
-    verify_shared_data_target,
+    resolve_shared_data_binding, run_container_exec_capture_with_credentials,
+    run_shared_data_command, verify_shared_data_target,
 };
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
@@ -1021,7 +1021,7 @@ where
     SharedExec: Fn(
         &effigy_containers::EffectiveContainerPolicy,
         &effigy_containers::SharedServiceBinding,
-        &[String],
+        &effigy_data::DatabaseCommandPlan,
         Option<&Path>,
     ) -> Result<std::process::Output, RunnerError>,
 {
@@ -1029,7 +1029,7 @@ where
     run_builtin_db_seed_entries_with(repo_root, policy, &entries, shared_exec)
 }
 
-fn run_builtin_db_seed_entries_with<SharedExec>(
+pub(in crate::runner) fn run_builtin_db_seed_entries_with<SharedExec>(
     repo_root: &Path,
     policy: &effigy_containers::EffectiveContainerPolicy,
     entries: &[BuiltinDbSeedEntry],
@@ -1039,7 +1039,7 @@ where
     SharedExec: Fn(
         &effigy_containers::EffectiveContainerPolicy,
         &effigy_containers::SharedServiceBinding,
-        &[String],
+        &effigy_data::DatabaseCommandPlan,
         Option<&Path>,
     ) -> Result<std::process::Output, RunnerError>,
 {
@@ -1070,12 +1070,13 @@ where
             .as_ref()
             .expect("builtin seed plan should include reset command");
         let reset_output = match entry.shared.as_ref() {
-            Some(binding) => shared_exec(policy, binding, &reset_command.argv, None)?,
-            None => run_container_exec_capture_with_options(
+            Some(binding) => shared_exec(policy, binding, reset_command, None)?,
+            None => run_container_exec_capture_with_credentials(
                 repo_root,
                 Some(container_name),
                 Some(&reset_command.service),
                 &reset_command.argv,
+                &reset_command.credential_env,
                 None,
             )?,
         };
@@ -1095,12 +1096,13 @@ where
             .as_ref()
             .expect("builtin seed plan should include import command");
         let output = match entry.shared.as_ref() {
-            Some(binding) => shared_exec(policy, binding, &command.argv, command.stdin.as_deref())?,
-            None => run_container_exec_capture_with_options(
+            Some(binding) => shared_exec(policy, binding, command, command.stdin.as_deref())?,
+            None => run_container_exec_capture_with_credentials(
                 repo_root,
                 Some(container_name),
                 Some(&command.service),
                 &command.argv,
+                &command.credential_env,
                 command.stdin.as_deref(),
             )?,
         };

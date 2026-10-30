@@ -8,6 +8,7 @@ use ratatui::Frame;
 
 use super::super::state::ProcessStartupState;
 use crate::core::{InputMode, LogEntry, ProcessExitState};
+use crate::waits::EntryState;
 
 use super::header::panel_block;
 
@@ -43,6 +44,8 @@ pub(super) struct OutputPaneRenderArgs<'a> {
     pub(super) active_restart_count: usize,
     pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
     pub(super) shell_cursor: Option<(u16, u16)>,
+    /// The active entry's own wait, when the session publishes one.
+    pub(super) active_entry_wait: Option<&'a EntryState>,
 }
 
 pub(super) fn render_output_pane(
@@ -67,6 +70,7 @@ pub(super) fn render_output_pane(
         active_restart_count,
         exit_states,
         shell_cursor,
+        active_entry_wait,
     } = args;
     let active_is_shell = active_process == "shell";
     let output_height = area.height.saturating_sub(2) as usize;
@@ -91,6 +95,7 @@ pub(super) fn render_output_pane(
             active_elapsed,
             active_restart_count,
             active_startup_state,
+            active_entry_wait,
         ))
         .block(panel)
         .style(shell_inactive_style)

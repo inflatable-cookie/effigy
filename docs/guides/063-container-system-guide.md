@@ -1502,8 +1502,9 @@ sources before it runs: on the host for Docker, or inside the Colima VM through
 the same `colima ssh` transport that carries managed task secrets. Each exec
 creates its own file (0600 inside a 0700 directory, created exclusively and
 never rewritten) and removes it when the call returns, so concurrent data
-commands never share a credential path. No credential value appears in a
-command line or a report.
+commands never share a credential path. A checkout-local target uses the same
+name-only transport. No credential value appears in a command line, a report or
+a diagnostic.
 
 Each shared Compose call is bounded. A control call (an ensure's `compose up`)
 gets 15 minutes and a data exec (reset, import or dump) gets one hour; on

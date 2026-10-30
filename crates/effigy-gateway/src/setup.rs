@@ -318,16 +318,84 @@ pub fn command(
     }
     Ok(output)
 }
-fn command_outcome(
+/// Run one setup child and keep its exit code with its output. A caller that
+/// reads a structured report from a child which exits non-zero on refusal (the
+/// low-port bind probe) needs both; [`command`] keeps only the success bytes.
+pub fn command_outcome(
     run: &mut Run<'_>,
     cx: &EffectContext,
     argv: Vec<OsString>,
     terminal: bool,
 ) -> io::Result<(i32, Vec<u8>)> {
+    let mut child = spawn_setup_child(run, cx, argv, terminal)?;
+    let exit = match child.wait(cx.operation()) {
+        Observed::Verified(exit, _) => exit,
+        other => return Err(error(format!("setup command outcome unknown: {other:?}"))),
+    };
+    child.complete(run, exit).map_err(error)?;
+    Ok((exit.code, child.tail()))
+}
+
+/// Run the elevated setup child and report each platform phase it prints while
+/// it runs. The spawn, the outcome and the refusal are [`command`]'s; the
+/// phases are the child's own progress, never its result.
+pub fn command_reporting_platform_phases(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    argv: Vec<OsString>,
+    terminal: bool,
+    report: &mut dyn FnMut(&str),
+) -> io::Result<Vec<u8>> {
+    let mut child = spawn_setup_child(run, cx, argv, terminal)?;
+    // `wait` would only show this child's output after it exited, too late to
+    // name the phase the operator is waiting in. This loop reads the captured
+    // stdout between polls; the operation check, the child's deadline and the
+    // verdict it reports stay the kernel's own, so this path cannot drift from
+    // [`command_outcome`].
+    let mut stdout = Vec::new();
+    let observed = loop {
+        let polled = child.poll();
+        if matches!(polled, Observed::Verified(..)) {
+            break polled;
+        }
+        let (out, _err) = child.take_stream_output();
+        stdout.extend_from_slice(&out);
+        report_phase_lines(&mut stdout, report);
+        if child.expired() || cx.operation().check("process wait").is_err() {
+            break child.wait(cx.operation());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let exit = match observed {
+        Observed::Verified(exit, _) => exit,
+        other => return Err(error(format!("setup command outcome unknown: {other:?}"))),
+    };
+    child.complete(run, exit).map_err(error)?;
+    // Our own progress lines are not the child's diagnostic: a refusal still
+    // reads as what the child said.
+    let output = without_phase_lines(&child.tail());
+    if exit.code != 0 {
+        return Err(error(format!(
+            "gateway setup adapter failed (exit {}): {}",
+            exit.code,
+            String::from_utf8_lossy(&output)
+        )));
+    }
+    Ok(output)
+}
+
+/// One setup child with the adapter's own working directory, environment,
+/// grace and lifetime bounds.
+fn spawn_setup_child(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    argv: Vec<OsString>,
+    terminal: bool,
+) -> io::Result<effigy_kernel::custody::OwnedProcess> {
     let env: BTreeMap<_, _> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
-    let mut child = Custody::spawn(
+    Custody::spawn(
         run,
         ProcessSpec {
             argv,
@@ -344,14 +412,7 @@ fn command_outcome(
         },
         cx,
     )
-    .map_err(|e| error(format!("setup spawn: {e:?}")))?;
-    let exit = match child.wait(cx.operation()) {
-        Observed::Verified(exit, _) => exit,
-        other => return Err(error(format!("setup command outcome unknown: {other:?}"))),
-    };
-    child.complete(run, exit).map_err(error)?;
-    let output = child.tail();
-    Ok((exit.code, output))
+    .map_err(|e| error(format!("setup spawn: {e:?}")))
 }
 
 #[derive(Debug)]
@@ -434,8 +495,8 @@ fn platform_command(
     Ok(output)
 }
 
-/// The macOS platform action's root-owned directories, operator identity and
-/// helper image. Production names `/private/etc`, `/Library/LaunchDaemons`,
+/// The platform actions' root-owned directories, operator identity and helper
+/// image. Production names `/private/etc`, `/Library/LaunchDaemons`,
 /// `/Library` and the running executable; a fixture substitutes its own, so
 /// nothing here can reach the machine's resolver, launchd or interfaces.
 #[cfg(any(target_os = "macos", test))]
@@ -447,8 +508,80 @@ pub(crate) struct MacosPlatform<'a> {
     pub library: &'a DirFd,
 }
 
+/// The schema of one platform setup phase line. The elevated setup child writes
+/// these to its captured stdout while the platform adapter runs, so the
+/// operator command waiting on it can name the object being changed. It is an
+/// internal process channel, not an operator-facing artifact: the child's
+/// stdout is a pipe the parent owns, and a direct run prints none of these.
+pub const PLATFORM_PHASE_SCHEMA: &str = "effigy.gateway.setup_phase.v1";
+
+/// One phase line: the schema marker and the phase itself.
+pub fn platform_phase_line(phase: &str) -> String {
+    serde_json::json!({
+        "schema": PLATFORM_PHASE_SCHEMA,
+        "phase": phase,
+    })
+    .to_string()
+}
+
+/// The phase a line reports, when it is one of ours. Any other line the child
+/// printed for its own reasons is not a phase and never reaches the operator's
+/// step.
+pub fn platform_phase_from_line(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let object = value.as_object()?;
+    if object.len() != 2 || object.get("schema")?.as_str()? != PLATFORM_PHASE_SCHEMA {
+        return None;
+    }
+    object.get("phase")?.as_str().map(str::to_owned)
+}
+
+/// Write one phase line for the command waiting on this child. Only the
+/// elevated child does this: its stdout is the captured pipe the operator
+/// command reads, so the line never reaches a terminal, a pipe or a JSON
+/// envelope.
+pub fn print_platform_phase(phase: &str) {
+    println!("{}", platform_phase_line(phase));
+}
+
+/// Longest phase line the parent keeps while waiting for its newline.
+const MAX_PHASE_LINE: usize = 8 << 10;
+
+/// Report every complete phase line in `buffer`, keeping any partial last line
+/// for the next read: the child's stdout can be split anywhere.
+fn report_phase_lines(buffer: &mut Vec<u8>, report: &mut dyn FnMut(&str)) {
+    while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+        let line: Vec<u8> = buffer.drain(..=newline).collect();
+        let text = String::from_utf8_lossy(&line);
+        if let Some(phase) = platform_phase_from_line(text.trim_end()) {
+            report(&phase);
+        }
+    }
+    // A child that wrote no newline in a long run is not reporting phases;
+    // keep only enough to finish one line.
+    if buffer.len() > MAX_PHASE_LINE {
+        let stale = buffer.len() - MAX_PHASE_LINE;
+        buffer.drain(..stale);
+    }
+}
+
+/// The child's output with this channel's own phase lines removed, so a refusal
+/// still reads as the child's diagnostic and not as our progress bookkeeping.
+fn without_phase_lines(output: &[u8]) -> Vec<u8> {
+    let mut kept = Vec::new();
+    for line in output.split_inclusive(|byte| *byte == b'\n') {
+        let text = String::from_utf8_lossy(line);
+        if platform_phase_from_line(text.trim_end()).is_none() {
+            kept.extend_from_slice(line);
+        }
+    }
+    kept
+}
+
 /// The macOS platform action: local resolver files, the loopback boot job and
-/// the privileged bind broker.
+/// the privileged bind broker. `report` names each operation before it starts,
+/// so the operator's step shows the object being changed rather than one
+/// combined label for the whole action.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn apply_macos(
     run: &mut Run<'_>,
@@ -456,6 +589,7 @@ pub(crate) fn apply_macos(
     suffixes: &[String],
     platform: &MacosPlatform<'_>,
     command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+    report: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     let (uid, gid) = platform.identity;
     let (helper, etc, jobs, library) = (
@@ -464,6 +598,10 @@ pub(crate) fn apply_macos(
         platform.jobs,
         platform.library,
     );
+    report(&format!(
+        "writing the resolver files for {}",
+        suffixes.join(", ")
+    ));
     let resolvers = etc
         .prepare_setup_child(cx, &FileName::new("resolver").map_err(error)?, 0o755)
         .map_err(error)?;
@@ -471,6 +609,7 @@ pub(crate) fn apply_macos(
         let contents = format!("# {MARKER}\nnameserver 127.0.0.1\nport 15353\n");
         managed_file(run, cx, &resolvers, suffix, contents.as_bytes(), true)?;
     }
+    report("installing the gateway loopback launch job");
     managed_file(
         run,
         cx,
@@ -486,9 +625,11 @@ pub(crate) fn apply_macos(
             0o755,
         )
         .map_err(error)?;
+    report("installing the privileged bind broker");
     broker::install(run, cx, jobs, &helpers, (uid, gid), helper, &mut *command)?;
     // Observe the real interface before adding missing aliases. Repeated setup
     // never treats a failed or unavailable observation as absence.
+    report("observing the loopback interface");
     let interfaces = platform_command(
         run,
         cx,
@@ -504,6 +645,7 @@ pub(crate) fn apply_macos(
         }) {
             continue;
         }
+        report(&format!("adding loopback address {address}"));
         platform_command(
             run,
             cx,
@@ -520,23 +662,34 @@ pub(crate) fn apply_macos(
     Ok(())
 }
 
+/// The Linux platform action's targets: the root-owned unit directory and the
+/// operator uid the low-port capability is installed for.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) struct LinuxUnit<'a> {
+    pub uid: u32,
+    pub systemd: &'a DirFd,
+}
+
 /// The Linux platform action: the split-DNS unit and the binary-local low-port
 /// capability. The unit directory, the command adapter and the capability
 /// install are parameters, so a fixture substitutes its own root and a fake
-/// capability and touches no unit, interface or binary attribute.
+/// capability and touches no unit, interface or binary attribute. `report`
+/// names each operation before it starts.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn apply_linux(
     run: &mut Run<'_>,
     cx: &EffectContext,
     suffixes: &[String],
-    uid: u32,
-    systemd: &DirFd,
+    unit: &LinuxUnit<'_>,
     command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
     install_capability: &mut impl FnMut(u32) -> io::Result<()>,
+    report: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
+    let (uid, systemd) = (unit.uid, unit.systemd);
     let name = FileName::new("effigy-gateway-dns.service").map_err(error)?;
     match read_record::<Bytes>(&cx.operation().observe().map_err(error)?, systemd, &name) {
         Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {
+            report("stopping the previous gateway DNS unit");
             platform_command(
                 run,
                 cx,
@@ -551,6 +704,7 @@ pub(crate) fn apply_linux(
         Observed::Absent(_) => {}
         other => return Err(error(format!("preserving unknown DNS unit: {other:?}"))),
     }
+    report("writing the gateway DNS unit");
     managed_file(
         run,
         cx,
@@ -559,12 +713,14 @@ pub(crate) fn apply_linux(
         &linux_boot_job(suffixes),
         false,
     )?;
+    report("reloading the systemd manager");
     platform_command(
         run,
         cx,
         &mut *command,
         vec!["/usr/bin/systemctl".into(), "daemon-reload".into()],
     )?;
+    report("enabling the gateway DNS unit");
     platform_command(
         run,
         cx,
@@ -579,6 +735,7 @@ pub(crate) fn apply_linux(
     // A binary-local capability avoids lowering a host-wide port threshold.
     // It is bound to exactly the binary setup ran, and a foreign record is
     // preserved rather than replaced.
+    report(&format!("installing the low-port capability for uid {uid}"));
     install_capability(uid)
 }
 
@@ -588,6 +745,7 @@ pub fn apply_platform(
     config: &GatewayConfig,
     suffixes: &[String],
     uid: u32,
+    report: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
         command_outcome(run, cx, argv, false)
@@ -615,20 +773,31 @@ pub fn apply_platform(
                 library: &library,
             },
             &mut command,
+            report,
         )?;
     }
     #[cfg(target_os = "linux")]
     {
         let systemd = DirFd::open(Path::new("/etc/systemd/system")).map_err(error)?;
-        apply_linux(run, cx, suffixes, uid, &systemd, &mut command, &mut |uid| {
-            crate::linux_operator::install_current_capability(uid).map(|_| ())
-        })?;
+        let unit = LinuxUnit {
+            uid,
+            systemd: &systemd,
+        };
+        apply_linux(
+            run,
+            cx,
+            suffixes,
+            &unit,
+            &mut command,
+            &mut |uid| crate::linux_operator::install_current_capability(uid).map(|_| ()),
+            report,
+        )?;
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         return Err(error("gateway setup has no native platform adapter"));
     }
-    let _ = (config, uid, command);
+    let _ = (config, uid, command, report);
     Ok(())
 }
 pub fn save_receipt(
@@ -1061,6 +1230,78 @@ fn read_migration_record(
 pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    /// One phase line is one internal line: the schema marks it as ours, and a
+    /// line for anything else is never read as a phase.
+    #[test]
+    fn a_platform_phase_line_round_trips_and_nothing_else_does() {
+        let line = platform_phase_line("installing the privileged bind broker");
+        assert_eq!(
+            platform_phase_from_line(&line).as_deref(),
+            Some("installing the privileged bind broker")
+        );
+        // A child's own diagnostic, a foreign schema, a missing phase and a
+        // line carrying more than this channel's two fields are all not ours.
+        for other in [
+            "the resolver directory is not writable",
+            "{\"schema\":\"something.else.v1\",\"phase\":\"writing\"}",
+            "{\"schema\":\"effigy.gateway.setup_phase.v1\"}",
+            "{\"schema\":\"effigy.gateway.setup_phase.v1\",\"phase\":\"writing\",\"uid\":0}",
+            "not json at all",
+            "",
+        ] {
+            assert_eq!(platform_phase_from_line(other), None, "{other}");
+        }
+    }
+
+    /// The child's stdout can split a line anywhere: complete lines are
+    /// reported as they arrive and the partial tail waits for its newline.
+    #[test]
+    fn reported_phase_lines_survive_a_split_stream() {
+        let mut buffer = Vec::new();
+        let mut phases = Vec::new();
+        let first = platform_phase_line("writing the gateway DNS unit");
+        let second = platform_phase_line("reloading the systemd manager");
+        let (head, tail) = first.split_at(first.len() / 2);
+        buffer.extend_from_slice(head.as_bytes());
+        report_phase_lines(&mut buffer, &mut |phase: &str| {
+            phases.push(phase.to_owned())
+        });
+        assert!(phases.is_empty(), "a partial line is not reported");
+        buffer.extend_from_slice(tail.as_bytes());
+        buffer.push(b'\n');
+        buffer.extend_from_slice(second.as_bytes());
+        buffer.push(b'\n');
+        buffer.extend_from_slice(b"the unit was refused\n");
+        buffer.extend_from_slice(second.as_bytes());
+        report_phase_lines(&mut buffer, &mut |phase: &str| {
+            phases.push(phase.to_owned())
+        });
+        assert_eq!(
+            phases,
+            vec![
+                "writing the gateway DNS unit".to_owned(),
+                "reloading the systemd manager".to_owned(),
+            ]
+        );
+        // The trailing partial line is kept for the next read.
+        assert_eq!(buffer, second.as_bytes());
+    }
+
+    /// The channel's own lines are removed from a refusal, so the operator
+    /// still reads the child's diagnostic.
+    #[test]
+    fn a_refusal_loses_the_phase_lines_and_keeps_the_child_diagnostic() {
+        let mut output = platform_phase_line("observing the loopback interface").into_bytes();
+        output.push(b'\n');
+        output.extend_from_slice(b"ifconfig failed: operation not permitted\n");
+        let kept = without_phase_lines(&output);
+        assert_eq!(
+            String::from_utf8_lossy(&kept),
+            "ifconfig failed: operation not permitted\n"
+        );
+    }
+
     pub(crate) fn with_run(work: impl FnOnce(&mut Run<'_>, &EffectContext, &Path)) {
         let home = tempfile::tempdir().unwrap();
         let op = operator::context(Duration::from_secs(10), EffectClass::Mutate);
@@ -1684,6 +1925,7 @@ pub(crate) mod tests {
             let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
                 platform.run(run, cx, argv)
             };
+            let mut phases = Vec::new();
             apply_macos(
                 run,
                 cx,
@@ -1696,8 +1938,31 @@ pub(crate) mod tests {
                     library: &library,
                 },
                 &mut command,
+                &mut |phase| phases.push(phase.to_owned()),
             )
             .expect("the macOS platform action runs after an empty-home migration");
+            // Each operation is its own phase, named before it starts, and an
+            // alias already on the interface is not reported as added.
+            assert_eq!(
+                phases.first().map(String::as_str),
+                Some("writing the resolver files for test")
+            );
+            assert!(phases.contains(&"installing the gateway loopback launch job".to_owned()));
+            assert!(phases.contains(&"installing the privileged bind broker".to_owned()));
+            assert!(phases.contains(&"observing the loopback interface".to_owned()));
+            assert!(phases.contains(&"adding loopback address 127.1.0.1".to_owned()));
+            assert_eq!(
+                phases.last().map(String::as_str),
+                Some("adding loopback address 127.1.0.50")
+            );
+            assert_eq!(
+                phases
+                    .iter()
+                    .filter(|phase| phase.starts_with("adding loopback address "))
+                    .count(),
+                50,
+                "{phases:?}"
+            );
         });
 
         let resolver = std::fs::read_to_string(platform.path("private/etc/resolver/test")).unwrap();
@@ -1736,19 +2001,34 @@ pub(crate) mod tests {
             let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
                 platform.run(run, cx, argv)
             };
+            let mut phases = Vec::new();
             apply_linux(
                 run,
                 cx,
                 &["test".to_owned()],
-                uid,
-                &systemd,
+                &LinuxUnit {
+                    uid,
+                    systemd: &systemd,
+                },
                 &mut command,
                 &mut |_: u32| -> io::Result<()> {
                     capabilities.set(capabilities.get() + 1);
                     Ok(())
                 },
+                &mut |phase| phases.push(phase.to_owned()),
             )
             .expect("the Linux platform action runs after an empty-home migration");
+            // No unit existed, so there is no stop phase; every operation that
+            // does run is named in order, ending with the capability install.
+            assert_eq!(
+                phases,
+                vec![
+                    "writing the gateway DNS unit".to_owned(),
+                    "reloading the systemd manager".to_owned(),
+                    "enabling the gateway DNS unit".to_owned(),
+                    format!("installing the low-port capability for uid {uid}"),
+                ]
+            );
         });
 
         let unit =
