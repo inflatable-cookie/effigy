@@ -5576,6 +5576,9 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "a borrowed environment's host process survived the session's stop: {}",
         report()
     );
+    println!(
+        "[fixture] borrowed plain environment host process {api} keeps running after the session's stop"
+    );
     let status_json = plain.container_cli(
         &cleanup,
         "borrowed plain environment status",
@@ -5614,6 +5617,9 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         &["down", "--json"],
     );
     assert_success(down);
+    for pid_file in [&plain.api_pid, &plain.worker_pid] {
+        assert_host_process_stopped(pid_file, &report);
+    }
     stop_private_gateway(
         &mut gateway_cleanup,
         &effects,
