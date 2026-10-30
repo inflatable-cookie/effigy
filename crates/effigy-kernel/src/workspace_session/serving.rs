@@ -162,6 +162,35 @@ impl ServingLease {
     }
 }
 
+/// The proof that the caller holds the admitted workspace session's owning run.
+///
+/// Only [`Run::session_owner`](crate::run::Run::session_owner) builds one, from
+/// the run whose private session slot is the journal's record of that session.
+/// A listener and key can therefore only be launched for a session whose run
+/// the caller actually owns; a copied binding, a made-up run or an environment
+/// run cannot hold custody.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionOwner {
+    run: RunId,
+    fence: Fence,
+}
+
+impl SessionOwner {
+    pub(crate) fn of(run: RunId, fence: Fence) -> Self {
+        Self { run, fence }
+    }
+    pub fn run(&self) -> RunId {
+        self.run
+    }
+    pub fn fence(&self) -> &Fence {
+        &self.fence
+    }
+    /// Whether this proof is the owning run of `session`, with its own fence.
+    fn names(&self, session: &SessionRef) -> bool {
+        self.run == session.run() && self.fence == *session.fence()
+    }
+}
+
 /// The session's memory-only serving key.
 ///
 /// The kernel neither reads nor encodes the secret bytes: it owns their
@@ -328,7 +357,7 @@ impl ChannelBound {
 /// as served while nothing owns the run behind it.
 #[derive(Debug)]
 pub struct SessionLaunch {
-    session: SessionBinding,
+    session: SessionRef,
     supervisor_id: String,
     key: ServingKey,
     listener: Box<dyn ChannelListener>,
@@ -337,15 +366,23 @@ pub struct SessionLaunch {
 }
 
 impl SessionLaunch {
-    /// Take custody of the key and the listener for `session`. The listener must
-    /// be bound: an unbound or stopped listener refuses here, so no launch can
-    /// later publish an endpoint that is not listening.
+    /// Take custody of the key and the listener for `session`, on behalf of the
+    /// run that owns it. `owner` is only obtainable from that session's own
+    /// `Run`, so custody is always rooted in the detached session owner and never
+    /// in a binding a caller assembled. The listener must be bound: an unbound or
+    /// stopped listener refuses here, so no launch can later publish an endpoint
+    /// that is not listening.
     pub fn launch(
-        session: SessionBinding,
+        session: &SessionRef,
+        owner: SessionOwner,
         supervisor_id: impl Into<String>,
         key: ServingKey,
         listener: Box<dyn ChannelListener>,
     ) -> Result<Self, ServingRefusal> {
+        if !owner.names(session) {
+            return Err(ServingRefusal::WrongSession);
+        }
+        let session = session.clone();
         let supervisor_id = supervisor_id.into();
         if supervisor_id.trim().is_empty() {
             return Err(ServingRefusal::Unqualified);
@@ -367,8 +404,16 @@ impl SessionLaunch {
         })
     }
 
-    pub fn session(&self) -> &SessionBinding {
+    pub fn session(&self) -> &SessionRef {
         &self.session
+    }
+    /// The lease-facing identity of the session this launch holds custody for.
+    pub fn binding(&self) -> SessionBinding {
+        SessionBinding {
+            owner: self.session.fence().resource.clone(),
+            run: self.session.run(),
+            generation: self.session.generation(),
+        }
     }
     pub fn phase(&self) -> ListenerPhase {
         self.listener.phase()
@@ -410,10 +455,11 @@ impl SessionLaunch {
             ListenerPhase::Holding | ListenerPhase::Serving => {}
         }
         let endpoint = self.listener.endpoint().ok_or(ServingRefusal::Unbound)?;
+        let binding = self.binding();
         let bound = ChannelBound {
-            session: self.session.clone(),
+            session: binding.clone(),
             lease: ServingLease::published(
-                self.session.clone(),
+                binding,
                 self.supervisor_id.clone(),
                 endpoint,
                 self.key.pin(),

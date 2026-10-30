@@ -47,11 +47,11 @@ pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
     selection_abandoned, selection_recovered, unfinished_selection, GuestObject, GuestSelection,
     SelectionLiveness, SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
-    SelectionSwitchReceipt, SelectorChange, SelectorReadback,
+    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader,
 };
 pub use serving::{
     ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
-    ServingProbe, ServingRefusal, SessionLaunch,
+    ServingProbe, ServingRefusal, SessionLaunch, SessionOwner,
 };
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
@@ -2196,6 +2196,12 @@ impl WorkspaceActivationReservation {
             ArtifactEvidence::Selected { .. } | ArtifactEvidence::Unselected { .. } => {
                 return Err(ActivationRefusal::SelectionMismatch.into())
             }
+        }
+        // The resolved selection the decision froze is the context this
+        // generation serves: its document digest. A context prepared for another
+        // selection is never published under this decision.
+        if frozen.selection != selection.selection().objects.context.digest {
+            return Err(ActivationRefusal::SelectionMismatch.into());
         }
         if let TargetEvidence::Observed(identity) = &frozen.target {
             if receipt.publication.container_id != identity.container_id

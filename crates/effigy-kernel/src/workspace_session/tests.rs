@@ -861,19 +861,20 @@ fn activate<'a>(
     let reservation = decided(cx, root, environment);
     let (session_run, session) = admit_staged(cx, root, &reservation, session_id);
     let mut environment_run = admit_activation(cx, root, &reservation, activation_id);
-    let receipt =
-        commit_receipt(cx, root, &reservation, &environment_run).expect("activation receipt");
+    let receipt = commit_receipt(cx, root, &reservation, &environment_run, &session_run)
+        .expect("activation receipt");
     let committed = reservation
         .commit_selection(cx, root, &environment_run, &session_run, &receipt)
         .expect("activation commit");
     // A completed activation switches its selectors: the generation it
     // published is attachable only once its selection is finished.
+    let mut reader = FakeSelectors::exact(&receipt);
     Attachments::selection_switched(
         &mut environment_run,
         committed
             .selection_obligation()
             .expect("the commit records its selection"),
-        &SelectionSwitchReceipt::of(&receipt),
+        &mut reader,
     )
     .expect("the switch is recorded");
     (reservation, session_run, session, environment_run)
@@ -2837,8 +2838,13 @@ fn publish_inputs(byte: u8, target: Option<ContainerIdentity>) -> PublishInputs 
     let digest = artifact(byte);
     let object = format!("/run/effigy/objects/bin/{digest}");
     PublishInputs {
-        artifact: ArtifactEvidence::Selected { digest, object },
-        selection: Digest::of(&[byte, b's']),
+        artifact: ArtifactEvidence::Selected {
+            digest: digest.clone(),
+            object,
+        },
+        // The resolved selection a decision freezes is the context document the
+        // generation serves.
+        selection: Digest::of(&context_document(&digest)),
         inputs_digest: Digest::of(&[byte, b'i']),
         target: match target {
             Some(identity) => TargetEvidence::Observed(identity),
@@ -2906,8 +2912,11 @@ fn decision_inputs(byte: u8) -> PublishInputs {
     let digest = fake_artifact();
     let object = format!("/run/effigy/objects/bin/{digest}");
     PublishInputs {
-        artifact: ArtifactEvidence::Selected { digest, object },
-        selection: Digest::of(&[byte, b's', b'e', b'l']),
+        artifact: ArtifactEvidence::Selected {
+            digest: digest.clone(),
+            object,
+        },
+        selection: Digest::of(&context_document(&digest)),
         inputs_digest: Digest::of(&[byte, b'i', b'n']),
         target: TargetEvidence::Absent {
             project: "fixture".to_owned(),
@@ -2953,30 +2962,128 @@ fn decided_with(
     }
 }
 
-/// One session's own listener and key custody, bound and qualified. Only a
-/// launch makes a locator: `SelectionReceipt::new` publishes it.
-fn launch_for(session: &SessionBinding) -> SessionLaunch {
+/// The context document the fixture prepare would write for `binary`; its
+/// digest is the "resolved selection" a decision freezes.
+fn context_document(binary: &Digest) -> Vec<u8> {
+    format!("effigy.workspace-context.v2 fixture {binary}").into_bytes()
+}
+
+/// A fake reader of the exact target: what a test says the guest holds. The
+/// kernel compares it, so a wrong entry is a refusal, not a shortcut.
+#[derive(Debug, Default)]
+struct FakeSelectors {
+    selectors: BTreeMap<String, Observed<String>>,
+    objects: BTreeMap<String, Observed<Digest>>,
+}
+
+impl FakeSelectors {
+    fn exact(receipt: &SelectionReceipt) -> Self {
+        let selection = receipt.selection();
+        let mut fake = Self::default();
+        for change in &selection.switches {
+            fake.selectors.insert(
+                change.path.clone(),
+                Observed::Verified(change.next.clone(), evidence()),
+            );
+        }
+        for object in [
+            &selection.objects.binary,
+            &selection.objects.context,
+            &selection.objects.credential,
+        ] {
+            fake.objects.insert(
+                object.path.clone(),
+                Observed::Verified(object.digest.clone(), evidence()),
+            );
+        }
+        fake
+    }
+
+    /// A switch that stopped after `moved` selectors: the rest still hold the
+    /// value the obligation expected to replace.
+    fn partial(receipt: &SelectionReceipt, moved: usize) -> Self {
+        let mut fake = Self::exact(receipt);
+        for change in &receipt.selection().switches[moved..] {
+            fake.selectors.insert(
+                change.path.clone(),
+                Observed::Verified(change.expected.clone().unwrap_or_default(), evidence()),
+            );
+        }
+        fake
+    }
+
+    /// A selector holding a value this activation never committed.
+    fn third(receipt: &SelectionReceipt) -> Self {
+        let mut fake = Self::exact(receipt);
+        let path = receipt.selection().switches[0].path.clone();
+        fake.selectors.insert(
+            path,
+            Observed::Verified("a third value".to_owned(), evidence()),
+        );
+        fake
+    }
+
+    /// An object that no longer hashes to what the selection names.
+    fn missing_object(receipt: &SelectionReceipt) -> Self {
+        let mut fake = Self::exact(receipt);
+        fake.objects.insert(
+            receipt.selection().objects.context.path.clone(),
+            Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                table: "guest-object".into(),
+            }),
+        );
+        fake
+    }
+}
+
+impl SelectorReader for FakeSelectors {
+    fn read_selector(&mut self, path: &str) -> Observed<String> {
+        self.selectors.remove(path).unwrap_or(Observed::Absent(
+            crate::observe::AbsenceProof::NoRow {
+                table: "guest-selector".into(),
+            },
+        ))
+    }
+    fn read_object(&mut self, path: &str) -> Observed<Digest> {
+        self.objects
+            .remove(path)
+            .unwrap_or(Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                table: "guest-object".into(),
+            }))
+    }
+}
+
+/// One session's own listener and key custody, bound and qualified, launched on
+/// behalf of the run that owns the session.
+fn launch_for(session_run: &Run<'_>, session: &SessionRef) -> Result<SessionLaunch, RunError> {
+    let owner = session_run.session_owner()?;
     let (mut listener, _stops) = FakeListener::bound();
     ChannelListener::qualify(&mut listener).expect("qualified");
     let key = ServingKey::new(vec![7u8; 32], Digest::of(b"session pin")).expect("key");
-    SessionLaunch::launch(session.clone(), "supervisor-1", key, Box::new(listener)).expect("launch")
+    Ok(SessionLaunch::launch(
+        session,
+        owner,
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )?)
 }
 
-/// The commit every activation uses: one validated selection recorded with the
-/// generation it publishes. The artifact is the one the run acknowledged, so a
-/// test that has not published still exercises the publication fence.
+/// The receipt an activation publishes: its own plan, the run's publication and
+/// the session's launch, which is what supplies the locator.
 fn commit_receipt(
     cx: &EffectContext,
     root: &StateRoot,
     reservation: &WorkspaceActivationReservation,
     environment_run: &Run<'_>,
+    session_run: &Run<'_>,
 ) -> Result<SelectionReceipt, RunError> {
     let plan = plan_of(reservation, &read_journal(cx, root))
         .ok_or_else(|| RunError::refused("no staged plan to commit"))?;
     let publication = publication_for(cx, root, reservation, environment_run);
     let binary = Digest::parse_hex(&publication.publication.artifact_digest)
         .ok_or_else(|| RunError::refused("the publication names no artifact digest"))?;
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(session_run, &plan.session())?;
     Ok(selection_receipt(
         &plan,
         publication,
@@ -2993,11 +3100,11 @@ fn commit_activation(
     environment_run: &Run<'_>,
     session_run: &Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
-    let receipt = commit_receipt(cx, root, reservation, environment_run)?;
+    let receipt = commit_receipt(cx, root, reservation, environment_run, session_run)?;
     reservation.commit_selection(cx, root, environment_run, session_run, &receipt)
 }
 
-/// Commit *and* record the switch: the generation is published and its
+/// Commit *and* read the switch back: the generation is published and its
 /// selection finished, exactly as a completed activation leaves it.
 fn commit_and_switch(
     cx: &EffectContext,
@@ -3006,28 +3113,16 @@ fn commit_and_switch(
     environment_run: &mut Run<'_>,
     session_run: &Run<'_>,
 ) -> Result<CommittedActivation, RunError> {
-    let receipt = commit_receipt(cx, root, reservation, environment_run)?;
+    let receipt = commit_receipt(cx, root, reservation, environment_run, session_run)?;
     let committed =
         reservation.commit_selection(cx, root, environment_run, session_run, &receipt)?;
     if let Some(obligation) = committed.selection_obligation() {
-        let receipt = SelectionSwitchReceipt::of(
-            &super::selection::read_obligation(
-                Store::open(cx, root).expect("store").conn(),
-                obligation.environment(),
-                obligation.environment_generation(),
-            )
-            .expect("read obligation")
-            .expect("obligation")
-            .receipt()
-            .clone(),
-        );
-        Attachments::selection_switched(environment_run, obligation, &receipt)?;
+        let mut reader = FakeSelectors::exact(&receipt);
+        Attachments::selection_switched(environment_run, obligation, &mut reader)?;
     }
     Ok(committed)
 }
 
-/// Commit *and* record the switch: the generation is published and its
-/// selection finished, exactly as a completed activation leaves it.
 /// The validated selection a workspace activation publishes. The context
 /// document is hashed here exactly as `prepare` would hash it, and no selector
 /// is touched.
@@ -3038,7 +3133,7 @@ fn selection_receipt(
     previous: Option<&str>,
     launch: &mut SessionLaunch,
 ) -> SelectionReceipt {
-    let document = format!("effigy.workspace-context.v2 fixture {binary}").into_bytes();
+    let document = context_document(&binary);
     let context = Digest::of(&document);
     let credential = Digest::of(b"enrol");
     let object = format!("/run/effigy/objects/bin/{binary}");
@@ -3130,7 +3225,7 @@ fn activate_with_selection<'a>(
     // The plan is read once the activation run claimed E, so the publication
     // receipt is validated against the run that actually recorded it.
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
     let committed = reservation
         .commit_selection(cx, root, &environment_run, &session_run, &receipt)
@@ -3140,12 +3235,9 @@ fn activate_with_selection<'a>(
         .expect("the commit records its selection")
         .clone();
     let mut environment_run = environment_run;
-    Attachments::selection_switched(
-        &mut environment_run,
-        &obligation,
-        &SelectionSwitchReceipt::of(&receipt),
-    )
-    .expect("the switch is recorded");
+    let mut reader = FakeSelectors::exact(&receipt);
+    Attachments::selection_switched(&mut environment_run, &obligation, &mut reader)
+        .expect("the switch is recorded");
     let switched = super::selection::read_obligation(
         read_journal(cx, root).conn(),
         &obligation.environment().clone(),
@@ -3405,7 +3497,7 @@ fn a_pending_selection_refuses_attach_and_reservation() {
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(207), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
     reservation
         .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)
@@ -3557,7 +3649,7 @@ fn commit_pending_selection<'a>(
     let (environment_run, publication) =
         admit_activation_publishing(cx, root, &reservation, activation_id, &binary);
     let plan = plan_of(&reservation, &read_journal(cx, root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
     let committed = reservation
         .commit_selection(cx, root, &environment_run, &session_run, &receipt)
@@ -3591,13 +3683,10 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
             run_id(211),
             &publish_inputs(42, None),
         );
-    let exact = SelectionSwitchReceipt::of(&receipt);
-
     // A value that is not the obligation's target is refused, never recorded.
-    let mut other = exact.clone();
-    other.context_digest = Digest::of(b"a third context");
+    let mut third = FakeSelectors::third(&receipt);
     assert!(
-        Attachments::selection_switched(&mut environment_run, &obligation, &other).is_err(),
+        Attachments::selection_switched(&mut environment_run, &obligation, &mut third).is_err(),
         "a third value is not a completion"
     );
     let reader = read_journal(&cx, &root);
@@ -3608,16 +3697,24 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
     );
 
     // The exact target completes it exactly once.
-    Attachments::selection_switched(&mut environment_run, &obligation, &exact)
-        .expect("exact switch");
+    Attachments::selection_switched(
+        &mut environment_run,
+        &obligation,
+        &mut FakeSelectors::exact(&receipt),
+    )
+    .expect("exact switch");
     let reader = read_journal(&cx, &root);
     assert_eq!(
         obligation_row(&reader, &environment).map(|row| row.0),
         Some("switched".to_owned())
     );
     assert!(una_finished(&reader, &environment).is_none());
-    let error = Attachments::selection_switched(&mut environment_run, &obligation, &exact)
-        .expect_err("a selection completes once");
+    let error = Attachments::selection_switched(
+        &mut environment_run,
+        &obligation,
+        &mut FakeSelectors::exact(&receipt),
+    )
+    .expect_err("a selection completes once");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     end_run(
         &cx,
@@ -3680,17 +3777,41 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         }),
         ..live.clone()
     };
-    let exact = SelectionSwitchReceipt::of(&receipt);
-    let error = selection_recovered(&cx, &root, &pending, &dead_listener, &exact, Wait::FailFast)
-        .expect_err("a dead listener cannot complete a selection");
+    let error = selection_recovered(
+        &cx,
+        &root,
+        &pending,
+        &dead_listener,
+        &mut FakeSelectors::exact(&receipt),
+        Wait::FailFast,
+    )
+    .expect_err("a dead listener cannot complete a selection");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     // Nor can a live listener complete a selection whose readback is not the
     // committed target: recovery repeats the same compares, it does not assume
     // they happened.
-    let mut third = exact.clone();
-    third.binary_digest = Digest::of(b"a third binary");
-    let error = selection_recovered(&cx, &root, &pending, &live, &third, Wait::FailFast)
-        .expect_err("a third value is never a completed selection");
+    let error = selection_recovered(
+        &cx,
+        &root,
+        &pending,
+        &live,
+        &mut FakeSelectors::third(&receipt),
+        Wait::FailFast,
+    )
+    .expect_err("a third value is never a completed selection");
+    // A missing object is not a completed selection either.
+    assert!(
+        selection_recovered(
+            &cx,
+            &root,
+            &pending,
+            &live,
+            &mut FakeSelectors::missing_object(&receipt),
+            Wait::FailFast,
+        )
+        .is_err(),
+        "a missing object is never a completed selection"
+    );
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     // ...and it cannot be abandoned while completion is still possible.
     let error = selection_abandoned(
@@ -3706,8 +3827,15 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
 
     // The three proven facts plus the exact readback complete it, without the
     // dead activation run.
-    selection_recovered(&cx, &root, &pending, &live, &exact, Wait::FailFast)
-        .expect("recovery completes the exact committed selection");
+    selection_recovered(
+        &cx,
+        &root,
+        &pending,
+        &live,
+        &mut FakeSelectors::exact(&receipt),
+        Wait::FailFast,
+    )
+    .expect("recovery completes the exact committed selection");
     let reader = read_journal(&cx, &root);
     assert_eq!(
         obligation_row(&reader, &environment).map(|row| row.0),
@@ -3942,13 +4070,10 @@ fn a_selection_never_names_another_session_s_listener() {
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(225), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    // A lease a different session's launch published holds another key for
-    // another run, so it is never this generation's locator.
-    let elsewhere = SessionBinding {
-        run: run_id(226),
-        ..plan.binding().clone()
-    };
-    let mut launch = launch_for(plan.binding());
+    let document = context_document(&binary);
+    // A session ref another run claims has no owner proof for this run, so no
+    // launch exists to publish its locator at all.
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let selection = selection_receipt(
         &plan,
         publication.clone(),
@@ -3958,26 +4083,31 @@ fn a_selection_never_names_another_session_s_listener() {
     )
     .selection()
     .clone();
-    let mut elsewhere_launch = launch_for(&elsewhere);
-    let document = format!("effigy.workspace-context.v2 fixture {binary}").into_bytes();
-    let error = SelectionReceipt::new(
-        &plan,
-        publication.clone(),
-        selection.clone(),
-        &document,
-        &mut elsewhere_launch,
-    )
-    .expect_err("another session's lease is not this session's locator");
-    assert!(
-        matches!(error, RunError::Refused(_)),
-        "the receipt refuses a foreign locator: {error:?}"
+    let elsewhere = SessionRef::new(
+        run_id(226),
+        plan.session().fence().clone(),
+        plan.session().environment().clone(),
+        plan.session().environment_generation(),
     );
+    let (listener, _stops) = FakeListener::bound();
+    let key = ServingKey::new(vec![1u8; 32], Digest::of(b"session pin")).expect("key");
+    assert!(matches!(
+        SessionLaunch::launch(
+            &elsewhere,
+            session_run.session_owner().expect("owner"),
+            "supervisor-1",
+            key,
+            Box::new(listener)
+        ),
+        Err(ServingRefusal::WrongSession)
+    ));
     // A listener that never answered a qualification cannot publish a locator,
     // so it cannot author a receipt either.
     let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"session pin")).expect("key");
     let mut unqualified = SessionLaunch::launch(
-        plan.binding().clone(),
+        &plan.session(),
+        session_run.session_owner().expect("owner"),
         "supervisor-1",
         key,
         Box::new(listener),
@@ -4031,7 +4161,7 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(219), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(
         &plan,
         publication.clone(),
@@ -4101,18 +4231,18 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     let reservation =
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reservation");
-    let (_, _session) = admit_staged(&cx, &root, &reservation, run_id(220));
+    let (session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(220));
     let binary = artifact(63);
     let (_, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(221), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let good = selection_receipt(&plan, publication.clone(), binary, None, &mut launch);
     assert!(good.validate(&plan).is_ok());
     // A selection whose context object names other bytes is not the receipt.
     let mut wrong = good.selection().clone();
     wrong.objects.context.digest = Digest::of(b"not the document");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     assert!(
         SelectionReceipt::new(&plan, publication, wrong, b"the document", &mut launch).is_err(),
         "the document digest is hashed, never taken on trust"
@@ -4182,26 +4312,76 @@ impl ServingProbe for FakeProbe {
     }
 }
 
-fn binding(byte: u8) -> SessionBinding {
+/// The lease-facing identity of an admitted session.
+fn session_binding(session: &SessionRef) -> SessionBinding {
     SessionBinding {
-        owner: workspace_entry(),
-        run: run_id(byte),
-        generation: Generation::new(1),
+        owner: session.fence().resource.clone(),
+        run: session.run(),
+        generation: session.generation(),
+    }
+}
+
+/// A fixture with one admitted, detached workspace session, whose run owns the
+/// listener and key custody these tests exercise.
+struct ServingFixture {
+    cx: EffectContext,
+    #[allow(dead_code)]
+    home: effigy_test_support::Fixture,
+    root: StateRoot,
+    environment: ResourceId,
+}
+
+impl ServingFixture {
+    fn new() -> Self {
+        let cx = context();
+        let home = home();
+        let root = StateRoot::effects(&cx, home.path()).expect("state root");
+        let (environment, _fence) = active_environment(&cx, &root);
+        Self {
+            cx,
+            home,
+            root,
+            environment,
+        }
+    }
+    fn admit(&self, id: u8) -> (Run<'_>, SessionRef) {
+        let fence = Fence {
+            resource: self.environment.clone(),
+            generation: Generation::new(1),
+        };
+        let mut options = opts(run_id(id));
+        options.id = run_id(id);
+        SessionRef::admit(
+            &self.cx,
+            &self.root,
+            &inv(workspace_entry(), "workspace"),
+            options,
+            &cleanup(&self.cx),
+            &mut adapter(),
+            &fence,
+            Placement::Detached,
+        )
+        .expect("workspace session")
     }
 }
 
 #[test]
 fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
+    let fixture = ServingFixture::new();
+    let (session_run, session) = fixture.admit(70);
     let (listener, stops) = FakeListener::bound();
     let key = ServingKey::new(vec![7u8; 32], Digest::of(b"session pin")).expect("key");
-    let launch = SessionLaunch::launch(binding(70), "supervisor-1", key, Box::new(listener))
-        .expect("launch");
-    // A caller that asked for the session goes away; the launch is what the
-    // supervisor holds, and nothing about it changed.
+    let owner = session_run
+        .session_owner()
+        .expect("the session's owning run");
+    let mut launch =
+        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
+            .expect("launch");
+    // The caller that asked for the session goes away; the launch is what the
+    // detached supervisor holds, and nothing about it changed.
+    drop(session_run);
     assert_eq!(launch.phase(), ListenerPhase::Qualifying);
     assert_eq!(stops.get(), 0);
-
-    let mut launch = launch;
     assert!(
         matches!(launch.publish(), Err(ServingRefusal::Unqualified)),
         "an unqualified listener is never published"
@@ -4216,7 +4396,7 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     assert_eq!(lease.endpoint(), "127.0.0.1:45999");
     assert_eq!(lease.pin(), &Digest::of(b"session pin"));
     assert_eq!(lease.supervisor_id(), "supervisor-1");
-    assert_eq!(lease.session(), &binding(70));
+    assert_eq!(lease.session(), &session_binding(&session));
     assert_eq!(
         launch.publish().expect("publish is idempotent").lease(),
         &lease,
@@ -4243,7 +4423,60 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
 }
 
 #[test]
+fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
+    let fixture = ServingFixture::new();
+    let (session_run, session) = fixture.admit(75);
+    let owner = session_run
+        .session_owner()
+        .expect("the session's owning run");
+    // A session ref another run claims is not the one this owner holds.
+    let elsewhere = SessionRef::new(
+        run_id(76),
+        session.fence().clone(),
+        session.environment().clone(),
+        session.environment_generation(),
+    );
+    let (listener, stops) = FakeListener::bound();
+    let key = ServingKey::new(vec![5u8; 32], Digest::of(b"pin")).expect("key");
+    assert!(matches!(
+        SessionLaunch::launch(
+            &elsewhere,
+            owner.clone(),
+            "supervisor-1",
+            key,
+            Box::new(listener)
+        ),
+        Err(ServingRefusal::WrongSession)
+    ));
+    assert_eq!(stops.get(), 0, "a refused launch stops nothing");
+    // An environment run holds no session custody at all.
+    let environment_run = admit_activation_stub(&fixture.cx, &fixture.root, &fixture.environment);
+    assert!(environment_run.session_owner().is_err());
+}
+
+/// A detached environment run, for the custody proof above: it owns an
+/// environment, never a workspace session.
+fn admit_activation_stub<'a>(
+    cx: &EffectContext,
+    root: &'a StateRoot,
+    environment: &ResourceId,
+) -> Run<'a> {
+    Run::begin(
+        cx,
+        root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(77)),
+        &cleanup(cx),
+        &mut adapter(),
+    )
+    .expect("environment run")
+}
+
+#[test]
 fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
+    let fixture = ServingFixture::new();
+    let (session_run, session) = fixture.admit(71);
+    let owner = session_run.session_owner().expect("owner");
     // No endpoint at all is not a listener.
     let stops = std::rc::Rc::new(std::cell::Cell::new(0));
     let unbound = FakeListener {
@@ -4253,7 +4486,13 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     };
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"pin")).expect("key");
     assert!(matches!(
-        SessionLaunch::launch(binding(71), "supervisor-1", key, Box::new(unbound)),
+        SessionLaunch::launch(
+            &session,
+            owner.clone(),
+            "supervisor-1",
+            key,
+            Box::new(unbound)
+        ),
         Err(ServingRefusal::Unbound)
     ));
     // A stopped listener is never adopted into a launch, so it can never be
@@ -4265,14 +4504,21 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     };
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"pin")).expect("key");
     assert!(matches!(
-        SessionLaunch::launch(binding(72), "supervisor-1", key, Box::new(stopped)),
+        SessionLaunch::launch(
+            &session,
+            owner.clone(),
+            "supervisor-1",
+            key,
+            Box::new(stopped)
+        ),
         Err(ServingRefusal::Stopped)
     ));
     // And one stopped after publication refuses both publish and serve.
     let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![2u8; 32], Digest::of(b"pin")).expect("key");
-    let mut launch = SessionLaunch::launch(binding(73), "supervisor-1", key, Box::new(listener))
-        .expect("launch");
+    let mut launch =
+        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
+            .expect("launch");
     launch.qualify().expect("qualified");
     launch.publish().expect("published before it stops");
     launch.stop();
@@ -4293,14 +4539,18 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
 
 #[test]
 fn a_real_bound_socket_is_the_endpoint_the_lease_names() {
+    let fixture = ServingFixture::new();
+    let (session_run, session) = fixture.admit(74);
+    let owner = session_run.session_owner().expect("owner");
     let listener =
         HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind");
     let endpoint = listener.endpoint().expect("bound endpoint");
     let mut listener = listener;
     listener.qualify().expect("qualify");
     let key = ServingKey::new(vec![3u8; 32], Digest::of(b"real pin")).expect("key");
-    let mut launch = SessionLaunch::launch(binding(74), "supervisor-1", key, Box::new(listener))
-        .expect("launch");
+    let mut launch =
+        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
+            .expect("launch");
     let lease = launch.publish().expect("publish").lease().clone();
     assert_eq!(lease.endpoint(), endpoint.to_string());
     // The published locator is reachable while the launch holds it.
@@ -4372,7 +4622,8 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             activation_run = Some(activating);
             let activating = activation_run.as_ref().expect("activation run");
             let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-            let mut launch = launch_for(plan.binding());
+            let staged = session_run.as_ref().expect("owning successor");
+            let mut launch = launch_for(staged, &plan.session()).expect("session custody");
             let receipt = selection_receipt(&plan, publication, binary, None, &mut launch);
             let committed = reservation.commit_selection(
                 &cx,
@@ -4386,7 +4637,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             Attachments::selection_switched(
                 activating,
                 obligation.as_ref().expect("selection obligation"),
-                &SelectionSwitchReceipt::of(&receipt),
+                &mut FakeSelectors::exact(&receipt),
             )?;
             Ok(())
         })();
@@ -4449,9 +4700,15 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 target: Observed::Verified((), evidence()),
                 listener: Observed::Verified((), evidence()),
             };
-            let exact = SelectionSwitchReceipt::of(pending.receipt());
-            selection_recovered(&cx, &root, &pending, &live, &exact, Wait::FailFast)
-                .expect("recovery completes the exact committed selection");
+            selection_recovered(
+                &cx,
+                &root,
+                &pending,
+                &live,
+                &mut FakeSelectors::exact(pending.receipt()),
+                Wait::FailFast,
+            )
+            .expect("recovery completes the exact committed selection");
             let reader = read_journal(&cx, &root);
             assert_eq!(
                 obligation_row(&reader, &environment).map(|row| row.0),
@@ -4603,15 +4860,9 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
             run_id(243),
             &publish_inputs(92, None),
         );
-    let exact = SelectionSwitchReceipt::of(&receipt);
-
     // Two selectors moved, the context pointer still holds its previous value.
-    let mut partial = exact.clone();
-    partial.selectors[2].value = obligation.receipt().selection().switches[2]
-        .expected
-        .clone()
-        .unwrap_or_default();
-    let error = Attachments::selection_switched(&mut environment_run, &obligation, &partial)
+    let mut partial = FakeSelectors::partial(&receipt, 2);
+    let error = Attachments::selection_switched(&mut environment_run, &obligation, &mut partial)
         .expect_err("a partial switch is not a completion");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     let reader = read_journal(&cx, &root);
@@ -4623,8 +4874,12 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
     assert!(una_finished(&reader, &environment).is_some());
 
     // The retry reads every selector back at the committed next value.
-    Attachments::selection_switched(&mut environment_run, &obligation, &exact)
-        .expect("the retried switch completes");
+    Attachments::selection_switched(
+        &mut environment_run,
+        &obligation,
+        &mut FakeSelectors::exact(&receipt),
+    )
+    .expect("the retried switch completes");
     let reader = read_journal(&cx, &root);
     assert_eq!(
         obligation_row(&reader, &environment).map(|row| row.0),
@@ -4674,7 +4929,7 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
     let (environment_run, publication) =
         admit_activation_publishing(&cx, &root, &reservation, run_id(245), &published);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
-    let mut launch = launch_for(plan.binding());
+    let mut launch = launch_for(&session_run, &plan.session()).expect("session custody");
     let receipt = selection_receipt(&plan, publication, published, None, &mut launch);
     let error = reservation
         .commit_selection(&cx, &root, &environment_run, &session_run, &receipt)

@@ -765,6 +765,44 @@ impl<'a> Run<'a> {
     /// Borrowing this exact owner keeps its Task-ranked liveness slot held
     /// through activation commit. A cross-process probe cannot provide this
     /// guarantee: the probed process may die before the transaction starts.
+    /// The owning proof a channel listener may be launched under.
+    ///
+    /// Only a run whose private session slot the journal records as an admitted
+    /// workspace session yields one, so a listener and key are always launched
+    /// for the detached session owner itself, never for a binding a caller
+    /// assembled or for an environment run.
+    pub fn session_owner(&self) -> Result<crate::workspace_session::SessionOwner, RunError> {
+        self.can_effect()?;
+        if self.owner.resource.kind() != crate::id::ResourceKind::Task {
+            return Err(RunError::refused(
+                "only an admitted workspace session owns a channel listener",
+            ));
+        }
+        // A workspace session is either staged for a reserved activation or the
+        // environment's mapped session; either record is this run's own.
+        let known: bool = self.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_session_runs \
+             WHERE run_id=?1 AND owner=?2 AND generation=?3) \
+             OR EXISTS(SELECT 1 FROM workspace_sessions \
+             WHERE run_id=?1 AND session_generation=?3)",
+            params![
+                self.id.to_string(),
+                self.owner.resource.name().to_string(),
+                self.owner.generation.get() as i64
+            ],
+            |row| row.get(0),
+        )?;
+        if !known {
+            return Err(RunError::refused(
+                "only an admitted workspace session owns a channel listener",
+            ));
+        }
+        Ok(crate::workspace_session::SessionOwner::of(
+            self.id,
+            self.owner.clone(),
+        ))
+    }
+
     pub(crate) fn owns_workspace_session(
         &self,
         root: &StateRoot,

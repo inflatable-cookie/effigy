@@ -797,10 +797,14 @@ Three production facts remain to implement and prove:
   `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
   `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
   the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
-  that publishes a generation, and only from inputs a decision froze and a lease
-  the session's own launch published), the per-selector readback switch/recovery
-  order and the settled-successor abandonment are implemented and fault-proven
-  against the real journal, including concurrent decision callers. What remains for #482 is the container/runner typed wrapper and
+  that publishes a generation, and only from inputs a decision froze, including
+  the context document it resolved, and a lease the session's own launch
+  published), the per-selector readback switch/recovery order (the kernel reads
+  selectors and objects through a `SelectorReader` and records only what it
+  observed) and the settled-successor abandonment are implemented and
+  fault-proven against the real journal, including concurrent decision callers.
+  Listener/key custody is rooted in the detached session owner: a launch needs
+  the session's `SessionRef` and a `SessionOwner` only its owning `Run` yields. What remains for #482 is the container/runner typed wrapper and
   guest selector switching, for #483 the transport, server-key generation and
   TLS qualification, and for #452 the glue and supervisor ownership transfer. The
   detailed appendix is still non-normative.

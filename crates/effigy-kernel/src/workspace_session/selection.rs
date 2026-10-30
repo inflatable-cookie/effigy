@@ -138,7 +138,7 @@ impl SelectionReceipt {
         if Digest::of(document) != selection.objects.context.digest {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
-        if launch.session() != plan.binding() {
+        if launch.binding() != *plan.binding() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         let serving = launch.publish()?.lease().clone();
@@ -194,26 +194,44 @@ pub struct SelectorReadback {
     pub value: String,
 }
 
-/// What the guest holds after the three compares, as the caller read it back.
-/// It is evidence to check, never authority: [`SelectionObligation::validate_switch`]
-/// refuses anything that is not the committed target, including a selector that
-/// still holds an earlier value (a partial switch).
+/// Reads the exact target a selection switched.
+///
+/// The kernel never guesses what a guest holds: it asks, and compares every
+/// answer with the committed target. An implementation is the container/runner
+/// adapter (#482/#483); the kernel supplies the paths and judges the values, so
+/// no caller can hand in a receipt it did not observe.
+pub trait SelectorReader {
+    /// The value a selector currently holds, read from the exact target.
+    fn read_selector(&mut self, path: &str) -> Observed<String>;
+    /// The digest of an immutable object, read back from the exact target.
+    fn read_object(&mut self, path: &str) -> Observed<Digest>;
+}
+
+/// What the guest holds after the three compares, as the kernel read it back.
+/// Its fields are private and only [`SelectionObligation::observe`] builds one,
+/// so completion cannot be asserted from the obligation's own record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionSwitchReceipt {
-    pub context_generation: Generation,
-    pub context_digest: Digest,
-    pub binary_digest: Digest,
-    pub credential_digest: Digest,
-    pub serving_pin: Digest,
-    /// Every selector's path and the value read back from it, in the obligation's
-    /// order. A partial switch names an earlier value here and is refused.
-    pub selectors: [SelectorReadback; 3],
+    context_generation: Generation,
+    context_digest: Digest,
+    binary_digest: Digest,
+    credential_digest: Digest,
+    serving_pin: Digest,
+    selectors: [SelectorReadback; 3],
 }
 
 impl SelectionSwitchReceipt {
-    /// The receipt for a selection that was just read back: every digest is the
-    /// one the obligation committed.
-    pub fn of(receipt: &SelectionReceipt) -> Self {
+    pub fn context_generation(&self) -> Generation {
+        self.context_generation
+    }
+    pub fn binary_digest(&self) -> &Digest {
+        &self.binary_digest
+    }
+    /// Every selector's path and the value that was read back from it.
+    pub fn selectors(&self) -> &[SelectorReadback; 3] {
+        &self.selectors
+    }
+    fn expected(receipt: &SelectionReceipt) -> Self {
         let selection = &receipt.selection;
         Self {
             context_generation: selection.objects.context_generation,
@@ -342,12 +360,70 @@ impl SelectionObligation {
         }
     }
 
-    /// Refuse a switch receipt that is not the obligation's exact target. The
-    /// caller reads the guest back; this is the check that turns that read into
-    /// evidence or a refusal, so a third value is never recorded as complete.
+    /// Read the exact target back and refuse anything that is not the committed
+    /// selection: every selector at its committed next value and every object
+    /// hashing to its committed digest. A partial switch, a third value, a
+    /// missing object and an unreadable one are each refused, so completion is
+    /// always the result of an observation, never of the obligation's own
+    /// record.
+    pub fn observe(
+        &self,
+        reader: &mut dyn SelectorReader,
+    ) -> Result<SelectionSwitchReceipt, RunError> {
+        let expected = SelectionSwitchReceipt::expected(&self.receipt);
+        let selection = &self.receipt.selection;
+        let mut selectors = Vec::with_capacity(3);
+        for (change, observed) in selection.switches.iter().zip(&expected.selectors) {
+            match reader.read_selector(&change.path) {
+                Observed::Verified(value, _) if value == observed.value => {
+                    selectors.push(SelectorReadback {
+                        path: change.path.clone(),
+                        value,
+                    });
+                }
+                Observed::Verified(..) | Observed::Absent(_) => {
+                    return Err(ActivationRefusal::SelectionMismatch.into())
+                }
+                Observed::Unknown(reason) => {
+                    return Err(RunError::unavailable(format!(
+                        "workspace selector `{}` is unreadable: {reason}",
+                        change.path
+                    )))
+                }
+            }
+        }
+        for object in [
+            &selection.objects.binary,
+            &selection.objects.context,
+            &selection.objects.credential,
+        ] {
+            match reader.read_object(&object.path) {
+                Observed::Verified(digest, _) if digest == object.digest => {}
+                Observed::Verified(..) | Observed::Absent(_) => {
+                    return Err(ActivationRefusal::SelectionMismatch.into())
+                }
+                Observed::Unknown(reason) => {
+                    return Err(RunError::unavailable(format!(
+                        "workspace object `{}` is unreadable: {reason}",
+                        object.path
+                    )))
+                }
+            }
+        }
+        let mut receipt = expected;
+        receipt.selectors = [
+            selectors[0].clone(),
+            selectors[1].clone(),
+            selectors[2].clone(),
+        ];
+        Ok(receipt)
+    }
+
+    /// Refuse a switch receipt that is not the obligation's exact target. This
+    /// is redundant with [`Self::observe`] on purpose: completion re-checks the
+    /// readback it will record against the committed target.
     pub fn validate_switch(&self, receipt: &SelectionSwitchReceipt) -> Result<(), RunError> {
-        let expected = SelectionSwitchReceipt::of(&self.receipt);
-        if expected != *receipt {
+        if SelectionSwitchReceipt::expected(&self.receipt) != *receipt {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         Ok(())
@@ -735,17 +811,19 @@ pub fn selection_recovered(
     root: &StateRoot,
     obligation: &SelectionObligation,
     liveness: &SelectionLiveness,
-    receipt: &SelectionSwitchReceipt,
+    reader: &mut dyn SelectorReader,
     wait: Wait,
 ) -> Result<(), RunError> {
     if !liveness.complete() {
         return Err(ActivationRefusal::ServingLost.into());
     }
     // Recovery *completes* the committed selection, it does not assume it: the
-    // caller proves it re-read the exact targets back after repeating the same
-    // ordered compares. A third value, a missing object or an unreadable one is
-    // refused here exactly as it is on the live path.
-    obligation.validate_switch(receipt)?;
+    // kernel reads the exact target back and compares every selector and object
+    // with the committed selection. A third value, a still-previous value, a
+    // missing object or an unreadable one is refused exactly as on the live
+    // path, and a receipt the caller assembled is never accepted.
+    let receipt = obligation.observe(reader)?;
+    obligation.validate_switch(&receipt)?;
     let _gate = Gate::acquire(
         cx,
         root,

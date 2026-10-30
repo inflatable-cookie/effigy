@@ -3066,12 +3066,19 @@ pub struct ServingLease { /* session, supervisor, endpoint, pin; only SessionLau
 pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3] }
 pub struct SelectionReceipt { /* publication + selection + the lease its own launch published */ }
 pub struct SelectorReadback { pub path: String, pub value: String }
-pub struct SelectionSwitchReceipt { /* digests, generation, serving pin, [SelectorReadback; 3] */ }
+pub struct SelectionSwitchReceipt { /* private: digests, generation, serving pin, [SelectorReadback; 3] */ }
+pub trait SelectorReader {
+    fn read_selector(&mut self, path: &str) -> Observed<String>;
+    fn read_object(&mut self, path: &str) -> Observed<Digest>;
+}
 pub enum SelectionState { Pending, Switched, Abandoned }
 pub struct SelectionObligation { /* id, reservation, E, activation run, session run, receipt, state */ }
 impl SelectionReceipt {
     pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8], launch: &mut SessionLaunch) -> Result<Self, RunError>;
     pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError>;
+}
+impl SessionLaunch {
+    pub fn launch(session: &SessionRef, owner: SessionOwner, supervisor_id: impl Into<String>, key: ServingKey, listener: Box<dyn ChannelListener>) -> Result<Self, ServingRefusal>;
 }
 impl WorkspaceActivationReservation {
     pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt) -> Result<CommittedActivation, RunError>;
@@ -3082,7 +3089,7 @@ impl Attachments {
 }
 pub struct SelectionLiveness { pub session: Observed<()>, pub target: Observed<()>, pub listener: Observed<()> }
 pub fn unfinished_selection(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SelectionObligation>>;
-pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, receipt: &SelectionSwitchReceipt, wait: Wait) -> Result<(), RunError>;
+pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reader: &mut dyn SelectorReader, wait: Wait) -> Result<(), RunError>;
 pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reason: &str, wait: Wait) -> Result<(), RunError>;
 ```
 
@@ -3095,10 +3102,14 @@ published container and boot must be that observation. `SelectionReceipt::new` t
 publishes the locator from it, so a selection can only name an endpoint and pin that a bound, qualified, session-owned listener
 holds; a launch serving another session, or one whose listener was never qualified, publishes nothing. A receipt's `ServingLease`
 names its own session, so a lease another session's launch published is refused.
-Recovery is completion, not assumption: `selection_recovered` requires both the three proven liveness facts **and** the exact
-`SelectionSwitchReceipt` readback, repeating the same compares a live switch does; the receipt carries each of the three selectors
-and the value read back from it, so a third value, a still-previous value (a partial switch), a missing object or an unknown answer
-never completes. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
+Recovery is completion, not assumption: `selection_recovered` requires the three proven liveness facts **and** a `SelectorReader`.
+The kernel reads every selector and every selected object back through that reader itself, compares each answer with the committed
+target, and only then builds the `SelectionSwitchReceipt` it records — its fields are private and nothing else constructs one. A
+third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
+never a completed selection. The same reader drives `Attachments::selection_switched` on the live path, so both complete exactly
+what was observed. Custody is rooted in the detached session owner: `SessionLaunch::launch` takes the session's `SessionRef` and a
+`SessionOwner` that only `Run::session_owner` builds, from the run whose private session slot (staged or mapped) the journal
+records, so a listener and key are never launched for a binding or an environment run a caller assembled. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
 or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
 is what they call.

@@ -321,16 +321,17 @@ impl Attachments {
     /// Record that the guest holds exactly the selection this obligation's
     /// commit wrote, under the environment run's own held `Gate(Env)`.
     ///
-    /// The caller has already performed the three compare-and-swap switches in
-    /// the obligation's order and read every selected object back; this call is
-    /// what turns that read into durable evidence or a refusal. It refuses a
-    /// receipt that is not the obligation's exact target, a generation that no
-    /// longer serves this obligation, and a second completion: a selection
-    /// completes or abandons exactly once. No transaction spans guest I/O.
+    /// The caller supplies only a reader of the exact target: the kernel reads
+    /// every selector and every selected object back itself and compares them
+    /// with the committed targets, so a partial switch, a third value or a
+    /// missing object is refused and a receipt the caller assembled is never
+    /// accepted. It also refuses a generation that no longer serves this
+    /// obligation and a second completion: a selection completes or abandons
+    /// exactly once. No transaction spans guest I/O.
     pub fn selection_switched(
         run: &mut Run<'_>,
         obligation: &crate::workspace_session::SelectionObligation,
-        receipt: &crate::workspace_session::SelectionSwitchReceipt,
+        reader: &mut dyn crate::workspace_session::SelectorReader,
     ) -> Result<(), RunError> {
         use crate::workspace_session::SelectionState;
         run.can_effect()?;
@@ -340,7 +341,8 @@ impl Attachments {
         {
             return Err(crate::workspace_session::ActivationRefusal::SelectionMismatch.into());
         }
-        obligation.validate_switch(receipt)?;
+        let receipt = obligation.observe(reader)?;
+        obligation.validate_switch(&receipt)?;
         let result = (|| {
             crate::fault_point!(SelectionSwitchBefore)?;
             run.store
