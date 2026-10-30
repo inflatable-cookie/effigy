@@ -37,6 +37,12 @@
 //! its listener. Cancellation/recovery takes only the exact successor's slot.
 
 mod down;
+mod guest_context;
+mod guest_stage;
+pub use guest_context::{GuestContextInputs, GuestPaths, GuestSourcePin};
+pub use guest_stage::{
+    BoundPlatform, GuestBinaryReceipt, GuestBinaryStage, ImagePlatform, LoaderFamily,
+};
 mod selection;
 mod serving;
 
@@ -824,6 +830,16 @@ pub struct ContainerIdentity {
     pub backend: String,
 }
 
+/// One candidate from the apply inventory. Fresh targets must carry the
+/// project and creating activation's identity; an unrelated container is never
+/// adopted merely because it is the only one the backend currently reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetCandidate {
+    pub identity: ContainerIdentity,
+    pub project: String,
+    pub created_by: Option<RunId>,
+}
+
 /// What a decision knows about the target. A fresh project has no container
 /// yet, so absence is its own evidence, recorded with the project and backend
 /// it names (052 §8.11).
@@ -881,9 +897,22 @@ pub struct PublishInputs {
     pub inputs_digest: Digest,
     /// What the decision knows about the target.
     pub target: TargetEvidence,
+    /// Optional image facts already observed when deciding. Fresh projects bind later.
+    #[serde(default)]
+    pub platform: Option<ImagePlatform>,
+    /// Guest-local materialisation frozen by the decision. Legacy rows remain readable but cannot publish without it.
+    #[serde(default)]
+    pub guest: Option<GuestContextInputs>,
 }
 impl PublishInputs {
     fn validate(&self) -> Result<(), RunError> {
+        self.guest
+            .as_ref()
+            .ok_or_else(|| RunError::refused("workspace decisions require frozen guest inputs"))?
+            .validate()?;
+        if let Some(platform) = &self.platform {
+            platform.validate()?;
+        }
         if let ArtifactEvidence::Selected { object, .. } = &self.artifact {
             if object.trim().is_empty() {
                 return Err(ActivationRefusal::ReceiptIncomplete.into());
@@ -1133,6 +1162,9 @@ fn attachable(
     let Some(frozen) = record.inputs.clone() else {
         return Ok(None);
     };
+    if frozen.guest.is_none() || publishing.guest.is_none() {
+        return Ok(None);
+    }
     let publication = obligation.receipt().publication();
     // The target is fenced *first*, before the artifact or selection digest can
     // decide anything: a replaced container or changed boot is refused by name
@@ -1151,7 +1183,13 @@ fn attachable(
             return Err(ActivationRefusal::TargetEvidenceMismatch.into());
         }
     }
-    if frozen.selection != publishing.selection || frozen.inputs_digest != publishing.inputs_digest
+    if frozen.guest != publishing.guest
+        || publishing
+            .platform
+            .as_ref()
+            .is_some_and(|platform| frozen.platform.as_ref() != Some(platform))
+        || frozen.selection != publishing.selection
+        || frozen.inputs_digest != publishing.inputs_digest
     {
         return Ok(None);
     }
@@ -1501,6 +1539,8 @@ pub enum ActivationRefusal {
     ActivationIncomplete,
     /// The target the decision observed disagrees with the live publication.
     TargetEvidenceMismatch,
+    /// The apply inventory did not identify exactly one target.
+    TargetAmbiguous,
     /// The committed generation's selection is unfinished, so nothing may
     /// attach to it or reserve around it.
     SelectionPending,
@@ -1547,6 +1587,7 @@ impl ActivationRefusal {
             Self::ActivationNotReady => "activation_not_ready",
             Self::ActivationIncomplete => "activation_incomplete",
             Self::TargetEvidenceMismatch => "target_evidence_mismatch",
+            Self::TargetAmbiguous => "target_ambiguous",
             Self::SelectionPending => "selection_pending",
             Self::SelectionAbandoned => "selection_abandoned",
             Self::SelectionMismatch => "selection_mismatch",
@@ -1619,6 +1660,7 @@ impl std::fmt::Display for ActivationRefusal {
             Self::ActivationIncomplete => {
                 "the environment activation run still has a required effect that is not applied, so it publishes nothing"
             }
+            Self::TargetAmbiguous => "the apply inventory must identify exactly one target",
             Self::TargetEvidenceMismatch => {
                 "the target this activation observed is not the container and boot the live publication names; re-prepare instead of re-targeting it"
             }
@@ -1957,6 +1999,44 @@ impl WorkspaceActivationReservation {
             }),
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
+    }
+
+    /// Freeze the apply's one exact container and boot under the claimed Env
+    /// owner's gate. Unknown inventory and zero or several candidates refuse.
+    /// Repeating the same observation returns the original binding; no retry
+    /// can replace it. The inventory must attest this run created a fresh
+    /// target, or match the decision's already observed target exactly.
+    pub fn bind_target(
+        &self,
+        authority: &mut Run<'_>,
+        candidates: Observed<Vec<TargetCandidate>>,
+    ) -> Result<ContainerIdentity, RunError> {
+        authority.bind_workspace_target(self, candidates)
+    }
+
+    pub(crate) fn claimed_inputs(
+        &self,
+        conn: &rusqlite::Connection,
+        run: RunId,
+        fence: &Fence,
+    ) -> Result<PublishInputs, RunError> {
+        if fence.resource != self.record.environment || fence.generation != self.record.generation {
+            return Err(ActivationRefusal::WrongGeneration.into());
+        }
+        let stored = read_reservation(conn, &self.record.environment, self.record.generation)?
+            .ok_or(ActivationRefusal::WrongReservation)?;
+        if stored.id != self.record.id {
+            return Err(ActivationRefusal::WrongReservation.into());
+        }
+        if stored.state != ActivationReservationState::Reserved {
+            return Err(ActivationRefusal::Frozen.into());
+        }
+        if stored.environment_run != Some(run) {
+            return Err(ActivationRefusal::ClaimedByAnotherRun.into());
+        }
+        stored
+            .inputs
+            .ok_or_else(|| ActivationRefusal::Unfrozen.into())
     }
 
     pub fn id(&self) -> ActivationReservationId {
@@ -2322,6 +2402,17 @@ impl WorkspaceActivationReservation {
             (plan, stored.inputs)
         };
         let receipt = plan.validate_publication(environment_run)?;
+        let staged_binary = environment_run.verified_workspace_binary()?;
+        if staged_binary.reservation != self.id() {
+            return Err(ActivationRefusal::WrongReservation.into());
+        }
+        if receipt.publication.container_id != staged_binary.binding.target.container_id
+            || receipt.publication.vm_boot_id != staged_binary.binding.target.vm_boot_id
+            || selection.selection().backend != staged_binary.binding.target.backend
+            || selection.selection().objects.binary != staged_binary.binding.artifact
+        {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
         selection.require_validated_document()?;
         selection.validate(&plan)?;
         // The commit holds the session's live custody: the launch that published
@@ -2343,16 +2434,11 @@ impl WorkspaceActivationReservation {
         // read, so its decision records `Unselected`: this commit freezes the
         // artifact the run actually selected, once, in its own transaction. Any
         // later activation compares against that frozen digest.
-        let fresh_artifact = match &frozen.artifact {
-            ArtifactEvidence::Selected { digest, .. } if *digest == selected => None,
-            ArtifactEvidence::Selected { .. } => {
-                return Err(ActivationRefusal::SelectionMismatch.into())
+        if let ArtifactEvidence::Selected { digest, .. } = &frozen.artifact {
+            if *digest != selected {
+                return Err(ActivationRefusal::SelectionMismatch.into());
             }
-            ArtifactEvidence::Unselected { .. } => Some(ArtifactEvidence::Selected {
-                digest: selected.clone(),
-                object: selection.selection().objects.binary.path.clone(),
-            }),
-        };
+        }
         // The resolved selection the decision froze is the one the published
         // context document names. A context prepared for another selection is
         // never published under this decision.
@@ -2394,42 +2480,13 @@ impl WorkspaceActivationReservation {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
             }
             plan.validate_receipt(&receipt)?;
-            // Freeze the artifact a fresh project just selected, in this same
-            // transaction and exactly once: a row that already names another
-            // artifact refuses instead of being rewritten.
-            if let Some(fresh) = fresh_artifact.as_ref() {
-                let stored_inputs: Option<String> = txn.conn().query_row(
-                    "SELECT inputs FROM workspace_activation_reservations \
-                     WHERE environment=?1 AND environment_generation=?2",
-                    params![
-                        self.record.environment.name().to_string(),
-                        self.record.generation.get() as i64
-                    ],
-                    |row| row.get(0),
-                )?;
-                let Some(stored_inputs) = stored_inputs else {
-                    return Err(ActivationRefusal::Frozen.into());
-                };
-                let mut inputs: PublishInputs = serde_json::from_str(&stored_inputs)?;
-                match &inputs.artifact {
-                    ArtifactEvidence::Selected { digest, .. } if *digest == selected => {}
-                    ArtifactEvidence::Selected { .. } => {
-                        return Err(ActivationRefusal::Frozen.into())
-                    }
-                    ArtifactEvidence::Unselected { .. } => {
-                        inputs.artifact = fresh.clone();
-                        txn.conn().execute(
-                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
-                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved'",
-                            params![
-                                self.record.environment.name().to_string(),
-                                self.record.generation.get() as i64,
-                                serde_json::to_string(&inputs)?,
-                                txn.now()
-                            ],
-                        )?;
-                    }
-                }
+            // Publish all bound facts once, atomically with the selection.
+            if stored.state == ActivationReservationState::Reserved {
+                let mut bound_inputs = stored.inputs.clone().ok_or(ActivationRefusal::Unfrozen)?;
+                bound_inputs.target = TargetEvidence::Observed(staged_binary.binding.target.clone());
+                bound_inputs.platform = Some(staged_binary.binding.platform.clone());
+                bound_inputs.artifact = ArtifactEvidence::Selected { digest: staged_binary.binding.artifact.digest.clone(), object: staged_binary.binding.artifact.path.clone() };
+                txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 WHERE environment=?1 AND environment_generation=?2 AND state='reserved'", params![self.environment().name().to_string(), self.generation().get() as i64, serde_json::to_string(&bound_inputs)?, txn.now()])?;
             }
             if stored.state == ActivationReservationState::Committed {
                 // A retry answers with the obligation the first commit wrote. A
@@ -2870,9 +2927,15 @@ pub struct ActivationPlan {
     environment_generation: Generation,
     environment_run: Option<RunId>,
     session: SessionBinding,
+    guest: Option<GuestContextInputs>,
 }
 
 impl ActivationPlan {
+    pub fn guest_context(&self) -> Result<&GuestContextInputs, RunError> {
+        self.guest
+            .as_ref()
+            .ok_or_else(|| ActivationRefusal::Unfrozen.into())
+    }
     pub fn reservation_id(&self) -> ActivationReservationId {
         self.reservation
     }
@@ -3054,6 +3117,10 @@ fn activation_plan(
         environment: record.environment.clone(),
         environment_generation: record.generation,
         environment_run: record.environment_run,
+        guest: record
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.guest.clone()),
         session,
     }))
 }

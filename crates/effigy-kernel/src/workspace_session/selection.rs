@@ -89,6 +89,14 @@ impl GuestSelection {
             || self.objects.credential.path.trim().is_empty()
             || self.objects.context_generation.get() == 0
             || self.objects.credential_generation.get() == 0
+            || self.objects.credential_generation != self.objects.context_generation
+            || self.objects.credential.path
+                != format!(
+                    "/run/effigy/objects/enrol/{}",
+                    self.objects.credential_generation.get()
+                )
+            || self.objects.binary.path
+                != format!("/run/effigy/objects/bin/{}", self.objects.binary.digest)
         {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
@@ -146,6 +154,11 @@ struct ContextDocument {
     credential: DocumentCredential,
     locator: DocumentLocator,
     selection_digest: String,
+    version: String,
+    paths: GuestPaths,
+    sources: Vec<GuestSourcePin>,
+    binary_path: String,
+    backend: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,7 +201,8 @@ impl SelectionReceipt {
         launch: &mut super::SessionLaunch,
         prior: &mut dyn SelectorReader,
     ) -> Result<Self, RunError> {
-        if Digest::of(document) != selection.objects.context.digest {
+        if document.len() > 1024 * 1024 || Digest::of(document) != selection.objects.context.digest
+        {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         if launch.binding() != *plan.binding() {
@@ -198,7 +212,14 @@ impl SelectionReceipt {
         let parsed: ContextDocument = serde_json::from_slice(document)
             .map_err(|_| RunError::from(ActivationRefusal::SelectionMismatch))?;
         let mismatch = ActivationRefusal::SelectionMismatch;
-        if parsed.schema != CONTEXT_SCHEMA_V2
+        let guest = plan.guest_context()?;
+        guest.validate()?;
+        if parsed.version != guest.version
+            || parsed.paths != guest.paths
+            || parsed.sources != guest.sources
+            || parsed.binary_path != selection.objects.binary.path
+            || parsed.backend != selection.backend
+            || parsed.schema != CONTEXT_SCHEMA_V2
             || parsed.context_generation != selection.objects.context_generation.get()
             || parsed.environment_generation != plan.environment_generation().get()
             || parsed.session.run_id != plan.session_run().to_string()

@@ -15,6 +15,8 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
+
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
   PM, APC and the other non-printing bytes) *before* redaction, over merged
   stdout/stderr arrival order, so a value a child split with a control
