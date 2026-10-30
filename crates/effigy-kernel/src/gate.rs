@@ -187,10 +187,13 @@ impl std::error::Error for GateError {}
 
 /// Held gates. Dropping releases resource gates before their scope gates, so
 /// a scope removal never runs while a resource gate is still held.
-#[derive(Debug)]
 pub struct GateGuard {
     gates: Vec<(ResourceId, GateFile)>,
     scopes: Vec<(String, GateFile)>,
+    /// Actions released with this guard: session listener/key custody is freed
+    /// when the owning run settles *or* is dropped un-settled, because either
+    /// way the gate is released here.
+    release_actions: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 /// A lock belongs to the open description, including copies in a concurrent
@@ -274,8 +277,31 @@ impl GateGuard {
         }
     }
 }
+impl GateGuard {
+    /// Register an action released with this guard, exactly once.
+    pub(crate) fn on_release(&mut self, action: impl FnOnce() + Send + 'static) {
+        self.release_actions.push(Box::new(action));
+    }
+    /// Run everything registered with [`GateGuard::on_release`], exactly once.
+    pub(crate) fn release_actions(&mut self) {
+        for action in std::mem::take(&mut self.release_actions) {
+            action();
+        }
+    }
+}
+impl std::fmt::Debug for GateGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GateGuard")
+            .field("gates", &self.gates.len())
+            .field("scopes", &self.scopes.len())
+            .finish()
+    }
+}
 impl Drop for GateGuard {
     fn drop(&mut self) {
+        // A run dropped without settling releases its holders before the gate
+        // goes: a retained listener must not outlive the owner's slot.
+        self.release_actions();
         self.gates.clear();
         self.scopes.clear();
     }
@@ -367,6 +393,7 @@ impl Gate {
         let mut guard = GateGuard {
             gates: Vec::new(),
             scopes: Vec::new(),
+            release_actions: Default::default(),
         };
         let mut scope_dirs = Vec::new();
         for name in &scope_names {

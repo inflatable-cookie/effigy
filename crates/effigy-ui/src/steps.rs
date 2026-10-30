@@ -6,12 +6,18 @@
 //! for verbose output, in which case it prints one plain line per step.
 //!
 //! Labels are short, present tense and name their subject: `starting web`,
-//! `waiting for web to report healthy (attempt 4)`, `fetching bundle
-//! decodelabs`. The label changes as the work moves on.
+//! `fetching bundle decodelabs`. A step is driven by a [`ProgressSource`], so
+//! its frames always name the current sub-step or object, a known count, the
+//! last event and the elapsed wait; when the operation cannot report more, the
+//! frame names the exact thing awaited. A canned label that never moves is not
+//! progress and is not expressible (Q-017).
 //!
 //! ```no_run
-//! let step = effigy_ui::steps::step("starting web");
-//! step.set_label("waiting for web to report healthy (attempt 2)");
+//! use effigy_ui::steps::{live_step, ProgressSource};
+//!
+//! let source = ProgressSource::waiting_for("the web health probe on :8080");
+//! let step = live_step(source.clone());
+//! source.update("waiting for web to report healthy", Some((2, 4)), None);
 //! step.succeed("web is healthy");
 //! ```
 //!
@@ -125,6 +131,15 @@ impl ProgressSource {
         }
     }
 
+    /// Name the exact object or probe now awaited, when the work moves on to
+    /// something other than the one first named.
+    pub fn waiting_on(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
     /// Update the current object or sub-step, known count and latest event.
     pub fn update(
         &self,
@@ -140,7 +155,49 @@ impl ProgressSource {
         }
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// Publish the latest event without changing the current sub-step: what an
+    /// operation just observed about the object it is waiting on.
+    pub fn event(&self, event: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.event = Some(event.into());
+    }
+
+    /// Drop the last event when the work moves on to a different wait, so a
+    /// blocker that has been resolved is never shown against the new step.
+    pub fn clear_event(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .event = None;
+    }
+
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
+    }
+
+    /// What the step ends with when it succeeds: the sub-step last set, or
+    /// the awaited object if the operation never named a sub-step.
+    pub fn summary(&self) -> String {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .sub_step
+            .clone()
+            .unwrap_or_else(|| state.awaiting.clone())
+    }
+
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
+    ///
+    /// A frame always names what is still awaited once its sub-step is known,
+    /// and the last event is added on top: an event says what just happened,
+    /// never what the operation is waiting for, so publishing one cannot hide
+    /// the awaited object for the rest of the phase (Q-017).
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step
@@ -149,10 +206,11 @@ impl ProgressSource {
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
+        if state.sub_step.is_some() && !state.awaiting.is_empty() {
+            label.push_str(&format!("; waiting for {}", state.awaiting));
+        }
         if let Some(event) = &state.event {
             label.push_str(&format!("; last: {event}"));
-        } else if state.sub_step.is_some() {
-            label.push_str(&format!("; waiting for {}", state.awaiting));
         }
         label.push_str(&format!("; {}s elapsed", elapsed.as_secs()));
         label
@@ -287,10 +345,11 @@ impl Step {
         }
     }
 
-    /// A nested step: a distinct line for the part of the work now running.
-    #[cfg_attr(
-        effigy_feedback_lint,
-        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    /// The legacy fixed-label nested step. It exists only as a lint anchor:
+    /// `lint:feedback` fails on any use. Start a nested live step with
+    /// [`Step::live_step`] instead.
+    #[deprecated(
+        note = "feedback legacy spinner: migrate to a live progress source; use `live_step(ProgressSource::waiting_for(\"the exact wait\"))` for work that can wait, or `finish_line` for an immediate outcome"
     )]
     pub fn step(&self, label: &str) -> Step {
         Step::new(Arc::clone(&self.inner.sink), Some(self), label)
@@ -447,10 +506,9 @@ impl Sink {
         crate::style_text(self.color, self.styles.muted, label)
     }
 
-    #[cfg_attr(
-        effigy_feedback_lint,
-        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-    )]
+    /// The one reviewed spinner sink. `clippy::disallowed_methods` forbids
+    /// every other `ProgressBar::new_spinner` in the workspace, and the
+    /// feedback inventory exempts exactly this construction.
     fn start_bar(&self, label: &str) -> ProgressBar {
         let bar = self.multi().add(ProgressBar::new_spinner());
         if let Ok(style) = ProgressStyle::with_template(SPINNER_TEMPLATE) {
@@ -585,11 +643,21 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
     sink.write_above_bars(&format!("{line}\n"));
 }
 
-/// Start a top-level step. The label is short, present tense and names its
-/// subject: `starting web`.
-#[cfg_attr(
-    effigy_feedback_lint,
-    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
+}
+
+/// The legacy fixed-label top-level step. It exists only as a lint anchor:
+/// `lint:feedback` fails on any use. Start a live step with [`live_step`], or
+/// end an immediate outcome with [`finish_line`].
+#[deprecated(
+    note = "feedback legacy spinner: migrate to a live progress source; use `live_step(ProgressSource::waiting_for(\"the exact wait\"))` for work that can wait, or `finish_line` for an immediate outcome"
 )]
 pub fn step(label: &str) -> Step {
     Step::new(Arc::clone(global_sink()), None, label)
@@ -707,7 +775,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(5)));
         assert_eq!(
             step.label(),
-            "checking web (2/3); last: HTTP 404; 5s elapsed"
+            "checking web (2/3); waiting for web health probe on port 8080; last: HTTP 404; 5s elapsed"
         );
         source.update(
             "checking database",
@@ -717,11 +785,26 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(7)));
         assert_eq!(
             step.label(),
-            "checking database (3/3); last: connection refused; 7s elapsed"
+            "checking database (3/3); waiting for web health probe on port 8080; last: connection refused; 7s elapsed"
         );
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
         assert!(step.label().ends_with("7s elapsed"));
+    }
+
+    #[test]
+    fn an_event_lands_without_moving_the_sub_step() {
+        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(1)),
+            "waiting for the environment gate for `stack`; 1s elapsed"
+        );
+        source.update("reconciling the backend", Some((1, 3)), None);
+        source.event("run agq holds it (pid 9012, task `dev`)");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(3)),
+            "reconciling the backend (1/3); waiting for the environment gate for `stack`; last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+        );
     }
 
     #[test]
@@ -812,7 +895,9 @@ mod tests {
     fn nested_steps_finish_with_their_parent() {
         let (sink, buffer) = sink(StepMode::Lines);
         let parent = Step::new(sink, None, "starting web");
-        let _child = parent.step("waiting for web to report healthy");
+        let _child = parent.live_step(ProgressSource::waiting_for(
+            "web to report healthy on :8080",
+        ));
         parent.succeed("web is healthy");
         assert_eq!(buffer.text(), "✓ web is healthy\n");
     }
@@ -986,14 +1071,13 @@ mod tests {
     #[test]
     fn capturing_records_the_finished_lines_and_draws_nothing() {
         let (value, lines) = capture_lines(|| {
-            let step = step("starting gateway");
-            step.set_label("waiting for gateway to answer");
+            let step = live_step(ProgressSource::waiting_for("the gateway to answer"));
             step.succeed("gateway is running");
-            let failed = step.step("starting DNS");
+            let failed = step.live_step(ProgressSource::waiting_for("DNS to bind port 53"));
             failed.fail("DNS refused to bind port 53");
-            let cleared = step.step("starting proxy");
+            let cleared = step.live_step(ProgressSource::waiting_for("the proxy to bind"));
             cleared.finish_clear();
-            let unfinished = step.step("starting broker");
+            let unfinished = step.live_step(ProgressSource::waiting_for("the broker to start"));
             drop(unfinished);
             7
         });
@@ -1010,9 +1094,13 @@ mod tests {
 
     #[test]
     fn capturing_is_per_thread_and_ends_with_the_closure() {
-        let (_, first) = capture_lines(|| step("starting web").succeed("web is healthy"));
+        let (_, first) = capture_lines(|| {
+            live_step(ProgressSource::waiting_for("web to start")).succeed("web is healthy")
+        });
         assert_eq!(first, vec!["✓ web is healthy".to_owned()]);
-        let (_, second) = capture_lines(|| step("starting web").fail("web is unhealthy"));
+        let (_, second) = capture_lines(|| {
+            live_step(ProgressSource::waiting_for("web to start")).fail("web is unhealthy")
+        });
         assert_eq!(second, vec!["✗ web is unhealthy".to_owned()]);
     }
 

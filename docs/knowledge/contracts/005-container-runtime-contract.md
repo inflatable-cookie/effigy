@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-28
+Last Updated: 2026-10-29
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -160,9 +160,74 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. A service that
+Each shared service a bring-up ensures is its own wait: entering the next
+service replaces the awaited subject and drops the previous service's event, so
+a stalled gate, inventory read, render or Compose call never displays a
+finished service's wait.
+
+The route-registration stage polls the runtime for the declared gateway service
+ports for up to 60s; its frame names the read in flight (`reading the runtime's
+containers for the declared gateway service ports (attempt 2)`) and then the
+blocker that read reported, with the service and domain when the detail knows
+them, instead of holding the stage label. The work after a ready poll is
+reported as its own stages too — confirming the primary container's binding,
+resolving the declared routes against the published ports, writing the route
+table, and, on timeout, reading the exited containers for the diagnostic — and
+entering a stage clears the previous stage's blocker so a resolved one is never
+shown against later work.
+
+Readiness is Running plus the service's own health check. Its progress names
+which of the probe's two runtime reads is running — the project's container
+list, or the inspect of the container names that list returned, with those
+names in the frame — because a stalled `ps` and a stalled `inspect` are
+different waits. A read that fails keeps that identity: the retry frame and the
+timeout diagnostic name the read, its probe number and, for an inspect, the
+containers it was reading, and the `waiting_on` probe entry carries the same
+facts as `probe` (`container_list` or `containers_inspect`), `probe_number` and
+`containers`. A service whose health regresses after reporting healthy opens
+a fresh step with its own attempt and last check output. The timeout diagnostic
+reads each exited service's own last log line under a live step that names the
+runtime container the read is issued against — an explicit Compose
+`container_name` may differ from the service name — with its position in the
+set, and reports a read the runtime does not answer instead of leaving the
+finished probe on screen. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
-one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
+a definite status line outside `2xx`/`3xx` is refused at once, naming the status
+it observed and the primary container's own last output, instead of spending
+the declared budget on an answer waiting cannot change (effigy#455). Only a
+complete, well-formed status line is evidence: the probe reads one bounded
+status line across partial reads, so a check that does not answer, that splits
+its response, or that closes after a prefix keeps the budgeted wait instead of
+reporting readiness or a mismatch it never observed. The container named in
+that evidence — in the human diagnostic as well as `waiting_on` — is the one the
+runtime's own row reports for the primary service, so a declared Compose
+`container_name` is read and reported as it is rather than assumed from the
+project and service names; when the runtime cannot name one, the diagnostic
+describes the environment and its primary service instead of calling the
+environment a container. The identity is carried from the readiness probe that
+already observed that service, so naming it costs no second runtime read; only
+when the readiness wait observed no services is one inventory read made, under
+its own live step naming that row and its elapsed wait. The failed container's
+log tail is the same kind of bounded runtime read, so it too runs under its own
+live step, naming the container it reads and reporting when the runtime does
+not answer it; the refusal then carries no tail rather than an unread one. The restart-policy apply after Compose names its own
+stages as they start: the Compose declaration read, the runtime inventory read,
+then the update, which may not be sent at all when no service qualifies. Each
+listed container is updated only after its full ID, project, declared service,
+canonical checkout and scope verify against the current policy, and a strict
+inspection re-verifies it immediately before the update; the update names the
+verified full ID, never the listed name. A foreign, replaced or unknown listed
+container, including a sibling of another owner, receives no update and is named
+in a warning; the selected service's own owned-binding check still refuses it
+separately. A shared service's stack belongs to no checkout, so its listed
+containers are proven by their own identity instead: the full ID, the shared
+project, the declared service, the running state, and the
+`com.effigy.shared-render` label equal to the render `up` just published. The
+same strict re-inspection runs before the update. A missing, foreign,
+stale-render, changed or ambiguous (more than one listed container of the
+service) identity receives no update and is named in a warning; no path falls
+back to a container name. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays
@@ -281,9 +346,95 @@ tls = true
 ```
 
 `readiness.timeout_secs` bounds only the wait after the listener's port first
-answers; a child still building has not opened its port, so the supervisor and
-the `up` that waits on it carry no deadline and the child's own exit is the
-failure that ends the wait.
+answers; a child still building has not opened its port, and the supervisor's
+own readiness budget starts when it does. The `up` that waits on it is bounded
+by that bring-up's runtime-observation budget instead (see
+[Per-route exposure](#per-route-exposure)): a port that never opens withholds
+that listener's route and never holds the activation open. The wait still
+reports what it observed: while the
+port is closed it prints progress at a fixed interval and carries the child's
+own output tail, bounded and with secret-shaped values redacted, so a long
+start is never a silent count. Progress and activation-budget refusals use the
+supervisor's last probe observation. A socket that accepted a connection but supplied no HTTP status is
+reported as waiting for the declared HTTP status, with its readiness clock
+running. A later connection failure does not reset that clock. A record with no
+probe observation makes no closed-port claim. A listener that answers the
+declared readiness request with a different status is refused as soon as that
+answer is observed.
+The refusal names the status it answered, the status the manifest required and
+the same bounded child-output tail, and the declared budget is not spent on a
+question the child has already answered: a `500` where `200` is required ends
+the start, it does not wait out `timeout_secs`.
+
+## Per-route exposure
+
+Exposure is decided per declared route target, not per activation. `up`
+registers the container's own verified routes first, then starts host
+listeners in `depends_on` order, and each listener publishes only its own route
+after its own readiness. A listener that never reaches readiness withholds
+exactly its own route: the container's published routes, and every other
+listener that did publish, stay exposed, and no unrelated route is withdrawn
+with it.
+
+A detached `up` still fails when a listener is withheld, and it reports the
+partial exposure instead of one blanket verdict: the text and JSON name the
+routes that are published, the listener whose route is not, its observed status
+where there was one, and the bounded, redacted child-output tail. That tail's
+window starts on a line boundary whenever the line begins within a bounded
+context read behind it; a line whose `key=` marker sits outside that context is
+dropped whole rather than printed with a value the redactor can no longer
+recognise. The failure
+is never phrased as an activation whose readiness and exposure are unverified,
+because the activation settled. A process whose `depends_on` listener was
+withheld does not start and withholds its own route too, naming the dependency
+that never became ready. That decision is this activation's own: a dependent
+reads it before any listener state file, so a chain `A -> B -> C` settles with
+every route withheld instead of waiting for a record a skipped process never
+wrote, and a non-listener at the end of the chain is not started either. A retry
+after the listener recovers publishes that listener's own route and leaves the
+container's routes exactly as they were: a route is replaced only by its own
+owner, so a retry never duplicates another target's route. An uncertain
+container identity still publishes no route at all, because the readiness wait
+refuses before any route write.
+
+The current dependency declaration takes precedence over reconciliation of a
+previous generation, including after the activation budget expires. If this
+activation withholds a dependency, it settles the dependent's exact owned run
+before reporting its route withheld, even when that run started without the
+dependency. A dependent without a listener also has its previous run stopped.
+An incomplete stop remains a settlement refusal; it cannot become a claim that
+the route was withheld.
+
+The wait itself is bounded by the activation, not by the child's build. Host
+listener startup shares the bring-up's one runtime-observation budget
+(effigy#411). A listener still starting when that budget is spent withholds its
+own route and the command stops waiting for the remaining declared listeners,
+so `up` cannot hang on a listener that never binds. The timed-out generation is
+**settled before the command returns**, under the same fenced kernel stop `down`
+uses, so no route can be published after the activation reported that route
+withheld. `effigy container <NAME> restart <process>` starts it again, and
+`readiness.timeout_secs` still bounds only the wait after a listener's port
+first opens.
+
+This settlement also applies to definite listener failures with a restart
+policy. A supervisor that failed before spawning its first child cannot be
+detached while waiting for an `Active` event it never emitted. A withheld
+supervisor is stopped, so a retry cannot publish after the partial-exposure
+report; an explicit restart or a later `up` retries that listener.
+
+A listener that a later activation does not start is never taken on trust
+either: it is reconciled against its own published generation and route first,
+so a healthy generation this activation never touched stays exposed and is
+named in `exposed_routes`. Reconciliation compares that generation with the
+**current declaration** — route domain, TLS mode, bind and the declared
+readiness request, which is probed live — and withholds the current route when
+they differ, because the declared target is not the one that generation serves.
+A generation that fails those checks is settled under the same fenced stop
+before the report, so a route the report withholds is withdrawn from the
+endpoint store instead of being left served by the generation that failed it;
+a definite status the live probe observed is named in the refusal. Only a
+listener with nothing verified against its current declaration is reported
+withheld.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
@@ -1084,6 +1235,55 @@ alias. A Docker engine backend supplies `host-gateway` for the same name, which
 Docker Desktop and Linux Docker both resolve. A service that receives no shared
 environment gets no entry.
 
+## Shared data targets (`data seed`, `data dump`)
+
+A declared data target whose manifest service is `shared = true` runs in that
+shared service's own machine-wide Compose project and render. The environment's
+generated Compose removes the service, so the checkout-local route could only
+ever reach a local service of the same name; the seed reset, staged-file import
+and logical dump instead use the shared render's Compose input and project
+name. `stack` and `hybrid` declarations of one shared identity therefore seed
+and dump the same project and named volume, and `data_from` does not redirect
+them, because `data_from` is a checkout-local volume feature (see below).
+
+Before the first statement Effigy proves the declared shared service: every
+file of the expected render (its Compose input and every configuration it
+binds) must be present, readable and unchanged, and the runtime must report
+exactly one running container of the declared service in the declared project,
+created from the declared render digest. A missing, unreadable or altered
+render file, a stopped or absent container, a container created from another
+render, more than one running container for the service, an unreadable
+inventory, or environments that declare the same service name with different
+shared identities all refuse and name the project and recovery command. The
+data step never publishes a render, starts or replaces a shared service — its
+own or an unrelated one — and never falls back to a checkout-local service of
+the same name. A seed that selects a shared target therefore skips its
+environment activation, and every activation a data seed performs (including an
+app-defined `data:seed` task's routed activation, through the data-seed runtime
+session) leaves shared services alone. Because bringing a stopped environment
+up would reconcile them, such a seed refuses and names `effigy container up
+<env>` instead of starting anything; an environment with no shared services keeps
+its ordinary activation, so a stopped local stack is still brought up before the
+seed. The decision is made per activated environment from that environment's own
+policy, so a sequence or catalog-routed step into another catalog's container
+also leaves that catalog's shared services alone. `data dump` starts nothing.
+
+A credential travels by name only. The exec forwards the client variable
+(`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a
+per-operation private file under the Effigy home that the Compose client sources
+before it runs — on the host for a host backend, and through `colima ssh` inside
+the VM for the VM-hosted backend, the same transport managed task secrets use.
+The file is 0600 inside a 0700 directory, created exclusively, never rewritten
+and removed when the call returns, so concurrent data commands never share a
+credential path. The checkout-local route uses the same transport, so an
+unshared target does not regress to an `env NAME=value` prefix in argv. No value
+reaches a command line, the Compose invocation, a report or a diagnostic.
+
+Every shared Compose call carries one absolute deadline: 15 minutes for a
+control call and one hour for a data exec. Expiry terminates the owned process
+group, and the call's complete output stays captured so a dump is never
+truncated. An unshared target keeps the checkout-local route unchanged.
+
 ## Shared service data volumes (`data_from`)
 
 A container environment may declare `data_from = "<other-env>"`. Every service
@@ -1563,7 +1763,8 @@ While that stage is `preparation`, `preparation_step` identifies the checked
 boundary: `declaration`, `policy`, `admission`, `validation`, `runtime`, `mounts`,
 `inventory`, `refresh`, or `dispatch`; it is null outside preparation.
 `failure_kind` is one of `endpoint_observation_unknown`, `endpoint_store_refusal`,
-`invocation_refusal`, `managed_readiness`, `gateway_route_refusal`, or `other`;
+`invocation_refusal`, `managed_readiness`, `managed_listener_exposure`,
+`gateway_route_refusal`, or `other`;
 `identity` names the requested environment and checkout. These closed codes do
 not turn an unavailable observation into absence or stop authority. `cause`
 carries the underlying refusal itself — for example the gateway claim or
@@ -1629,6 +1830,19 @@ and the environment/checkout identity, alongside its unavailable state, failure
 kind and recovery advice. Secret-shaped `key=value` details in the cause
 are redacted and the cause is bounded; the generic reconciliation advice never
 replaces the actionable cause.
+
+A settled activation whose exposure is partial is not an unavailable
+activation, and it reports differently. Its state is `partial`, its phase is
+`listener_exposure`, its `failure_kind` is `managed_listener_exposure`, its
+`readiness` is `verified` and its `exposure` is `partial`. It carries
+`exposed_routes` (`domain -> target` for every route this activation published)
+and `withheld_routes`, one entry per failed listener with its `listener`,
+`route_domain`, `status`, `observed_status`, bounded `detail`, bounded
+`output_tail`, `log` and its own `restart` recovery. `activation_stage` keeps
+the stage the activation reached, and the text form names the same published
+and withheld routes. A host listener that answers the wrong status withholds
+only its own route; it never withdraws an unrelated verified container route
+(effigy#455).
 
 ## Handoff contract
 
@@ -1808,7 +2022,7 @@ before children launch:
 - routed and deferred container tasks
 
 Plain primary-service `effigy exec` requires that the primary service is
-already running. If it is down, Effigy reports `effigy container up <NAME>`
+already running. If it is down, Effigy reports `effigy container <NAME> up`
 and returns before workspace repair or the requested child. `effigy dev` is
 also a project start path. Plain exec does not start the VM, service, or
 gateway. Explicit `container up` and the existing routed-task activation path
@@ -1985,9 +2199,89 @@ host-visible HTTP route keeps the scoped apex and application configuration is
 never rewritten. An explicit route for the canonical name keeps its precedence
 over the generated alias.
 
-Host-native execution in a scoped checkout is outside this guarantee: a host
-process resolving the canonical alias reaches the host-visible route, which
-belongs to the scope that published it (normally the primary checkout).
+Host-native execution in a scoped checkout needs the same resolution without
+machine-wide DNS and without another scope's route. A host process cannot be
+given a Compose network alias, and the gateway answers one route per domain, so
+the declared name stays with the checkout that published it. Effigy therefore
+resolves the canonical declared alias in every environment it delivers to a
+host run in a scoped checkout (`crates/effigy-core/src/host_alias.rs` is the one
+rewrite, used by the runner and by the managed session's run specs):
+
+- a task's own `env`
+- an env-schema value, plain or `@sensitive`, including one read from `.env`
+- a declared secret env value
+- a sequence step's environment, including values chained from earlier steps
+- a managed session's process plan (`mode = "tui"`), its entry `env`, its
+  sequence steps, its `setup` steps and the nested task references it renders
+- a configured test suite's own delivered environment, its rendered command,
+  and the step environment of that suite's `setup`/`teardown` commands — proved
+  for the suites the run selects, before any suite starts
+- a value the child would otherwise inherit unchanged from the caller's
+  environment, such as an exported `DATABASE_URL`, for a host task, a sequence
+  step, a managed host workload and a selected host suite with its lifecycle:
+  each naming an endpoint is resolved and proved like a declared value and
+  delivered to the child
+
+Each is delivered with this checkout's effective alias in place of the
+declared one. That env map is the one Effigy already owns: a consumer whose
+configuration carries `postgres.<apex>` reaches its own database with no
+manifest change, because the delivered value wins over the app's own `.env`
+read as it already does for an env-schema value. Value source precedence is
+decided first and is unchanged — a task's `env` still beats an env-schema
+value, which still beats a `.env` value or a schema default — and the winning
+value is then resolved.
+
+Only an endpoint is rewritten: a value that is exactly the host, the host of a
+URL authority (`scheme://host`, `user@host`), or a host carrying its own port
+(`host:5432`). URL credentials are never the host: a name that appears in
+`user:password@`, or a URL naming another server, keeps its exact bytes and
+proves nothing. Text that merely names the alias keeps its exact bytes — a
+search pattern, a JSON blob, a comma-separated list, a note, or a longer host
+such as `postgres.<apex>.example.com`. Effigy rewrites the environment it
+delivers; it never rewrites a command body or configuration text it only passes
+through.
+
+A managed session proves the alias in the processes it places on the host and
+nowhere else: a container-routed session keeps the declared name in its own
+processes, which its target's network answers, and resolves the scope's alias
+only in the entries it runs on the host.
+
+Before the child starts, Effigy proves the alias: the record for the effective
+domain must belong to this checkout's path, must carry a published upstream
+port, and that upstream must accept a connection within the gateway's own short
+deadline. A record left behind by a stopped stack is stale, not published. The proof reads the endpoints Effigy delivered, with the same shape rule
+as the rewrite, so text that merely mentions an effective alias proves nothing
+and refuses nothing. A missing route, a route another checkout owns, or a route with no
+published port refuses the run with the declared alias, the backing service and
+`effigy container <NAME> up`, and the task's command never runs. A primary
+checkout keeps its declared name and resolves nothing, and a container-bound
+run is untouched: its target's own network already answers both names.
+
+A worktree's first host run is scoped: Effigy records the checkout's scope
+token before resolving, exactly as the container path does, so a fresh worktree
+never falls back to the declared names. A checkout that names no default
+container environment still resolves its aliases from all of its environments.
+A container registry this scoped checkout declares but Effigy cannot read is
+refused — without it there is no way to know which names belong to this scope,
+so host execution could quietly deliver the canonical alias and reach another
+checkout's service. A sensitive value the declaring environment overrides — the
+task's own `env`, or a sequence step's — is dropped rather than delivered, so it
+is neither resolved nor proved: the declared value outranks the secret source.
+An inherited value is resolved and proved **at the boundary of the child that
+receives it**. Only that child's own *spawn-level* delivered environment — its
+task `env`, env-schema values, secrets, and a suite's `env` — keeps a key from
+being re-resolved, so the source that wins still wins. A `setup` step is its own
+statement in the same script, and a key that merely appears in a command's text
+(log line, pattern, quoted literal) is no assignment at all: neither hides the
+caller's value from the workload or suite command that inherits it. A managed
+session decides inherited values per host workload so a value no workload
+receives is never proved, its client hands the resolved values to its supervisor
+in the supervisor's own environment, and the supervisor inherits what was
+proved.
+
+A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
+aliases it would deliver, and the built-in `test` plan keeps the declared
+names.
 
 ## Fallback ownership
 
@@ -2068,6 +2362,11 @@ The minimum proof set should cover:
 - runtime activation plans preserving repo root, repo override, policy name,
   container identity, and hold policy across `effigy exec`, workspace, and
   managed surfaces
+- one primary checkout and two marked linked scopes, proving each host run
+  receives only its own scope's declared backing-service alias, that the alias
+  reaches only that scope's own backing service, that an absent backing service
+  refuses before the command runs, and that a primary checkout, a plan render
+  and a container-bound run keep the declared name
 
 ## Drift triggers
 
@@ -2081,6 +2380,8 @@ Update this contract when Effigy changes:
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution
 - runtime activation request/plan/report fields
+- which host runs receive scoped declared-alias resolution, and what proves a
+  scope's backing service before such a run starts
 
 ## Verified local runtime refresh — 2026-10-04
 

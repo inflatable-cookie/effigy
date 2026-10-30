@@ -29,7 +29,7 @@ pub(super) fn run_container_hosts(
 /// Build the effective host map and label it with the checkout's real scope
 /// shape, so a marked ephemeral clone reports as its own kind instead of a
 /// linked worktree.
-pub(super) fn scoped_host_map(
+pub(in crate::runner) fn scoped_host_map(
     repo_root: &std::path::Path,
     policy: &EffectiveContainerPolicy,
     token: Option<&str>,

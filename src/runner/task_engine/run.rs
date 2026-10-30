@@ -1116,8 +1116,11 @@ fn close_run_settled(
 
 /// Files a fenced stop request against run `id` for its live owner, as
 /// `effigy run stop` does.
-pub(in crate::runner) fn request_run_stop(id: RunId) -> Result<(), RunnerError> {
-    match super::control::lookup(id) {
+pub(in crate::runner) fn request_run_stop(
+    checkout: &std::path::Path,
+    id: RunId,
+) -> Result<(), RunnerError> {
+    match super::control::lookup_checkout(checkout, id) {
         super::control::Lookup::Found(record) => super::control::request_stop(&record).map(|_| ()),
         _ => Err(RunnerError::task_invocation(format!(
             "run {id} is not readable for a stop request"

@@ -16,18 +16,34 @@ pub(super) fn run_shutdown_with_progress(
     supervisor: &dyn SessionProcesses,
 ) {
     supervisor.terminate_all_graceful_with_progress(SHUTDOWN_GRACE_TIMEOUT, &mut |progress| {
-        let _ = draw_shutdown_status(terminal, shutdown_progress_label(&progress));
+        let _ = draw_shutdown_status(terminal, &shutdown_progress_label(&progress));
     });
 }
 
-fn shutdown_progress_label(progress: &ShutdownProgress) -> &'static str {
+/// The stage the supervisor just reached, and what it counted: each label is
+/// an event from the shutdown, so the footer never redraws one fixed stage.
+fn shutdown_progress_label(progress: &ShutdownProgress) -> String {
     match progress {
-        ShutdownProgress::SendingTerm => "Shutdown: sending SIGTERM to managed processes...",
-        ShutdownProgress::Waiting => "Shutdown: waiting for managed processes to exit...",
-        ShutdownProgress::ForceKilling => {
-            "Shutdown: forcing remaining managed processes to stop..."
+        ShutdownProgress::SendingTerm => {
+            "Shutdown: sending SIGTERM to managed processes...".to_owned()
         }
-        ShutdownProgress::Complete { .. } => "Shutdown: complete.",
+        ShutdownProgress::Waiting => {
+            "Shutdown: waiting for managed processes to exit...".to_owned()
+        }
+        ShutdownProgress::ForceKilling => {
+            "Shutdown: forcing remaining managed processes to stop...".to_owned()
+        }
+        ShutdownProgress::Complete { total, forced } => {
+            let forced = if *forced == 0 {
+                String::new()
+            } else {
+                format!(", {forced} forced")
+            };
+            format!(
+                "Shutdown: complete ({total} managed {}{forced}).",
+                if *total == 1 { "process" } else { "processes" }
+            )
+        }
     }
 }
 
@@ -66,7 +82,7 @@ mod tests {
         for stage in stages {
             let label = shutdown_progress_label(&stage);
             terminal
-                .draw(|frame| render_shutdown_status(frame, label))
+                .draw(|frame| render_shutdown_status(frame, &label))
                 .unwrap();
             let frame = terminal
                 .backend()
@@ -76,8 +92,26 @@ mod tests {
                 .map(|cell| cell.symbol())
                 .collect::<String>();
             assert_eq!(frame.matches("Shutdown:").count(), 1, "{frame}");
-            assert!(frame.contains(label), "{frame}");
+            assert!(frame.contains(&label), "{frame}");
             assert!(!frame.contains("running dev"), "{frame}");
         }
+    }
+
+    #[test]
+    fn the_completion_frame_counts_the_processes_and_the_forced_ones() {
+        assert_eq!(
+            shutdown_progress_label(&ShutdownProgress::Complete {
+                total: 1,
+                forced: 0,
+            }),
+            "Shutdown: complete (1 managed process)."
+        );
+        assert_eq!(
+            shutdown_progress_label(&ShutdownProgress::Complete {
+                total: 3,
+                forced: 1,
+            }),
+            "Shutdown: complete (3 managed processes, 1 forced)."
+        );
     }
 }

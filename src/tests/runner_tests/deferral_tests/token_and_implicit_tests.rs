@@ -13,6 +13,79 @@ fn fake_app_full_id(root: &std::path::Path) -> String {
     effigy_gateway::ports::sha256_hex(format!("{}-app-1", policy.project_name).as_bytes())
 }
 
+/// Runs one guest-owned script (the provisioning seam's `sh -lc` text) against
+/// the private guest root `$1`. Guest absolute paths are rooted under it and
+/// command output maps back, so the script and its read-back are the production
+/// bytes; only where they land changes.
+const GUEST_EXEC_SCRIPT: &str = r#"#!/bin/bash
+# usage: effigy-guest-exec <guest-root> <script>
+set -o pipefail
+root=$1
+script=$2
+here=$(dirname "$0")
+mapped=$(printf '%s\n' "$script" | sed -E -e "s#(^|[^A-Za-z0-9_./-])/(run/effigy|usr/local/bin|tmp/effigy-host)#\1$root/\2#g") || exit 1
+PATH="$here/guest-shims:$PATH" sh -c "$mapped" | sed -e "s#$root##g"
+"#;
+
+/// Copies one host file to a container path inside the private guest root. The
+/// `guest-drop-copy` and `guest-tamper-copy` markers under the fake HOME model
+/// lost and corrupted staged bytes for the negative cases.
+const GUEST_CP_SCRIPT: &str = r#"#!/bin/sh
+# usage: effigy-guest-cp <guest-root> <host-source> <container-dest>
+root=$1
+src=$2
+target="$root$3"
+if [ -f "$HOME/guest-drop-copy" ]; then exit 0; fi
+mkdir -p "$(dirname "$target")" && cp "$src" "$target" || exit 1
+if [ -f "$HOME/guest-tamper-copy" ]; then printf 'tampered\n' >> "$target"; fi
+"#;
+
+/// The guest runs as root and the fixture host does not, so ownership is not
+/// modelled: `chown` is a successful no-op inside the guest-only PATH.
+const GUEST_CHOWN_SHIM: &str = "#!/bin/sh\nexit 0\n";
+
+/// BSD `mv` has no `-T`; the guest's `mv -Tf` is a plain forced rename.
+const GUEST_MV_SHIM: &str = r#"#!/bin/sh
+if [ "$1" = -Tf ]; then shift; set -- -f "$@"; fi
+exec /bin/mv "$@"
+"#;
+
+/// Seeds the release cache that the guest artifact resolves to under the fake
+/// HOME. The receipt digest is computed from these bytes, so the normal
+/// authentication in `verify_guest_artifact` still runs; nothing is skipped.
+fn seed_guest_effigy_artifact(home: &std::path::Path) {
+    use sha2::{Digest, Sha256};
+    let triple = "x86_64-unknown-linux-gnu";
+    let cache = home
+        .join(".effigy/workspace-bin/linux")
+        .join(triple)
+        .join(format!("v{}", env!("CARGO_PKG_VERSION")));
+    fs::create_dir_all(&cache).expect("mkdir fake guest artifact cache");
+    let bytes = b"fake-guest-effigy\n";
+    let artifact = cache.join(format!("effigy-{triple}"));
+    fs::write(&artifact, bytes).expect("write fake guest artifact");
+    let hex: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    fs::write(
+        cache.join(format!("effigy-{triple}.receipt")),
+        format!("release_triple={triple}\nsha256={hex}\nbuild_kind=release-download\n"),
+    )
+    .expect("write fake guest artifact receipt");
+    let version = effigy_core::build_info::active_version();
+    fs::write(
+        cache.join(format!("effigy-{triple}.active-version")),
+        format!("{version}\n"),
+    )
+    .expect("write fake guest artifact version");
+    fs::write(
+        cache.join(format!("effigy-{triple}.install-identity")),
+        format!("release:v{version}\n"),
+    )
+    .expect("write fake guest artifact identity");
+}
+
 fn setup_fake_docker_deferral_runtime(
     root: &std::path::Path,
     service_running: bool,
@@ -58,6 +131,13 @@ for arg in "$@"; do
     -g) if [ -n "$saw_id" ]; then id_mode=gid; fi ;;
   esac
 done
+case "$*" in
+  *boot_id*)
+    if [ -f "$HOME/fake-guest-identity-absent" ]; then exit 0; fi
+    printf 'boot=fake-boot\nplatform=x86_64\nlibc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n'
+    exit 0
+    ;;
+esac
 case "$*" in
   *'id -u'*'id -g'*) printf '501\n20\n'; exit 0 ;;
 esac
@@ -117,6 +197,20 @@ case "$*" in
 esac
 if [ "$id_mode" = uid ]; then printf '501\n'; exit 0; fi
 if [ "$id_mode" = gid ]; then printf '20\n'; exit 0; fi
+if [ "$1" = exec ] || [ "$1" = compose ]; then
+  # Guest-owned provisioning scripts run against the private guest root. Any
+  # other exec (the deferred user command) keeps its recorded no-op behaviour.
+  script=
+  for arg in "$@"; do script=$arg; done
+  case "$script" in
+    *'/run/effigy'*|*'/usr/local/bin/effigy'*|*'/tmp/effigy-host'*)
+      exec effigy-guest-exec "$HOME/guest" "$script" ;;
+  esac
+fi
+if [ "$1" = cp ]; then
+  dest=$(printf '%s' "$3" | sed 's/^[^:]*://')
+  exec effigy-guest-cp "$HOME/guest" "$2" "$dest"
+fi
 if [ "$1" = ps ]; then
   if [ -f '{}' ]; then
     project=$(cat "$project_file")
@@ -184,12 +278,26 @@ exit 0
             mkcert_caroot.display()
         ),
     );
+    // The guest runner and its shims live beside the fake docker, but the shims
+    // sit in a subdirectory so they reach only the guest scripts, never the host.
+    write_executable(&bin_dir.join("effigy-guest-exec"), GUEST_EXEC_SCRIPT);
+    write_executable(&bin_dir.join("effigy-guest-cp"), GUEST_CP_SCRIPT);
+    let guest_shims = bin_dir.join("guest-shims");
+    fs::create_dir_all(&guest_shims).expect("mkdir guest shims");
+    write_executable(&guest_shims.join("chown"), GUEST_CHOWN_SHIM);
+    write_executable(&guest_shims.join("mv"), GUEST_MV_SHIM);
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     let lease_home = root.join("lease-home");
     let temp_home = root.join("fake-home");
     let gateway_home = temp_home.join(".effigy/gateway");
     fs::create_dir_all(&lease_home).expect("mkdir lease home");
     fs::create_dir_all(&gateway_home).expect("mkdir fake gateway home");
+    // The guest root is the image's filesystem: base directories the image
+    // always ships, then the artifact cache the host seeds for the guest.
+    for base in ["guest/usr/local/bin", "guest/tmp"] {
+        fs::create_dir_all(temp_home.join(base)).expect("mkdir fake guest image base");
+    }
+    seed_guest_effigy_artifact(&temp_home);
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
         ("HOME", Some(temp_home.display().to_string())),
@@ -788,5 +896,79 @@ shared_root = "{}"
     assert!(
         mkdir_at < deferred_at && chown_at < deferred_at && probe_at < deferred_at,
         "permission prep must finish before deferred exec, got {log}"
+    );
+}
+
+#[test]
+fn run_manifest_task_php_app_bundle_refuses_container_that_reports_no_identity() {
+    let _guard = lock_test();
+    let root = temp_workspace("php_app-container-identity-absent");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    setup_php_library_path_bundle(&root);
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = { type = "path", dir = "bundles/php-library" }
+"#,
+    );
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    // The guest reports no boot, platform or libc, so no identity is verified
+    // and the deferral must refuse before any guest state is written.
+    fs::write(root.join("fake-home/fake-guest-identity-absent"), "")
+        .expect("mark guest identity absent");
+
+    let err =
+        crate::runner::tests::prelude::run_task_in_workspace(&root, "missing-task", &["--watch"])
+            .expect_err("an unverified container identity must refuse the deferral");
+    let message = format!("{err:?}");
+    assert!(
+        message.contains("did not report its identity"),
+        "expected an identity refusal, got {message}"
+    );
+}
+
+/// Runs the PHP library bundle deferral with one guest copy fault armed under
+/// the fake HOME and returns the refusal. The fault is the guest-side marker
+/// read by `effigy-guest-cp`, so the refusal comes from the normal publish and
+/// read-back checks, not from a fixture shortcut.
+fn php_bundle_refusal_with_guest_copy_fault(label: &str, marker: &str) -> String {
+    let root = temp_workspace(label);
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    setup_php_library_path_bundle(&root);
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = { type = "path", dir = "bundles/php-library" }
+"#,
+    );
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    fs::write(root.join("fake-home").join(marker), "").expect("arm guest copy fault");
+    let err =
+        crate::runner::tests::prelude::run_task_in_workspace(&root, "missing-task", &["--watch"])
+            .expect_err("a guest copy fault must refuse the deferral");
+    format!("{err:?}")
+}
+
+#[test]
+fn run_manifest_task_php_app_bundle_refuses_missing_staged_guest_bytes() {
+    let _guard = lock_test();
+    let message =
+        php_bundle_refusal_with_guest_copy_fault("php_library-staged-missing", "guest-drop-copy");
+    assert!(
+        message.contains("cannot install the pinned guest executable"),
+        "a lost staged copy must refuse at install, got {message}"
+    );
+}
+
+#[test]
+fn run_manifest_task_php_app_bundle_refuses_tampered_staged_guest_bytes() {
+    let _guard = lock_test();
+    let message = php_bundle_refusal_with_guest_copy_fault(
+        "php_library-staged-tampered",
+        "guest-tamper-copy",
+    );
+    assert!(
+        message.contains("does not match the pinned digest"),
+        "tampered staged bytes must refuse at read-back, got {message}"
     );
 }

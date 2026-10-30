@@ -284,6 +284,11 @@ fn run_deferred_request_with_binding(
                     repo_override: plan.request.repo_override.clone(),
                     route: plan.route,
                     session_context,
+                    reconcile_shared_services:
+                        crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                            &policy,
+                            session_context,
+                        ),
                 },
             )?;
             let policy = activation.policy;

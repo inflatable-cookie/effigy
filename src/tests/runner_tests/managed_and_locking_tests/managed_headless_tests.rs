@@ -64,6 +64,7 @@ fn assert_gone(root: &std::path::Path, files: &[&str]) {
             !effigy_process::process_is_running(pid),
             "`{file}` pid {pid} survived the settle"
         );
+        println!("[fixture] `{file}`: pid {pid} exited");
     }
 }
 
@@ -409,6 +410,13 @@ fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     write_plain_bound_environment_manifest(&root);
     let _runtime = install_fake_container_runtime(&root);
     let _containers_home = private_containers_home(&root);
+    // The Linux workspace artifact is not this fixture's subject: readiness
+    // probes exercise the exec path, and the environment stays plain because
+    // this declared workspace publishes no guest here.
+    let _handoff = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
+        Some("1".to_owned()),
+    )]);
 
     let run_root = root.clone();
     let run = std::thread::spawn(move || run_dev(&run_root, &["--headless"]));

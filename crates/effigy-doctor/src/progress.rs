@@ -1,34 +1,43 @@
-//! Doctor's scan progress, drawn through the one step API so JSON and piped
-//! output stay silent without a second terminal check here.
+//! Doctor's scan progress, drawn through the one live-step API so JSON and
+//! piped output stay silent without a second terminal check here.
 //!
-//! Each visible check gets one step: its active label names the work while it
-//! runs, and it ends with one ✓ or ✗ line that names the check.
+//! Each visible check gets one step driven by a `ProgressSource`: the exact
+//! probe and elapsed wait are always present. The scan crate emits no
+//! per-file events, so a long check names that probe rather than a second
+//! canned label. A known check count or shared-inventory event is attached
+//! when the caller can observe it. Each step ends with one ✓ or ✗ line that
+//! names the check.
 
-use effigy_ui::steps::{self, Step};
+use effigy_ui::steps::{self, ProgressSource, Step};
 
 use crate::{DoctorFinding, DoctorSeverity};
 
 /// A check's step labels. `active` names the work while it runs; `subject`
-/// names the check on its one ending line.
+/// names the check on its one ending line; `probe` is the exact wait the
+/// live source names when no further event is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ScanLabel {
     pub(super) active: &'static str,
     pub(super) subject: &'static str,
+    pub(super) probe: &'static str,
 }
 
 pub(super) const GOD_FILES: ScanLabel = ScanLabel {
     active: "scanning for god files",
     subject: "god files",
+    probe: "god files scan",
 };
 
 pub(super) const DUPLICATE_BLOCKS: ScanLabel = ScanLabel {
     active: "scanning for duplicate blocks",
     subject: "duplicate blocks",
+    probe: "duplicate blocks scan",
 };
 
 pub(super) const HEALTH_TASK: ScanLabel = ScanLabel {
     active: "running health task",
     subject: "health task",
+    probe: "health --json",
 };
 
 /// How a check ended, for its one terminal line.
@@ -88,8 +97,15 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
+struct ActiveScan {
+    label: ScanLabel,
+    #[cfg(test)]
+    source: ProgressSource,
+    step: Step,
+}
+
 pub(super) struct DoctorProgressReporter {
-    active: Vec<(ScanLabel, Step)>,
+    active: Vec<ActiveScan>,
 }
 
 impl DoctorProgressReporter {
@@ -101,7 +117,43 @@ impl DoctorProgressReporter {
     }
 
     pub(super) fn start_scan(&mut self, label: ScanLabel) {
-        self.active.push((label, steps::step(label.active)));
+        self.start_scan_with(label, None, None);
+    }
+
+    /// Start a check with a known count and the last observable event. The
+    /// scan crate has no per-file hook, so `event` is the shared inventory or
+    /// exact probe the caller can name.
+    pub(super) fn start_scan_with(
+        &mut self,
+        label: ScanLabel,
+        count: Option<(u64, u64)>,
+        event: Option<String>,
+    ) {
+        let source = ProgressSource::waiting_for(label.probe);
+        source.update(label.active, count, event);
+        #[cfg(test)]
+        let stored = source.clone();
+        let step = steps::live_step(source);
+        self.active.push(ActiveScan {
+            label,
+            #[cfg(test)]
+            source: stored,
+            step,
+        });
+    }
+
+    /// The operator-visible label at `elapsed` for a started check. Tests use
+    /// this as a fake clock.
+    #[cfg(test)]
+    pub(super) fn live_frame(
+        &self,
+        label: ScanLabel,
+        elapsed: std::time::Duration,
+    ) -> Option<String> {
+        self.active
+            .iter()
+            .find(|scan| scan.label.subject == label.subject)
+            .map(|scan| scan.source.frame_at(elapsed))
     }
 
     /// End a started check's step with its one line. A check that never
@@ -110,11 +162,11 @@ impl DoctorProgressReporter {
         let Some(index) = self
             .active
             .iter()
-            .position(|(active, _)| active.subject == label.subject)
+            .position(|scan| scan.label.subject == label.subject)
         else {
             return;
         };
-        let (_, step) = self.active.remove(index);
+        let ActiveScan { step, .. } = self.active.remove(index);
         let line = outcome.line(label.subject);
         if outcome.is_failure() {
             step.fail(&line);
@@ -125,8 +177,8 @@ impl DoctorProgressReporter {
 
     /// Clear any step still running when the scan ends without an outcome.
     pub(super) fn finish(&mut self) {
-        for (_, step) in self.active.drain(..) {
-            step.finish_clear();
+        for scan in self.active.drain(..) {
+            scan.step.finish_clear();
         }
     }
 }
@@ -134,6 +186,7 @@ impl DoctorProgressReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn finding(check_id: &str, severity: DoctorSeverity) -> DoctorFinding {
         DoctorFinding {
@@ -217,6 +270,86 @@ mod tests {
     #[test]
     fn json_output_has_no_reporter() {
         assert!(DoctorProgressReporter::new(true).is_none());
+    }
+
+    #[test]
+    fn live_frames_name_the_probe_count_elapsed_and_check_transitions() {
+        let ((), lines) = steps::capture_lines(|| {
+            let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
+            reporter.start_scan_with(
+                GOD_FILES,
+                Some((1, 3)),
+                Some("shared scan inventory".into()),
+            );
+            assert_eq!(
+                reporter
+                    .live_frame(GOD_FILES, Duration::from_secs(0))
+                    .expect("god files"),
+                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 0s elapsed"
+            );
+            assert_eq!(
+                reporter
+                    .live_frame(GOD_FILES, Duration::from_secs(4))
+                    .expect("god files"),
+                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 4s elapsed"
+            );
+
+            reporter.finish_scan(GOD_FILES, &ScanOutcome::Clear { warnings: 0 });
+            reporter.start_scan_with(
+                DUPLICATE_BLOCKS,
+                Some((2, 3)),
+                Some("shared scan inventory".into()),
+            );
+            assert_eq!(
+                reporter
+                    .live_frame(DUPLICATE_BLOCKS, Duration::from_secs(9))
+                    .expect("duplicate blocks"),
+                "scanning for duplicate blocks (2/3); waiting for duplicate blocks scan; last: shared scan inventory; 9s elapsed"
+            );
+            reporter.finish_scan(DUPLICATE_BLOCKS, &ScanOutcome::Failed { errors: 2 });
+
+            reporter.start_scan(HEALTH_TASK);
+            assert_eq!(
+                reporter
+                    .live_frame(HEALTH_TASK, Duration::from_secs(3))
+                    .expect("health"),
+                "running health task; waiting for health --json; 3s elapsed"
+            );
+            reporter.finish_scan(
+                HEALTH_TASK,
+                &ScanOutcome::Stopped("stopped at the time budget"),
+            );
+            assert!(reporter
+                .live_frame(GOD_FILES, Duration::from_secs(1))
+                .is_none());
+            assert!(reporter
+                .live_frame(HEALTH_TASK, Duration::from_secs(1))
+                .is_none());
+        });
+        assert_eq!(
+            lines,
+            vec![
+                "✓ god files: no problems found".to_owned(),
+                "✗ duplicate blocks: 2 errors, see the findings below".to_owned(),
+                "✗ health task: stopped at the time budget".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_scan_without_events_names_its_exact_probe() {
+        let ((), lines) = steps::capture_lines(|| {
+            let mut reporter = DoctorProgressReporter::new(false).expect("reporter");
+            reporter.start_scan(GOD_FILES);
+            assert_eq!(
+                reporter
+                    .live_frame(GOD_FILES, Duration::from_secs(12))
+                    .expect("god files"),
+                "scanning for god files; waiting for god files scan; 12s elapsed"
+            );
+            reporter.finish();
+        });
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

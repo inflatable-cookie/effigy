@@ -8,7 +8,7 @@ use effigy_tasks::TaskSelector;
 
 use super::{invalid_managed_process_definition, select_run_or_task};
 use crate::references;
-use crate::run_spec::{render_run_step_sequence, wrap_reference_command_in_cwd};
+use crate::run_spec::{render_run_step_sequence, wrap_reference_command_in_cwd, HostAlias};
 use crate::{
     resolve_catalog_env_schema_with_ancestors, ManagedProcessRole, ManagedProcessSpec,
     DEFAULT_MANAGED_SHELL_RUN,
@@ -21,9 +21,12 @@ struct EntryResolutionContext<'a> {
     catalog: &'a LoadedCatalog,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &'a Path,
+    host_env_aliases: &'a [HostAlias],
+    host_placed: bool,
     resolver: TaskResolverFn<'a>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_concurrent_process_entries<'a>(
     selector: &TaskSelector,
     task: &ManifestTask,
@@ -31,6 +34,8 @@ pub fn resolve_concurrent_process_entries<'a>(
     catalog: &LoadedCatalog,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    host_env_aliases: &'a [HostAlias],
+    host_placed: bool,
     resolver: TaskResolverFn<'a>,
 ) -> Result<Vec<super::ConcurrentResolvedProcess>, crate::ManagedError> {
     let context = EntryResolutionContext {
@@ -39,6 +44,8 @@ pub fn resolve_concurrent_process_entries<'a>(
         catalog,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
+        host_placed,
         resolver,
     };
     let mut used_names = HashSet::<String>::new();
@@ -54,8 +61,18 @@ pub fn resolve_concurrent_process_entries<'a>(
             ));
         }
 
-        let (run, cwd) = resolve_process_run_and_cwd(context, &process_name, entry)?;
-        let setup = resolve_process_setup(context, &process_name, entry, &cwd)?;
+        // A process Effigy places on the host resolves this checkout's
+        // effective alias; a container-routed one keeps the declared name, which
+        // its target's own network answers (effigy#431 review).
+        let entry_context = EntryResolutionContext {
+            host_env_aliases: match context.host_placed || normalized.run_on_host {
+                true => context.host_env_aliases,
+                false => &[],
+            },
+            ..context
+        };
+        let (run, cwd) = resolve_process_run_and_cwd(entry_context, &process_name, entry)?;
+        let setup = resolve_process_setup(entry_context, &process_name, entry, &cwd)?;
         resolved.push(super::ConcurrentResolvedProcess {
             spec: ManagedProcessSpec {
                 name: process_name,
@@ -83,6 +100,7 @@ pub fn resolve_concurrent_process_entries<'a>(
 /// bound to a container environment with no `concurrent` entries. It renders
 /// exactly as the task's standard execution would, and keeps the passthrough
 /// arguments the operator typed after the profile.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_own_task_run_process(
     selector: &TaskSelector,
     task: &ManifestTask,
@@ -90,11 +108,14 @@ pub fn resolve_own_task_run_process(
     catalogs: &[LoadedCatalog],
     task_scope_cwd: &Path,
     passthrough: &[String],
+    host_env_aliases: &[HostAlias],
+    host_placed: bool,
     resolver: TaskResolverFn<'_>,
 ) -> Result<Option<super::ConcurrentResolvedProcess>, crate::ManagedError> {
     let Some(run_spec) = task.run.as_ref() else {
         return Ok(None);
     };
+    let placed_on_host = host_placed || matches!(task.run_in, Some(ManifestTaskRunIn::Host));
     let args = passthrough.get(1..).unwrap_or_default();
     let env_schema_resolved =
         resolve_catalog_env_schema_with_ancestors(catalogs, task_scope_cwd, None)?;
@@ -120,6 +141,13 @@ pub fn resolve_own_task_run_process(
             task_scope_cwd,
             invocation_cwd: task_scope_cwd,
             runtime_env_schema_override: None,
+            // Only a run Effigy places on the host resolves the declared
+            // alias; a container-bound session's own run keeps the declared
+            // name, which its target's network answers (effigy#431 review).
+            host_env_aliases: match placed_on_host {
+                true => host_env_aliases,
+                false => &[],
+            },
             depth: 0,
             resolver,
         },
@@ -181,6 +209,7 @@ fn resolve_process_setup<'a>(
             catalogs,
             task_scope_cwd: process_cwd,
             runtime_env_schema_override: None,
+            host_env_aliases: context.host_env_aliases,
             resolver,
         },
     )?;
@@ -342,6 +371,7 @@ fn resolve_task_process_run_and_cwd<'a>(
         selector,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
         resolver,
         ..
     } = context;
@@ -354,6 +384,7 @@ fn resolve_task_process_run_and_cwd<'a>(
         task_ref,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
         resolver,
     )
 }

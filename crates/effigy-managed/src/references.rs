@@ -27,18 +27,23 @@ pub(crate) struct ReferenceResolution<'request, 'catalog> {
     pub(crate) runtime_env_schema_override: Option<&'request Path>,
     pub(crate) depth: usize,
     pub(crate) resolver: TaskResolverFn<'catalog>,
+    /// Declared backing-service aliases the host execution environment
+    /// resolves to this checkout's effective aliases (effigy#431).
+    pub(crate) host_env_aliases: &'catalog [crate::run_spec::HostAlias],
     /// True when the rendered command will run on the host (suite/sequence
     /// expansion). False when a managed parent will already exec it in a
     /// selected container.
     pub(crate) host_launched: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_task_reference_run<'a>(
     managed_task_name: &str,
     process_name: &str,
     task_ref: &str,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &Path,
+    host_env_aliases: &'a [crate::run_spec::HostAlias],
     resolver: TaskResolverFn<'a>,
 ) -> Result<(String, PathBuf), ManagedError> {
     let context = ManagedRefContext {
@@ -57,6 +62,7 @@ pub fn resolve_task_reference_run<'a>(
             runtime_env_schema_override: None,
             depth: 0,
             resolver,
+            host_env_aliases,
             host_launched: false,
         },
         |detail| context.invalid(detail),

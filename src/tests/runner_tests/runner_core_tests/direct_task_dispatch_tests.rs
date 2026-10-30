@@ -4,7 +4,88 @@ use crate::runner::task_engine::{root_task_status_for_tests, TaskRun};
 use crate::runner::tests::prelude::{assert_file_text_equals, temp_workspace, write_root_manifest};
 use effigy_cli::{Command, TaskInvocation};
 use effigy_context::EffigyRuntimeContext;
+use effigy_manifest::{with_test_user_config_home, USER_CONFIG_FILE};
 use std::fs;
+
+/// Runs `name` as a direct foreground task under a private user-config home,
+/// so the host's `~/.effigy/config.toml` cannot move it to durable custody.
+fn run_direct_task(name: &str, context: &EffigyRuntimeContext) -> Result<String, RunnerError> {
+    let home = temp_workspace(&format!("direct-task-home-{name}"));
+    with_test_user_config_home(&home, || {
+        run_command_with_context(
+            Command::Task(TaskInvocation {
+                name: name.to_owned(),
+                args: Vec::new(),
+            }),
+            context,
+        )
+    })
+}
+
+/// A user config home whose `[programs]` block is the only one under test.
+fn user_home_with_program(name: &str, program: &str, fallback: &str) -> std::path::PathBuf {
+    let home = temp_workspace(name);
+    fs::write(
+        home.join(USER_CONFIG_FILE),
+        format!("[programs.{program}]\nfallback = \"{fallback}\"\n"),
+    )
+    .expect("write user config");
+    home
+}
+
+#[test]
+fn direct_foreground_dispatch_stays_in_memory_when_configured_program_is_inactive() {
+    // `sh` is on PATH and not forced, so the block puts no shim on this run.
+    let home = user_home_with_program("task-status-program-inactive-home", "sh", "true");
+    let root = temp_workspace("task-status-program-inactive");
+    write_root_manifest(&root, "[tasks.echo]\nrun = \"printf ok\"\n");
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    with_test_user_config_home(&home, || {
+        run_command_with_context(
+            Command::Task(TaskInvocation {
+                name: "echo".to_owned(),
+                args: Vec::new(),
+            }),
+            &context,
+        )
+        .expect("direct task")
+    });
+
+    let status = root_task_status_for_tests(&root, "echo");
+    assert_eq!(status.state, "not-recorded");
+    assert!(status.latest.is_none());
+    assert!(status.history.is_empty());
+}
+
+#[test]
+fn direct_foreground_dispatch_records_durably_when_configured_program_activates() {
+    // The program is absent from PATH, so its shim activates and the run must
+    // be durable: a shim cannot ride on foreground memory custody.
+    let home = user_home_with_program(
+        "task-status-program-active-home",
+        "effigy-no-such-program-491",
+        "sh",
+    );
+    let root = temp_workspace("task-status-program-active");
+    write_root_manifest(&root, "[tasks.echo]\nrun = \"printf ok\"\n");
+    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
+
+    with_test_user_config_home(&home, || {
+        run_command_with_context(
+            Command::Task(TaskInvocation {
+                name: "echo".to_owned(),
+                args: Vec::new(),
+            }),
+            &context,
+        )
+        .expect("direct task")
+    });
+
+    let status = root_task_status_for_tests(&root, "echo");
+    let latest = status.latest.expect("durable run recorded");
+    assert_eq!(latest.exit_code, Some(0));
+}
 
 #[test]
 fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
@@ -19,14 +100,7 @@ fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
     );
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "echo".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect("direct task");
+    run_direct_task("echo", &context).expect("direct task");
 
     assert_file_text_equals(&marker, "ok");
     let status = root_task_status_for_tests(&root, "echo");
@@ -46,14 +120,7 @@ fn direct_foreground_dispatch_reports_failure_without_recording_history() {
     write_root_manifest(&root, "[tasks.fail]\nrun = \"sh -c 'exit 7'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    let error = run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "fail".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect_err("task should fail");
+    let error = run_direct_task("fail", &context).expect_err("task should fail");
     match error {
         RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(7)),
         other => panic!("unexpected error: {other}"),
@@ -71,14 +138,7 @@ fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
     write_root_manifest(&root, "[tasks.stop]\nrun = \"sh -c 'exit 130'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
 
-    let error = run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "stop".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect_err("task should cancel");
+    let error = run_direct_task("stop", &context).expect_err("task should cancel");
     match error {
         RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(130)),
         other => panic!("unexpected error: {other}"),

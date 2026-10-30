@@ -215,8 +215,11 @@ impl EnvRun<'_> {
     /// Drops this environment's render references (kernel refuses while any
     /// holder remains).
     pub fn reset_objects(&mut self) -> Result<(), EnvError> {
+        self.phase("dropping the environment's render references", None);
         let result = Objects::reset(&mut self.run);
-        self.kernel(result)
+        self.kernel(result)?;
+        self.publish_event("dropped the environment's render references");
+        Ok(())
     }
 }
 

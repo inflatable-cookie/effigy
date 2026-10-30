@@ -141,7 +141,7 @@ impl Run<'_> {
         successor: Option<(RunId, Generation)>,
     ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
-        if !self.guard.covers(&self.owner.resource) {
+        if !self.holds_owner_gate()? {
             return Err(RunError::broken("a settle without its owner gate"));
         }
         crate::fault_point!(SettleBefore)?;
@@ -520,9 +520,15 @@ pub(crate) fn settle_interrupted_wait(
     wait: Wait,
 ) -> Result<Outcome<Settled>, RunError> {
     let (owner, id) = target;
-    let ids = super::aliases::gates(root, owner, std::slice::from_ref(owner))?;
-    let guard = Gate::acquire(cx, root, &ids, wait)?;
     let store = Store::open(&cleanup_effects(cleanup)?, root)?;
+    let gate_owner = crate::workspace_session::session_run_gate(store.conn(), owner, id)?;
+    let ids = super::aliases::gates(root, &gate_owner, std::slice::from_ref(&gate_owner))?;
+    let guard = Gate::acquire(cx, root, &ids, wait)?;
+    // Admission identities are immutable. Recheck after locking, before any
+    // settlement callback, so a liveness slot can never lend another run custody.
+    if crate::workspace_session::session_run_gate(store.conn(), owner, id)? != gate_owner {
+        return Err(RunError::broken("workspace recovery slot changed"));
+    }
     let record = journal::run(store.conn(), id)?;
     if record.owner != owner.name().to_string() {
         return Err(RunError::broken("wrong run owner"));

@@ -105,7 +105,8 @@ fn host_target_routes_the_detected_rust_suite_through_oxide() {
     let fixture = fixture("host", POOL_OK);
     let _env = with_fixture_path(&fixture);
 
-    let (plans, _, _, _) = resolve_target_test_plans(&[], &fixture.root, true).expect("test plans");
+    let (plans, _, _, _) =
+        resolve_target_test_plans(&[], &fixture.root, true, None).expect("test plans");
 
     assert_eq!(plans[0].command, "oxide nextest run --workspace");
     assert!(
@@ -124,7 +125,7 @@ fn container_target_keeps_the_plain_cargo_route() {
     let _env = with_fixture_path(&fixture);
 
     let (plans, _, _, _) =
-        resolve_target_test_plans(&[], &fixture.root, false).expect("test plans");
+        resolve_target_test_plans(&[], &fixture.root, false, None).expect("test plans");
 
     assert_eq!(plans[0].command, "cargo nextest run --workspace");
 }

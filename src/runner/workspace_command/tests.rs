@@ -1966,3 +1966,110 @@ fn local_artifact_receipts_remain_current_for_each_target() {
         ));
     }
 }
+
+mod live_progress_tests {
+    use super::*;
+    use effigy_ui::steps;
+    use std::time::Duration;
+
+    #[test]
+    fn download_frames_name_artifact_checksum_and_cache_waits() {
+        let ((), lines) = steps::capture_lines(|| {
+            let url = "https://example.test/effigy-x86_64";
+            let progress = WorkspaceOpProgress::start(false, format!("GET `{url}`"), false);
+            progress.update("downloading linux effigy `x86_64`", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(3)),
+                "downloading linux effigy `x86_64`; waiting for GET `https://example.test/effigy-x86_64`; 3s elapsed");
+            progress.now_waiting_for(format!("GET `{url}.sha256`"));
+            progress.update("fetching linux effigy release checksum", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(7)),
+                "fetching linux effigy release checksum; waiting for GET `https://example.test/effigy-x86_64.sha256`; 7s elapsed");
+            progress.now_waiting_for("write and rename `/cache/effigy.tmp`");
+            progress.update("caching verified linux effigy artifact", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(9)),
+                "caching verified linux effigy artifact; waiting for write and rename `/cache/effigy.tmp`; 9s elapsed");
+            progress.finish_clear();
+        });
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    #[test]
+    fn context_and_provisioning_frames_name_sub_steps_count_and_elapsed() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = WorkspaceOpProgress::start(false, PROBE_GUEST_PUBLICATION, false);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(0)),
+                "waiting for workspace guest publication; 0s elapsed"
+            );
+            progress.update("verifying guest artifact", None, None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(2)),
+                "verifying guest artifact; waiting for workspace guest publication; 2s elapsed"
+            );
+            progress.update(
+                "installing pinned guest binary",
+                None,
+                Some("guest artifact verified".to_owned()),
+            );
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(4)),
+                "installing pinned guest binary; waiting for workspace guest publication; last: guest artifact verified; 4s elapsed"
+            );
+            progress.update(
+                "publishing workspace context",
+                Some((1, 2)),
+                Some("guest binary installed".to_owned()),
+            );
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(6)),
+                "publishing workspace context (1/2); waiting for workspace guest publication; last: guest binary installed; 6s elapsed"
+            );
+            progress.finish_clear();
+        });
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    #[test]
+    fn a_blocked_identity_probe_names_the_exact_wait() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_IDENTITY, false);
+            progress.update("probing workspace container identity", None, None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(8)),
+                "probing workspace container identity; waiting for container identity probe; 8s elapsed"
+            );
+            progress.fail(
+                "workspace identity changed during publication; run `effigy container up` on the host",
+            );
+        });
+        assert_eq!(
+            lines,
+            vec![
+                "✗ workspace identity changed during publication; run `effigy container up` on the host"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn permission_and_shutdown_frames_name_the_probe_and_count() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = WorkspaceOpProgress::start(false, PROBE_PERMISSION_PREP, false);
+            progress.update("preparing workspace permissions", Some((0, 3)), None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(3)),
+                "preparing workspace permissions (0/3); waiting for workspace path inspect; 3s elapsed"
+            );
+            progress.finish_clear();
+
+            let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, false);
+            progress.update("stopping workspace system `app`", None, None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(5)),
+                "stopping workspace system `app`; waiting for container down; 5s elapsed"
+            );
+            progress.succeed("workspace system app stopped");
+        });
+        assert_eq!(lines, vec!["✓ workspace system app stopped".to_owned()]);
+    }
+}

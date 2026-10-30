@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::core::{InputMode, LogEntry, ProcessExitState};
+use ratatui::backend::TestBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::Frame;
+use ratatui::{Frame, Terminal};
 
 use super::state::ProcessStartupState;
 use super::OptionsAction;
+use crate::waits::EntryState;
 
 mod footer;
 mod header;
@@ -14,7 +16,7 @@ mod help_overlay;
 mod panes;
 
 use footer::render_footer;
-use header::render_tabs;
+use header::{render_tabs, TabBar};
 use help_overlay::{render_help_overlay, render_options_overlay};
 use panes::{render_input_pane, render_output_pane, OutputPaneRenderArgs};
 
@@ -39,6 +41,10 @@ pub(super) struct RenderUiState<'a> {
     pub(super) shell_capture_mode: bool,
     pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
     pub(super) startup_states: &'a HashMap<String, ProcessStartupState>,
+    /// Each entry's own wait from the session that supervises it, when it
+    /// publishes one.
+    pub(super) entry_waits: &'a HashMap<String, EntryState>,
+    pub(super) active_entry_wait: Option<&'a EntryState>,
     pub(super) show_help: bool,
     pub(super) show_options: bool,
     pub(super) options_index: usize,
@@ -68,6 +74,8 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         shell_capture_mode,
         exit_states,
         startup_states,
+        entry_waits,
+        active_entry_wait,
         show_help,
         show_options,
         options_index,
@@ -99,11 +107,14 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
     render_tabs(
         frame,
         chunks[0],
-        process_names,
-        active_index,
-        shell_capture_mode,
-        exit_states,
-        startup_states,
+        TabBar {
+            process_names,
+            active_index,
+            shell_capture_mode,
+            exit_states,
+            startup_states,
+            entry_waits,
+        },
     );
 
     if show_help {
@@ -129,6 +140,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
                 active_restart_count,
                 exit_states,
                 shell_cursor,
+                active_entry_wait,
             },
         );
     }
@@ -155,4 +167,93 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
             message: footer_message,
         },
     );
+}
+
+/// One session frame built from the entry snapshot another process published.
+///
+/// The interactive loop draws the same renderer from the same state; a
+/// supervising process uses this to prove its projections frame by frame, so
+/// what a proof asserts is the frame a person sees (effigy#458).
+#[derive(Debug, Clone)]
+pub struct FrameSnapshot<'a> {
+    /// Every tab, in order.
+    pub process_names: &'a [String],
+    /// The selected tab.
+    pub active: &'a str,
+    /// The session's published entry waits.
+    pub entry_waits: &'a [EntryState],
+    /// The active tab's log.
+    pub logs: &'a [LogEntry],
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Draws one frame of a session from [`FrameSnapshot`] and returns its text.
+pub fn render_snapshot_frame(snapshot: FrameSnapshot<'_>) -> Result<String, String> {
+    let mut state = super::state::SessionState::new(
+        std::path::PathBuf::new(),
+        snapshot.process_names.to_vec(),
+        40,
+        120,
+        500,
+    );
+    state.apply_entry_waits(snapshot.entry_waits.to_vec());
+    let names = snapshot.process_names;
+    let active_index = names
+        .iter()
+        .position(|name| name == snapshot.active)
+        .ok_or_else(|| format!("`{}` is not one of the session's tabs", snapshot.active))?;
+    let startup_states = names
+        .iter()
+        .map(|name| (name.clone(), ProcessStartupState::Waiting))
+        .collect::<HashMap<_, _>>();
+    let active_entry_wait = state.entry_waits.get(snapshot.active);
+    let mut terminal = Terminal::new(TestBackend::new(snapshot.width, snapshot.height))
+        .map_err(|error| error.to_string())?;
+    let logs = snapshot.logs;
+    terminal
+        .draw(|frame| {
+            render_ui(
+                frame,
+                RenderUiState {
+                    process_names: names,
+                    active_index,
+                    active_logs: logs,
+                    scroll_offset: 0,
+                    max_offset: 0,
+                    render_scroll_offset: 0,
+                    scrollbar_total: 0,
+                    follow: true,
+                    active_process: snapshot.active,
+                    active_startup_state: ProcessStartupState::Running,
+                    active_vt: false,
+                    input_line: "",
+                    input_mode: InputMode::Command,
+                    shell_capture_mode: false,
+                    exit_states: &state.exit_states,
+                    startup_states: &startup_states,
+                    entry_waits: &state.entry_waits,
+                    active_entry_wait,
+                    show_help: false,
+                    show_options: false,
+                    options_index: 0,
+                    footer_message: None,
+                    active_output_seen: !logs.is_empty(),
+                    spinner_tick: 0,
+                    active_elapsed: Duration::ZERO,
+                    active_restart_count: 0,
+                    shell_cursor: None,
+                },
+            )
+        })
+        .map_err(|error| error.to_string())?;
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            text.push_str(buffer[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+    Ok(text)
 }
