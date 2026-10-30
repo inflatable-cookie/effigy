@@ -5306,6 +5306,10 @@ fn report_session_processes_absent(log: &Path, scope: &str) {
             pids.push(pid);
         }
     }
+    assert!(
+        !pids.is_empty(),
+        "{scope}: the session recorded no pid, so its cleanup cannot be proved"
+    );
     for pid in pids {
         let deadline = Instant::now() + Duration::from_secs(20);
         while effigy_process::process_is_running(pid) && Instant::now() < deadline {

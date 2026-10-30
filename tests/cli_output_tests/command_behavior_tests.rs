@@ -4797,9 +4797,17 @@ detach_timeout_secs = 1
     }
     let mut owner_pids: Vec<u32> = owner_supervisor.into_iter().chain(owner_reported).collect();
     owner_pids.dedup();
+    assert!(
+        !owner_pids.is_empty(),
+        "the owner's supervisor pid was not recorded, so its cleanup cannot be proved"
+    );
     assert_fixture_processes_absent("owner `devc` supervisor", &owner_pids);
     assert_fixture_processes_absent("owner `devc`", &started_pids(&owner_output.stdout));
     let incoming_pids: Vec<u32> = supervised_pid(&incoming_exit.stdout).into_iter().collect();
+    assert!(
+        !incoming_pids.is_empty(),
+        "the incoming session's supervisor pid was not recorded, so its cleanup cannot be proved"
+    );
     assert_fixture_processes_absent("incoming `devh` supervisor", &incoming_pids);
     assert_fixture_processes_absent("incoming `devh`", &started_pids(&incoming_exit.stdout));
 }
