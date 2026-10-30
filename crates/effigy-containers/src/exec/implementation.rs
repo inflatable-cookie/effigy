@@ -289,17 +289,22 @@ pub fn list_running_compose_containers_for_policy(
     )
 }
 
-/// One container of a shared service's own Compose project, with the render
-/// identity that render wrote onto it.
+/// One container of a shared service's own Compose project, with the Compose
+/// service and render identity the container carries. A shared project belongs
+/// to no checkout, so a data command selects a container by these labels rather
+/// than by a name pattern (effigy#477).
 pub struct SharedProjectContainer {
     pub container_name: String,
     pub running: bool,
     /// `None` when no Effigy wrote the render label, which is what a container
     /// an older Effigy created looks like (effigy#377).
     pub render: Option<String>,
+    /// The Compose service label, which is how a shared data target proves the
+    /// container belongs to the declared service rather than a lookalike.
+    pub service: Option<String>,
 }
 
-const SHARED_PROJECT_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Label \"com.effigy.shared-render\"}}\t{{.Label \"com.docker.compose.project\"}}";
+const SHARED_PROJECT_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Label \"com.effigy.shared-render\"}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.service\"}}";
 
 /// Every container of one shared-service Compose project, running or stopped,
 /// with the render each was created from. A shared project belongs to no
@@ -326,11 +331,13 @@ pub fn shared_project_containers(
             let status = fields.next().unwrap_or_default();
             let render = fields.next().unwrap_or_default().trim();
             let project = fields.next().unwrap_or_default().trim();
+            let service = fields.next().unwrap_or_default().trim();
             (!container_name.is_empty() && project == project_name).then(|| {
                 SharedProjectContainer {
                     container_name: container_name.to_owned(),
                     running: super::parse::compose_status_is_running(status),
                     render: (!render.is_empty()).then(|| render.to_owned()),
+                    service: (!service.is_empty()).then(|| service.to_owned()),
                 }
             })
         })

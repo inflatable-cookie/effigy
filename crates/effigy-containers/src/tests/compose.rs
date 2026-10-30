@@ -1790,6 +1790,11 @@ databases = ["app", "legacy"]
         .expect("write manifest");
 
         let policy = load_prepared_policy(&root, None).expect("policy");
+        // A shared render is published by its ensure, not by Prepare (task 414):
+        // the test publishes it the way the ensure's first creation does.
+        for render in &policy.render.as_ref().expect("rendered").shared {
+            crate::policy::render::publish_shared_render(render).expect("publish shared");
+        }
         let shared = &policy.shared_services[0];
         assert!(
             home.join("shared-services")

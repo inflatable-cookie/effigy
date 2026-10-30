@@ -93,6 +93,11 @@ pub(super) fn run_workspace_container_session(
             repo_override: repo_override.clone(),
             route: RuntimeActivationRoute::Workspace,
             session_context: workspace_activation_session_context(),
+            reconcile_shared_services:
+                crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                    &policy,
+                    workspace_activation_session_context(),
+                ),
         },
     )?;
     let crate::runner::container_runtime_prep::ContainerTaskActivation {
@@ -136,6 +141,7 @@ fn workspace_activation_session_context() -> RuntimeSessionContext {
     RuntimeSessionContext {
         lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
         public_workspace_cleanup: current_runtime_session_context().public_workspace_cleanup,
+        data_seed_session: current_runtime_session_context().data_seed_session,
     }
 }
 
