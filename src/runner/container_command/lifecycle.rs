@@ -20,7 +20,7 @@ use super::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
 };
-use super::steps::{self, ComposeSteps};
+use super::steps::{self, ComposeSteps, ProgressSource, TimedStep};
 use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
@@ -395,15 +395,16 @@ fn run_container_up_inner(
 
     operation.stage = Some("runtime_integrations");
     let integrations = steps::during(
-        "registering routes",
+        ProgressSource::waiting_for("the runtime integrations of this environment"),
         "routes and host listeners registered",
-        || {
+        |progress| {
             complete_container_up_runtime_integrations(
                 repo_root,
                 &plan,
                 observation
                     .get()
                     .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
+                progress,
             )
         },
     )?;
@@ -493,12 +494,12 @@ fn prepare_container_up(
                 return Err(error.into());
             }
         };
-    let rendering_step = steps::phase("rendering the stack");
     operation.preparation_step = Some("rendering");
-    rendering_step.succeed(format!(
-        "stack rendered from {}",
-        policy.compose_file_display
-    ));
+    // Rendering is immediate, so it is one finished line and never a spinner.
+    effigy_ui::steps::finish_line(
+        true,
+        &format!("stack rendered from {}", policy.compose_file_display),
+    );
     operation.preparation_step = Some("validation");
     validate_container_policy(repo_root, &policy)?;
     crate::runner::host_process::validate_host_process_preflight(repo_root, &policy)?;
@@ -517,10 +518,24 @@ fn prepare_container_up(
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
-    let shared_service_notes =
-        steps::during("starting shared services", "shared services ready", || {
-            ensure_shared_services_running(&policy)
-        })?;
+    // A shared service is awaited by its own project, so the frame names the
+    // exact services it waits on until the ensure reports one of them.
+    let shared_names = policy
+        .shared_services
+        .iter()
+        .map(|service| format!("`{}`", service.service_name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let awaiting = if shared_names.is_empty() {
+        "the shared services to be ready".to_owned()
+    } else {
+        format!("shared services {shared_names} to be ready")
+    };
+    let shared_service_notes = steps::during(
+        ProgressSource::waiting_for(awaiting),
+        "shared services ready",
+        |_| ensure_shared_services_running(&policy),
+    )?;
     operation.preparation_step = Some("dispatch");
     let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
         repo_root,
@@ -558,11 +573,23 @@ fn run_container_up_compose(
     compose_steps: &mut ComposeSteps,
     observation: &std::cell::Cell<Option<std::time::Instant>>,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
-    // A runtime whose progress this parser does not recognise still gets one
-    // honest step instead of a silent wait.
-    let whole_stack = steps::phase(format!("starting the `{}` stack", plan.policy.name));
+    // The stack's own step names the Compose call it waits on and the last
+    // runtime line it read, so a runtime whose progress this parser does not
+    // recognise still shows what it is waiting for (effigy#460, Q-017).
+    let progress = ProgressSource::waiting_for(format!(
+        "{} to return for stack `{}`",
+        plan.up_plan.label, plan.policy.name
+    ));
+    progress.update(
+        format!("starting the `{}` stack", plan.policy.name),
+        None,
+        None,
+    );
+    let whole_stack = TimedStep::live(progress.clone());
+    let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
         if let Some(event) = parse_compose_step_event(line) {
+            progress.event(event.label(&project));
             compose_steps.observe(&event);
         }
     };
@@ -631,16 +658,26 @@ fn render_container_up_interrupted(
     )
 }
 
+/// The integration stages `container up` runs after readiness, in order. The
+/// frame counts the stages finished before the one now running.
+const INTEGRATION_STAGES: u64 = 8;
+
+fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
+    progress.update(stage, Some((finished, INTEGRATION_STAGES)), None);
+}
+
 fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
     deadline: std::time::Instant,
+    progress: &ProgressSource,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
     // Readiness is Running plus the service's own health check, decided by the
     // bring-up wait. This only proves the binding the later stages target, and
     // it shares the bring-up's one observation budget: a runtime that already
     // did not answer is refused here rather than asked a fresh question.
+    integration_stage(progress, 0, "reading the primary service binding");
     let binding = match crate::runner::container_runtime_prep::ensure_primary_service_binding(
         repo_root,
         policy,
@@ -661,6 +698,7 @@ fn complete_container_up_runtime_integrations(
     // reporting. `container up` is the one stage every first creation,
     // reuse and handover passes through; managed children and `container
     // shell` enter through exec without their own preparation.
+    integration_stage(progress, 1, "preparing workspace permissions");
     if let Err(error) = ensure_up_workspace_permissions(policy, || {
         crate::runner::workspace_command::ensure_workspace_permissions_ready(
             repo_root,
@@ -675,6 +713,7 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 2, "materializing secrets");
     if let Err(error) =
         materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
     {
@@ -684,6 +723,7 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 3, "checking pinned host ports");
     if let Err(error) =
         super::support::ensure_pinned_host_ports_available(repo_root, policy, Some(deadline))
     {
@@ -695,6 +735,7 @@ fn complete_container_up_runtime_integrations(
     }
     // A gateway stopped by a reboot comes back here: `up` starts or reconciles
     // it and prints one line naming it.
+    integration_stage(progress, 4, "starting the gateway");
     if let Err(error) = super::gateway_registration::ensure_gateway_running_for_container(policy) {
         if plan.attach_mode == EffectiveAttachMode::Detached {
             return Err(detached_activation_error(policy, error));
@@ -702,6 +743,7 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 5, "registering gateway routes");
     let gateway_routes =
         match super::gateway_registration::register_gateway_routes_for_verified_container(
             repo_root,
@@ -718,6 +760,7 @@ fn complete_container_up_runtime_integrations(
                 ));
             }
         };
+    integration_stage(progress, 6, "reconciling tcp alias hosts");
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(
         repo_root,
         policy,
@@ -738,6 +781,7 @@ fn complete_container_up_runtime_integrations(
     // Listener startup shares this bring-up's one observation budget: a
     // listener that has not opened its port when it is spent withholds its own
     // route instead of holding the activation open (effigy#455, effigy#411).
+    integration_stage(progress, 7, "starting host listeners");
     let (managed_host_listeners, managed_host_listener_failures) =
         match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
             Ok(report) => (report.ready, report.failures),

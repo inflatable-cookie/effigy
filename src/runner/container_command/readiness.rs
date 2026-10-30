@@ -20,7 +20,7 @@ use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
 
-use super::steps::TimedStep;
+use super::steps::{ProgressSource, TimedStep};
 
 /// How often the wait reads the services' own health while a stack is still
 /// starting. Every probe is two runtime calls, so the wait backs off to
@@ -57,12 +57,19 @@ pub(super) enum ReadinessEnd {
     Interrupted,
 }
 
+/// One service's own step while it is not yet healthy.
+struct ServiceStep {
+    progress: ProgressSource,
+    step: TimedStep,
+}
+
 /// Wait until every service of `policy`'s environment reports ready.
 ///
 /// The wait is bounded by `deadline`, the one budget the bring-up shares with
 /// the runtime reads it made before this wait; without one it starts the
-/// environment's own `health` timeout now. One step per service says what is
-/// happening: `waiting for web to report healthy (attempt 4, last: HTTP 404)`.
+/// environment's own `health` timeout now. The parent step counts the healthy
+/// services and names the one still failing; each waiting service has its own
+/// step with its attempt and last check output (effigy#460, Q-017).
 pub(super) fn await_services_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -71,8 +78,10 @@ pub(super) fn await_services_ready(
 ) -> Result<ReadinessEnd, RunnerError> {
     let started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
-    let parent = TimedStep::new("waiting for services to report healthy");
-    let mut steps = BTreeMap::<String, TimedStep>::new();
+    let progress = ProgressSource::waiting_for("the environment's services to report healthy");
+    progress.update("reading service health", None, None);
+    let parent = TimedStep::live(progress.clone());
+    let mut steps = BTreeMap::<String, ServiceStep>::new();
     let mut attempts = BTreeMap::<String, u32>::new();
     let mut tracker = SharedFailureTracker::default();
     let mut last_services: Vec<ServiceHealth> = Vec::new();
@@ -81,8 +90,8 @@ pub(super) fn await_services_ready(
 
     loop {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
-            for step in steps.values() {
-                step.finish_clear();
+            for waiting in steps.values() {
+                waiting.step.finish_clear();
             }
             parent.finish_clear();
             return Ok(ReadinessEnd::Interrupted);
@@ -90,8 +99,8 @@ pub(super) fn await_services_ready(
         let probe_deadline = probe_budget_deadline(Instant::now(), deadline);
         match inspect_project_health(repo_root, policy, Some(probe_deadline)) {
             Ok(services) if services.is_empty() => {
-                for step in steps.values() {
-                    step.finish_clear();
+                for waiting in steps.values() {
+                    waiting.step.finish_clear();
                 }
                 parent.finish_clear();
                 return Ok(if observed && last_probe_error.is_some() {
@@ -104,10 +113,11 @@ pub(super) fn await_services_ready(
                 observed = true;
                 last_probe_error = None;
                 last_services = services.clone();
+                observe_parent(&progress, &services);
                 let ready = report_services(&services, &mut steps, &mut attempts);
                 if ready.is_empty() {
-                    for step in steps.values() {
-                        step.finish_clear();
+                    for waiting in steps.values() {
+                        waiting.step.finish_clear();
                     }
                     parent.succeed(format!(
                         "{} service{} ready",
@@ -121,8 +131,8 @@ pub(super) fn await_services_ready(
                 if let Some(failure) = tracker.observe(&services, started.elapsed()) {
                     let diagnosis = repeated_failure_diagnostic(&failure);
                     for service in unready(&services) {
-                        if let Some(step) = steps.get(&service.service) {
-                            step.fail(service.problem());
+                        if let Some(waiting) = steps.get(&service.service) {
+                            waiting.step.fail(service.problem());
                         }
                     }
                     // The step ends on the diagnosis's first line; the error
@@ -132,6 +142,7 @@ pub(super) fn await_services_ready(
                 }
             }
             Err(error) => {
+                observe_probe_failure(&progress, &policy.project_name, &error.to_string());
                 last_probe_error = Some(error.to_string());
             }
         }
@@ -150,13 +161,46 @@ pub(super) fn await_services_ready(
         // No service's health could be read at all, so the environment's own
         // declared check is the only evidence there is. This is exactly the
         // behaviour before per-service readiness, never a new refusal.
-        for step in steps.values() {
-            step.finish_clear();
+        for waiting in steps.values() {
+            waiting.step.finish_clear();
         }
         parent.finish_clear();
         return Ok(ReadinessEnd::NothingToAwait);
     }
     readiness_failure(policy, &last_services, last_probe_error, &steps)
+}
+
+/// The parent step after a probe that read every service: how many are
+/// healthy, and the first service still failing, in its own words.
+fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
+    let ready = services.iter().filter(|service| service.is_ready()).count();
+    let latest = unready(services).first().map(|service| service.problem());
+    progress.update(
+        "waiting for services to report healthy",
+        Some((ready as u64, services.len() as u64)),
+        latest,
+    );
+}
+
+/// The parent step after a probe the runtime could not answer: it names the
+/// exact health read it is waiting on, with the error that read returned.
+fn observe_probe_failure(progress: &ProgressSource, project: &str, error: &str) {
+    progress.update(
+        format!("waiting for the runtime to answer the health read of project `{project}`"),
+        None,
+        Some(first_line(error)),
+    );
+}
+
+/// The first line of a runtime error, bounded so one frame stays one line.
+fn first_line(text: &str) -> String {
+    const LIMIT: usize = 160;
+    let line = text.lines().next().unwrap_or_default();
+    if line.chars().count() <= LIMIT {
+        return line.to_owned();
+    }
+    let cut: String = line.chars().take(LIMIT).collect();
+    format!("{cut}…")
 }
 
 /// When one probe must give up: at most [`PROBE_BUDGET`] away, but never less
@@ -183,7 +227,7 @@ fn readiness_failure(
     policy: &EffectiveContainerPolicy,
     services: &[ServiceHealth],
     probe_error: Option<String>,
-    steps: &BTreeMap<String, TimedStep>,
+    steps: &BTreeMap<String, ServiceStep>,
 ) -> Result<ReadinessEnd, RunnerError> {
     let logs = exited_logs(&policy.repo_root, policy, services);
     let diagnostic = readiness_diagnostic(
@@ -194,8 +238,8 @@ fn readiness_failure(
         probe_error.as_deref(),
     );
     for service in unready(services) {
-        if let Some(step) = steps.get(&service.service) {
-            step.fail(service.problem());
+        if let Some(waiting) = steps.get(&service.service) {
+            waiting.step.fail(service.problem());
         }
     }
     Err(RunnerError::task_invocation(diagnostic))
@@ -228,36 +272,42 @@ fn exited_logs(
     logs
 }
 
-/// Update one step per service and return the ones that are not ready.
+/// Update one step per service and return the ones that are not ready. A
+/// waiting service's frame names its attempt and the last thing its health
+/// check or container state reported.
 fn report_services(
     services: &[ServiceHealth],
-    steps: &mut BTreeMap<String, TimedStep>,
+    steps: &mut BTreeMap<String, ServiceStep>,
     attempts: &mut BTreeMap<String, u32>,
 ) -> Vec<String> {
     let mut not_ready = Vec::new();
     for service in services {
         if service.is_ready() {
-            if let Some(step) = steps.get(&service.service) {
-                step.succeed(format!("{} is healthy", service.service));
+            if let Some(waiting) = steps.get(&service.service) {
+                waiting
+                    .step
+                    .succeed(format!("{} is healthy", service.service));
             }
             continue;
         }
         let attempt = attempts.entry(service.service.clone()).or_insert(0);
         *attempt += 1;
-        let label = match service.last_output.as_deref() {
-            Some(output) => format!(
-                "waiting for {} to report healthy (attempt {attempt}, last: {output})",
-                service.service
-            ),
-            None => format!(
-                "waiting for {} to report healthy (attempt {attempt}, {})",
-                service.service, service.state
-            ),
-        };
+        let sub_step = format!(
+            "waiting for {} to report healthy (attempt {attempt})",
+            service.service
+        );
+        let last = service
+            .last_output
+            .clone()
+            .unwrap_or_else(|| format!("container {}", service.state));
         match steps.get(&service.service) {
-            Some(step) => step.set_label(label),
+            Some(waiting) => waiting.progress.update(sub_step, None, Some(last)),
             None => {
-                steps.insert(service.service.clone(), TimedStep::new(label));
+                let progress =
+                    ProgressSource::waiting_for(format!("{} to report healthy", service.service));
+                progress.update(sub_step, None, Some(last));
+                let step = TimedStep::live(progress.clone());
+                steps.insert(service.service.clone(), ServiceStep { progress, step });
             }
         }
         not_ready.push(service.service.clone());
@@ -271,43 +321,85 @@ mod tests {
     use effigy_containers::health::readiness::parse_inspect_health;
     use effigy_containers::health::readiness::HealthState;
 
+    fn health(
+        service: &str,
+        state: &str,
+        health: Option<HealthState>,
+        streak: u32,
+        output: Option<&str>,
+    ) -> ServiceHealth {
+        ServiceHealth {
+            service: service.to_owned(),
+            container: format!("demo-{service}-1"),
+            state: state.to_owned(),
+            health,
+            failing_streak: u64::from(streak),
+            last_output: output.map(str::to_owned),
+            exit_code: None,
+            restart_policy: None,
+        }
+    }
+
     #[test]
-    fn a_waiting_step_names_the_service_the_attempt_and_the_last_check_output() {
+    fn a_waiting_service_names_its_attempt_and_last_check_output() {
         let services = vec![
-            ServiceHealth {
-                service: "web".to_owned(),
-                container: "demo-web-1".to_owned(),
-                state: "running".to_owned(),
-                health: Some(HealthState::Unhealthy),
-                failing_streak: 4,
-                last_output: Some("GET / HTTP/1.1 404".to_owned()),
-                exit_code: None,
-                restart_policy: None,
-            },
-            ServiceHealth {
-                service: "db".to_owned(),
-                container: "demo-db-1".to_owned(),
-                state: "running".to_owned(),
-                health: Some(HealthState::Healthy),
-                failing_streak: 0,
-                last_output: None,
-                exit_code: None,
-                restart_policy: None,
-            },
+            health(
+                "web",
+                "running",
+                Some(HealthState::Unhealthy),
+                4,
+                Some("GET / HTTP/1.1 404"),
+            ),
+            health("db", "running", Some(HealthState::Healthy), 0, None),
         ];
         let mut steps = BTreeMap::new();
         let mut attempts = BTreeMap::new();
         let not_ready = report_services(&services, &mut steps, &mut attempts);
         assert_eq!(not_ready, vec!["web"]);
         assert_eq!(attempts.get("web"), Some(&1));
-        let step = steps.get("web").expect("web is waiting");
-        // The drawing is silent under test; the label is what a terminal shows.
+        let waiting = steps.get("web").expect("web is waiting");
+        // Fake clock: the frame names the attempt, the last output and the time.
         assert_eq!(
-            step.label(),
-            "waiting for web to report healthy (attempt 1, last: GET / HTTP/1.1 404)"
+            waiting.progress.frame_at(Duration::from_secs(12)),
+            "waiting for web to report healthy (attempt 1); last: GET / HTTP/1.1 404; 12s elapsed"
         );
         // The healthy service has no waiting step.
         assert!(!steps.contains_key("db"));
+    }
+
+    #[test]
+    fn the_parent_counts_healthy_services_and_names_the_failing_one() {
+        let services = vec![
+            health(
+                "web",
+                "running",
+                Some(HealthState::Unhealthy),
+                4,
+                Some("GET / HTTP/1.1 404"),
+            ),
+            health("db", "running", Some(HealthState::Healthy), 0, None),
+            health("cache", "running", Some(HealthState::Healthy), 0, None),
+        ];
+        let progress = ProgressSource::waiting_for("the environment's services to report healthy");
+        observe_parent(&progress, &services);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "waiting for services to report healthy (2/3); last: web is unhealthy after 4 failed checks; 12s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_silent_runtime_names_the_exact_health_read_it_waits_on() {
+        let progress = ProgressSource::waiting_for("the environment's services to report healthy");
+        observe_probe_failure(
+            &progress,
+            "demo",
+            "docker: daemon not responding\nsecond line",
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(30)),
+            "waiting for the runtime to answer the health read of project `demo`; last: docker: daemon not responding; 30s elapsed"
+        );
     }
 
     #[test]

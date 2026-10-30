@@ -667,6 +667,17 @@ During v0.x, MINOR bumps may include breaking changes.
   command or source they wait on, in place of one fixed label. JSON, piped and
   quiet output are unchanged.
 
+- `container up` progress now follows the bring-up's actual state. Readiness
+  counts the healthy services (`2/3`) and names the first one still failing
+  with its own problem; each waiting service shows its attempt and last check
+  output. A runtime that does not answer the health read names that exact read
+  with its error. Activation shows the Compose call it waits on and the last
+  runtime line it read, and each Compose child step moves with the runtime's
+  reports instead of holding one fixed label. Integration stages count the
+  stages finished (`3/8`) and name the one now running; shared services name
+  the services they await. Every frame carries elapsed time. JSON, piped and
+  quiet output stay silent. Rendering is a single finished line, not a spinner.
+
 ### Removed
 
 - The gateway's dead-route sweep, certificate deletion on `down`, the

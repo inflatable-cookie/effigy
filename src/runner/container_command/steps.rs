@@ -6,20 +6,18 @@
 //! with its own failure sentence.
 
 pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};
+pub(super) use effigy_ui::steps::ProgressSource;
 
-/// Run one phase under a step, ending it with `summary` or the phase's own
-/// failure.
-#[cfg_attr(
-    effigy_feedback_lint,
-    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-)]
+/// Run one phase under a live step driven by `progress`, ending it with
+/// `summary` or the phase's own failure. The phase moves `progress` as its
+/// sub-steps start, so the frame names the one now running (effigy#460).
 pub(super) fn during<T>(
-    label: impl Into<String>,
+    progress: ProgressSource,
     summary: impl AsRef<str>,
-    work: impl FnOnce() -> Result<T, super::RunnerError>,
+    work: impl FnOnce(&ProgressSource) -> Result<T, super::RunnerError>,
 ) -> Result<T, super::RunnerError> {
-    let step = phase(label);
-    match work() {
+    let step = TimedStep::live(progress.clone());
+    match work(&progress) {
         Ok(value) => {
             step.succeed(summary);
             Ok(value)
@@ -38,11 +36,15 @@ mod tests {
     #[test]
     fn a_failed_phase_ends_with_what_it_was_doing_and_why() {
         let (_, lines) = effigy_ui::steps::capture_lines(|| {
-            during("registering routes", "routes registered", || {
-                Err::<(), _>(super::super::RunnerError::task_invocation(
-                    "gateway domain `api.app.test` is claimed by another checkout",
-                ))
-            })
+            during(
+                ProgressSource::waiting_for("the route registration"),
+                "routes registered",
+                |_| {
+                    Err::<(), _>(super::super::RunnerError::task_invocation(
+                        "gateway domain `api.app.test` is claimed by another checkout",
+                    ))
+                },
+            )
         });
         assert_eq!(lines.len(), 1);
         assert!(

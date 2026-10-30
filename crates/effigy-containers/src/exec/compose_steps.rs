@@ -14,17 +14,30 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use super::compose_progress::ComposeStepEvent;
-use effigy_ui::steps::Step;
+use effigy_ui::steps::{ProgressSource, Step};
 
 /// A step that remembers when it started and whether it has ended.
 #[derive(Debug)]
 pub struct TimedStep {
     step: Step,
+    /// The live state a live step renders from; `None` for a legacy label.
+    source: Option<ProgressSource>,
     started: Instant,
     finished: Cell<bool>,
 }
 
 impl TimedStep {
+    /// A step whose frames come from `source`: the current sub-step, counts,
+    /// latest event and elapsed time (effigy#460, Q-017).
+    pub fn live(source: ProgressSource) -> Self {
+        Self {
+            step: effigy_ui::steps::live_step(source.clone()),
+            source: Some(source),
+            started: Instant::now(),
+            finished: Cell::new(false),
+        }
+    }
+
     #[cfg_attr(
         effigy_feedback_lint,
         deprecated(note = "feedback legacy spinner: migrate to a live progress source")
@@ -32,6 +45,7 @@ impl TimedStep {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             step: effigy_ui::steps::step(&label.into()),
+            source: None,
             started: Instant::now(),
             finished: Cell::new(false),
         }
@@ -39,11 +53,17 @@ impl TimedStep {
 
     /// The label a person last saw for this step.
     pub fn label(&self) -> String {
-        self.step.label()
+        match &self.source {
+            Some(source) => source.frame_at(self.elapsed()),
+            None => self.step.label(),
+        }
     }
 
     pub fn set_label(&self, label: impl Into<String>) {
-        self.step.set_label(&label.into());
+        match &self.source {
+            Some(source) => source.update(label.into(), None, None),
+            None => self.step.set_label(&label.into()),
+        }
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -80,6 +100,15 @@ impl TimedStep {
         }
         self.step.finish_clear();
     }
+}
+
+/// A step that moves with the runtime's own progress lines. Between two lines
+/// the frame names the wait it is in, with elapsed time, so a long pull or
+/// start never shows one fixed label for its whole duration.
+fn runtime_step(label: String) -> TimedStep {
+    let source = ProgressSource::waiting_for("the runtime's next report");
+    source.update(label, None, None);
+    TimedStep::live(source)
 }
 
 /// A one-off step for a phase that has not finished yet.
@@ -124,7 +153,7 @@ impl ComposeSteps {
         let entry = self
             .steps
             .entry(key)
-            .or_insert_with(|| (TimedStep::new(event.label(&project)), subject.clone()));
+            .or_insert_with(|| (runtime_step(event.label(&project)), subject.clone()));
         let step = &entry.0;
         if step.is_finished() {
             return;

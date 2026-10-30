@@ -7,21 +7,15 @@
   ],
   [
     "crates/effigy-containers/src/exec/compose_steps.rs",
-    34,
+    47,
     "step: effigy_ui::steps::step(&label.into()),",
     37
   ],
   [
     "crates/effigy-containers/src/exec/compose_steps.rs",
-    91,
+    120,
     "TimedStep::new(label)",
     16
-  ],
-  [
-    "crates/effigy-containers/src/exec/compose_steps.rs",
-    127,
-    ".or_insert_with(|| (TimedStep::new(event.label(&project)), subject.clone()));",
-    44
   ],
   [
     "crates/effigy-containers/src/health.rs",
@@ -127,69 +121,21 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    397,
-    "let integrations = steps::during(",
-    31
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    414,
+    415,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    481,
+    482,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    496,
-    "let rendering_step = steps::phase(\"rendering the stack\");",
-    33
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    521,
-    "steps::during(\"starting shared services\", \"shared services ready\", || {",
-    16
-  ],
-  [
-    "src/runner/container_command/lifecycle.rs",
-    563,
-    "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
-    30
-  ],
-  [
-    "src/runner/container_command/readiness.rs",
-    74,
-    "let parent = TimedStep::new(\"waiting for services to report healthy\");",
-    29
-  ],
-  [
-    "src/runner/container_command/readiness.rs",
-    260,
-    "steps.insert(service.service.clone(), TimedStep::new(label));",
-    66
   ],
   [
     "src/runner/container_command/steps.rs",
     8,
     "pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};",
     42
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    21,
-    "let step = phase(label);",
-    16
-  ],
-  [
-    "src/runner/container_command/steps.rs",
-    41,
-    "during(\"registering routes\", \"routes registered\", || {",
-    13
   ],
   [
     "src/runner/execute/sequence_run.rs",
