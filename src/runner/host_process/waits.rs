@@ -13,18 +13,27 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use effigy_containers::EffectiveContainerPolicy;
-#[cfg(test)]
-use effigy_containers::EffectiveHostProcess;
+use effigy_containers::{EffectiveContainerPolicy, EffectiveHostProcess};
 use effigy_tui::waits::{should_publish, EntryState, EntryWaits, HostOrder, SessionOrder};
 
 use std::collections::BTreeMap;
 
-#[cfg(test)]
-use super::ManagedHostListenerResult;
-#[cfg(test)]
+use super::{EffectiveManagedHostListener, ManagedHostListenerFailure, ManagedHostListenerResult};
 use crate::runner::error::RunnerError;
 use crate::runner::managed_wait::{WaitLedger, WaitOwner};
+
+/// The first dependency this activation already withheld, if this process
+/// declared one.
+fn withheld_dependency(
+    dependencies: &[String],
+    withheld: &BTreeMap<String, (String, Option<u16>)>,
+) -> Option<(String, String, Option<u16>)> {
+    dependencies.iter().find_map(|dependency| {
+        withheld
+            .get(dependency.as_str())
+            .map(|(detail, status)| (dependency.clone(), detail.clone(), *status))
+    })
+}
 
 /// The attribution a withheld entry names: the process or prerequisite and the
 /// first line of why its readiness was never verified, bounded so a diagnostic
@@ -92,14 +101,6 @@ pub(in crate::runner) fn attributed_environment_failure(
         Some(failure) => format!("{reason}; {failure}"),
         None => reason.to_owned(),
     }
-}
-
-/// What one bring-up performed, once its whole plan ran. Test-only: the merged
-/// bring-up publishes the same graph from `start_host_processes_inner`.
-#[cfg(test)]
-#[derive(Debug, Default)]
-pub(in crate::runner) struct HostPlanOutcome {
-    pub(in crate::runner) listeners: Vec<ManagedHostListenerResult>,
 }
 
 /// The published waits of one host-process bring-up.
@@ -386,103 +387,235 @@ impl HostWaitGraph {
     }
 }
 
-/// What the fake plan asks of its driver. Production publishes the same
-/// transitions from `start_host_processes_inner`, where the kernel waits and
-/// starts; the fake records spawns and answers readiness from a script.
-#[cfg(test)]
-pub(in crate::runner) trait HostLauncher {
-    /// The diagnostic this process's own readiness was withheld with, when the
-    /// script withholds it (a failed listener, never a spawn failure).
-    fn withheld_reason(&self, process: &str) -> Option<String>;
-    /// Waits for `dependency`'s published listener readiness, reporting
-    /// progress so the wait it holds can be published while it blocks.
+/// How one readiness observation ended, as the activation's ordering loop
+/// needs it: verified, or withheld with the reason and observed status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum ReadinessOutcome {
+    Ready,
+    Withheld {
+        diagnostic: String,
+        observed_status: Option<u16>,
+        /// The enclosing activation's observation budget ended the wait, so
+        /// nothing further is started.
+        budget_expired: bool,
+    },
+}
+
+/// What the activation's ordering loop asks of whoever runs it. The kernel
+/// starts real supervisors and waits for real listeners; a strict fake records
+/// spawns and answers readiness from a script. The loop below is then the one
+/// production scheduler, so a fake proof exercises the real spawn and
+/// transition decisions (effigy#458).
+pub(in crate::runner) trait HostActivation {
+    /// The listener this process declares, resolved for this activation.
+    fn listener(&self, process: &EffectiveHostProcess) -> Option<EffectiveManagedHostListener>;
+
+    /// Waits for `dependency`'s verified readiness, reporting progress so the
+    /// wait it holds is published while it blocks.
     fn dependency_ready(
         &mut self,
         dependency: &str,
         on_wait: &mut dyn FnMut(Instant),
-    ) -> Result<(), RunnerError>;
+    ) -> Result<ReadinessOutcome, RunnerError>;
 
-    /// Launches `process` and, when it declares a listener, waits for its own
-    /// declared readiness. Returns the listener result it observed.
-    fn launch(
+    /// The replace step: settle the previous generation of this exact process
+    /// and start its successor.
+    fn launch(&mut self, process: &EffectiveHostProcess) -> Result<(), RunnerError>;
+
+    /// Waits for the launched listener's own declared readiness. A withheld
+    /// result has already settled the generation this activation started.
+    fn await_listener(
         &mut self,
-        process: &str,
+        process: &EffectiveHostProcess,
         on_wait: &mut dyn FnMut(Instant),
-    ) -> Result<Option<ManagedHostListenerResult>, RunnerError>;
+    ) -> Result<ReadinessOutcome, RunnerError>;
+
+    /// Reconciles a listener a previous activation published, once this
+    /// activation's observation budget is spent.
+    fn reconcile(
+        &mut self,
+        process: &EffectiveHostProcess,
+    ) -> Result<ReadinessOutcome, RunnerError>;
+
+    /// Withdraws the listener of a process this activation will not start,
+    /// settling any generation it ran. Returns the detail it recorded.
+    fn withdraw(
+        &mut self,
+        process: &EffectiveHostProcess,
+        detail: String,
+        observed_status: Option<u16>,
+    ) -> Result<String, RunnerError>;
+
+    /// The clients this activation started, for the caller's detach and its
+    /// owner-loss fallback.
+    fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)>;
+    /// How many clients the activation holds now.
+    fn started_len(&self) -> usize;
+    /// The listeners this activation verified, for the caller's report.
+    fn take_listeners(&mut self) -> Vec<ManagedHostListenerResult>;
+    /// The listeners this activation withheld, for the caller's report.
+    fn take_failures(&mut self) -> Vec<ManagedHostListenerFailure>;
 }
 
-/// Runs the resolved plan in dependency order, publishing the graph as it goes
-/// — the fake twin of `start_host_processes_inner`'s own publication points.
-///
-/// A withheld entry is terminal and attributed, and the plan still starts every
-/// entry that does not need it, exactly as the merged bring-up does. A spawn
-/// failure aborts the plan and settles every entry it never started.
-#[cfg(test)]
-pub(in crate::runner) fn run_host_plan(
+/// The activation's ordering loop: the one place that decides what starts, what
+/// is withheld and what every entry's wait says. In dependency order it waits
+/// for each declared reader, launches the process, observes its own declared
+/// readiness and publishes the transition; a withheld entry is terminal and
+/// attributed while everything that does not need it still starts. Once the
+/// activation's observation budget is spent nothing further starts: a dependent
+/// of a withheld entry is withheld, and a listener a previous activation
+/// published is reconciled rather than restarted.
+pub(in crate::runner) fn run_host_activation(
     ordered: &[&EffectiveHostProcess],
     selection: Option<&BTreeSet<String>>,
     graph: &mut HostWaitGraph,
-    launcher: &mut dyn HostLauncher,
+    kernel: &mut dyn HostActivation,
     now: &dyn Fn() -> Instant,
-) -> Result<HostPlanOutcome, RunnerError> {
+) -> Result<(), RunnerError> {
     graph.publish_all(now());
-    let mut outcome = HostPlanOutcome::default();
-    // What this plan withheld, so a dependent is withheld without waiting on a
-    // record its prerequisite never published (effigy#455, #458).
-    let mut withheld: BTreeMap<String, String> = BTreeMap::new();
+    // What this activation withheld, so a dependent is withheld without waiting
+    // on a record its prerequisite never published (effigy#455, #458).
+    let mut withheld: BTreeMap<String, (String, Option<u16>)> = BTreeMap::new();
+    let mut activation_budget_spent = false;
     for process in ordered {
+        // `up` starts every declared process; a restart names the ones it
+        // replaces and leaves the rest running.
         if selection.is_some_and(|selection| !selection.contains(&process.name)) {
             continue;
         }
-        // A dependency this plan withheld withholds this entry too, before any
-        // state file its prerequisite never wrote is read.
-        let refused = process.depends_on.iter().find_map(|dependency| {
-            withheld
-                .get(dependency.as_str())
-                .map(|reason| (dependency.clone(), reason.clone()))
-        });
-        if let Some((dependency, reason)) = refused {
+        let listener = kernel.listener(process);
+        // The activation's observation budget is spent: nothing further is
+        // started. A dependency this activation withheld withholds this
+        // process, and only then is a listener the previous activation
+        // published reconciled against its own generation and route.
+        if activation_budget_spent {
+            if let Some((dependency, detail, observed_status)) =
+                withheld_dependency(&process.depends_on, &withheld)
+            {
+                let detail = kernel.withdraw(
+                    process,
+                    format!(
+                        "its dependency `{dependency}` was withheld by this activation: {detail}"
+                    ),
+                    observed_status,
+                )?;
+                graph.withheld(
+                    &process.name,
+                    withheld_attribution(&dependency, &detail),
+                    now(),
+                );
+                withheld.insert(process.name.clone(), (detail, observed_status));
+                continue;
+            }
+            if listener.is_none() {
+                graph.withheld(
+                    &process.name,
+                    withheld_attribution(
+                        &process.name,
+                        "the activation's observation budget expired before this process was reached",
+                    ),
+                    now(),
+                );
+                continue;
+            }
+            match kernel.reconcile(process)? {
+                ReadinessOutcome::Ready => {
+                    graph.ready(&process.name, now());
+                }
+                ReadinessOutcome::Withheld {
+                    diagnostic,
+                    observed_status,
+                    ..
+                } => {
+                    graph.withheld(
+                        &process.name,
+                        withheld_attribution(&process.name, &diagnostic),
+                        now(),
+                    );
+                    withheld.insert(process.name.clone(), (diagnostic, observed_status));
+                }
+            }
+            continue;
+        }
+        let mut dependency_refusal = None;
+        for dependency in &process.depends_on {
+            if let Some((diagnostic, observed_status)) = withheld.get(dependency.as_str()) {
+                dependency_refusal = Some((
+                    dependency.clone(),
+                    format!("its dependency was withheld by this activation: {diagnostic}"),
+                    *observed_status,
+                ));
+                break;
+            }
+            // Publish the wait this entry holds before blocking on the reader's
+            // readiness, so a restart of a dependent names the reader it
+            // re-confirms even when another activation started it.
+            graph.publish_all(now());
+            match kernel.dependency_ready(dependency, &mut |at| graph.publish_all(at))? {
+                ReadinessOutcome::Ready => {
+                    graph.dependency_ready(dependency, now());
+                }
+                ReadinessOutcome::Withheld {
+                    diagnostic,
+                    observed_status,
+                    budget_expired,
+                } => {
+                    activation_budget_spent = budget_expired;
+                    dependency_refusal = Some((dependency.clone(), diagnostic, observed_status));
+                    break;
+                }
+            }
+        }
+        if let Some((dependency, diagnostic, observed_status)) = dependency_refusal {
+            let detail = kernel.withdraw(
+                process,
+                format!("its dependency `{dependency}` did not become ready: {diagnostic}"),
+                observed_status,
+            )?;
             graph.withheld(
                 &process.name,
-                withheld_attribution(&dependency, &reason),
+                withheld_attribution(&dependency, &detail),
                 now(),
             );
-            withheld.insert(process.name.clone(), reason);
+            withheld.insert(process.name.clone(), (detail, observed_status));
             continue;
         }
-        for dependency in &process.depends_on {
-            // Publish the wait this entry holds before blocking on the
-            // reader's readiness, so a restart of a dependent names the reader
-            // it re-confirms even when another call started it.
-            graph.publish_all(now());
-            launcher.dependency_ready(dependency, &mut |at| graph.publish_all(at))?;
-            graph.dependency_ready(dependency, now());
-        }
+        kernel.launch(process)?;
         graph.started(&process.name, now());
-        if let Some(listener) = &process.listener {
-            graph.probing(
-                &process.name,
-                effigy_tui::waits::listener_probe_label(
-                    &listener.readiness_path,
-                    listener.readiness_status,
-                ),
-                now(),
-            );
-        }
-        let listener = launcher.launch(&process.name, &mut |at| graph.publish_all(at))?;
-        if let Some(reason) = launcher.withheld_reason(&process.name) {
-            // The listener was launched, so its withheld readiness is a failed
-            // start, not a non-start; the plan still starts everything that
-            // does not need it.
-            graph.listener_failed(&process.name, &reason, now());
-            withheld.insert(process.name.clone(), format!("failed: {reason}"));
+        let Some(listener) = listener else {
+            // A non-listener's launch is complete when it returns: the next
+            // entry's hold is the next launch, not this finished one.
+            graph.ready(&process.name, now());
             continue;
+        };
+        graph.probing(
+            &process.name,
+            effigy_tui::waits::listener_probe_label(
+                &listener.readiness_path,
+                listener.readiness_status,
+            ),
+            now(),
+        );
+        match kernel.await_listener(process, &mut |at| graph.publish_all(at))? {
+            ReadinessOutcome::Ready => {
+                graph.ready(&process.name, now());
+            }
+            ReadinessOutcome::Withheld {
+                diagnostic,
+                observed_status,
+                budget_expired,
+            } => {
+                activation_budget_spent = budget_expired;
+                graph.listener_failed(&process.name, &diagnostic, now());
+                withheld.insert(
+                    process.name.clone(),
+                    (format!("failed: {diagnostic}"), observed_status),
+                );
+            }
         }
-        graph.ready(&process.name, now());
-        outcome.listeners.extend(listener);
     }
     graph.settle_all(now());
-    Ok(outcome)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -609,6 +742,8 @@ mod tests {
         /// The process whose own readiness the script withholds, and why.
         pub(super) withheld: Option<(String, String)>,
         pub(super) spawns: Vec<String>,
+        /// The entries whose listener this activation withdrew.
+        pub(super) withdrawn: Vec<String>,
         /// The published records at each observed moment.
         pub(super) frames: Vec<Vec<EntryState>>,
     }
@@ -619,40 +754,115 @@ mod tests {
         }
     }
 
-    impl HostLauncher for FakeLauncher<'_> {
-        fn withheld_reason(&self, process: &str) -> Option<String> {
-            self.withheld
-                .as_ref()
-                .filter(|(name, _)| name == process)
-                .map(|(_, reason)| reason.clone())
+    impl HostActivation for FakeLauncher<'_> {
+        fn listener(&self, process: &EffectiveHostProcess) -> Option<EffectiveManagedHostListener> {
+            process.listener.clone()
         }
 
         fn dependency_ready(
             &mut self,
-            _dependency: &str,
+            dependency: &str,
             on_wait: &mut dyn FnMut(Instant),
-        ) -> Result<(), RunnerError> {
+        ) -> Result<ReadinessOutcome, RunnerError> {
             self.observe();
+            let withheld = self
+                .withheld
+                .as_ref()
+                .filter(|(name, _)| name == dependency)
+                .map(|(_, reason)| reason.clone());
+            if let Some(reason) = withheld {
+                // A prerequisite that failed its own readiness withholds every
+                // dependent exactly as the kernel reports it.
+                return Ok(ReadinessOutcome::Withheld {
+                    diagnostic: format!("failed: {reason}"),
+                    observed_status: Some(500),
+                    budget_expired: false,
+                });
+            }
             // A reader's readiness is observed after a short wait.
             self.clock.advance(1_000);
             on_wait(self.clock.at());
             self.observe();
+            Ok(ReadinessOutcome::Ready)
+        }
+
+        fn launch(&mut self, process: &EffectiveHostProcess) -> Result<(), RunnerError> {
+            self.spawns.push(process.name.clone());
             Ok(())
         }
 
-        fn launch(
+        fn await_listener(
             &mut self,
-            process: &str,
+            process: &EffectiveHostProcess,
             on_wait: &mut dyn FnMut(Instant),
-        ) -> Result<Option<ManagedHostListenerResult>, RunnerError> {
-            self.spawns.push(process.to_owned());
+        ) -> Result<ReadinessOutcome, RunnerError> {
+            let withheld = self
+                .withheld
+                .as_ref()
+                .filter(|(name, _)| name == &process.name)
+                .map(|(_, reason)| reason.clone());
+            if let Some(reason) = withheld {
+                // The launched listener answered its probe with a failure: it
+                // started, and its own readiness never verified.
+                self.observe();
+                return Ok(ReadinessOutcome::Withheld {
+                    diagnostic: reason,
+                    observed_status: Some(500),
+                    budget_expired: false,
+                });
+            }
             self.observe();
             // The entry's own declared readiness request blocks for 12s.
             self.clock.advance(12_000);
             on_wait(self.clock.at());
             self.observe();
-            Ok(None)
+            Ok(ReadinessOutcome::Ready)
         }
+
+        fn reconcile(
+            &mut self,
+            _process: &EffectiveHostProcess,
+        ) -> Result<ReadinessOutcome, RunnerError> {
+            // This script never spends the activation's observation budget.
+            Ok(ReadinessOutcome::Ready)
+        }
+
+        fn withdraw(
+            &mut self,
+            process: &EffectiveHostProcess,
+            detail: String,
+            _observed_status: Option<u16>,
+        ) -> Result<String, RunnerError> {
+            self.withdrawn.push(process.name.clone());
+            Ok(detail)
+        }
+
+        fn take_started(&mut self) -> Vec<(String, effigy_kernel::supervise::SupervisorClient)> {
+            Vec::new()
+        }
+
+        fn started_len(&self) -> usize {
+            0
+        }
+
+        fn take_listeners(&mut self) -> Vec<ManagedHostListenerResult> {
+            Vec::new()
+        }
+
+        fn take_failures(&mut self) -> Vec<ManagedHostListenerFailure> {
+            Vec::new()
+        }
+    }
+
+    /// The production ordering loop, driven by the strict fake.
+    pub(super) fn run_plan(
+        ordered: &[&EffectiveHostProcess],
+        selection: Option<&BTreeSet<String>>,
+        graph: &mut HostWaitGraph,
+        launcher: &mut FakeLauncher<'_>,
+        clock: &Clock,
+    ) -> Result<(), RunnerError> {
+        run_host_activation(ordered, selection, graph, launcher, &|| clock.at())
     }
 
     /// Frame by frame: the dependents name `api` while it starts, `api` names
@@ -677,11 +887,10 @@ mod tests {
             clock: &clock,
             withheld: None,
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
-        let outcome = run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect("the plan finishes");
-        assert!(outcome.listeners.is_empty());
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock).expect("the plan finishes");
 
         // Frame 0 is `api` launched with its declared readiness request still
         // unanswered: exactly the interval the operator was left guessing in.
@@ -760,9 +969,10 @@ mod tests {
                 "readiness probe GET / returned 500; the listener never became ready".to_owned(),
             )),
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
-        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock)
             .expect("a withheld listener does not abort the plan");
         assert_eq!(
             launcher.spawns,
@@ -819,8 +1029,8 @@ mod environment_tests {
     use effigy_tui::waits::{EntryPhase, WaitOn};
 
     use super::tests::{
-        four_entry_policy, policy_with_an_independent_host, process, records, state_of, Clock,
-        FakeLauncher, ENVIRONMENT,
+        four_entry_policy, policy_with_an_independent_host, process, records, run_plan, state_of,
+        Clock, FakeLauncher, ENVIRONMENT,
     };
     use super::*;
     use crate::runner::managed_run::wait_views;
@@ -896,10 +1106,11 @@ mod environment_tests {
             clock: &clock,
             withheld: None,
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
-        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock)
             .expect("the plan finishes once the environment is ready");
         assert_eq!(launcher.spawns, vec!["api", "front", "admin"]);
         assert!(
@@ -1086,10 +1297,11 @@ mod environment_tests {
                 "readiness probe GET / returned 500; the listener never became ready".to_owned(),
             )),
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
-        run_host_plan(&ordered, None, &mut planner, &mut launcher, &|| clock.at())
+        run_plan(&ordered, None, &mut planner, &mut launcher, &clock)
             .expect("a withheld listener does not abort the plan");
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
@@ -1293,10 +1505,11 @@ mod environment_tests {
                 "readiness probe GET / returned 500; the listener never became ready".to_owned(),
             )),
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = policy.host_processes.iter().collect::<Vec<_>>();
-        run_host_plan(&ordered, None, &mut failing, &mut launcher, &|| clock.at())
+        run_plan(&ordered, None, &mut failing, &mut launcher, &clock)
             .expect("a withheld listener does not abort the plan");
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
@@ -1370,12 +1583,12 @@ mod environment_tests {
             clock: &clock,
             withheld: None,
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
             .expect("the plan order resolves");
-        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect("the plan finishes");
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock).expect("the plan finishes");
 
         // While `api` probes, `jobs` names that active launch — several
         // positions ahead of it — not the queued `admin` behind it.
@@ -1419,6 +1632,64 @@ mod environment_tests {
         assert_eq!(launcher.spawns, vec!["api", "front", "admin", "jobs"]);
     }
 
+    /// A completed non-listener launch stops holding the scheduler: while the
+    /// next entry blocks re-confirming a reader another activation started, an
+    /// independent queued entry names nothing, and once that next entry's own
+    /// launch is active it names that launch (effigy#458).
+    #[test]
+    fn a_completed_non_listener_launch_does_not_hold_the_scheduler() {
+        let (_dir, checkout) = fixture();
+        let mut policy = four_entry_policy(&checkout);
+        // `api` runs outside this call; `seed` completes before `front` blocks.
+        policy.host_processes = vec![
+            process("api", &[], true),
+            process("seed", &[], false),
+            process("front", &["api"], true),
+            process("jobs", &[], false),
+        ];
+        let selected = BTreeSet::from(["seed".to_owned(), "front".to_owned(), "jobs".to_owned()]);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        let clock = Clock::new();
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
+        let mut graph = HostWaitGraph::for_policy(&checkout, &policy, &selected, clock.at());
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            withheld: None,
+            spawns: Vec::new(),
+            withdrawn: Vec::new(),
+            frames: Vec::new(),
+        };
+        run_plan(&ordered, Some(&selected), &mut graph, &mut launcher, &clock)
+            .expect("the plan finishes");
+
+        // Frame 0 is `front` blocked re-confirming `api`, after `seed`'s launch
+        // returned and before `front` launches: the scheduler holds nothing, so
+        // the independent `jobs` never names `seed`'s finished launch.
+        let after_seed = &launcher.frames[0];
+        let jobs = state_of(after_seed, "jobs");
+        assert_eq!(
+            jobs.waiting_on, None,
+            "a finished non-listener launch is not the scheduler's hold: {jobs:?}"
+        );
+        // Frame 2 is `front` launched with its own probe unanswered: now the
+        // hold is that active launch, named for the queued entry.
+        let during_front = &launcher.frames[2];
+        assert_eq!(
+            state_of(during_front, "jobs").waiting_on,
+            Some(WaitOn::Launch {
+                name: "front".to_owned(),
+                phase: EntryPhase::Starting
+            })
+        );
+        assert_eq!(
+            launcher.spawns,
+            vec!["seed", "front", "jobs"],
+            "the selected entries started once each"
+        );
+    }
+
     /// A restart of one dependent re-confirms a reader another call started.
     /// While the plan blocks on that reader's readiness, the entry names it —
     /// its phase, its elapsed time and its machine-readable identity — instead
@@ -1460,18 +1731,13 @@ mod environment_tests {
             clock: &clock,
             withheld: None,
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
             .expect("the plan order resolves");
-        run_host_plan(
-            &ordered,
-            Some(&selected),
-            &mut graph,
-            &mut launcher,
-            &|| clock.at(),
-        )
-        .expect("the restart finishes");
+        run_plan(&ordered, Some(&selected), &mut graph, &mut launcher, &clock)
+            .expect("the restart finishes");
         let during_block = &launcher.frames[1];
         let front = state_of(during_block, "front");
         assert_eq!(
@@ -1547,6 +1813,7 @@ mod environment_tests {
             clock: &clock,
             withheld: None,
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
@@ -1559,8 +1826,7 @@ mod environment_tests {
             vec!["api", "front", "jobs"],
             "the plan launches the reader first"
         );
-        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
-            .expect("the plan finishes");
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock).expect("the plan finishes");
 
         // While api probes, `front` names its declared dependency and `jobs`
         // names the active launch; nothing names a queued entry.
@@ -1625,11 +1891,12 @@ mod environment_tests {
                 "readiness probe GET / returned 500; the listener never became ready".to_owned(),
             )),
             spawns: Vec::new(),
+            withdrawn: Vec::new(),
             frames: Vec::new(),
         };
         let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
             .expect("the plan order resolves");
-        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+        run_plan(&ordered, None, &mut graph, &mut launcher, &clock)
             .expect("a withheld listener does not abort the plan");
         assert_eq!(
             launcher.spawns,

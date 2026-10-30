@@ -397,8 +397,12 @@ During v0.x, MINOR bumps may include breaking changes.
   its own `launch` identity in JSON and never attributed as a dependency. A
   launch that aborts the plan marks every entry it never started terminal
   (`not started — plan stopped after api failed: …500…`), so no wait outlives
-  the plan, and a restart names the reader readiness it re-confirms
-  (`waiting for api (running)`) while publishing only the entries it replaces.
+  the plan, a restart names the reader readiness it re-confirms
+  (`waiting for api (running)`) while publishing only the entries it replaces,
+  and a host nothing has observed yet reports no status at all, so neither the
+  headless text nor a tab claims it is starting before the bring-up launched
+  it. A non-listener's launch stops holding the scheduler as soon as it
+  returns, so a queued entry never names an entry that already finished.
   Only a dependent that needs a failed entry's readiness loses it: a workload
   that only needed its predecessor to start keeps going after that predecessor
   exits non-zero, even inside its own scheduled delay. The environment phase's

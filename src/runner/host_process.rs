@@ -50,7 +50,8 @@ pub(in crate::runner) use kernel_run::{
     HostProcessStopReport,
 };
 pub(in crate::runner) use waits::{
-    attributed_environment_failure, begin_environment_phase, withheld_attribution, HostWaitGraph,
+    attributed_environment_failure, begin_environment_phase, run_host_activation, HostActivation,
+    HostWaitGraph, ReadinessOutcome,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";

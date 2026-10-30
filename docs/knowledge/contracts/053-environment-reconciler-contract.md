@@ -299,7 +299,11 @@ a missing or partial snapshot across the handoff. The host plan launches entries
 one at a time in its resolved dependency order, so each queued entry names the
 launch the plan is performing now, with that entry's actual phase, as its own
 wait (`launch`) — distinct from a declared `depends_on` edge and never
-attributed as one. A launch that aborts the plan marks every entry it never
+attributed as one. A launch's hold ends when that launch returns, so a
+non-listener that finished its launch is never the queued entry's hold. An entry
+nothing has observed yet — no published record, no settled launch, no log line
+and no ready URL — reports no status at all: neither the text nor a tab claims a
+host is starting before the plan launched it. A launch that aborts the plan marks every entry it never
 started `not started` with the plan's own attribution
 (`plan stopped after <entry> <report>`), so no wait outlives the plan. A restart
 publishes only the entries it replaces: a reader another call started stays

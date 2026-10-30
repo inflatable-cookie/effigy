@@ -197,6 +197,12 @@ pub(in crate::runner) struct HostFollower {
     /// Whether the published record says the wait is over: the planner only
     /// settles an entry once it launched the process.
     settled: bool,
+    /// Whether this process has been observed at all: one of its own published
+    /// records, a settled launch, a ready URL or a line from its log. Before
+    /// the first observation the tab reports no status, so no front end claims
+    /// a process is starting while the bring-up has not reached it
+    /// (effigy#458).
+    evidence: bool,
 }
 
 impl HostFollower {
@@ -210,6 +216,7 @@ impl HostFollower {
             next_poll: std::time::Instant::now(),
             wait: None,
             settled: false,
+            evidence: false,
         }
     }
 
@@ -261,6 +268,7 @@ impl HostFollower {
         if now >= self.next_poll {
             self.next_poll = now + LISTENER_POLL;
             self.read_wait();
+            self.evidence |= self.wait.is_some();
             if let Some(state) = &self.wait {
                 let reported = match state.phase {
                     EntryPhase::NotStarted | EntryPhase::Failed => {
@@ -288,12 +296,18 @@ impl HostFollower {
                 }
             }
             if let Some(url) = ready_url(&self.tab) {
+                self.evidence = true;
                 let ready = HostStatus::Ready(url);
                 if ready != self.status {
                     changed = Some(ready.clone());
                     self.status = ready;
                 }
             }
+        }
+        // Nothing has observed this process yet: it has not been reported as
+        // starting, because the bring-up has not said anything about it.
+        if !self.evidence {
+            return None;
         }
         if !self.announced || changed.is_some() {
             self.announced = true;
@@ -314,6 +328,7 @@ impl HostFollower {
         for line in self.tail.read(&self.tab.log) {
             poll.lines.push(line.clone());
             if let Some(status) = status_from_log_line(&self.tab, &line) {
+                self.evidence = true;
                 if status != self.status {
                     self.status = status.clone();
                     poll.statuses.push(status);
@@ -460,6 +475,31 @@ mod tests {
 
         std::fs::write(&state, "{ truncated").expect("torn state");
         assert_eq!(ready_url(&tab), None, "a torn state file is no observation");
+    }
+
+    /// No observation is not a start: a host the bring-up has not reached yet
+    /// reports no status at all, so neither the headless text nor a tab can
+    /// claim it is starting before the planner launched it (effigy#458).
+    #[test]
+    fn an_unobserved_host_process_reports_no_starting_status() {
+        let dir = tempfile::tempdir().expect("wait dir");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
+        let mut tab = tab(HostProcessRestart::Never, None);
+        tab.name = "api".to_owned();
+        tab.wait_ledger = ledger.clone();
+        let mut follower = HostFollower::new(tab);
+
+        // The pre-publication window: nothing has been said about this host.
+        assert!(
+            follower.poll().statuses.is_empty(),
+            "an unobserved host is not reported as starting"
+        );
+        assert!(follower.poll().statuses.is_empty());
+        assert!(
+            !follower.may_announce_started(),
+            "and it may not be announced as started"
+        );
     }
 
     /// A host process that has not started is held by the bring-up, and the
