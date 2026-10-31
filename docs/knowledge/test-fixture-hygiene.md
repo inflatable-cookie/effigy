@@ -80,11 +80,22 @@ recorded state the suite now reads from the kernel directly.
 
 An adapterless listener proof starts plain servers through Effigy, so the
 child is a generation Effigy supervises, not the fixture's own. Its state file
-records the child's PID with its boot and start identity. The fixture's `Drop`
-reads those records and signals a child (and its group) only while the live
-process still matches that identity. A PID reused by the OS, or a changed
-boot, is left alone. This runs after the proof's own `container down`, so it
-also covers an unwinding or unsettled proof.
+records the child's PID with its boot and start identity, and the private
+gateway's `gateway.identity` records the daemon the same way.
+`tests/gateway_private/fixture_sweep.rs` signals a recorded leader only while it
+still holds that identity. A background job in the leader's group is captured
+while the leader lives, by its own identity, so it is still stopped after the
+leader exits. A group member the sweep never captured is left alone once its
+leader is gone: nothing then proves it belongs to the record. A PID reused by
+the OS, or a changed boot, is never signalled.
+
+The fixture's `Drop` runs the sweep after the proof's own `container down`, so
+an unwinding or unsettled proof is covered. A killed process runs no `Drop`, so
+each `AdapterlessSetup` also starts a watchdog: it keeps capturing the fixture's
+generations while its owner lives and stops the captured ones by identity once
+the owner is gone. The interrupted-parent proof
+(`managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`)
+runs that path through the real adapterless fixture.
 
 ## Placement
 
