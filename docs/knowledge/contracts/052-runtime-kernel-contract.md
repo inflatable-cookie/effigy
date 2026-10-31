@@ -4549,7 +4549,11 @@ each partial write, each resize, and each idle tick — so a stale, released,
 replaced or foreign attachment, a second terminal, and a run this session owns
 no terminal for refuse with zero bytes and zero resize, and no effect can land
 against a row that was released between turns or between two chunks of one
-frame. Input is bounded at two frames and then refuses rather than growing a
+frame. The two kinds of effect alternate while both have work, so neither can
+starve the other: a writer that stays full (a child that stopped reading) never
+holds back the newest geometry, and a resize handle that stays full never holds
+back queued input. Resize remains latest-wins, so the alternation costs at most
+one turn and never a backlog. Input is bounded at two frames and then refuses rather than growing a
 queue; the pump drains what a slow child refused on its own cadence, so
 backpressured input completes even when the connection is live and idle and never
 needs the client to type again; resize keeps one size and never replays an older

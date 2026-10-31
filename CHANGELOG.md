@@ -243,7 +243,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `Attachment::attached_observed` immediately before every effect, and each
   owner drives its writer from its own pump, which re-reads the run's resumed
   owning row immediately before every writer effect — each partial write, each
-  resize — and on every idle tick.
+  resize — and on every idle tick. Writes and resizes alternate while both have
+  work, so a full writer (a child that stopped reading) never starves the newest
+  geometry and a stuck resize handle never starves queued input.
   A stale, released, replaced or foreign attachment, a second terminal, or a run
   this session owns no terminal for therefore refuses with zero bytes and zero
   resize, and no effect lands against a row released between turns. Input is

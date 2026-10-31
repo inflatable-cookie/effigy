@@ -425,6 +425,12 @@ fn spawn_pump(
 /// released between turns, or between two partial writes, therefore stops the
 /// next effect instead of letting it land. The row is also read on every idle
 /// tick, so owner EOF retires the writer without waiting for connection traffic.
+///
+/// The two kinds alternate while both have work, so neither can starve the
+/// other: a writer that stays full — a child that has stopped reading — must not
+/// hold back the newest geometry, and a resize handle that stays full must not
+/// hold back queued input. Resize stays latest-wins, so the alternation costs at
+/// most one turn and never a backlog.
 fn pump(
     shared: Arc<Shared>,
     observe: ObserveContext,
@@ -432,6 +438,9 @@ fn pump(
     owner: Attachment,
     mut writer: Box<dyn TerminalWriter>,
 ) {
+    // Which kind goes first when both have work. It flips every turn, so each
+    // kind is served at least every other turn while both stay pending.
+    let mut prefer_resize = false;
     loop {
         // What is there to do? Nothing is effected here.
         let (wants_write, wants_resize) = {
@@ -464,11 +473,14 @@ fn pump(
             retire(&shared, writer.as_mut());
             return;
         }
-        let step = if wants_write {
-            write_once(&shared, writer.as_mut())
-        } else {
-            resize_once(&shared, writer.as_mut())
+        let step = match (wants_write, wants_resize) {
+            (true, true) if prefer_resize => resize_once(&shared, writer.as_mut()),
+            (true, _) => write_once(&shared, writer.as_mut()),
+            (false, true) => resize_once(&shared, writer.as_mut()),
+            // `!wants_write && !wants_resize` was handled above.
+            (false, false) => unreachable!("a turn with nothing to do is an idle turn"),
         };
+        prefer_resize = !prefer_resize;
         match step {
             Pumped::Closed => {
                 retire(&shared, writer.as_mut());

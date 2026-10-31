@@ -2633,6 +2633,9 @@ struct PtyLog {
     sizes: Vec<TerminalSize>,
     retired: usize,
     capacity: usize,
+    /// Whether the resize handle accepts a geometry at all. Tests close and
+    /// reopen it to place a resize effect either side of a lifetime change.
+    resize_open: bool,
 }
 
 impl Default for PtyLog {
@@ -2642,6 +2645,7 @@ impl Default for PtyLog {
             sizes: Vec::new(),
             retired: 0,
             capacity: usize::MAX,
+            resize_open: true,
         }
     }
 }
@@ -2719,11 +2723,15 @@ impl TerminalWriter for FakePty {
     }
 
     fn resize(&mut self, size: TerminalSize) -> io::Result<()> {
+        let mut log = self.log.lock().expect("pty log");
+        if !log.resize_open {
+            return Err(io::Error::from(io::ErrorKind::WouldBlock));
+        }
         if self.resize_blocks > 0 {
             self.resize_blocks -= 1;
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
-        self.log.lock().expect("pty log").sizes.push(size);
+        log.sizes.push(size);
         Ok(())
     }
 
@@ -3874,35 +3882,34 @@ fn a_queued_resize_is_fenced_by_the_owners_lifetime() {
     admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-    // A writer that takes four bytes and then stays full, so the geometry waits
-    // behind queued input.
     custody
         .open(
             &cx,
             run,
             vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
+            Box::new(FakePty::new(log.clone())),
         )
         .expect("the run's terminal opens");
     let mut owner =
         run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
     custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
 
-    custody
-        .input(&owner, b"12345678")
-        .expect("the owning attachment types");
-    wait_until("the writer to take what it accepts", || {
-        written(&log) == b"1234"
-    });
-    // The newest geometry is queued while the writer is full...
+    // The resize handle is full, so the newest geometry cannot land yet.
+    log.lock().expect("pty log").resize_open = false;
     custody
         .resize(&owner, size(50, 120))
         .expect("the owning attachment resizes its terminal");
-    // ...and the owner's end of stream arrives before it can be applied. The
-    // resize effect is fenced on the same row, so it must never land.
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(sizes(&log).is_empty(), "the full handle applied nothing");
+
+    // The owning client's stream ends while the geometry is still queued...
     owner
         .release(&cx, &root, Release::Eof)
         .expect("the owning client's end of stream");
+    // ...and the handle frees immediately afterwards. The next turn re-reads the
+    // owning row before its effect, so the queued geometry is never applied; a
+    // pump that skipped that read would apply it here.
+    log.lock().expect("pty log").resize_open = true;
     wait_until("the writer to retire on the released row", || {
         log.lock().expect("pty log").retired == 1
     });
@@ -3916,6 +3923,110 @@ fn a_queued_resize_is_fenced_by_the_owners_lifetime() {
         sizes(&log).is_empty(),
         "the retired writer never applies a size"
     );
+}
+
+#[test]
+fn a_full_writer_never_starves_the_newest_geometry() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    // A child that has stopped reading: the writer takes four bytes and then
+    // reports a full buffer forever. Queued input never drains.
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
+        )
+        .expect("the run's terminal opens");
+    let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+
+    custody
+        .input(&owner, b"12345678")
+        .expect("the owning attachment types");
+    wait_until("the writer to take what it accepts", || {
+        written(&log) == b"1234"
+    });
+
+    // The newest geometry must still reach the writer, even though input stays
+    // queued behind a full writer for as long as the child is not reading.
+    custody
+        .resize(&owner, size(50, 120))
+        .expect("the owning attachment resizes its terminal");
+    wait_until("the newest geometry while input is stuck", || {
+        sizes(&log) == vec![size(50, 120)]
+    });
+    // A newer size replaces it without a backlog, and the queued input is kept.
+    custody
+        .resize(&owner, size(60, 140))
+        .expect("the owning attachment resizes again");
+    wait_until("the newest geometry to win", || {
+        sizes(&log) == vec![size(50, 120), size(60, 140)]
+    });
+    assert_eq!(
+        written(&log),
+        b"1234",
+        "the full writer still took nothing more"
+    );
+    let terminal = custody.terminal_mut(run).expect("the run's terminal");
+    assert_eq!(terminal.pending(), 4, "the queued input was not dropped");
+    assert_eq!(terminal.applied(), Some(size(60, 140)));
+    assert!(
+        !terminal.retired(),
+        "a full writer is not a retired terminal"
+    );
+}
+
+#[test]
+fn a_refused_resize_never_starves_queued_input() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    // A resize handle that never accepts: the geometry waits forever, and the
+    // input behind it must still arrive.
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone()).refusing_resizes(usize::MAX)),
+        )
+        .expect("the run's terminal opens");
+    let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+
+    custody
+        .resize(&owner, size(50, 120))
+        .expect("the owning attachment resizes its terminal");
+    custody
+        .input(&owner, b"typed input")
+        .expect("the owning attachment types");
+    wait_until("queued input to arrive despite the stuck resize", || {
+        written(&log) == b"typed input"
+    });
+    assert!(sizes(&log).is_empty(), "the stuck handle applied nothing");
+    let terminal = custody.terminal_mut(run).expect("the run's terminal");
+    assert_eq!(terminal.delivered(), 11);
+    assert_eq!(terminal.pending(), 0);
+    assert_eq!(terminal.applied(), None);
 }
 
 #[test]
