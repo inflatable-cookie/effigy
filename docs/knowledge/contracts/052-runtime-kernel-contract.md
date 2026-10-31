@@ -2418,7 +2418,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; only the owning durable settle removes it |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree only by the fenced publisher that consumed its receipt or by recovery of a dead lease |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2430,6 +2430,57 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
+
+Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
+preflight seal (§7.1–§7.4, effigy#509) **never publishes**: one helper thread
+mints a random token, creates and locks the owner lease
+(`preflight-<token>.lock`, `flock`) **before** creating the tree, writes
+`preflight-<token>/` (`O_EXCL`/0600, content and directories synced), verifies it
+with the kernel closure verifier inside the caller's deadline, and hands back
+`SealedPreflight { digest, token, verified_at, inventory }`. The sealing thread
+performs no filesystem work at all — it only spawns that helper and waits with a
+bounded receive — so the deadline bounds every wait and decision it takes, and a
+stalled syscall can finish late only inside that private tree. The seal takes no
+gate and no `Gate(Env)`.
+
+Because the lease is created and locked before the tree exists, and only a
+publisher that already holds the objects gate ever unlinks a lease, a tree is
+dead exactly when its lease is acquirable; a live helper's or a live returned
+receipt's tree always carries a held lease and is never removed or raced.
+Recovery never inspects a lease that has no tree, so it cannot unlink one a
+helper is about to lock. The token also records the minting process's pid and
+process incarnation *before* any file exists, so liveness never depends on the
+lease: a live helper is skipped even in the instant between creating its lease
+and locking it, and a crash in that instant leaves a bare lease that a later
+publication provably reclaims (its pid is gone or names another incarnation)
+instead of accumulating. Removal otherwise needs positive proof: the lease is
+absent, or present and acquirable; a lease it cannot open or inspect — a trust
+failure, a hard link or symlink, an I/O error, descriptor exhaustion — proves
+nothing, so that tree is left untouched for a later publication.
+
+Canonical promotion stays exactly where it was: the fenced publisher.
+`publish_sealed_desired` is that same publisher — one journalled intent, one
+objects gate, one reference transaction — consuming a receipt as its source: it
+re-verifies the private tree under the gate against the receipt's verified
+inventory (bytes, digest and every entry's private mode, so a tree whose modes
+drifted is refused even though its digest still matches), moves it with one
+exclusive no-replace rename, and verifies the canonical byte/mode inventory
+against the receipt even for existing objects and concurrent winners. Any
+still-present seal is verified before consumption even when the canonical
+object already exists; replay with a consumed seal verifies the canonical
+inventory too. The publisher records
+the object row and desired reference exactly as `publish_desired` does. There is no second
+publisher, no direct preflight promotion and no revocable-rename primitive. It
+refuses any run whose owner is not an environment or whose owner gate is not
+held, so a receipt is only ever consumed by its environment's activation under
+`Gate(Env)`; the objects gate and a run fence never substitute for that
+authority. That publisher also reclaims **one** provably dead seal tree per
+publication, under the same gate and after its own fenced commit. Recovery is
+infallible: an over-full or unreadable staging family, a trust refusal, an I/O
+error or a stalled removal leaves residue for a later publication and can never
+turn a committed publication into a failure. Both together keep recovery one
+bounded, post-commit gate-held critical section (§5.5). Seal trees never name a run and a run's own staging tree is
+still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not

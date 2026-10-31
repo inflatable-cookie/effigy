@@ -640,6 +640,65 @@ impl DirFd {
         }
         Ok(())
     }
+    /// Rename between two already verified directories only when `to` does not
+    /// exist: `Ok(false)` means another entry already holds the name and
+    /// nothing moved. Linux uses `renameat2(RENAME_NOREPLACE)`, macOS
+    /// `renameatx_np(RENAME_EXCL)`; a filesystem or platform without an exact
+    /// no-replace rename (`ENOTSUP`, `EINVAL`) refuses instead of falling back
+    /// to a replace-in-place rename.
+    pub(crate) fn move_to_exclusive(
+        &self,
+        from: &FileName,
+        target: &Self,
+        to: &FileName,
+    ) -> Result<bool, FsError> {
+        let path = target.join(to.as_str());
+        let a = cstring(from.as_str().as_bytes(), &path)?;
+        let b = cstring(to.as_str().as_bytes(), &path)?;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // SAFETY: live directory descriptors and validated single components.
+        let result = unsafe {
+            libc::renameat2(
+                self.raw(),
+                a.as_ptr(),
+                target.raw(),
+                b.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        // SAFETY: live directory descriptors and validated single components.
+        let result = unsafe {
+            libc::renameatx_np(
+                self.raw(),
+                a.as_ptr(),
+                target.raw(),
+                b.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        )))]
+        let result = {
+            return Err(FsError::io(
+                "rename",
+                &path,
+                &io::Error::from_raw_os_error(libc::ENOTSUP),
+            ));
+        };
+        if result != 0 {
+            let error = io::Error::last_os_error();
+            if matches!(error.raw_os_error(), Some(libc::EEXIST | libc::ENOTEMPTY)) {
+                return Ok(false);
+            }
+            return Err(FsError::io("rename", &path, &error));
+        }
+        Ok(true)
+    }
     pub(crate) fn link(&self, from: &FileName, to: &FileName) -> Result<(), FsError> {
         let path = self.join(to.as_str());
         let a = cstring(from.as_str().as_bytes(), &path)?;

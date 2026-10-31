@@ -571,6 +571,39 @@ During v0.x, MINOR bumps may include breaking changes.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
+- **A container render can be sealed and verified before it is applied, then
+  published by the one fenced publisher.** `effigy_kernel::objects::
+  Objects::seal_for_preflight` hands the frozen closure to one helper that mints
+  a random token, locks an owner lease (`preflight-<token>.lock`) *before*
+  creating `state/staging/preflight-<token>/` (`O_EXCL`/0600, synced content and
+  directories), verifies the tree with the kernel's closure verifier inside the
+  caller's deadline, and returns a typed `SealedPreflight` receipt (digest, token,
+  verified-at, byte/mode inventory). The calling thread performs no filesystem
+  work, takes no gate and publishes nothing: a helper that outlives its caller
+  can only write its own leased private tree, and a later call cannot race or
+  remove a live lease. `Objects::publish_sealed_desired` is the existing fenced
+  publisher consuming that receipt — same intent, objects gate and reference
+  transaction — re-verifying the tree under the gate, moving it with one
+  exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
+  than replacing), verifying any concurrent winner in full against the
+  receipt's bytes, digest and per-entry private modes (including existing
+  canonical objects and consumed-receipt replay), refusing any altered seal
+  still present even when canonical bytes already exist, and reclaiming one
+  provably dead seal artifact per publication after its own fenced commit. The
+  staging token records the minting process's pid and incarnation before any
+  file exists, so a live helper is never raced even between creating its lease
+  and locking it, and a crash in that instant leaves a lease a later publication
+  provably reclaims instead of accumulating. Otherwise removal needs positive
+  proof — an absent lease, or one that can be acquired; a lease that cannot be
+  opened or inspected leaves the tree untouched.
+  Receipt consumption is refused unless the run is owned by an environment and
+  its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  that authority. Recovery is infallible and post-commit, so residue can never
+  turn a committed publication into a failure. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical.
+  The kernel's object verifier also refuses an entry the closure digest cannot
+  name, such as an extra empty directory.
 
 ### Changed
 
