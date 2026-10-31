@@ -1466,3 +1466,69 @@ fn a_stalled_scope_token_makes_predecessor_ownership_unknown() {
         );
     });
 }
+
+/// The production adapter, on an unpublished frozen render: it seals through the
+/// kernel owner and returns the receipt, which the environment's fenced publisher
+/// then promotes. The Compose-hash comparison needs a live stack, which this
+/// environment has not, so that half is exercised by the fake seam.
+#[test]
+fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-adapter-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
+        assert!(!render.path.exists(), "the render is unpublished");
+
+        let observed = super::observed_predecessor_compatibility(
+            &checkout,
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        );
+        let effigy_kernel::observe::Observed::Verified(observation, _) = observed else {
+            panic!("a project with nothing running is observed as such");
+        };
+        assert_eq!(
+            observation.compatibility,
+            super::PredecessorCompatibility::NoPredecessor
+        );
+        let sealed = observation.seal.expect("the adapter sealed the render");
+        assert!(sealed.receipt().matches(&render.closure));
+        assert!(!render.path.exists(), "no canonical object yet");
+
+        // The fenced publisher, under the environment's gate, promotes exactly
+        // that receipt.
+        let ctx = crate::runner::environment::context(&checkout).expect("environment context");
+        let env = crate::runner::environment::env_ref(&policy).expect("environment ref");
+        effigy_containers::environment::activate_with(&ctx, &env, &[], |run| {
+            run.publish_sealed_desired(sealed.receipt(), sealed.closure().expect("closure"))
+                .map(|_| ())
+        })
+        .expect("the gated publisher accepts the adapter's seal");
+        assert_eq!(
+            effigy_kernel::objects::Objects::resolve(
+                &ctx.observe(),
+                ctx.root,
+                &env.resource,
+                effigy_kernel::objects::Role::Desired,
+            )
+            .verified()
+            .map(|object| object.closure.digest()),
+            Some(render.closure.digest())
+        );
+    });
+}

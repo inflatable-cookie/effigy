@@ -559,6 +559,10 @@ pub(in crate::runner) struct ReservedPublicationPlan {
     deadline: PublicationDeadline,
     backend_label: String,
     render_digest: String,
+    /// The verified render seal the preflight produced. The one apply publishes
+    /// exactly this receipt (`EnvRun::publish_sealed_desired`) under its gate, so
+    /// the gated recheck reuses it rather than sealing a second tree.
+    predecessor_seal: Option<crate::runner::container_runtime_prep::SealedRender>,
     /// The preflight live-compatibility evidence, frozen. The gated recheck must
     /// observe exactly this value: a container that appeared, disappeared or was
     /// replaced in between is a different fact, not a renewal of this one.
@@ -607,6 +611,15 @@ impl ReservedPublicationPlan {
     /// already have published exactly this one.
     pub(in crate::runner) fn render_digest(&self) -> &str {
         &self.render_digest
+    }
+
+    /// The verified render seal the preflight produced. #452 publishes exactly
+    /// this receipt with `EnvRun::publish_sealed_desired` under the gate, on the
+    /// one apply; nothing else promotes it.
+    pub(in crate::runner) fn predecessor_seal(
+        &self,
+    ) -> Option<&crate::runner::container_runtime_prep::SealedRender> {
+        self.predecessor_seal.as_ref()
     }
 
     /// The frozen preflight live-compatibility evidence. The gated recheck must
@@ -769,6 +782,7 @@ pub(in crate::runner) fn plan(
         deadline,
         backend_label: local.backend_label,
         render_digest: local.render_digest,
+        predecessor_seal: predecessor.seal,
         predecessor: predecessor.compatibility,
     }))
 }
@@ -781,26 +795,13 @@ pub(in crate::runner) fn plan(
 /// predecessor.
 pub(in crate::runner) struct PredecessorRecheck {
     compatibility: PredecessorCompatibility,
-    /// The verified seal this recheck produced. #452 publishes this exact receipt
-    /// with `EnvRun::publish_sealed_desired` under the gate, on the one apply.
-    seal: Option<crate::runner::container_runtime_prep::SealedRender>,
 }
 
 impl std::fmt::Debug for PredecessorRecheck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PredecessorRecheck")
             .field("compatibility", &self.compatibility)
-            .field("sealed", &self.seal.is_some())
             .finish()
-    }
-}
-
-impl PredecessorRecheck {
-    /// The retained preflight seal, for the gated publication.
-    pub(in crate::runner) fn seal(
-        &self,
-    ) -> Option<&crate::runner::container_runtime_prep::SealedRender> {
-        self.seal.as_ref()
     }
 }
 
@@ -822,18 +823,24 @@ impl PredecessorRecheck {
 /// Unknown, a changed container id, a changed Compose config hash and a backend
 /// that cannot report hashes all refuse. The environment record's historical
 /// `desired` digest is not consulted: it is not live evidence.
+/// The preflight result: the frozen compatibility facts and the verified seal.
+struct LivePredecessor {
+    compatibility: PredecessorCompatibility,
+    seal: Option<crate::runner::container_runtime_prep::SealedRender>,
+}
+
 fn verify_live_predecessor(
     policy: &EffectiveContainerPolicy,
     deadline: PublicationDeadline,
     observation: &mut dyn ReservedBackendObservation,
-) -> Result<PredecessorRecheck, EnvError> {
+) -> Result<LivePredecessor, EnvError> {
     deadline.remaining()?;
     let observed = verified(
         observation.predecessor(policy, deadline),
         "workspace live predecessor",
     )?;
     deadline.remaining()?;
-    Ok(PredecessorRecheck {
+    Ok(LivePredecessor {
         compatibility: observed.compatibility,
         seal: observed.seal,
     })
@@ -852,6 +859,9 @@ pub(in crate::runner) fn recheck_live_predecessor(
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<PredecessorRecheck, EnvError> {
     let recheck = verify_live_predecessor(&plan.policy, plan.deadline, observation)?;
+    let recheck = PredecessorRecheck {
+        compatibility: recheck.compatibility,
+    };
     // The recheck must observe exactly the preflight facts. Two individually
     // valid observations of different containers, or a container that appeared or
     // disappeared since preflight, are a changed world: the frozen evidence no

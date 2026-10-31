@@ -897,27 +897,28 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
                 && effigy_containers::exec::compose_status_is_running(&row.status)
         })
         .collect::<Vec<_>>();
-    if running.is_empty() {
-        return Observed::Verified(
-            PredecessorObservation {
-                compatibility: PredecessorCompatibility::NoPredecessor,
-                seal: None,
-            },
-            Evidence::new("project inventory".into(), None).expect("fixed evidence"),
-        );
-    }
-    // Compose can only hash the render it can read. Before the one apply has
-    // published this closure, materialize the exact frozen bytes at the exact paths
-    // the apply will use (content-addressed, so the apply finds them present), all
-    // on the publication's bounded worker.
+    // Seal the frozen render first: the receipt is the one ticket the apply may
+    // publish, and it is retained even when nothing is running.
     let sealed = match seal_render_for_preflight(policy, deadline) {
-        Ok(sealed) => sealed,
-        Err(BoundedReadRefusal::Unavailable(reason)) => return unknown(reason),
+        Ok(sealed) => Some(sealed),
         Err(BoundedReadRefusal::TimedOut) => {
             return Observed::Unknown(UnknownReason::TimedOut {
                 phase: "workspace render preflight".into(),
             })
         }
+        Err(BoundedReadRefusal::Unavailable(reason)) => return unknown(reason),
+    };
+    if running.is_empty() {
+        return Observed::Verified(
+            PredecessorObservation {
+                compatibility: PredecessorCompatibility::NoPredecessor,
+                seal: sealed,
+            },
+            Evidence::new("project inventory".into(), None).expect("fixed evidence"),
+        );
+    }
+    let Some(sealed) = sealed else {
+        return unknown("the frozen render was not sealed".into());
     };
     let intended = match compose_service_config_hashes(repo_root, &sealed.policy, deadline) {
         Ok(hashes) => hashes,
@@ -1074,21 +1075,51 @@ fn seal_render_for_preflight(
             "the render preflight cannot take a Prepare capability".into(),
         )
     })?;
-    let root = effigy_containers::environment::state_root(&cx, policy.repo_root.as_path())
-        .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?;
-    let sealed =
-        effigy_kernel::objects::Objects::seal_for_preflight(&cx, &root, &render.closure, deadline)
-            .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?;
-    // The receipt names no canonical object; its private tree follows the
-    // documented layout `staging/preflight-<token>/<digest>`. A wrong guess is
-    // fail-closed: Compose cannot read it, so the guard refuses.
-    let sealed_root = effigy_containers::environment::state_root(&cx, policy.repo_root.as_path())
-        .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?
-        .state_directory()
-        .path()
-        .join("staging")
-        .join(format!("preflight-{}", sealed.token()))
-        .join(sealed.digest());
+    // Opening the state root walks and opens directories, and the seal stages and
+    // verifies files. Both are synchronous, so the pair runs on the owner's
+    // bounded worker: the caller stops waiting at the deadline. An abandoned seal
+    // only writes a private, leased staging tree that recovery reclaims; nothing
+    // canonical can come of it, because only a returned receipt can be published.
+    let closure = render.closure.clone();
+    let token_deadline = deadline;
+    let repo_root = policy.repo_root.clone();
+    let (sealed, sealed_root) =
+        match crate::runner::workspace_command::provisioning::bounded_publication_read(
+            "workspace-render-seal",
+            deadline,
+            move || {
+                let root = effigy_containers::environment::state_root(&cx, repo_root.as_path())
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+                    &cx,
+                    &root,
+                    &closure,
+                    token_deadline,
+                )
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                // The receipt names no canonical object; its private tree follows
+                // the documented layout `staging/preflight-<token>/<digest>`. A
+                // wrong guess is fail-closed: Compose cannot read it, so the guard
+                // refuses.
+                let sealed_root = root
+                    .state_directory()
+                    .path()
+                    .join("staging")
+                    .join(format!("preflight-{}", sealed.token()))
+                    .join(sealed.digest());
+                Ok((sealed, sealed_root))
+            },
+        ) {
+            Ok(pair) => pair,
+            Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut) => {
+                return Err(BoundedReadRefusal::TimedOut)
+            }
+            Err(
+                crate::runner::workspace_command::provisioning::BoundedReadRefusal::Unavailable(
+                    reason,
+                ),
+            ) => return Err(BoundedReadRefusal::Unavailable(reason)),
+        };
     let mut policy = policy.clone();
     for file in &mut policy.compose_files {
         let Ok(relative) = file.strip_prefix(&render.path) else {

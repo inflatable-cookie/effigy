@@ -897,25 +897,13 @@ than inventing them:
   address. Until an owner observes the
   address actually reachable from the guest for a default-configured profile,
   such a Colima workspace cannot publish through the reserved path.
-* **A deadline-bounded, exclusively-published render seal for preflight.** The
-  predecessor hash comparison needs the plan's frozen render closure at its final
-  content-addressed path before the one apply publishes it, without taking
-  `Gate(Env)` and without mutating desired state. Nothing in the tree can supply
-  that yet: `policy::render::prepare`/`prepare_resolved` acquire the owner gate,
-  publish desired state and run on a fixed budget; `Objects::publish_desired` needs
-  an admitted owner `Run`; and the primitives a hand-written seal needs — private
-  staging under the kernel staging family, an exclusive no-replace directory
-  promotion, and the kernel's trusted closure verifier (extra entries, modes,
-  digest) — are `pub(crate)` in the kernel (`fs::DirFd::move_to` is a plain
-  `renameat`, not a no-replace move). The missing owner signature is
-  `effigy_kernel::objects::Objects::seal_for_preflight(cx: &EffectContext, root:
-  &StateRoot, closure: &Closure, deadline: Instant) -> Result<String, RunError>`,
-  which must stage privately, promote exclusively (a genuine no-replace move),
-  accept an existing byte-identical object unchanged, refuse differing, extra or
-  untrusted content through the kernel verifier, take no owner gate, write no
-  desired reference, and either bound every blocking step or guarantee that no
-  promotion happens after the deadline. Until it exists the reserved preflight
-  reads only an already-published render and refuses otherwise.
+* **The render preflight seal (answered).** #509 supplies
+  `Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight` and
+  `Objects::publish_sealed_desired(run, sealed, closure)`; the reserved preflight
+  seals the plan's frozen render off-gate inside the publication deadline, retains
+  the receipt, hashes the sealed bytes, and the one apply promotes that exact
+  receipt through `EnvRun::publish_sealed_desired` under `Gate(Env)`. Nothing
+  canonical comes from the seal itself.
 * **A container's creator — still blocking the fresh-target path (pending
   effigy#508).** No owner records
   "this run created container X": the engine's apply effect names the engine,
