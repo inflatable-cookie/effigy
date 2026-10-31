@@ -310,5 +310,5 @@ pub(crate) fn activate<'r>(
         root,
     );
     ServiceOwner::retained(owner, session, lease)
-        .map_err(|error| RunError::refused(format!("the fixture custody: {error:?}")))
+        .map_err(|error| RunError::refused(format!("the fixture custody: {error}")))
 }

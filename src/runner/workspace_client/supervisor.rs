@@ -545,6 +545,17 @@ impl<'a> ServiceOwner<'a> {
             owner.stop();
             return Err(AdoptError::WrongSession);
         }
+        // A custody that carries its published locator must have published
+        // exactly this lease. Only an injected disposable activation, which has
+        // no qualified locator, is identified by the lease its caller just
+        // published for this session.
+        if let Some(locator) = owner.locator() {
+            if locator.bound().lease() != &lease {
+                let mut owner = owner;
+                owner.stop();
+                return Err(AdoptError::WrongSession);
+            }
+        }
         Ok(Self {
             owner,
             session,
