@@ -75,16 +75,12 @@ use crate::runner::workspace_command::provisioning::staging::DeadlineGuest;
 use crate::runner::workspace_command::provisioning::{
     held_linux_workspace_effigy_artifact, host_user, observed_workspace_container_identity,
     operator_workspace_for_policy, verify_guest_artifact_until, workspace_path_map,
-    workspace_routes, workspace_source_closure, LinuxWorkspaceTarget, WorkspaceSourceClosure,
+    workspace_routes, workspace_source_closure_until, LinuxWorkspaceTarget, SourceClosureRefusal,
+    WorkspaceSourceClosure,
 };
 use crate::runner::workspace_transport::qualification::{Backend, ChannelAliasPlan};
 
 type EnvError = effigy_containers::environment::EnvError;
-
-/// Planning will not begin the checkout's source closure with less budget than
-/// this left: the closure reads the checkout and composes the manifest, and a
-/// publication that cannot finish it must refuse before it starts.
-const SOURCE_CLOSURE_FLOOR: Duration = Duration::from_millis(250);
 
 /// The fixed evidence label every derived value in this module carries. It names
 /// this builder, so a receipt reader can tell a builder fact from an
@@ -708,27 +704,30 @@ pub(in crate::runner) fn plan(
             policy.name,
         )));
     }
-    // The source closure is a local file read plus the composed manifest, which
-    // may resolve pinned sources with their own bounded timeouts. It is the last
-    // unbounded-in-principle step before planning returns, so planning refuses to
-    // start it without a floor of budget left and refuses the result when the
-    // clock has passed: a publication is never built on work that overran it.
-    deadline.remaining()?;
-    if deadline
-        .remaining()
-        .is_ok_and(|remaining| remaining < SOURCE_CLOSURE_FLOOR)
-    {
-        return Err(unavailable(format!(
-            "workspace publication has less than {}ms left, which cannot close the checkout's \
-             source pins",
-            SOURCE_CLOSURE_FLOOR.as_millis()
-        )));
-    }
     // One read of the checkout's identity, path map and pinned source closure:
     // the decision's frozen materialisation and the snapshots the producer
-    // stages come from this single observation.
+    // stages come from this single observation. The closure reads the checkout,
+    // composes the manifest and reads every fragment, none of which can be
+    // interrupted once started, so it runs on its own bounded worker: the
+    // publication stops at its deadline and reports the pins unknown instead of
+    // running past the one budget it declared.
+    deadline.remaining()?;
     let paths = workspace_path_map(rendered.repo_root.as_path(), &workspace).map_err(io)?;
-    let closure = workspace_source_closure(rendered.repo_root.as_path(), &paths).map_err(io)?;
+    let closure =
+        match workspace_source_closure_until(rendered.repo_root.as_path(), &paths, deadline.at()) {
+            Ok(closure) => closure,
+            Err(SourceClosureRefusal::TimedOut) => {
+                return Err(unavailable(
+                    "workspace source closure is unknown: the publication deadline expired while \
+                 the checkout's pins were being composed",
+                ))
+            }
+            Err(SourceClosureRefusal::Unavailable(reason)) => {
+                return Err(unavailable(format!(
+                    "workspace source closure is unknown: {reason}"
+                )))
+            }
+        };
     deadline.remaining()?;
     let guest = environment_materialisation(&rendered, &selected, paths, &closure)?;
     let backend_label = selected.engine.as_str().to_owned();

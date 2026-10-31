@@ -3038,7 +3038,17 @@ call inside the deadline. Its one enrolment secret is 32 OS-random bytes in
 canonical 64-hex form; no pid, clock or request id participates. The producer now
 takes that same **absolute** deadline rather than a fresh budget, and the guest it
 receives is `staging::DeadlineGuest`: one deadline and one cumulative capture
-budget for every staging, snapshot and selector command. The plan, the observed
+budget for every staging, snapshot and selector command. Planning's own local
+reads are bounded by the same deadline: the short ones are checked against the
+clock before they start and after they return, and the source closure — which
+reads the checkout, composes the manifest (includes, source lock, bundle and
+catalog roots) and reads every fragment, none of it interruptible once started —
+runs on its own bounded worker
+(`workspace_source_closure_until`), so the planner stops waiting at the one
+deadline and reports the pins unknown while the abandoned worker only reads. The
+producer's probe is owned, built by an injected factory from the identity the
+observation verified, so a caller's publication callback returns an input that
+borrows nothing from a local. The plan, the observed
 input and the guest remain in one process, so the durable owner #507 launches can
 plan, freeze, apply once, observe and publish without moving a live handle across
 a process boundary. Rootless Linux and Apple Containers remain unqualified.

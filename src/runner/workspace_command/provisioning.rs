@@ -1236,6 +1236,69 @@ pub(in crate::runner) struct WorkspaceSourceClosure {
     pub(in crate::runner) snapshots: Vec<(String, Vec<u8>)>,
 }
 
+/// Why a publication could not obtain the checkout's pinned source closure.
+#[derive(Debug)]
+pub(in crate::runner) enum SourceClosureRefusal {
+    /// The publication's one absolute deadline passed first.
+    TimedOut,
+    /// The checkout's sources could not be read or composed.
+    Unavailable(String),
+}
+
+/// The checkout's pinned source closure, produced within one absolute deadline.
+///
+/// The closure reads the checkout, composes the manifest (includes, the source
+/// lock, bundle and catalog roots, every fragment) and reads each fragment. None
+/// of those steps can be interrupted once started, so the whole sequence runs on
+/// its own worker and the caller stops waiting at the deadline: a publication that
+/// cannot close its pins returns Unknown/pending instead of running past the one
+/// budget it declared. An abandoned worker only reads, so leaving it behind
+/// cannot publish or mutate anything.
+pub(in crate::runner) fn workspace_source_closure_until(
+    repo_root: &Path,
+    paths: &WorkspacePathMap,
+    until: std::time::Instant,
+) -> Result<WorkspaceSourceClosure, SourceClosureRefusal> {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+
+    let owned_root = repo_root.to_path_buf();
+    let owned_paths = paths.clone();
+    let (send, receive) = channel();
+    let worker = std::thread::Builder::new()
+        .name("effigy-workspace-source-closure".to_owned())
+        .spawn(move || {
+            let _ = send.send(workspace_source_closure(&owned_root, &owned_paths));
+        })
+        .map_err(|error| {
+            SourceClosureRefusal::Unavailable(format!(
+                "the source closure worker could not start: {error}"
+            ))
+        })?;
+    let remaining = until.saturating_duration_since(std::time::Instant::now());
+    let outcome = if remaining.is_zero() {
+        Err(RecvTimeoutError::Timeout)
+    } else {
+        receive.recv_timeout(remaining)
+    };
+    match outcome {
+        Ok(Ok(closure)) => {
+            let _ = worker.join();
+            Ok(closure)
+        }
+        Ok(Err(error)) => {
+            let _ = worker.join();
+            Err(SourceClosureRefusal::Unavailable(error.to_string()))
+        }
+        Err(RecvTimeoutError::Timeout) => Err(SourceClosureRefusal::TimedOut),
+        Err(RecvTimeoutError::Disconnected) => {
+            let _ = worker.join();
+            Err(SourceClosureRefusal::Unavailable(
+                "the source closure worker ended without a result".into(),
+            ))
+        }
+    }
+}
+
 pub(in crate::runner) fn workspace_source_closure(
     repo_root: &Path,
     paths: &WorkspacePathMap,

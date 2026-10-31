@@ -24,7 +24,9 @@ use effigy_test_support::Fixture;
 
 use super::*;
 use crate::runner::error::RunnerError;
-use crate::runner::workspace_client::context::{GuestReader, GuestWorkspace};
+use crate::runner::workspace_client::context::{
+    GuestReader, GuestWorkspace, COMPOSED_MANIFEST_KIND,
+};
 use crate::runner::workspace_command::provisioning::reserved_guest::WorkspaceGuestProbe;
 use crate::runner::workspace_command::provisioning::{
     workspace_artifact_receipt_path, workspace_effigy_active_version_file,
@@ -1416,4 +1418,130 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
         )?
         .into_input())
     });
+}
+
+// --------------------------------------------- the bounded source closure
+
+/// A checkout whose manifest includes many fragments: composing its closure has
+/// to read and pin every one of them.
+fn fragment_checkout(label: &str, fragments: usize) -> (Fixture, PathBuf, PathBuf) {
+    let fixture = Fixture::new(&format!("effigy-reserved-input-{label}-")).expect("fixture");
+    let root = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    std::fs::create_dir_all(root.join("fragments")).expect("checkout");
+    std::fs::create_dir_all(&home).expect("home");
+    std::fs::create_dir_all(root.join(".git")).expect("git directory");
+    let mut includes = Vec::new();
+    for index in 0..fragments {
+        let relative = format!("fragments/{index:04}.toml");
+        std::fs::write(
+            root.join(&relative),
+            format!(
+                "[tasks.fragment-{index}]\nrun = \"true\"\ndescription = \"fragment {index} that the closure must read and pin\"\n"
+            ),
+        )
+        .expect("fragment");
+        includes.push(format!("\"{relative}\""));
+    }
+    std::fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[manifest]\ninclude = [{}]\n\n[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n",
+            includes.join(", ")
+        ),
+    )
+    .expect("manifest");
+    std::fs::write(
+        root.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    (fixture, root, home)
+}
+
+#[test]
+fn the_source_closure_is_bounded_by_the_publication_deadline() {
+    let (_fixture, root, _home) = fragment_checkout("closure-bound", 8);
+    let policy = rendered_policy(&root);
+    let paths = crate::runner::workspace_command::provisioning::workspace_path_map(
+        &root,
+        &crate::runner::workspace_command::provisioning::operator_workspace_for_policy(
+            &root, &policy,
+        )
+        .expect("operator workspace")
+        .expect("container mode"),
+    )
+    .expect("path map");
+
+    // A deadline that has already passed must not wait for the worker at all.
+    let expired = crate::runner::workspace_command::provisioning::workspace_source_closure_until(
+        &root,
+        &paths,
+        Instant::now() - Duration::from_secs(1),
+    );
+    assert!(
+        matches!(
+            expired,
+            Err(crate::runner::workspace_command::provisioning::SourceClosureRefusal::TimedOut)
+        ),
+        "an expired publication refuses instead of reading the checkout"
+    );
+
+    // The abandoned worker is read-only: the checkout is unchanged and the next
+    // attempt with a real budget closes its pins normally.
+    let closed = crate::runner::workspace_command::provisioning::workspace_source_closure_until(
+        &root,
+        &paths,
+        Instant::now() + Duration::from_secs(30),
+    )
+    .expect("a bounded closure with budget left");
+    assert!(
+        closed
+            .pins
+            .iter()
+            .any(|pin| pin.kind == COMPOSED_MANIFEST_KIND),
+        "the composed manifest is pinned"
+    );
+    assert!(
+        closed
+            .pins
+            .iter()
+            .any(|pin| pin.name.contains("fragments/0000.toml")),
+        "every composed fragment is pinned: {:?}",
+        closed
+            .pins
+            .iter()
+            .map(|pin| pin.name.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_publication_never_plans_past_its_deadline_composing_pins() {
+    let (_fixture, root, home) = fragment_checkout("closure-expiry", 400);
+    let policy = rendered_policy(&root);
+    let mut backend = FakeBackend::colima();
+    // One millisecond cannot cover composing 400 fragments and the rest of
+    // planning, so the publication must refuse rather than publish anyway.
+    let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(1));
+
+    let refusal = effigy_containers::with_test_effigy_home(&home, || {
+        plan(
+            ReservedPlanRequest {
+                policy: &policy,
+                deadline: expired,
+            },
+            &mut backend,
+        )
+    });
+
+    let error = match refusal {
+        Ok(Some(_)) => panic!("a publication past its deadline must not plan"),
+        Ok(None) => panic!("this checkout declares an operator workspace"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.contains("deadline expired") || error.contains("source closure is unknown"),
+        "{error}"
+    );
 }
