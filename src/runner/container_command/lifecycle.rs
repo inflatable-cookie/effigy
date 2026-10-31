@@ -1100,6 +1100,12 @@ fn annotate_environment_record(
                     );
                 }
                 None => {
+                    if let Some(receipt) = creation.receipt() {
+                        object.insert(
+                            "creation_image_identities".to_owned(),
+                            serde_json::json!(receipt.image_identities()),
+                        );
+                    }
                     object.insert(
                         "created_container_ids".to_owned(),
                         serde_json::Value::Array(

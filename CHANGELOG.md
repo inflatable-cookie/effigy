@@ -293,7 +293,12 @@ During v0.x, MINOR bumps may include breaking changes.
   identical labels inside that window is outside v0.15's guarantee. Unreadable or
   incomplete evidence produces no receipt, and retries never reapply or fabricate
   attribution from a later inventory. Missing journal evidence is Unknown.
-  Reference-only Colima container image observations refuse attribution.
+  Colima reference-only container images carry explicit reference/resolved-ID
+  evidence: rendered and observed references must agree, and image-inspect IDs
+  must remain stable before/after apply and binding. Digest-pinned references
+  remain explicit. Missing nerdctl one-off labels require matching Compose
+  membership, name and frozen network evidence. Same-user retag/restore inside
+  the gate is excluded; detected tag moves refuse.
   Workspace attribution requires a sealed render with explicit managed, scope
   and checkout labels; ordinary unsealed applies provide no creation receipt.
   Docker observations and apply plans pin the recorded context or endpoint.
@@ -301,8 +306,9 @@ During v0.x, MINOR bumps may include breaking changes.
   dependency image-reference replacements and the workspace predecessor. Workspace
   environment, mount and entrypoint edits may recreate at the same image reference:
   exactly one new workspace ID replaces the absent predecessor, while unchanged
-  services stay attached and extra/foreign IDs refuse. The v3 receipt records the
-  workspace predecessor separately from required creations.
+  services stay attached and extra/foreign IDs refuse. The v4 receipt records
+  image capabilities and the workspace predecessor separately from required
+  creations; container-up JSON exposes the image-identity evidence.
 
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers

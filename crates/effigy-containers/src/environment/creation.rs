@@ -1,8 +1,12 @@
 //! A complete ID difference scoped to one gated Compose apply.
 //! The exclusive environment gate excludes competing Effigy activations.
 //! A same-user actor forging identical labels inside the window is explicitly
-//! outside v0.15's guarantee. This inference is never an engine create response.
+//! outside v0.15's guarantee, as is same-user retag/restore inside the gate.
+//! This inference is never an engine create response.
 
+mod image;
+use image::same_reference;
+pub use image::{ImageCapability, ImageIdentity};
 mod window;
 pub use window::CreationPreflight;
 pub(super) use window::{CreationWindow, InventoryDifference};
@@ -25,7 +29,7 @@ const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
 
 pub const CREATION_LOOKBACK: usize = 64;
 
-pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v3";
+pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v4";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatedContainer {
@@ -34,6 +38,7 @@ pub struct CreatedContainer {
     service: String,
     image_id: String,
     image_reference: String,
+    image_capability: ImageCapability,
 }
 
 impl CreatedContainer {
@@ -49,8 +54,14 @@ impl CreatedContainer {
         &self.service
     }
 
+    /// The image-inspect resolution; capability says whether the container
+    /// itself also attested this immutable ID.
     pub fn image_id(&self) -> &str {
         &self.image_id
+    }
+
+    pub fn image_capability(&self) -> ImageCapability {
+        self.image_capability
     }
 
     pub fn image_reference(&self) -> &str {
@@ -71,6 +82,7 @@ pub struct CreationReceipt {
     workdir: std::path::PathBuf,
     expected_created: std::collections::BTreeMap<String, Option<String>>,
     workspace_predecessor: Option<String>,
+    image_identities: std::collections::BTreeMap<String, ImageIdentity>,
     created: Vec<CreatedContainer>,
     attached: Vec<String>,
 }
@@ -121,12 +133,25 @@ impl CreationReceipt {
             ));
         }
         for row in current {
-            let resolved =
-                match backend.image_id_until(&self.workdir, &row.image_reference, deadline) {
-                    Observed::Verified(id, _) => exact_image_id(&id),
-                    _ => None,
-                };
-            if resolved.is_none() || resolved != exact_image_id(&row.image) {
+            let service = row
+                .labels
+                .get(COMPOSE_SERVICE_LABEL)
+                .ok_or_else(|| CreationRefusal::Service(row.name.clone()))?;
+            let expected = self
+                .image_identities
+                .get(service)
+                .ok_or_else(|| CreationRefusal::ImageMismatch(row.id.clone()))?;
+            let resolved = match backend.image_id_until(
+                &self.workdir,
+                expected.rendered_reference(),
+                deadline,
+            ) {
+                Observed::Verified(id, _) => id,
+                _ => return Err(CreationRefusal::ImageMismatch(row.id.clone())),
+            };
+            let observed =
+                ImageIdentity::observe(backend, &row, expected.rendered_reference(), &resolved)?;
+            if &observed != expected {
                 return Err(CreationRefusal::ImageMismatch(row.id));
             }
         }
@@ -159,6 +184,11 @@ impl CreationReceipt {
 
     pub fn context(&self) -> &str {
         &self.context
+    }
+
+    /// Frozen references, resolved IDs and the backend's actual observation capability.
+    pub fn image_identities(&self) -> &std::collections::BTreeMap<String, ImageIdentity> {
+        &self.image_identities
     }
 
     /// Required new services fixed before apply; a value names the replaced ID.
@@ -280,6 +310,7 @@ pub enum RecordedCreation {
         workdir: std::path::PathBuf,
         expected_created: std::collections::BTreeMap<String, Option<String>>,
         workspace_predecessor: Option<String>,
+        image_identities: std::collections::BTreeMap<String, ImageIdentity>,
         created: Vec<CreatedContainer>,
         attached: Vec<String>,
     },
@@ -373,6 +404,7 @@ pub(super) fn outcome(
             primary_service,
             expected_created,
             workspace_predecessor,
+            image_identities,
             created,
             attached,
             generation,
@@ -388,6 +420,7 @@ pub(super) fn outcome(
             context,
             expected_created,
             workspace_predecessor,
+            image_identities,
             created,
             attached,
             generation,

@@ -110,7 +110,12 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
-  immutable image identities. The post-apply service set must equal the frozen
+  explicit image capabilities: container image ID, reference plus stable resolved
+  image-inspect ID, or digest-pinned reference (052 §8.12). Nerdctl's absent one-off
+  flag requires actual project/service, name and frozen network corroboration.
+  Observed tag moves refuse; same-user retag/restore inside the gate is outside
+  the narrowed guarantee (owner ruling, 2026-10-31).
+  The post-apply service set must equal the frozen
   set. Before apply, the workspace predecessor is allowed to remain attached or
   be replaced for any Compose reason, including environment, mount and entrypoint
   changes at the same image reference. Replacement requires its predecessor to
@@ -120,7 +125,11 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   exact IDs (owner ruling, 2026-10-31; 052 §8.12). The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
-  v0.15 guarantee. Failed apply or incomplete observations produce no creation
+  v0.15 guarantee. An `Absent` reservation names an unknown desired successor,
+  including an authorized non-live predecessor replacement, and binds only this
+  run's exact new ID; an `Observed` target must retain its exact ID. #506's gated
+  compatibility check must refuse recreation of a live protected predecessor.
+  Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;
   missing evidence is Unknown, never a global NoCreator claim. Retained records

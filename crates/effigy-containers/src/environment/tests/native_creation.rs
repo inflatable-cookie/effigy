@@ -137,9 +137,287 @@ impl Drop for NativeWindow {
     }
 }
 
+fn native_render(window: &NativeWindow, image: &str, revision: usize) -> Closure {
+    let labels = serde_json::json!({
+        "com.effigy.managed":"true", "com.effigy.project":window.project,
+        "com.effigy.scope":window.scope, "com.effigy.checkout":window.workdir,
+    });
+    let compose = serde_json::to_vec(&serde_json::json!({"services":{"workspace":{
+        "image":image,"network_mode":"none","entrypoint":["/bin/sh","-c","sleep 120"],
+        "environment":{"EFFIGY_510_CONFIG_REVISION":revision.to_string()},"labels":labels,
+    }}}))
+    .unwrap();
+    let metadata = serde_json::to_vec(&serde_json::json!({
+        "repo_root":window.workdir,"project_name":window.project,"primary_service":"workspace",
+        "compose_files":["compose.yml"],"backend_id":window.selection.engine.as_str(),
+        "backend_context":window.selection.context,
+    }))
+    .unwrap();
+    Closure::new(
+        [
+            ("compose.yml".into(), compose),
+            ("inputs/environment.json".into(), metadata),
+        ]
+        .into(),
+    )
+    .unwrap()
+}
+
+fn reserve_successor(
+    ctx: &EnvContext<'_>,
+    stack: &EnvRef,
+    window: &NativeWindow,
+    render: &Closure,
+    image: &str,
+) -> Result<effigy_kernel::workspace_session::WorkspaceActivationReservation, String> {
+    use effigy_kernel::workspace_session::*;
+    let inputs = PublishInputs {
+        artifact: ArtifactEvidence::Unselected {
+            image_reference: image.into(),
+            backend: window.selection.engine.as_str().into(),
+        },
+        selection: effigy_kernel::id::Digest::of(b"native-creator-attribution"),
+        inputs_digest: effigy_kernel::id::Digest::of(render.digest().as_bytes()),
+        target: TargetEvidence::Absent {
+            project: window.project.clone(),
+            backend: window.selection.engine.as_str().into(),
+        },
+        platform: None,
+        // These frozen inputs admit target binding only. No guest objects,
+        // credentials, locator, session commit or serving proof is synthesized.
+        guest: Some(GuestContextInputs {
+            version: env!("CARGO_PKG_VERSION").into(),
+            protocol: 1,
+            host_user: "0".into(),
+            checkout_id: stack.checkout.text(),
+            environment_resource: stack.resource.name().to_string(),
+            profile: window.selection.context.clone(),
+            runtime: Some("containerd".into()),
+            vm_type: None,
+            routes: vec![],
+            sources: vec![],
+            paths: GuestPaths {
+                host_checkout: window.workdir.to_string_lossy().into(),
+                guest_checkout: "/".into(),
+                workdir: "/".into(),
+                user: "0".into(),
+                home: "/".into(),
+            },
+        }),
+    };
+    match WorkspaceActivationReservation::decide(
+        &ctx.cx,
+        ctx.root,
+        &stack.resource,
+        &inputs,
+        Wait::FailFast,
+    )
+    .map_err(|error| error.to_string())?
+    {
+        ActivationDecision::Activate(reservation) => Ok(*reservation),
+        _ => Err("native successor unexpectedly attached to a live session".into()),
+    }
+}
+
+fn native_phase(
+    state: &StateRoot,
+    stack: &EnvRef,
+    window: &mut NativeWindow,
+    render: &Closure,
+    image: &str,
+    predecessor: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    let ctx = EnvContext::new(state, CancelToken::default()).map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let request = CreationRequest {
+        workdir: &window.workdir,
+        project: &window.project,
+        primary_service: "workspace",
+        render: Some(render),
+        compose_files: &[],
+        deadline,
+        preflight: None,
+        required: true,
+    };
+    let mut adapter = window.selection.adapter();
+    let preflight =
+        CreationPreflight::observe(adapter.as_mut(), request).map_err(|error| error.to_string())?;
+    let seal =
+        effigy_kernel::objects::Objects::seal_for_preflight(&ctx.cx, state, render, deadline)
+            .map_err(|error| error.to_string())?;
+    let reservation = reserve_successor(&ctx, stack, window, render, image)?;
+    let mut run = EnvRun::begin_claimed(&ctx, stack, Operation::Up, Wait::FailFast, &reservation)
+        .map_err(|error| error.to_string())?;
+    let before = window.inventory()?;
+    match (predecessor, before.as_slice()) {
+        (None, []) => {}
+        (Some(id), [row]) if row.id == id && window.owned(row) => {}
+        _ => {
+            return Err(
+                "native pre-inventory differs from the expected non-live predecessor".into(),
+            )
+        }
+    }
+    run.publish_sealed_desired(&seal, render)
+        .map_err(|error| error.to_string())?;
+    let object = match effigy_kernel::objects::Objects::resolve(
+        &ctx.observe(),
+        state,
+        &stack.resource,
+        effigy_kernel::objects::Role::Desired,
+    ) {
+        Observed::Verified(object, _) => object,
+        other => return Err(format!("native sealed object unavailable: {other:?}")),
+    };
+    let files = [object.path.join("compose.yml")];
+    run.verify_compose_inputs(render, &files, &window.workdir)
+        .map_err(|error| error.to_string())?;
+    if window.remote_directory.is_none() {
+        let output = window.ssh(&["mktemp".into(), "-d".into()], &[])?;
+        let directory = PathBuf::from(
+            String::from_utf8(output.stdout)
+                .map_err(|error| error.to_string())?
+                .trim(),
+        );
+        if directory.parent() != Some(Path::new("/tmp"))
+            || !directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                    })
+                })
+        {
+            return Err("VM mktemp returned an unexpected directory".into());
+        }
+        window.compose_file = directory.join("compose.yml");
+        window.remote_directory = Some(directory);
+    }
+    let bytes = render
+        .files()
+        .get("compose.yml")
+        .ok_or("sealed Compose bytes missing")?;
+    window.ssh(
+        &[
+            "sh".into(),
+            "-c".into(),
+            "umask 077; cat > \"$1\"".into(),
+            "sh".into(),
+            window.compose_file.as_os_str().to_owned(),
+        ],
+        bytes,
+    )?;
+    if window
+        .ssh(
+            &["cat".into(), window.compose_file.as_os_str().to_owned()],
+            &[],
+        )?
+        .stdout
+        != *bytes
+    {
+        return Err("VM copy differs from sealed Compose bytes".into());
+    }
+    eprintln!(
+        "native-creation-stage {}",
+        serde_json::json!({"project":window.project,
+        "vm_directory":window.remote_directory,"render_digest":render.digest(),
+        "predecessor":predecessor,"transport":"verified private VM copy of sealed bytes"})
+    );
+    // Clone only request identity to leave the exact window's apply state mutable.
+    let workdir = window.workdir.clone();
+    let project = window.project.clone();
+    let request = CreationRequest {
+        workdir: &workdir,
+        project: &project,
+        compose_files: &files,
+        preflight: Some(&preflight),
+        ..request
+    };
+    let selection = window.selection.clone();
+    let outcome = run
+        .create_with(adapter.as_mut(), &selection, request, || {
+            window.applied.set(true);
+            window
+                .invoke(
+                    &window.compose_args(&["up", "-d"]),
+                    "native sealed Compose apply",
+                )
+                .map_err(BackendError::Uncertain)
+        })
+        .map_err(|error| error.to_string())?;
+    let receipt = outcome
+        .receipt()
+        .ok_or("native activation has no attributed receipt")?;
+    let rows = window.inventory()?;
+    let [row] = rows.as_slice() else {
+        return Err("native inventory is not exactly one workspace".into());
+    };
+    if !window.owned(row)
+        || receipt.created_ids().collect::<Vec<_>>() != [row.id.as_str()]
+        || receipt.workspace_predecessor() != predecessor
+    {
+        return Err("native receipt does not attribute exactly the new workspace ID".into());
+    }
+    let boot = window.ssh(
+        &["cat".into(), "/proc/sys/kernel/random/boot_id".into()],
+        &[],
+    )?;
+    let identity = ContainerIdentity {
+        container_id: row.id.clone(),
+        vm_boot_id: String::from_utf8(boot.stdout)
+            .map_err(|error| error.to_string())?
+            .trim()
+            .into(),
+        backend: selection.engine.as_str().into(),
+    };
+    let evidence = Evidence::new(
+        "complete native project inventory under activation gate".into(),
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    let bound = run
+        .bind_target_observing(
+            &reservation,
+            Observed::Verified(
+                vec![TargetCandidate {
+                    identity: identity.clone(),
+                    project: project.clone(),
+                    created_by: None,
+                }],
+                evidence,
+            ),
+            adapter.as_mut(),
+            deadline,
+        )
+        .map_err(|error| error.to_string())?;
+    if bound != identity {
+        return Err("native reserved target differs from actual new ID".into());
+    }
+    run.activate(&[]).map_err(|error| error.to_string())?;
+    let phase = serde_json::json!({"project":project,"container_id":row.id,
+        "predecessor":predecessor,"creating_run":run.id().to_string(),
+        "reserved_generation":reservation.generation().get(),"target_bound":true,
+        "image_identities":receipt.image_identities(),"render_digest":render.digest(),
+        "apply_exit":0,"environment_active":true,
+        "guest_workspace_session_commit_publication_proved":false});
+    run.finish(true).map_err(|error| error.to_string())?;
+    if !record(&ctx, stack).active() {
+        return Err("native environment did not publish Active".into());
+    }
+    // The fixture never admits a guest workspace session. Close this completed
+    // target-only reservation before testing its non-live successor generation.
+    reservation
+        .cancel(&ctx.cx, state, Wait::FailFast)
+        .map_err(|error| error.to_string())?;
+    eprintln!("native-creation-phase {phase}");
+    Ok(phase)
+}
+
 #[test]
-#[ignore = "requires an explicitly selected running Colima profile and a cached alpine image"]
-fn native_colima_complete_window_qualifies_or_refuses_without_weak_image_identity() {
+#[ignore = "requires owner authorization, a running Colima profile and a cached alpine image"]
+fn native_colima_reserved_fresh_and_config_recreate() {
     let profile = std::env::var("EFFIGY_510_NATIVE_PROFILE").expect("explicit native profile");
     let image = std::env::var("EFFIGY_510_NATIVE_IMAGE").expect("explicit cached image reference");
     let fixture = home();
@@ -154,179 +432,53 @@ fn native_colima_complete_window_qualifies_or_refuses_without_weak_image_identit
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).unwrap();
     }
-    let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, bytes);
-    let stack = EnvRef::new(checkout, "native").unwrap();
-    let project = format!("effigy-510-{}", token);
+    let stack = EnvRef::new(
+        CheckoutId::new(CheckoutKind::EphemeralClone, bytes),
+        "native",
+    )
+    .unwrap();
     let selection = BackendSelection {
         kind: BackendKind::Colima,
         engine: crate::BackendId::colima_nerdctl(),
         context: profile.clone(),
         reason: BackendReason::EnvironmentVariable("native proof".into()),
     };
-    let labels = serde_json::json!({ "com.effigy.managed":"true", "com.effigy.project":project, "com.effigy.scope":token, "com.effigy.checkout":fixture.path() });
-    let compose = serde_json::to_vec(&serde_json::json!({"services":{"workspace":{"image":image,"network_mode":"none","entrypoint":["/bin/sh","-c","sleep 120"],"labels":labels}}})).unwrap();
-    let metadata = serde_json::to_vec(&serde_json::json!({"repo_root":fixture.path(),"project_name":project,"primary_service":"workspace","compose_files":["compose.yml"],"backend_id":selection.engine.as_str(),"backend_context":profile})).unwrap();
-    let render = Closure::new(
-        [
-            ("compose.yml".into(), compose),
-            ("inputs/environment.json".into(), metadata),
-        ]
-        .into_iter()
-        .collect(),
-    )
-    .unwrap();
-    let state = root(fixture.path());
-    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
     let mut window = NativeWindow {
-        selection: selection.clone(),
+        selection,
         workdir: fixture.path().into(),
-        project: project.clone(),
+        project: format!("effigy-510-{token}"),
         scope: token,
         compose_file: fixture.path().join("not-published"),
         applied: Cell::new(false),
         remote_directory: None,
         remote_removed: Cell::new(false),
     };
+    let state = root(fixture.path());
     eprintln!(
         "native-creation-start {}",
-        serde_json::json!({"profile":profile,"project":project,"fixture":fixture.path(),"image":image})
+        serde_json::json!({"profile":profile,
+        "project":window.project,"fixture":fixture.path(),"image":image})
     );
     let result = (|| -> Result<serde_json::Value, String> {
-        if !window.inventory()?.is_empty() {
-            return Err("native project was not empty before the proof".into());
-        }
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let request = CreationRequest {
-            workdir: fixture.path(),
-            project: &project,
-            primary_service: "workspace",
-            render: Some(&render),
-            compose_files: &[],
-            deadline,
-            preflight: None,
-            required: true,
-        };
-        let mut adapter = selection.adapter();
-        let preflight = CreationPreflight::observe(adapter.as_mut(), request)
-            .map_err(|error| error.to_string())?;
-        let seal =
-            effigy_kernel::objects::Objects::seal_for_preflight(&ctx.cx, &state, &render, deadline)
-                .map_err(|error| error.to_string())?;
-        let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast)
-            .map_err(|error| error.to_string())?;
-        run.publish_sealed_desired(&seal, &render)
-            .map_err(|error| error.to_string())?;
-        let object = match effigy_kernel::objects::Objects::resolve(
-            &ctx.observe(),
+        let first_render = native_render(&window, &image, 1);
+        let first = native_phase(&state, &stack, &mut window, &first_render, &image, None)?;
+        let predecessor = first["container_id"].as_str().ok_or("fresh ID missing")?;
+        let second_render = native_render(&window, &image, 2);
+        let second = native_phase(
             &state,
-            &stack.resource,
-            effigy_kernel::objects::Role::Desired,
-        ) {
-            Observed::Verified(object, _) => object,
-            Observed::Absent(proof) => return Err(proof.to_string()),
-            Observed::Unknown(reason) => return Err(reason.to_string()),
-        };
-        let files = [object.path.join("compose.yml")];
-        run.verify_compose_inputs(&render, &files, fixture.path())
-            .map_err(|error| error.to_string())?;
-        let remote = window.ssh(&["mktemp".into(), "-d".into()], &[])?;
-        let remote = String::from_utf8(remote.stdout).map_err(|error| error.to_string())?;
-        let directory = PathBuf::from(remote.trim());
-        if directory.parent() != Some(Path::new("/tmp"))
-            || !directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-                    })
-                })
-        {
-            return Err("VM mktemp returned an unexpected directory".into());
-        }
-        window.remote_directory = Some(directory.clone());
-        let bytes = render
-            .files()
-            .get("compose.yml")
-            .ok_or("sealed compose file missing")?;
-        window.ssh(
-            &[
-                "sh".into(),
-                "-c".into(),
-                "umask 077; cat > \"$1/compose.yml\"".into(),
-                "sh".into(),
-                directory.as_os_str().to_owned(),
-            ],
-            bytes,
+            &stack,
+            &mut window,
+            &second_render,
+            &image,
+            Some(predecessor),
         )?;
-        window.compose_file = directory.join("compose.yml");
-        if window
-            .ssh(
-                &["cat".into(), window.compose_file.as_os_str().to_owned()],
-                &[],
-            )?
-            .stdout
-            != *bytes
-        {
-            return Err("VM copy differs from the sealed Compose bytes".into());
+        if first["container_id"] == second["container_id"] {
+            return Err("config edit did not recreate workspace".into());
         }
-        eprintln!(
-            "native-creation-stage {}",
-            serde_json::json!({"project":project,"vm_directory":directory,"transport":"verified private VM copy of sealed bytes"})
-        );
-        let request = CreationRequest {
-            compose_files: &files,
-            preflight: Some(&preflight),
-            ..request
-        };
-        let apply_ok = Cell::new(false);
-        let outcome = run.create_with(adapter.as_mut(), &selection, request, || {
-            window.applied.set(true);
-            let result = window.invoke(
-                &window.compose_args(&["up", "-d"]),
-                "native sealed Compose apply",
-            );
-            apply_ok.set(result.is_ok());
-            result.map_err(BackendError::Uncertain)
-        });
-        if !apply_ok.get() {
-            return Err(format!(
-                "native Compose apply did not complete successfully: {}",
-                outcome
-                    .as_ref()
-                    .err()
-                    .map(ToString::to_string)
-                    .unwrap_or_default()
-            ));
-        }
-        let rows = window.inventory()?;
-        let [row] = rows.as_slice() else {
-            return Err(format!(
-                "native project answered {} rows, expected one",
-                rows.len()
-            ));
-        };
-        if !window.owned(row) {
-            return Err("native apply answered an unowned container".into());
-        }
-        let immutable = crate::environment::backend::exact_image_id(&row.image).is_some();
-        let refusal = outcome.as_ref().err().map(ToString::to_string);
-        if immutable {
-            let receipt = outcome
-                .as_ref()
-                .map_err(|error| error.to_string())?
-                .receipt()
-                .ok_or("native immutable container received no receipt")?;
-            if receipt.created_ids().collect::<Vec<_>>() != [row.id.as_str()] {
-                return Err("native receipt differs from the exact observed ID".into());
-            }
-        } else if outcome.is_ok() {
-            return Err("native reference-only image received a successful receipt".into());
-        }
-        run.finish(outcome.is_ok())
-            .map_err(|error| error.to_string())?;
         Ok(
-            serde_json::json!({"profile":profile,"project":project,"container_id":row.id,"container_image":row.image,"image_reference":row.image_reference,"immutable_container_image":immutable,"qualified_receipt":outcome.is_ok(),"refusal":refusal,"apply_exit":0}),
+            serde_json::json!({"profile":profile,"project":window.project,"phases":[first,second],
+            "qualified_creator_attribution":true,"guest_workspace_session_commit_publication_proved":false,
+            "proof_limit":"does NOT prove guest workspace-session commit/publication"}),
         )
     })();
     let cleanup = window.cleanup();
@@ -334,7 +486,8 @@ fn native_colima_complete_window_qualifies_or_refuses_without_weak_image_identit
         cleanup.is_ok(),
         "exact-owned native cleanup failed: {cleanup:?}"
     );
-    let mut evidence = result.expect("native window must complete or name a real adapter blocker");
+    let mut evidence =
+        result.expect("one native fresh/config window must succeed without fabricated evidence");
     evidence["cleanup_exit"] = 0.into();
     eprintln!("native-creation-result {evidence}");
 }

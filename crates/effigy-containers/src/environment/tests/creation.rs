@@ -304,7 +304,7 @@ fn recreation_expectation_refuses_old_reference_retag_expiry_and_empty_reference
 }
 
 #[test]
-fn incomplete_extra_duplicate_foreign_or_reference_only_rows_refuse() {
+fn incomplete_extra_duplicate_foreign_or_unproved_image_rows_refuse() {
     let render = render(&[PRIMARY]);
     let good = row(PRIMARY, 'a');
     let mut wrong_label = good.clone();
@@ -312,7 +312,7 @@ fn incomplete_extra_duplicate_foreign_or_reference_only_rows_refuse() {
         .labels
         .insert("com.effigy.checkout".into(), "/elsewhere".into());
     let mut reference_only = good.clone();
-    reference_only.image = "fixture:latest".into();
+    reference_only.image = "other:latest".into();
     let mut wrong_reference = good.clone();
     wrong_reference.image_reference = "other:latest".into();
     let mut short = good.clone();
@@ -1011,3 +1011,5 @@ fn ordinary_unsealed_apply_never_mints_a_weaker_workspace_receipt() {
     assert_eq!(fake.reads, 0);
     run.finish(true).unwrap();
 }
+
+mod capabilities;

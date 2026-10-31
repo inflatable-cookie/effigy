@@ -540,7 +540,7 @@ fn docker_context_and_endpoint_are_explicit_on_apply_and_observation() {
 /// Exercise the complete sealed before/apply/after protocol through each CLI
 /// adapter, rather than accepting a fake's preassembled Workload directly.
 #[test]
-fn sealed_id_difference_uses_both_cli_adapters_and_refuses_reference_only_container_images() {
+fn sealed_id_difference_records_each_cli_image_capability_and_nerdctl_membership() {
     use crate::environment::creation::{CreationPreflight, CreationRequest};
     for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
         for reference_only in [false, true] {
@@ -555,7 +555,23 @@ fn sealed_id_difference_uses_both_cli_adapters_and_refuses_reference_only_contai
             if reference_only {
                 let mut rows: serde_json::Value =
                     serde_json::from_slice(&std::fs::read(&tools.inspect).unwrap()).unwrap();
-                rows[0]["Image"] = "fixture:latest".into();
+                rows[0]["Image"] = "docker.io/library/fixture:latest".into();
+                rows[0]["Config"]["Image"] = "docker.io/library/fixture:latest".into();
+                if tool == "colima" {
+                    rows[0]["Config"]["Labels"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("com.docker.compose.oneoff");
+                    rows[0]["Config"]["Labels"]["nerdctl/name"] = rows[0]["Name"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches('/')
+                        .into();
+                    rows[0]["Config"]["Labels"]["nerdctl/networks"] =
+                        serde_json::to_string(&[format!("{PROJECT}_default")])
+                            .unwrap()
+                            .into();
+                }
                 std::fs::write(&tools.inspect, serde_json::to_vec(&rows).unwrap()).unwrap();
             }
             let labels = serde_json::json!({
@@ -599,11 +615,20 @@ fn sealed_id_difference_uses_both_cli_adapters_and_refuses_reference_only_contai
                     .map(|_| ())
                     .map_err(|error| BackendError::Uncertain(error.to_string()))
             });
-            assert_eq!(outcome.is_ok(), !reference_only, "{tool}: {outcome:?}");
-            if !reference_only {
+            let accepted = !reference_only || tool == "colima";
+            assert_eq!(outcome.is_ok(), accepted, "{tool}: {outcome:?}");
+            if accepted {
                 let outcome = outcome.unwrap();
                 let receipt = outcome.receipt().unwrap();
                 assert_eq!(receipt.created_ids().collect::<Vec<_>>(), [ID]);
+                assert_eq!(
+                    receipt.created()[0].image_capability(),
+                    if reference_only {
+                        crate::environment::ImageCapability::ReferenceResolvedId
+                    } else {
+                        crate::environment::ImageCapability::ContainerImageId
+                    }
+                );
                 receipt
                     .reobserve(adapter.as_mut(), request.deadline)
                     .unwrap();
@@ -616,7 +641,7 @@ fn sealed_id_difference_uses_both_cli_adapters_and_refuses_reference_only_contai
                     .count(),
                 1
             );
-            run.finish(!reference_only).unwrap();
+            run.finish(accepted).unwrap();
         }
     }
 }

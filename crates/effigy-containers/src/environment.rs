@@ -26,8 +26,8 @@ pub use backend::{
 };
 pub use creation::{
     created_by, CreatedContainer, CreationOutcome, CreationPreflight, CreationReceipt,
-    CreationRefusal, CreationRequest, RecordedCreation, StoredCreation, CREATE_EFFECT,
-    CREATION_SCHEMA,
+    CreationRefusal, CreationRequest, ImageCapability, ImageIdentity, RecordedCreation,
+    StoredCreation, CREATE_EFFECT, CREATION_SCHEMA,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use ops::{activate, activate_with, down, reconcile, reset, Applied, BringUp, Up};

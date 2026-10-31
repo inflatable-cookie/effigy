@@ -1097,6 +1097,7 @@ impl<'r> EnvRun<'r> {
             Ok(creation::InventoryDifference {
                 expected_created,
                 workspace_predecessor,
+                image_identities,
                 created,
                 attached,
                 observed,
@@ -1110,6 +1111,7 @@ impl<'r> EnvRun<'r> {
                 workdir: request.workdir.to_path_buf(),
                 expected_created,
                 workspace_predecessor,
+                image_identities,
                 created,
                 attached,
             },

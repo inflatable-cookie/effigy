@@ -30,8 +30,10 @@ impl ExpectedInventory {
                     expected.created.insert(service.clone(), None);
                 }
                 Some(row) => {
-                    let image_changed =
-                        desired.image.as_deref() != Some(row.image_reference.as_str());
+                    let image_changed = !desired
+                        .image
+                        .as_deref()
+                        .is_some_and(|reference| same_reference(reference, &row.image_reference));
                     if image_changed {
                         // The old container must still match its immutable
                         // reference identity, even when replacement is allowed.
@@ -40,15 +42,15 @@ impl ExpectedInventory {
                             &row.image_reference,
                             request.deadline,
                         ) {
-                            Observed::Verified(id, _) => exact_image_id(&id),
-                            _ => None,
+                            Observed::Verified(id, _) => id,
+                            _ => return Err(CreationRefusal::ImageMismatch(row.id.clone())),
                         };
-                        if resolved.is_none() || resolved != exact_image_id(&row.image) {
-                            return Err(CreationRefusal::ImageMismatch(row.id.clone()));
-                        }
-                        expected
-                            .previous_images
-                            .insert(row.image_reference.clone(), row.image.clone());
+                        let identity =
+                            ImageIdentity::observe(backend, row, &row.image_reference, &resolved)?;
+                        expected.previous_images.insert(
+                            row.image_reference.clone(),
+                            identity.resolved_id().to_owned(),
+                        );
                     }
                     if service == request.primary_service {
                         // Compose may recreate the workspace for env, mounts,

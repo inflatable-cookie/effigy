@@ -7,6 +7,7 @@ use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, SCOPE_LABEL};
 use effigy_kernel::objects::Closure;
 use std::collections::{BTreeMap, BTreeSet};
 mod expectation;
+mod network;
 use expectation::ExpectedInventory;
 
 const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, CHECKOUT_LABEL];
@@ -61,7 +62,7 @@ impl CreationPreflight {
                 ));
             }
         }
-        let declared = declared_services(render)
+        let declared = declared_services(render, request.project)
             .map_err(|error| CreationRefusal::Unknown(error.to_string()))?;
         let images = images(backend, request, &declared)?;
         Ok(Self {
@@ -86,6 +87,7 @@ pub(crate) struct CreationWindow {
 pub(crate) struct InventoryDifference {
     pub expected_created: BTreeMap<String, Option<String>>,
     pub workspace_predecessor: Option<String>,
+    pub image_identities: BTreeMap<String, ImageIdentity>,
     pub created: Vec<CreatedContainer>,
     pub attached: Vec<String>,
     pub observed: Vec<Workload>,
@@ -104,7 +106,7 @@ impl CreationWindow {
         let render = request.render.ok_or_else(|| {
             CreationRefusal::Unknown("no frozen render declares the expected inventory".into())
         })?;
-        let declared = declared_services(render)
+        let declared = declared_services(render, request.project)
             .map_err(|reason| CreationRefusal::Unknown(reason.to_string()))?;
         if declared.is_empty() || !declared.contains_key(request.primary_service) {
             return Err(CreationRefusal::Partial(
@@ -126,7 +128,7 @@ impl CreationWindow {
         }
         let before =
             rows(backend.inventory_until(request.workdir, request.project, request.deadline))?;
-        validate(request, &declared, &images, &before, false)?;
+        validate(backend, request, &declared, &images, &before, false)?;
         let expected = ExpectedInventory::observe(backend, request, &declared, &before)?;
         Ok(Self {
             declared,
@@ -149,7 +151,7 @@ impl CreationWindow {
                 "declared image identity changed during apply".into(),
             ));
         }
-        validate(request, &self.declared, &images, &after, true)?;
+        validate(backend, request, &self.declared, &images, &after, true)?;
         self.expected
             .verify(backend, request, &self.before, &after)?;
         if std::time::Instant::now() >= request.deadline {
@@ -162,6 +164,18 @@ impl CreationWindow {
             .iter()
             .map(|row| (row.id.to_ascii_lowercase(), row))
             .collect();
+        let image_identities: BTreeMap<_, _> = after
+            .iter()
+            .map(|row| {
+                let service = &row.labels[COMPOSE_SERVICE_LABEL];
+                let reference = self.declared[service]
+                    .image
+                    .as_deref()
+                    .ok_or_else(|| CreationRefusal::ImageMismatch(service.clone()))?;
+                ImageIdentity::observe(backend, row, reference, &images[service])
+                    .map(|identity| (service.clone(), identity))
+            })
+            .collect::<Result<_, _>>()?;
         let mut created = Vec::new();
         let mut attached = Vec::new();
         for row in after.clone() {
@@ -184,12 +198,14 @@ impl CreationWindow {
                     service: service.clone(),
                     image_id: images[&service].clone(),
                     image_reference: row.image_reference,
+                    image_capability: image_identities[&service].capability(),
                 });
             }
         }
         Ok(InventoryDifference {
             expected_created: self.expected.created,
             workspace_predecessor: self.expected.workspace_predecessor,
+            image_identities,
             created,
             attached,
             observed: after,
@@ -229,6 +245,7 @@ fn images(
 }
 
 fn validate(
+    backend: &dyn EnvironmentBackend,
     request: CreationRequest<'_>,
     declared: &BTreeMap<String, DeclaredService>,
     images: &BTreeMap<String, String>,
@@ -255,13 +272,26 @@ fn validate(
         let expected = declared
             .get(service)
             .ok_or_else(|| CreationRefusal::Service(service.clone()))?;
-        if row.labels.get(COMPOSE_PROJECT_LABEL).map(String::as_str) != Some(request.project)
-            || row
-                .labels
-                .get(COMPOSE_ONEOFF_LABEL)
-                .is_none_or(|value| !value.eq_ignore_ascii_case("false"))
-        {
-            return Err(CreationRefusal::Service(row.name.clone()));
+        if row.labels.get(COMPOSE_PROJECT_LABEL).map(String::as_str) != Some(request.project) {
+            return Err(CreationRefusal::Service(format!(
+                "{} has another Compose project",
+                row.name
+            )));
+        }
+        match row.labels.get(COMPOSE_ONEOFF_LABEL) {
+            Some(value) if value.eq_ignore_ascii_case("false") => {}
+            None if backend.selection().kind == super::super::backend::BackendKind::Colima
+                && expected
+                    .networks
+                    .as_ref()
+                    .is_some_and(|networks| network::corroborates(row, networks)) => {}
+            None => {
+                return Err(CreationRefusal::Unknown(format!(
+                "{} has no Compose one-off flag and no matching nerdctl name/network membership",
+                row.name
+            )))
+            }
+            Some(_) => return Err(CreationRefusal::OneOff(row.name.clone())),
         }
         if expected.labels.get(MANAGED_LABEL).map(String::as_str) != Some("true")
             || expected.labels.get(PROJECT_LABEL).map(String::as_str) != Some(request.project)
@@ -292,11 +322,16 @@ fn validate(
         {
             return Err(CreationRefusal::Service(row.name.clone()));
         }
-        let same_reference = Some(&row.image_reference) == expected.image.as_ref();
-        if row.image_reference.trim().is_empty()
-            || exact_image_id(&row.image).is_none()
-            || (complete && !same_reference)
-            || (same_reference && exact_image_id(&row.image).as_ref() != images.get(service))
+        let reference = expected
+            .image
+            .as_deref()
+            .ok_or_else(|| CreationRefusal::ImageMismatch(row.name.clone()))?;
+        if complete || same_reference(&row.image_reference, reference) {
+            ImageIdentity::observe(backend, row, reference, &images[service])?;
+        } else if row.image_reference.is_empty()
+            || (exact_image_id(&row.image).is_none()
+                && !(backend.selection().kind == super::super::backend::BackendKind::Colima
+                    && same_reference(&row.image, &row.image_reference)))
         {
             return Err(CreationRefusal::ImageMismatch(row.name.clone()));
         }
@@ -320,6 +355,7 @@ struct DeclaredService {
     labels: BTreeMap<String, String>,
     /// The image reference the render declares for the service.
     image: Option<String>,
+    networks: Option<BTreeSet<String>>,
 }
 
 /// Read the render's own declarations: which services it declares, the
@@ -328,7 +364,10 @@ struct DeclaredService {
 /// The render is the one authority for these values. A value declared twice
 /// with different spellings refuses, because the window cannot then say which
 /// one the apply used.
-fn declared_services(render: &Closure) -> Result<BTreeMap<String, DeclaredService>, UnknownReason> {
+fn declared_services(
+    render: &Closure,
+    project: &str,
+) -> Result<BTreeMap<String, DeclaredService>, UnknownReason> {
     let mut declared: BTreeMap<String, DeclaredService> = BTreeMap::new();
     let selected: Option<Vec<String>> = render
         .files()
@@ -370,6 +409,13 @@ fn declared_services(render: &Closure) -> Result<BTreeMap<String, DeclaredServic
                 continue;
             };
             let service = declared.entry(name.to_owned()).or_default();
+            let networks = network::declared(&document, body, project).ok();
+            if service.networks.is_some() && service.networks != networks {
+                return Err(inconsistent(format!(
+                    "conflicting frozen networks for {name}"
+                )));
+            }
+            service.networks = networks;
             if let Some(labels) = body.get("labels") {
                 for (key, value) in label_pairs(labels)? {
                     if !OWNERSHIP_LABELS.contains(&key.as_str()) {
