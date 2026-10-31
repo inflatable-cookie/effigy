@@ -1013,12 +1013,11 @@ pub(in crate::runner) fn observed_predecessor_compatibility_with(
     for row in running {
         let inspected = match backend.inspect(repo_root, policy, &row.container_name, deadline) {
             effigy_kernel::observe::Observed::Verified(bytes, _) => bytes,
-            other => {
+            _ => {
                 return unknown(format!(
-                    "the predecessor `{}` inspect is {other:?}",
+                    "the predecessor `{}` inspect is unavailable",
                     row.container_name
                 ))
-                .into()
             }
         };
         let verified = match ownership.verify_inspected(repo_root, policy, &row, &inspected) {
