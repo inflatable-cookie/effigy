@@ -564,7 +564,7 @@ pub(crate) fn settle_interrupted_wait(
         checkout_custody: None,
         ancestor_closure: None,
         processes: Default::default(),
-        session_launch: None,
+        session_launch: Default::default(),
     }
     .settle(cleanup, adapter)
 }

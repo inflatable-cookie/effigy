@@ -471,30 +471,23 @@ fn a_custody_is_not_retained_under_another_sessions_lease() {
 /// session refuses at the kernel boundary instead of opening a second listener.
 #[test]
 fn a_session_serves_through_one_owner_only() {
-    use effigy_kernel::workspace_session::SessionLaunch;
-
     with_serving_session(|mut supervisor, session, _cx, _root, _observe| {
-        let _first = prepare_owned_channel(&mut supervisor, &session);
-        let (listener, key, _acceptor) =
-            crate::runner::workspace_transport::listener::SessionTlsListener::bind(
-                std::net::SocketAddr::from(([127u8, 0, 0, 1], 0)),
-                Duration::from_millis(500),
-            )
-            .expect("a second bound listener");
-        let second = SessionLaunch::launch(
-            &mut supervisor,
-            &session,
-            "507-competing-owner",
-            key,
-            Box::new(listener),
-        );
+        let mut first = prepare_owned_channel(&mut supervisor, &session);
+        first
+            .launch
+            .serve(&supervisor)
+            .expect("the session's first owner serves it");
+        let mut second = prepare_owned_channel(&mut supervisor, &session);
+        let refused = second.launch.serve(&supervisor);
         assert!(
             matches!(
-                second,
+                refused,
                 Err(effigy_kernel::workspace_session::ServingRefusal::AlreadyPublished)
             ),
-            "a second owner for one session refuses"
+            "a second owner for one serving session refuses: {refused:?}"
         );
+        // The first owner keeps serving: the refusal took nothing away.
+        assert!(first.launch.serving(&supervisor));
     });
 }
 

@@ -578,9 +578,6 @@ impl SessionLaunch {
         if listener.endpoint().is_none() {
             return Err(ServingRefusal::Unbound);
         }
-        // One session has one listener and key: a second launch for a session
-        // whose listener is already live refuses here instead of opening another.
-        let claim = session_run.claim_session_launch()?;
         let state = std::sync::Arc::new(std::sync::Mutex::new(LaunchState {
             held: Some(Held {
                 listener: Some(listener),
@@ -591,7 +588,7 @@ impl SessionLaunch {
             bound: None,
             guest: None,
             served: false,
-            claim: Some(claim),
+            claim: None,
         }));
         // The session run is the custody: settling it takes the listener and the
         // key away, so a settled session neither serves nor keeps a socket open.
@@ -819,11 +816,35 @@ impl SessionLaunch {
     /// whose session run is no longer open.
     pub fn serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
         self.require_live_owner(session_run)?;
+        {
+            // One session is served through one owner: a second launch that asks
+            // to serve the same session refuses here instead of dispatching on a
+            // second listener and key under one session's custody.
+            let state = self.lock();
+            if state.claim.is_none() {
+                drop(state);
+                return self.claim_and_serve(session_run);
+            }
+        }
         let mut state = self.lock();
         if state.bound.is_none() {
             return Err(ServingRefusal::Unqualified);
         }
         state.live_bound()?;
+        state.served = true;
+        Ok(())
+    }
+
+    /// Claim the session's one serving owner and mark this launch serving.
+    fn claim_and_serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
+        let claim = session_run.claim_session_launch()?;
+        let mut state = self.lock();
+        if state.bound.is_none() {
+            claim.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(ServingRefusal::Unqualified);
+        }
+        state.live_bound()?;
+        state.claim = Some(claim);
         state.served = true;
         Ok(())
     }

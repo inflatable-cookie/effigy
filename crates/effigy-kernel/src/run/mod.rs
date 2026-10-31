@@ -394,7 +394,7 @@ pub struct Run<'a> {
     /// The session's one live listener claim, when this run is a workspace
     /// session. A second launch for the same session refuses instead of opening
     /// a second listener and key under one session's custody.
-    session_launch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    session_launch: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl std::fmt::Debug for Run<'_> {
@@ -710,7 +710,7 @@ impl<'a> Run<'a> {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
-                session_launch: None,
+                session_launch: Default::default(),
             };
             previous.settle_recovering(
                 &cleanup,
@@ -770,7 +770,7 @@ impl<'a> Run<'a> {
             checkout_custody: None,
             ancestor_closure: None,
             processes: Default::default(),
-            session_launch: None,
+            session_launch: Default::default(),
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
@@ -815,19 +815,20 @@ impl<'a> Run<'a> {
     /// never serve through two owners. The claim is released when the launch
     /// stops or its run settles.
     pub(crate) fn claim_session_launch(
-        &mut self,
+        &self,
     ) -> Result<
         std::sync::Arc<std::sync::atomic::AtomicBool>,
         crate::workspace_session::ServingRefusal,
     > {
         use std::sync::atomic::Ordering;
-        if let Some(existing) = &self.session_launch {
+        let mut slot = self.session_launch.borrow_mut();
+        if let Some(existing) = slot.as_ref() {
             if existing.load(Ordering::SeqCst) {
                 return Err(crate::workspace_session::ServingRefusal::AlreadyPublished);
             }
         }
         let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        self.session_launch = Some(claim.clone());
+        *slot = Some(claim.clone());
         Ok(claim)
     }
 
