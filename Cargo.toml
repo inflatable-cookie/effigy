@@ -96,7 +96,7 @@ fault-injection = ["effigy-kernel/fault-injection"]
 workspace-serving-fixture = ["effigy-kernel/test-support"]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }
 effigy-builtin = { path = "crates/effigy-builtin" }
 effigy-catalog = { path = "crates/effigy-catalog" }
@@ -162,7 +162,7 @@ effigy-json-schema = { path = "crates/effigy-json-schema" }
 effigy-test-support = { path = "crates/effigy-test-support" }
 # A settled-run proof asks the kernel whether a workload group still exists.
 libc = "0.2"
-base64 = "0.22"
+base64 = "0.23"
 # Ordinary HTTP/1 server fixture for the managed listener readiness probe.
 bytes = "1"
 http-body-util = "0.1"
