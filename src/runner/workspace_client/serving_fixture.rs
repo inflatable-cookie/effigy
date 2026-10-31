@@ -353,6 +353,35 @@ pub(crate) fn activate<'r>(
     // this record back from the journal and fences on it, so the switch it
     // serves is a durable fact and not a value this function asserts.
     record_selection(&mut supervisor, &lease, disposable, &fence)?;
+    if disposable.contend {
+        // Competing second owner through the production launch path: the first
+        // owner serves, and a second launch asking to serve the same session must
+        // be refused by the kernel's one-serving-owner fence.
+        launch.serve(&supervisor).map_err(|error| {
+            RunError::refused(format!("the first owner did not serve: {error}"))
+        })?;
+        let (second_listener, second_key, _second_acceptor) =
+            SessionTlsListener::bind(SocketAddr::from(([127u8, 0, 0, 1], 0)), budget).map_err(
+                |error| RunError::unavailable(format!("the contender's listener: {error}")),
+            )?;
+        let contender = SessionLaunch::launch(
+            &mut supervisor,
+            &session,
+            "507-competing-owner",
+            second_key,
+            Box::new(second_listener),
+        );
+        match contender {
+            Err(_) => {}
+            Ok(mut contender) => {
+                if contender.serve(&supervisor).is_ok() {
+                    return Err(RunError::broken(
+                        "a second serving owner was admitted for one workspace session",
+                    ));
+                }
+            }
+        }
+    }
     let server = serving_server(request, disposable, &session, pin, root)?;
     let owner = ServingOwner::new(
         supervisor,

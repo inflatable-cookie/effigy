@@ -750,6 +750,48 @@ pub(super) fn read_obligation(
         .transpose()
 }
 
+/// The environment's most recently committed selection, whatever its state.
+///
+/// A serving host fences on it before anything is announced: only a selection
+/// the kernel recorded as switched may be served, and a pending or abandoned one
+/// refuses. A recovery driver reads it to complete, abandon or leave it pending.
+pub fn committed_selection(
+    reader: &crate::store::StoreReader,
+    environment: &ResourceId,
+) -> Observed<Option<SelectionObligation>> {
+    let sql = format!(
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 \
+         ORDER BY environment_generation DESC LIMIT 1"
+    );
+    let row = match reader
+        .conn()
+        .query_row(
+            &sql,
+            params![environment.name().to_string()],
+            obligation_row,
+        )
+        .optional()
+    {
+        Ok(row) => row,
+        Err(error) => {
+            return Observed::Unknown(crate::observe::UnknownReason::StoreUnreadable(
+                error.to_string(),
+            ))
+        }
+    };
+    match row {
+        Some(row) => match decode_obligation(environment, row) {
+            Ok(obligation) => Observed::Verified(Some(obligation), super::session_evidence()),
+            Err(error) => Observed::Unknown(crate::observe::UnknownReason::Inconsistent(
+                error.to_string(),
+            )),
+        },
+        None => Observed::Absent(crate::observe::AbsenceProof::NoRow {
+            table: OBLIGATIONS.into(),
+        }),
+    }
+}
+
 /// The environment's committed but unfinished selection, whatever its owner's
 /// liveness: a decision must meet it before it attaches or reserves anything.
 pub(super) fn pending_obligation(

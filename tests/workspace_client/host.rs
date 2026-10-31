@@ -136,6 +136,13 @@ fn successor(request: &serde_json::Value) -> serde_json::Value {
     request
 }
 
+/// The same request whose activation attempts a competing second owner.
+fn contended(request: &serde_json::Value) -> serde_json::Value {
+    let mut request = request.clone();
+    request["activation"]["contend"] = serde_json::json!(true);
+    request
+}
+
 /// The same request whose activation never records its switch: the host must
 /// refuse to serve the session it would otherwise announce.
 fn unrecorded_switch(request: &serde_json::Value) -> serde_json::Value {
@@ -426,7 +433,9 @@ fn a_listener_failure_retires_the_session_once() {
     std::fs::create_dir_all(&project).expect("project");
     let request = failing_listener(&request(&fixture, &project));
 
-    let result = initiate("__workspace-serving-fixture", &request);
+    // No detach: a failing listener settles the host as soon as it serves, so the
+    // front end has nothing to acknowledge.
+    let result = initiate("__workspace-serving-fixture-abandon", &request);
     let supervisor_run = run_of(&result, "supervisor_run");
     let session_run = run_of(&result["published"], "session_run");
     let endpoint = endpoint_of(
@@ -606,5 +615,73 @@ fn an_unrecorded_switch_is_refused_not_served() {
     while Instant::now() < until {
         std::thread::sleep(Duration::from_millis(50));
         break;
+    }
+}
+
+/// A competing second owner for one session refuses inside the detached process,
+/// and the first owner keeps serving: the kernel's one-serving-owner fence holds
+/// across the production launch path, not only in an in-crate proof.
+#[test]
+fn a_competing_owner_is_refused_inside_the_detached_process() {
+    let fixture =
+        effigy_test_support::Fixture::new("workspace-serving-contended").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = contended(&request(&fixture, &project));
+
+    let result = initiate("__workspace-serving-fixture", &request);
+    let supervisor_run = run_of(&result, "supervisor_run");
+    let endpoint = endpoint_of(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+    // The activation refused the contender and the first owner still serves.
+    assert!(
+        TcpStream::connect_timeout(&endpoint, Duration::from_secs(5)).is_ok(),
+        "the first owner still serves after refusing a contender"
+    );
+
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let supervisor = read_summary(&observe, &root, supervisor_run).expect("the host run");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let stop = Request {
+        id: RunId::new(millis, [0x66; 10]).expect("a request id"),
+        run: supervisor_run,
+        expected: Fence {
+            resource: supervisor
+                .invocation
+                .as_ref()
+                .expect("the host records its invocation")
+                .spec()
+                .owner
+                .clone(),
+            generation: supervisor.generation,
+        },
+        action: RequestAction::Stop,
+    };
+    run::request(&cx, &root, &stop).expect("the stop is recorded");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, supervisor_run).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(Instant::now() < until, "the contended host did not settle");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let until = Instant::now() + Duration::from_secs(10);
+    while TcpStream::connect_timeout(&endpoint, Duration::from_secs(1)).is_ok() {
+        assert!(
+            Instant::now() < until,
+            "the contended host released its listener"
+        );
+        std::thread::sleep(Duration::from_millis(50));
     }
 }

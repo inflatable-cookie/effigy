@@ -127,6 +127,10 @@ pub(crate) struct DisposableActivation {
     /// the host must refuse to serve it.
     #[serde(default)]
     pub(crate) omit_selection_record: bool,
+    /// Attempt a competing second owner for this session inside the same
+    /// process, so the kernel's one-serving-owner fence is exercised.
+    #[serde(default)]
+    pub(crate) contend: bool,
 }
 
 /// What one serving host announced to its front end: the committed session it
@@ -626,7 +630,51 @@ fn durable_selection(
             ))
         }
     };
-    let effects = match effigy_kernel::run::effects(&reader, session.run()) {
+    // The kernel's own committed selection is the fence. It exists once an
+    // activation commit wrote it; a disposable activation has none by
+    // construction, so only in a fixture build does the host fall back to the
+    // record that activation wrote on the session's own run.
+    match effigy_kernel::workspace_session::committed_selection(&reader, session.environment()) {
+        Observed::Verified(Some(obligation), _) => {
+            if obligation.session_run() != session.run() {
+                return Err(RunError::refused(
+                    "the committed selection names another session; nothing is served",
+                ));
+            }
+            return Ok(obligation.state());
+        }
+        Observed::Verified(None, _) => {}
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "the committed workspace selection is unreadable: {reason}"
+            )))
+        }
+        Observed::Absent(_) => {}
+    }
+    #[cfg(not(feature = "workspace-serving-fixture"))]
+    {
+        let _ = (reader, session);
+        Err(RunError::refused(
+            "the workspace has no committed selection; nothing is served",
+        ))
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    {
+        fixture_selection(&reader, session)
+    }
+}
+
+/// The record a disposable activation writes on the session's own run. Only a
+/// fixture build reads it, and only when the kernel has no committed selection
+/// for the environment: it is what a disposable activation can record without a
+/// container activation commit.
+#[cfg(feature = "workspace-serving-fixture")]
+fn fixture_selection(
+    reader: &effigy_kernel::store::StoreReader,
+    session: &effigy_kernel::workspace_session::SessionRef,
+) -> Result<effigy_kernel::workspace_session::SelectionState, RunError> {
+    use effigy_kernel::workspace_session::SelectionState;
+    let effects = match effigy_kernel::run::effects(reader, session.run()) {
         Observed::Verified(effects, _) => effects,
         Observed::Unknown(reason) => {
             return Err(RunError::unavailable(format!(
