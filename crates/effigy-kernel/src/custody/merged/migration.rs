@@ -645,6 +645,9 @@ mod tests {
         assert!(prepare(&path, [3; 32], "retry", |_| Ok(())).is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"operator data");
     }
+    // Overrides the expected owner through `crate::fault`, which exists only with
+    // `fault-injection`; ordinary builds keep the rest of the migration tests.
+    #[cfg(feature = "fault-injection")]
     #[test]
     fn unowned_log_is_refused_without_changing_operator_data() {
         struct RestoreUid;
