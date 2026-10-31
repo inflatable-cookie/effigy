@@ -2520,3 +2520,59 @@ fn a_capability_is_never_minted_from_a_weaker_secret() {
     .expect("a full read mints the capability");
     assert_eq!(minted, [0x5c; 32]);
 }
+
+/// Two independent real pseudo-terminals resolve two client identities, and one
+/// terminal resolves one. This is the isolation the capability store depends on;
+/// the full process harness belongs to the terminal owner (#485), so this proof
+/// exercises the identity derivation over real pty device numbers.
+#[test]
+fn two_real_pseudo_terminals_resolve_two_client_identities() {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    let open = || -> (OwnedFd, OwnedFd) {
+        let mut master: libc::c_int = -1;
+        let mut slave: libc::c_int = -1;
+        // SAFETY: openpty opens both descriptors and writes them to the out
+        // parameters; no termios or winsize is supplied or read.
+        let result = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(result, 0, "a pseudo-terminal is available");
+        // SAFETY: both descriptors were opened above and are owned from here on.
+        (unsafe { OwnedFd::from_raw_fd(master) }, unsafe {
+            OwnedFd::from_raw_fd(slave)
+        })
+    };
+    let device = |fd: &OwnedFd| -> u64 {
+        use std::os::fd::AsRawFd;
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstat writes into the zeroed struct for the borrowed descriptor.
+        assert_eq!(unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) }, 0);
+        assert_ne!(stat.st_rdev, 0, "a pty slave is a terminal device");
+        stat.st_rdev as u64
+    };
+
+    let (_master_a, slave_a) = open();
+    let (_master_b, slave_b) = open();
+    let first =
+        super::terminal_client_identity(Some(device(&slave_a)), 4242).expect("a terminal identity");
+    let same =
+        super::terminal_client_identity(Some(device(&slave_a)), 4242).expect("a terminal identity");
+    let second =
+        super::terminal_client_identity(Some(device(&slave_b)), 4242).expect("a terminal identity");
+    assert_eq!(first, same, "one terminal keeps one client identity");
+    assert_ne!(
+        first, second,
+        "two independent pseudo-terminals are two clients: {first} vs {second}"
+    );
+    assert!(
+        first.starts_with("tty-"),
+        "a terminal client is identified by its device: {first}"
+    );
+}

@@ -942,7 +942,13 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
     let competing = detached_contender(&request);
     assert!(
         competing["refused"].as_bool() == Some(true),
-        "a second detached owner is refused: {competing}"
+        "a second detached owner is refused (a launcher error is not a refusal): {competing}"
+    );
+    assert!(
+        competing["reason"]
+            .as_str()
+            .is_some_and(|reason| { reason.contains("is held by") || reason.contains("refused") }),
+        "the refusal is the kernel's own owner-gate/refusal fencing: {competing}"
     );
 
     // Stop it through the kernel's own control path; it settles once.

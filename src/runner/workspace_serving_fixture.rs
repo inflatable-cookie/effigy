@@ -389,12 +389,36 @@ pub fn compete_detached(request_json: &str) -> Result<CompetingOwner, String> {
     let root = StateRoot::checkout_effects(&cx, &request.state_home, &location)
         .map_err(|error| format!("the state root: {error}"))?;
     let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
-    let mut host = serving_host::start(&cx, &root, &request, &executable)
-        .map_err(|error| format!("the contender could not even launch: {error}"))?;
+    // The kernel's own owner gate is the fencing: a second owner for the same
+    // workspace is refused there, before it can launch anything. Only a typed
+    // refusal counts; an unavailable or broken launcher proves nothing.
+    let mut host = match serving_host::start(&cx, &root, &request, &executable) {
+        Ok(host) => host,
+        Err(error) if error.category() == effigy_kernel::human::Category::Refused => {
+            return Ok(CompetingOwner {
+                refused: true,
+                reason: Some(error.to_string()),
+            })
+        }
+        Err(error) => {
+            return Ok(CompetingOwner {
+                refused: false,
+                reason: Some(format!("the contender was not refused: {error}")),
+            })
+        }
+    };
     match host.await_serving(&cx, Duration::from_secs(20)) {
+        // Only a typed refusal of the second owner counts. An unavailable or
+        // timed-out contender proves nothing, so it is reported as not-refused.
+        Err(error) if error.category() == effigy_kernel::human::Category::Refused => {
+            Ok(CompetingOwner {
+                refused: true,
+                reason: Some(error.to_string()),
+            })
+        }
         Err(error) => Ok(CompetingOwner {
-            refused: true,
-            reason: Some(error.to_string()),
+            refused: false,
+            reason: Some(format!("the contender was not refused: {error}")),
         }),
         Ok(published) => {
             let _ = host.stop(&cx);
