@@ -601,6 +601,15 @@ Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
 orders this work after Q-011 simplification; it does not waive the release
 criterion.
 
+Tom's 2026-10-31 creator-attribution amendment keeps the workspace client in
+v0.15 with the narrow, gate-scoped ID-set rule in
+[contract 052](contracts/052-runtime-kernel-contract.md). It forbids adopting a
+container from another checkout, project or stale generation and requires a
+complete before/after exact-ID set under the exclusive environment gate. A
+same-user actor able to create an identically labelled container during that
+window is explicitly outside the v0.15 threat model. This does not qualify a
+backend or waive the native Colima, Docker Desktop and Linux Docker checks.
+
 The complete human-facing feedback ruling also blocks v0.15. Every command
 plane must show the live, subject-named terminal steps and actionable errors
 defined in the product guardrails. Existing feedback work (#312 and #315) is a

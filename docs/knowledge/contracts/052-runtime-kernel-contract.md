@@ -5259,19 +5259,27 @@ generation while P's context remains selected.
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
 
-**Creator attribution ruling (Tom, 2026-10-31).** A foreign actor creating an
-identically labelled container during the apply window remains in the threat
-model. Before/after container ID sets, labels, timestamps and image-reference
-checks cannot prove which actor created that container, even under `Gate(Env)`.
-The v0.15 first-up path must use an Effigy-owned engine create/apply operation
-that returns the exact created container IDs as authenticated effect results,
-then verify those IDs against the intended project, service, image and target
-before publication. The provisional Option C inventory-difference design is
-rejected; a foreign creation is never adopted as this activation's target.
+**Creator attribution ruling (Tom, 2026-10-31, amended after the #510 design
+review).** Never adopt a container created by another checkout, project or
+stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
+Compose apply and exact full-ID inventories before and after it. Only an ID
+new in that window, with the complete expected created set and exact managed,
+project, service, checkout/scope, generation and immutable-image evidence, may
+bind a fresh target. Missing, extra, ambiguous, changed or unreadable evidence
+refuses publication; attached/reused containers never receive a new creator
+receipt. Recheck preflight identity under the gate and keep the complete-set
+decision and its journal evidence tied to that activation. A same-user actor
+that can create an identically labelled container inside the gate window is
+**explicitly outside this v0.15 threat model**: same-user access already permits
+reading the render and replacing the binary or vault material. The ID-set
+difference is gate-scoped attribution under that stated limit, not proof that
+the engine returned the created IDs. This supersedes the earlier 2026-10-31
+engine-create-only ruling and the rejection of Option C; it does not permit
+label-only, timestamp-only or unbounded post-apply guessing.
 
 | Window | What the guest resolves | Recovery |
 | --- | --- | --- |
-| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a foreign creation is never adopted as this activation's target, and no later step may re-target |
+| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a container from another checkout, project or stale generation is never adopted, and no later step may re-target |
 | Before E8 (no commit) | the predecessor's pair, A and A, and its own credential generation; the staged B objects are unselected orphans, and a crash before E7 leaves no context document at all | no selector moved, so there is nothing to restore; the reservation is cancelled after both bound runs settle and `preserve_active_predecessor` keeps the predecessor's applied fence, so a live predecessor and **its next invocation** stay fully usable on A |
 | Killed immediately after E8, before E9 runs at all | still A and A, with A's environment generation now superseded, so requests refuse `stale_context` | the obligation was written by E8's own transaction, so `unfinished_selection` names every selector, its expected previous value and every digest; `reserve` and `recover` prefer the oldest unfinished reservation, so a retry cannot roll past it, and recovery runs the same compares before any new generation is reserved |
 | Killed during E9 (some selectors moved, completion lost) | a mixed pair, reported as `stale_context` and re-read | each selector reports `AlreadyNext` or `Swapped`; recovery writes only what is still behind and then completes, so the set converges on g, B and the credential generation |
