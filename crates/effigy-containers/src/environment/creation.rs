@@ -595,9 +595,6 @@ impl<'a> CreationWindow<'a> {
             Err(reason) => return Creation::Unproven(reason),
         };
         match receipt(
-            backend,
-            workdir,
-            deadline,
             selection,
             environment,
             run,
@@ -620,9 +617,6 @@ impl<'a> CreationWindow<'a> {
 /// The receipt one complete before/apply/after window proves.
 #[allow(clippy::too_many_arguments)]
 fn receipt(
-    backend: &mut dyn EnvironmentBackend,
-    workdir: &Path,
-    deadline: Instant,
     selection: &BackendSelection,
     environment: ResourceId,
     run: RunId,
@@ -1004,13 +998,8 @@ mod tests {
     use super::{normalize_reference, reference_matches};
     use crate::environment::backend::{parse_image_inspect, parse_inspect};
     use crate::environment::tests::{env as test_env, selection};
-    use crate::environment::{BackendSelection, EnvironmentBackend, Workload, CREATION_WINDOW};
     use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
-    use effigy_kernel::id::RunId;
-    use effigy_kernel::observe::{Evidence, Observed};
     use std::collections::BTreeMap;
-    use std::path::Path;
-    use std::time::Instant;
 
     /// Compose resolves a short reference before it creates a container, so
     /// the fully-qualified spelling of one reference is the same image.
@@ -1045,45 +1034,6 @@ mod tests {
             "docker.io/acme/api:2",
             "a repository with a namespace is not in `library/`"
         );
-    }
-
-    /// A backend whose image table is the native `nerdctl image inspect` trace
-    /// below: every spelling of the one reference the trace names resolves to
-    /// the exact image id the engine reported, which is exactly what the real
-    /// adapter reads.
-    struct NativeImages {
-        selection: BackendSelection,
-        image_id: String,
-    }
-
-    impl EnvironmentBackend for NativeImages {
-        fn selection(&self) -> &BackendSelection {
-            &self.selection
-        }
-        fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
-            panic!("the native trace supplies its own inventory ({project})")
-        }
-        fn inventory_until(
-            &mut self,
-            _: &Path,
-            project: &str,
-            _: Instant,
-        ) -> Observed<Vec<Workload>> {
-            panic!("the native trace supplies its own inventory ({project})")
-        }
-        fn image_id_until(&mut self, _: &Path, reference: &str, _: Instant) -> Observed<String> {
-            assert!(
-                reference == "alpine:3.19" || reference == "docker.io/library/alpine:3.19",
-                "the trace names one image: {reference}"
-            );
-            Observed::Verified(
-                self.image_id.clone(),
-                Evidence::new("native image inspect".to_owned(), None).expect("evidence"),
-            )
-        }
-        fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
-            panic!("a proof does not ask the raw backend about `{container_id}` in `{project}`")
-        }
     }
 
     /// A native trace, not a fake: the container below was created by
@@ -1140,14 +1090,7 @@ mod tests {
             .expect("completion")
             .with_timezone(&chrono::Utc);
         let mut after_images = images.clone();
-        let mut backend = NativeImages {
-            selection: selection(),
-            image_id: image_id.clone(),
-        };
         let refused = super::receipt(
-            &mut backend,
-            Path::new("/fixtures/checkout"),
-            Instant::now() + CREATION_WINDOW,
             &selection(),
             test_env("stack").resource,
             effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
@@ -1244,14 +1187,7 @@ mod tests {
             .expect("completion")
             .with_timezone(&chrono::Utc);
         let mut after_images = images.clone();
-        let mut backend = NativeImages {
-            selection: selection(),
-            image_id: middle_id,
-        };
         let refused = super::receipt(
-            &mut backend,
-            Path::new("/fixtures/checkout"),
-            Instant::now() + CREATION_WINDOW,
             &selection(),
             test_env("stack").resource,
             effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
