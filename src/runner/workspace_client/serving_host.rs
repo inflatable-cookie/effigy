@@ -620,10 +620,10 @@ fn durable_selection(
                 "the session's selection record is unreadable: {reason}"
             )))
         }
-        Observed::Absent(absent) => {
-            return Err(RunError::unavailable(format!(
-                "the session's journal is absent: {absent:?}"
-            )))
+        Observed::Absent(_) => {
+            return Err(RunError::unavailable(
+                "the session's journal is not recorded",
+            ))
         }
     };
     let effects = match effigy_kernel::run::effects(&reader, session.run()) {
@@ -633,10 +633,10 @@ fn durable_selection(
                 "the session's selection record is unreadable: {reason}"
             )))
         }
-        Observed::Absent(absent) => {
-            return Err(RunError::unavailable(format!(
-                "the session's selection record is absent: {absent:?}"
-            )))
+        Observed::Absent(_) => {
+            return Err(RunError::unavailable(
+                "the session's selection record is not recorded",
+            ))
         }
     };
     for effect in effects.iter().rev() {
