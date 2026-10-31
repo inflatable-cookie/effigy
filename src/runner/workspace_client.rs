@@ -143,16 +143,14 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
     // issued, and two separate terminals are two clients even when they share a
     // login session. A terminal with no controlling tty falls back to its session;
     // with neither, the client is refused by name rather than sharing a file.
-    if let Some(device) = controlling_terminal_device() {
-        return Ok(format!("tty-{device:x}"));
-    }
     terminal_client_identity(None, current_session())
 }
 
-/// The identity one terminal's commands share: its terminal DEVICE. A command
-/// with no terminal has no identity and is refused, because the only other
-/// candidates (its session, its process) are shared with, or change between,
-/// independent clients.
+/// The identity one terminal's commands share: the terminal DEVICE its own
+/// standard descriptors point at. A command whose descriptors are all redirected
+/// has no identity here and is refused, because every other candidate — its
+/// session, `/dev/tty` (whose device two terminals were measured sharing), its
+/// process — is shared between independent clients or changes between commands.
 ///
 /// The device number (`st_rdev`) is the one fact that identifies an individual
 /// terminal: every pty slave in a session can report the same filesystem inode and
@@ -196,30 +194,6 @@ fn descriptor_terminal_device() -> Option<u64> {
         }
     }
     None
-}
-
-/// The controlling terminal device of this process, when it has one.
-fn controlling_terminal_device() -> Option<u64> {
-    // SAFETY: open a fixed path with no flags that could take ownership of the
-    // terminal, then read that file's own name and metadata.
-    let fd = unsafe {
-        libc::open(
-            c"/dev/tty".as_ptr(),
-            libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return None;
-    }
-    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: fstat writes into the zeroed struct for the open descriptor.
-    let result = unsafe { libc::fstat(fd, &mut stat) };
-    // SAFETY: the descriptor was opened above and is not used again.
-    unsafe { libc::close(fd) };
-    if result != 0 || stat.st_rdev == 0 {
-        return None;
-    }
-    Some(stat.st_rdev as u64)
 }
 
 /// This process's session id, or a negative value when unavailable.
