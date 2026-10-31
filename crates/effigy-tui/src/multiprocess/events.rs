@@ -55,6 +55,9 @@ pub(super) fn drain_process_events(
                 true
             }
             ProcessEventKind::Started => {
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
+                    crate::terminal_text::ingest_generation_boundary(buffer);
+                }
                 // It has started, so it no longer waits: the tab follows the
                 // process's own state from here (effigy#458).
                 state.entry_waits.remove(&event_item.process);
@@ -88,6 +91,16 @@ pub(super) fn drain_process_events(
             | ProcessEventKind::StartupFailed => {}
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
                 handle_chunk_event(&event_item, state, diagnostics, vt_emulator_enabled)
+            }
+            ProcessEventKind::Styled => {
+                if let Ok(chunk) = serde_json::from_str::<effigy_core::terminal_text::StyledChunk>(
+                    &event_item.payload,
+                ) {
+                    if let Some(buffer) = state.logs.get_mut(&event_item.process) {
+                        crate::terminal_text::ingest_styled_chunk(buffer, chunk);
+                    }
+                    state.mark_process_received_output(&event_item.process);
+                }
             }
             ProcessEventKind::Stdout => {
                 if handle_stdout_event(&event_item, state, diagnostics, vt_emulator_enabled) {

@@ -10,17 +10,17 @@
 //! - where the supervisor writes the process's output
 //!   ([`crate::runner::host_process::host_process_log_path`]) and, for a
 //!   listener, the state file that says when it is ready;
-//! - the status line, derived from the supervisor's own log lines and that
-//!   state file, never from scraping a process tree;
+//! - the status line, derived from the owner journal and a generation-bound
+//!   listener record, never child log text or a process-tree scrape;
 //! - [`LogTail`], a bounded incremental reader for the log file, shared by the
 //!   TUI tabs and the `--headless` front end so both show the same lines.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::runner::host_process::{HostPaneIdentity, HostPaneObservation};
 use effigy_containers::{EffectiveContainerPolicy, HostProcessRestart};
 use effigy_tui::waits::{EntryPhase, EntryState};
-use serde::Deserialize;
 
 /// The most one log tail read returns, so a chatty process cannot stall a
 /// frame or a headless turn.
@@ -32,6 +32,7 @@ const LISTENER_POLL: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) name: String,
+    pub(in crate::runner) identity: Option<HostPaneIdentity>,
     pub(in crate::runner) log: PathBuf,
     /// The state file a listener publishes; `None` for a plain process.
     pub(in crate::runner) listener_state: Option<PathBuf>,
@@ -54,6 +55,7 @@ impl HostProcessTab {
             .iter()
             .map(|process| Self {
                 name: process.name.clone(),
+                identity: HostPaneIdentity::new(repo_root, policy, &process.name),
                 log: crate::runner::host_process::host_process_log_path(
                     repo_root,
                     policy,
@@ -92,8 +94,15 @@ impl HostProcessTab {
 pub(in crate::runner) enum HostStatus {
     /// The supervisor has not reported a generation yet.
     Starting,
+    LogReplaced,
+    LogUnavailable,
+    LogTruncated,
     /// A generation is running; a listener that is not serving yet waits here.
     Running,
+    Unavailable,
+    Failed,
+    Stopped,
+    Stopping,
     /// A listener reported its route: its live URL.
     Ready(String),
     /// The last generation exited and the restart policy replaces it.
@@ -122,7 +131,14 @@ impl HostStatus {
     pub(in crate::runner) fn line(&self) -> String {
         match self {
             Self::Starting => "starting".to_owned(),
+            Self::LogUnavailable => "output unavailable: canonical provenance is missing or changed; restart the host owner, then reopen this follower".to_owned(),
+            Self::LogReplaced => "output log replaced; reopened at byte zero (reopen older attached followers)".to_owned(),
+            Self::LogTruncated => "output follow stopped: invalid text or line buffer exceeded; inspect the canonical log before reopening".to_owned(),
             Self::Running => "running".to_owned(),
+            Self::Unavailable => "unavailable: no current ready owner generation".to_owned(),
+            Self::Failed => "failed".to_owned(),
+            Self::Stopped => "stopped".to_owned(),
+            Self::Stopping => "stopping".to_owned(),
             Self::Ready(url) => format!("ready on {url}"),
             Self::Restarting => "restarting".to_owned(),
             Self::Exited(code) => format!("exited {code}"),
@@ -132,53 +148,48 @@ impl HostStatus {
     }
 }
 
-/// The status a supervisor log line reports, if it reports one. The lines are
-/// the supervisor's own (`host_process.rs` writes them into the same log the
-/// tab follows), so this reads a stable internal contract, never process
-/// output a user's program printed.
-pub(in crate::runner) fn status_from_log_line(
-    tab: &HostProcessTab,
-    line: &str,
-) -> Option<HostStatus> {
-    const MARKERS: &str = "[effigy host-process]";
-    let reported = line.trim();
-    if !reported.starts_with(MARKERS) {
-        return None;
+/// Only typed owner/journal observations can change a pane's status.
+fn observed_status(tab: &HostProcessTab, view: &HostPaneObservation) -> HostStatus {
+    use effigy_kernel::run::Phase;
+    if view.phase == Phase::Closed {
+        return view
+            .exit
+            .map(HostStatus::Exited)
+            .unwrap_or(HostStatus::Stopped);
     }
-    if reported.contains("started `") {
-        return Some(HostStatus::Running);
+    if view.phase == Phase::Stopping {
+        return HostStatus::Stopping;
     }
-    if reported.contains("failed to spawn") {
-        return Some(HostStatus::Exited(127));
+    if !view.live {
+        return HostStatus::Unavailable;
     }
-    let code = reported
-        .split("exited (code ")
-        .nth(1)
-        .and_then(|rest| rest.split(')').next())
-        .and_then(|code| code.trim().parse::<i32>().ok())?;
-    Some(if tab.restarts_after(code) {
-        HostStatus::Restarting
+    if let Some(code) = view.exit {
+        return if tab.restarts_after(code) {
+            HostStatus::Restarting
+        } else {
+            HostStatus::Exited(code)
+        };
+    }
+    if let Some((status, url)) = &view.listener {
+        match status.as_str() {
+            "ready" => {
+                return url
+                    .clone()
+                    .map(HostStatus::Ready)
+                    .unwrap_or(HostStatus::Unavailable)
+            }
+            "unavailable" => return HostStatus::Unavailable,
+            "failed" => return HostStatus::Failed,
+            "stopped" => return HostStatus::Stopped,
+            "starting" => return HostStatus::Starting,
+            _ => {}
+        }
+    }
+    if matches!(view.phase, Phase::Admitted | Phase::Starting) {
+        HostStatus::Starting
     } else {
-        HostStatus::Exited(code)
-    })
-}
-
-/// A listener's live URL, once its state file says it is ready. A state file
-/// that is absent, mid-write or for a failed generation is no observation.
-pub(in crate::runner) fn ready_url(tab: &HostProcessTab) -> Option<String> {
-    #[derive(Deserialize)]
-    struct ListenerState {
-        status: String,
-        internal_url: Option<String>,
-        public_url: Option<String>,
+        HostStatus::Running
     }
-    let path = tab.listener_state.as_ref()?;
-    let raw = std::fs::read(path).ok()?;
-    let state: ListenerState = serde_json::from_slice(&raw).ok()?;
-    if state.status != "ready" {
-        return None;
-    }
-    state.public_url.or(state.internal_url)
 }
 
 /// One host process's followed log and status, as a front end renders it.
@@ -188,6 +199,7 @@ pub(in crate::runner) struct HostFollower {
     tail: LogTail,
     status: HostStatus,
     announced: bool,
+    log_refused: bool,
     /// Whether the tab has been told this process exists, so its startup
     /// projection stops waiting for it.
     started: bool,
@@ -198,7 +210,7 @@ pub(in crate::runner) struct HostFollower {
     /// settles an entry once it launched the process.
     settled: bool,
     /// Whether this process has been observed at all: one of its own published
-    /// records, a settled launch, a ready URL or a line from its log. Before
+    /// wait records, a settled launch or a typed owner observation. Before
     /// the first observation the tab reports no status, so no front end claims
     /// a process is starting while the bring-up has not reached it
     /// (effigy#458).
@@ -212,6 +224,7 @@ impl HostFollower {
             tail: LogTail::new(),
             status: HostStatus::Starting,
             announced: false,
+            log_refused: false,
             started: false,
             next_poll: std::time::Instant::now(),
             wait: None,
@@ -262,7 +275,7 @@ impl HostFollower {
     }
 
     /// This follower's status line, and whether it changed since the last
-    /// call. The first call always reports, so a tab opens with its state.
+    /// call. The first observed state reports; no record is not a start.
     fn take_status_change(&mut self, now: std::time::Instant) -> Option<HostStatus> {
         let mut changed = None;
         if now >= self.next_poll {
@@ -295,13 +308,18 @@ impl HostFollower {
                     return Some(status);
                 }
             }
-            if let Some(url) = ready_url(&self.tab) {
-                self.evidence = true;
-                let ready = HostStatus::Ready(url);
-                if ready != self.status {
-                    changed = Some(ready.clone());
-                    self.status = ready;
-                }
+            let observed = self
+                .tab
+                .identity
+                .as_ref()
+                .and_then(|identity| identity.read(self.tab.listener_state.as_deref()));
+            self.evidence |= observed.is_some();
+            let status = observed
+                .map(|view| observed_status(&self.tab, &view))
+                .unwrap_or(HostStatus::Unavailable);
+            if status != self.status {
+                changed = Some(status.clone());
+                self.status = status;
             }
         }
         // Nothing has observed this process yet: it has not been reported as
@@ -325,16 +343,49 @@ impl HostFollower {
         if let Some(status) = self.take_status_change(now) {
             poll.statuses.push(status);
         }
-        for line in self.tail.read(&self.tab.log) {
-            poll.lines.push(line.clone());
-            if let Some(status) = status_from_log_line(&self.tab, &line) {
-                self.evidence = true;
-                if status != self.status {
-                    self.status = status.clone();
-                    poll.statuses.push(status);
+        // Reject legacy paths before opening payload bytes. Identity is checked
+        // again after the bounded read so a raced replacement publishes none.
+        let before = match effigy_kernel::custody::MergedLog::identity(&self.tab.log) {
+            Ok(before) => before,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return poll,
+            Err(_) => {
+                if !self.evidence || self.wait_state().is_some() {
+                    return poll;
                 }
+                if !self.log_refused {
+                    poll.statuses.push(HostStatus::LogUnavailable);
+                }
+                self.log_refused = true;
+                return poll;
             }
+        };
+        if std::mem::take(&mut self.log_refused) {
+            poll.statuses.push(self.status.clone());
         }
+        let was_failed = self.tail.failed;
+        let lines = self
+            .tail
+            .read_verified(&self.tab.log, Some(before.identity));
+        let same = match effigy_kernel::custody::MergedLog::identity(&self.tab.log) {
+            Ok(after) => after.identity == before.identity,
+            // read_verified already checked the committed range and inode.
+            // A new append cannot invalidate that prefix or reset its cursor.
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
+            Err(_) => false,
+        };
+        if !same {
+            self.tail = LogTail::new();
+            poll.statuses.push(HostStatus::LogReplaced);
+            return poll;
+        }
+        poll.styled = std::mem::take(&mut self.tail.styled);
+        if self.tail.replaced {
+            poll.statuses.push(HostStatus::LogReplaced);
+        }
+        if self.tail.failed && !was_failed {
+            poll.statuses.push(HostStatus::LogTruncated);
+        }
+        poll.lines = lines;
         poll
     }
 }
@@ -344,6 +395,7 @@ impl HostFollower {
 pub(in crate::runner) struct HostPoll {
     pub(in crate::runner) lines: Vec<String>,
     pub(in crate::runner) statuses: Vec<HostStatus>,
+    pub(in crate::runner) styled: Vec<effigy_core::terminal_text::StyledChunk>,
 }
 
 /// A bounded incremental reader for one host process's log file. Lines are
@@ -352,7 +404,11 @@ pub(in crate::runner) struct HostPoll {
 #[derive(Debug, Default)]
 struct LogTail {
     offset: u64,
+    identity: Option<(u64, u64)>,
+    replaced: bool,
+    failed: bool,
     partial: Vec<u8>,
+    styled: Vec<effigy_core::terminal_text::StyledChunk>,
 }
 
 impl LogTail {
@@ -360,19 +416,44 @@ impl LogTail {
         Self::default()
     }
 
+    #[cfg(test)]
     fn read(&mut self, path: &Path) -> Vec<String> {
+        self.read_verified(path, None)
+    }
+
+    fn read_verified(
+        &mut self,
+        path: &Path,
+        expected: Option<effigy_kernel::custody::FileIdentity>,
+    ) -> Vec<String> {
         use std::io::{Read as _, Seek as _, SeekFrom};
 
-        let Ok(mut file) = std::fs::File::open(path) else {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+        else {
             return Vec::new();
         };
         let Ok(metadata) = file.metadata() else {
             return Vec::new();
         };
-        if metadata.len() < self.offset {
-            // A new generation opened the log again from the start.
+        use std::os::unix::fs::MetadataExt as _;
+        let identity = (metadata.dev(), metadata.ino());
+        if !metadata.is_file() || expected.is_some_and(|id| (id.device, id.inode) != identity) {
+            return Vec::new();
+        }
+        self.replaced =
+            self.identity.is_some_and(|prior| prior != identity) || metadata.len() < self.offset;
+        if self.replaced {
             self.offset = 0;
             self.partial.clear();
+            self.failed = false;
+        }
+        self.identity = Some(identity);
+        if self.failed {
+            return Vec::new();
         }
         if metadata.len() == self.offset {
             return Vec::new();
@@ -384,16 +465,47 @@ impl LogTail {
         if file.take(READ_MAX as u64).read_to_end(&mut chunk).is_err() {
             return Vec::new();
         }
+        if let Some(id) = expected {
+            // Re-open through the provenance gate; exact range matching avoids
+            // exposing a raced legacy/replacement descriptor or stale styles.
+            let Ok(read) = effigy_kernel::custody::MergedLog::read_plain(
+                path,
+                Some(id),
+                self.offset,
+                chunk.len(),
+            ) else {
+                return Vec::new();
+            };
+            if read.cutover || !chunk.starts_with(&read.bytes) {
+                return Vec::new();
+            }
+            chunk = read.bytes.clone();
+            let spans = effigy_kernel::custody::MergedLog::styles(path, &read);
+            self.styled.push(effigy_core::terminal_text::StyledChunk {
+                offset: self.offset,
+                spans,
+            });
+        }
         self.offset += chunk.len() as u64;
-        self.partial.extend_from_slice(&chunk);
         let mut lines = Vec::new();
-        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
-            let line = self.partial.drain(..=end).collect::<Vec<u8>>();
-            lines.push(
-                String::from_utf8_lossy(&line)
-                    .trim_end_matches(['\n', '\r'])
-                    .to_owned(),
-            );
+        for byte in chunk {
+            if self.partial.len() == READ_MAX {
+                self.partial.clear();
+                self.failed = true;
+                return Vec::new();
+            }
+            self.partial.push(byte);
+            if byte == b'\n' {
+                let Ok(line) = String::from_utf8(std::mem::take(&mut self.partial)) else {
+                    self.failed = true;
+                    return Vec::new();
+                };
+                if line.chars().any(|ch| ch.is_control() && ch != '\n') {
+                    self.failed = true;
+                    return Vec::new();
+                }
+                lines.push(line.trim_end_matches('\n').to_owned());
+            }
         }
         lines
     }
@@ -406,6 +518,7 @@ mod tests {
     fn tab(restart: HostProcessRestart, listener_state: Option<PathBuf>) -> HostProcessTab {
         HostProcessTab {
             name: "api".to_owned(),
+            identity: None,
             log: PathBuf::from("/nonexistent/api.log"),
             listener_state,
             restart,
@@ -418,63 +531,48 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_log_lines_report_start_restart_and_exit() {
-        let always = tab(HostProcessRestart::Always, None);
+    fn typed_owner_status_clears_ready_for_unavailable_and_terminal_states() {
+        let tab = tab(HostProcessRestart::OnFailure, None);
+        let mut view = HostPaneObservation {
+            phase: effigy_kernel::run::Phase::Active,
+            live: true,
+            exit: None,
+            listener: Some(("ready".into(), Some("https://api.test".into()))),
+        };
         assert_eq!(
-            status_from_log_line(&always, "[effigy host-process] started `api` (pid 12)"),
-            Some(HostStatus::Running)
+            observed_status(&tab, &view),
+            HostStatus::Ready("https://api.test".into())
         );
+        view.listener = Some(("unavailable".into(), None));
+        assert_eq!(observed_status(&tab, &view), HostStatus::Unavailable);
+        view.listener = Some(("ready".into(), Some("https://api.test".into())));
         assert_eq!(
-            status_from_log_line(&always, "[effigy host-process] `api` exited (code 3)"),
-            Some(HostStatus::Restarting)
+            observed_status(&tab, &view),
+            HostStatus::Ready("https://api.test".into())
         );
-        let never = tab(HostProcessRestart::Never, None);
-        assert_eq!(
-            status_from_log_line(&never, "[effigy host-process] `api` exited (code 3)"),
-            Some(HostStatus::Exited(3))
-        );
-        let on_failure = tab(HostProcessRestart::OnFailure, None);
-        assert_eq!(
-            status_from_log_line(&on_failure, "[effigy host-process] `api` exited (code 0)"),
-            Some(HostStatus::Exited(0)),
-            "a clean exit is not a failure the policy replaces"
-        );
-        assert_eq!(
-            status_from_log_line(
-                &on_failure,
-                "[effigy host-process] failed to spawn `x`: nope"
-            ),
-            Some(HostStatus::Exited(127))
-        );
+        for (state, status) in [
+            ("failed", HostStatus::Failed),
+            ("stopped", HostStatus::Stopped),
+        ] {
+            view.listener = Some((state.into(), None));
+            assert_eq!(observed_status(&tab, &view), status);
+        }
+        view.listener = None;
+        assert_eq!(observed_status(&tab, &view), HostStatus::Running);
     }
-
     #[test]
-    fn a_programs_own_line_is_never_a_status() {
-        let tab = tab(HostProcessRestart::Never, None);
-        assert_eq!(status_from_log_line(&tab, "listening on :3000"), None);
+    fn child_owner_marker_spoofs_never_change_status() {
+        let mut follower = HostFollower::new(tab(HostProcessRestart::Never, None));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spoof.log");
+        std::fs::write(&path, "[effigy host-process] `api` exited (code 0)\n").unwrap();
+        // Log parsing returns display bytes only; lifecycle observation has no
+        // log-text input, including a forged marker at the beginning of a line.
         assert_eq!(
-            status_from_log_line(&tab, "my app: [effigy host-process] started `x`"),
-            None
+            follower.tail.read(&path),
+            ["[effigy host-process] `api` exited (code 0)"]
         );
-    }
-
-    #[test]
-    fn a_listener_state_file_names_its_ready_url() {
-        let dir = tempfile::tempdir().expect("state dir");
-        let state = dir.path().join("api.listener.json");
-        std::fs::write(&state, r#"{"status":"starting"}"#).expect("starting state");
-        let tab = tab(HostProcessRestart::Never, Some(state.clone()));
-        assert_eq!(ready_url(&tab), None, "a starting listener is not ready");
-
-        std::fs::write(
-            &state,
-            r#"{"status":"ready","public_url":"https://api.test","internal_url":"http://127.0.0.1:5000"}"#,
-        )
-        .expect("ready state");
-        assert_eq!(ready_url(&tab).as_deref(), Some("https://api.test"));
-
-        std::fs::write(&state, "{ truncated").expect("torn state");
-        assert_eq!(ready_url(&tab), None, "a torn state file is no observation");
+        assert_eq!(follower.status, HostStatus::Starting);
     }
 
     /// No observation is not a start: a host the bring-up has not reached yet
@@ -802,5 +900,33 @@ mod tests {
 
         std::fs::write(&log, "fresh\n").expect("truncate for a new generation");
         assert_eq!(tail.read(&log), vec!["fresh".to_owned()]);
+    }
+    #[test]
+    fn larger_replacement_resets_partial_text_and_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("api.log");
+        std::fs::write(&log, "old\npartial").unwrap();
+        let mut tail = LogTail::new();
+        assert_eq!(tail.read(&log), ["old"]);
+        let replacement = dir.path().join("new");
+        std::fs::write(&replacement, "safe replacement grows beyond old offset\n").unwrap();
+        std::fs::rename(replacement, &log).unwrap();
+        assert_eq!(
+            tail.read(&log),
+            ["safe replacement grows beyond old offset"]
+        );
+        assert!(tail.replaced);
+        assert!(tail.partial.is_empty());
+    }
+    #[test]
+    fn huge_line_is_a_bounded_explicit_follow_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("api.log");
+        std::fs::write(&log, vec![b'x'; READ_MAX + 1]).unwrap();
+        let mut tail = LogTail::new();
+        assert!(tail.read(&log).is_empty());
+        assert!(tail.read(&log).is_empty());
+        assert!(tail.failed);
+        assert!(tail.partial.len() <= READ_MAX);
     }
 }

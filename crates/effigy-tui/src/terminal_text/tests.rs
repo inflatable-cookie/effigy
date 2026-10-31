@@ -174,3 +174,58 @@ fn vt_logs_do_not_rewrap_terminal_rows_to_narrow_panel_width() {
         "expected full terminal row to survive narrow pane rendering: {rendered:?}"
     );
 }
+
+#[test]
+fn typed_writer_spans_keep_text_style_and_partial_chunk_boundaries() {
+    use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+    let green =
+        effigy_core::terminal_text::style::apply_sgr(Default::default(), "32", Default::default());
+    let mut buffer = VecDeque::new();
+    for (offset, text, style) in [
+        (0, "rea", green),
+        (3, "dy\n", green),
+        (6, "[REDACTED]\n", Default::default()),
+    ] {
+        super::ingest_styled_chunk(
+            &mut buffer,
+            StyledChunk {
+                offset,
+                spans: vec![StyledSpan {
+                    text: text.into(),
+                    style,
+                }],
+            },
+        );
+    }
+    assert_eq!(buffer.len(), 2);
+    assert_eq!(buffer[0].line, "ready\n");
+    assert_eq!(buffer[0].styles.as_ref().unwrap()[0].style, green);
+    assert_eq!(buffer[1].line, "[REDACTED]\n");
+    assert_eq!(
+        buffer[1].styles.as_ref().unwrap()[0].style,
+        Default::default()
+    );
+}
+
+#[test]
+fn a_restarted_producer_cannot_complete_the_previous_typed_partial_line() {
+    use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+    let chunk = |text: &str| StyledChunk {
+        offset: 0,
+        spans: vec![StyledSpan {
+            text: text.into(),
+            style: Default::default(),
+        }],
+    };
+    let mut buffer = VecDeque::new();
+    super::ingest_styled_chunk(&mut buffer, chunk("super"));
+    super::ingest_generation_boundary(&mut buffer);
+    super::ingest_styled_chunk(&mut buffer, chunk("secret\n"));
+    assert_eq!(buffer.len(), 3);
+    assert_eq!(buffer[0].line, "super");
+    assert!(buffer[1].line.contains("generation changed"));
+    assert_eq!(buffer[2].line, "secret\n");
+    assert!(buffer
+        .iter()
+        .all(|entry| !entry.line.contains("supersecret")));
+}

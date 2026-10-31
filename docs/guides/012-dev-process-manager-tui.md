@@ -45,6 +45,26 @@ effigy dev stop
 - On non-interactive terminals, Effigy renders a managed plan summary or stream
   output depending on task/runtime state.
 
+Managed Cargo/Oxide producers use the initiating ANSI pane capability and
+respect `NO_COLOR`, CI and explicit colour preferences. Their canonical logs
+contain sanitized, redacted plain text; panes receive optional typed styles
+from the same writer result. A missing or expired style window renders plain
+text, and plain/JSON readers do not interpret terminal controls.
+Effigy readers show only the committed extent. A failed or interrupted append
+stops capture and can refuse restart; preserve its files for operator recovery.
+Underlay and direct file reads are presentation-only: they can show a safe line
+awaiting sync that is later lost on crash, and acknowledge no durability.
+
+On the first host-process start after upgrading from the raw-log writer,
+Effigy settles the prior owner, retains its old log in private
+`.legacy-host-logs` quarantine, and creates a fresh inode at the same public
+log path. **Stop and reopen pre-upgrade attached log followers after upgrading.**
+An already-open POSIX descriptor cannot be revoked by that rename. The bundled
+Underlay follower detects the new inode and reports a log-restarted gap,
+including when the replacement grew beyond the old byte offset. Old bytes
+are not replayed, and continuity across this one-time transition is not
+promised. Quarantined data is retained for explicit operator handling.
+
 ## 2) Two Valid Shapes
 
 There are now two honest ways to use managed sessions.

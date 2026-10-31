@@ -1,7 +1,6 @@
 mod line;
 mod normalize;
 mod parse;
-mod style;
 #[cfg(test)]
 mod tests;
 

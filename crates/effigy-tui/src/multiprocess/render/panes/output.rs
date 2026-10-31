@@ -129,6 +129,14 @@ fn waiting_label(startup_state: ProcessStartupState) -> &'static str {
 }
 
 fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
+    if let Some(spans) = &entry.styles {
+        return Line::from(
+            spans
+                .iter()
+                .map(|span| Span::styled(span.text.trim_end_matches('\n').to_owned(), span.style))
+                .collect::<Vec<_>>(),
+        );
+    }
     match entry.kind {
         LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
         LogEntryKind::Stderr => ansi_line(&entry.line, Style::default()),

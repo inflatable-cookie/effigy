@@ -26,6 +26,7 @@ mod format_command;
 mod gateway_command;
 mod host_process;
 mod interactive_session;
+mod managed_color;
 mod managed_listener_readiness;
 mod managed_run;
 mod managed_secrets;

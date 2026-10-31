@@ -9,14 +9,17 @@ use super::super::output::{output_lines, waiting_for_output_lines};
 fn output_lines_include_runtime_meta_for_non_shell_processes() {
     let logs = vec![
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: "hello".to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stderr,
             line: "oops".to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Exit,
             line: "code=1".to_owned(),
         },
@@ -33,11 +36,13 @@ fn output_lines_include_runtime_meta_for_non_shell_processes() {
 fn output_lines_render_stderr_lines_plainly() {
     let logs = vec![
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stderr,
             line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
                 .to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stderr,
             line: "     Running `target/debug/acme-api`".to_owned(),
         },
@@ -58,6 +63,7 @@ fn output_lines_render_stderr_lines_plainly() {
 #[test]
 fn output_lines_skip_runtime_meta_for_shell_processes() {
     let logs = vec![LogEntry {
+        styles: None,
         kind: LogEntryKind::Stdout,
         line: "shell-output".to_owned(),
     }];
@@ -83,6 +89,33 @@ fn waiting_for_output_lines_uses_spinner_frame_and_message() {
         lines[1].spans[1].content.as_ref(),
         " waiting for first output..."
     );
+}
+
+#[test]
+fn output_lines_render_writer_styles_without_ansi_bytes() {
+    use effigy_core::terminal_text::StyledSpan;
+    let green =
+        effigy_core::terminal_text::style::apply_sgr(Default::default(), "32", Default::default());
+    let logs = vec![LogEntry {
+        kind: LogEntryKind::Stdout,
+        line: "ready [REDACTED]\n".into(),
+        styles: Some(vec![
+            StyledSpan {
+                text: "ready ".into(),
+                style: green,
+            },
+            StyledSpan {
+                text: "[REDACTED]\n".into(),
+                style: Default::default(),
+            },
+        ]),
+    }];
+    let lines = output_lines(&logs, true, Duration::ZERO, 0);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].spans[0].style, green);
+    assert_eq!(lines[0].spans[0].content, "ready ");
+    assert_eq!(lines[0].spans[1].style, Default::default());
+    assert_eq!(lines[0].spans[1].content, "[REDACTED]");
 }
 
 #[test]

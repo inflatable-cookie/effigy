@@ -51,8 +51,23 @@ when the real cause was two named services failing their health checks.
   each step ends with a one-line success or failure. Spinners write to stderr
   and never appear in `--json`, piped or non-terminal output. A managed TUI
   owns its screen: nested Effigy processes in its panes use plain start and
-  finish lines without banners or spinner redraws. Application output remains
-  unfiltered.
+  finish lines without banners or spinner redraws.
+- **Managed producer colour belongs behind custody.** Tom reversed the v0.16
+  colour deferral on 2026-10-30: Cargo/Oxide colour in ANSI-capable managed
+  panes is a v0.15 requirement. The canonical host log must contain only
+  writer-sanitized, writer-redacted plain text; live style is separate data
+  from that same parsed/redacted stream. Underlay's path/offset follower must
+  continue to read that plain file directly. Reader-time normalization,
+  inherited raw child log descriptors and unclassified known secrets do not
+  satisfy this boundary. Producer colour must remain disabled until the
+  fault/security harness, strict touched-crate Clippy and independent exhaustive
+  review qualify the boundary. Host supervisor message appends and environment
+  provenance still require that qualification; a child-pipe capture alone is
+  insufficient.
+  Tom's same-day durability ruling distinguishes presentation from commit:
+  Effigy-owned readers honor the durable committed extent and hide failed or
+  torn suffixes; Underlay/direct file reads can show already-safe bytes awaiting
+  sync, acknowledge no durability and may show a line later lost on crash.
 - **A spinner must carry live state.** Tom confirmed on 2026-10-29 that a
   canned label fixed for the whole wait is noise. Show the current sub-step or
   object (service, image, dependency, layer or gate), known counts or ratios,

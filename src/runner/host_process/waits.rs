@@ -1177,6 +1177,7 @@ mod environment_tests {
     ) -> crate::runner::managed_run::HostFollower {
         let ledger = WaitLedger::environment(checkout, ENVIRONMENT);
         crate::runner::managed_run::HostFollower::new(crate::runner::managed_run::HostProcessTab {
+            identity: None,
             name: entry.to_owned(),
             log: std::path::PathBuf::from(format!("/nonexistent/{entry}.log")),
             listener_state: None,
