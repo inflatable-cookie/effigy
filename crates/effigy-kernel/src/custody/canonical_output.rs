@@ -66,6 +66,7 @@ struct Writer {
     queue_max: usize,
     tail_max: usize,
     truncated: bool,
+    capture_truncated: bool,
     failed: bool,
     finished: bool,
 }
@@ -164,13 +165,14 @@ impl CanonicalOutput {
             queue_max,
             tail_max,
             truncated: false,
+            capture_truncated: false,
             failed: blocked,
             finished: false,
         }))))
     }
     pub(super) fn validate(&self, spec: &ProcessSpec) -> io::Result<()> {
         let writer = lock(&self.0);
-        if writer.failed || writer.finished {
+        if writer.failed || writer.finished || writer.log.incomplete() {
             return Err(io::Error::other(
                 "host canonical capture is closed or failed",
             ));
@@ -239,6 +241,30 @@ impl CanonicalOutput {
         writer.finished = true;
         Ok(())
     }
+    /// A closed generation may omit unread pipe bytes at its drain bound.
+    /// Reset only terminal framing, retaining the SAME merged redactor and
+    /// its held secret prefixes across the gap. No suffix can complete an old
+    /// CSI/OSC or scalar, and no reader needs to repair the persisted text.
+    pub(crate) fn abandon_generation(&self) -> io::Result<()> {
+        let mut writer = lock(&self.0);
+        writer.check()?;
+        if !matches!(&writer.log, Destination::Host(_)) {
+            writer.failed = true;
+            writer.log.mark_failed();
+            return Err(io::Error::other("non-host capture drain was truncated"));
+        }
+        let clean = writer.pipeline.push_terminal(&[], true, false);
+        writer.commit(clean, false)?;
+        writer.capture_truncated = true;
+        writer.truncated = true;
+        Ok(())
+    }
+    /// A failed append/provenance boundary stops the producer. A bounded
+    /// generation drain gap is reported as Truncated but permits restart.
+    pub fn is_failed(&self) -> bool {
+        let writer = lock(&self.0);
+        writer.failed || writer.log.incomplete()
+    }
     pub(crate) fn fail(&self) {
         let mut writer = lock(&self.0);
         writer.failed = true;
@@ -248,6 +274,8 @@ impl CanonicalOutput {
         let writer = lock(&self.0);
         if writer.failed || writer.log.incomplete() {
             CaptureState::Truncated("canonical capture failed".into())
+        } else if writer.capture_truncated {
+            CaptureState::Truncated("generation capture drain omitted unread bytes".into())
         } else {
             CaptureState::Complete
         }

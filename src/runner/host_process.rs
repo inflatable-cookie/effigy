@@ -1490,12 +1490,11 @@ fn stop_requested(
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
     spec: &HostProcessRuntimeSpec,
 ) -> bool {
-    if spec.output.as_ref().is_some_and(|output| {
-        matches!(
-            output.capture_state(),
-            effigy_kernel::custody::CaptureState::Truncated(_)
-        )
-    }) {
+    if spec
+        .output
+        .as_ref()
+        .is_some_and(|output| output.is_failed())
+    {
         return true;
     }
     if !crate::runner::task_engine::routed_signals().is_empty() {
@@ -1638,8 +1637,19 @@ fn stop_generation(
         capture_truncated: matches!(
             report.capture,
             effigy_kernel::custody::CaptureState::Truncated(_)
-        ),
+        ) || spec.output.as_ref().is_some_and(|output| {
+            matches!(
+                output.capture_state(),
+                effigy_kernel::custody::CaptureState::Truncated(_)
+            )
+        }),
     };
+    if matches!(
+        report.capture,
+        effigy_kernel::custody::CaptureState::Truncated(_)
+    ) {
+        append_log_line(spec.output.as_ref(), "[effigy host-process] capture truncated while draining this generation; terminal framing reset, declared restart policy still applies");
+    }
     if let Some(exit) = exit {
         let _ = child.complete(run, effigy_kernel::custody::Exit { code: exit });
     }
@@ -1755,10 +1765,11 @@ fn classify_environment(
                     .windows(secret.len())
                     .any(|bytes| bytes == secret)
             });
-            let plain = schema
-                .get(name)
-                .map(|secret| !secret)
-                .unwrap_or_else(|| literals.contains_key(name) || nonsecret_host_environment(name));
+            let plain = schema.get(name).map(|secret| !secret).unwrap_or_else(|| {
+                literals.contains_key(name)
+                    || nonsecret_host_environment(name)
+                    || nonsecret_launcher_flag(name, &value)
+            });
             let value = if value.is_empty() || (plain && !contains_secret) {
                 EnvValue::Plain(value)
             } else {
@@ -1767,6 +1778,16 @@ fn classify_environment(
             Ok((key, value))
         })
         .collect()
+}
+
+/// These launcher switches have a closed boolean domain, not application or
+/// credential provenance. Unexpected values still fail closed as secrets;
+/// schema sensitivity and aliases of known secrets take precedence above.
+fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
+    matches!(
+        name,
+        "CLAUDECODE" | "AI_AGENT" | "COREPACK_ENABLE_AUTO_PIN" | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
+    ) && matches!(value.to_str(), Some("0" | "1" | "true" | "false"))
 }
 
 /// Only transport/session facts with established non-secret meaning. All
@@ -1814,6 +1835,10 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "OSLogRateLimit"
             | "NoDefaultCurrentDirectoryInExePath"
             | "LESS"
+            | "PASEO_AGENT_CWD"
+            | "PASEO_AGENT_ID"
+            | "PASEO_CLI"
+            | "PASEO_HOME"
             | "CODEX_CI"
             | "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS"
             | "LC_ALL"
@@ -2807,6 +2832,63 @@ mod tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn launcher_flags_preserve_provenance_without_refusing_ordinary_argv() {
+        use effigy_kernel::custody::EnvValue;
+        let flags = [
+            ("CLAUDECODE", "1"),
+            ("AI_AGENT", "1"),
+            ("COREPACK_ENABLE_AUTO_PIN", "0"),
+            ("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"),
+            ("PASEO_AGENT_ID", "agent-id"),
+        ];
+        let environment = || {
+            flags
+                .into_iter()
+                .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
+                .collect()
+        };
+        let classified =
+            super::classify_environment(environment(), &Default::default(), &Default::default())
+                .unwrap();
+        assert!(classified
+            .values()
+            .all(|value| matches!(value, EnvValue::Plain(_))));
+        let sensitive = super::classify_environment(
+            environment(),
+            &Default::default(),
+            &[("CLAUDECODE".into(), true)].into_iter().collect(),
+        )
+        .unwrap();
+        assert!(matches!(
+            sensitive.get(std::ffi::OsStr::new("CLAUDECODE")),
+            Some(EnvValue::Secret(_))
+        ));
+        // The same known secret value cannot be declassified through an alias.
+        assert!(matches!(
+            sensitive.get(std::ffi::OsStr::new("AI_AGENT")),
+            Some(EnvValue::Secret(_))
+        ));
+        let suspicious = super::classify_environment(
+            [
+                (
+                    "CLAUDECODE".into(),
+                    EnvValue::Plain("credential-value".into()),
+                ),
+                ("CLAUDE_TOKEN".into(), EnvValue::Plain("1".into())),
+                ("PASEO_TOKEN".into(), EnvValue::Plain("0".into())),
+            ]
+            .into_iter()
+            .collect(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(suspicious
+            .values()
+            .all(|value| matches!(value, EnvValue::Secret(_))));
     }
 
     use super::*;

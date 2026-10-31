@@ -1343,8 +1343,12 @@ uses that same writer; it never filters the result back into separate streams.
 A sequence-0 setup failure nulls both descriptors and records a typed journal
 capture-truncation effect before setup may continue; its readers report
 `Truncated` with no payload. Failure to make descriptors safe or record that
-state refuses startup. A drain timeout poisons the shared writer, preventing a
-successor from inheriting unfinished CSI/OSC state. Unsupported redaction
+state refuses startup. A host generation drain timeout closes both old pipes,
+resets terminal framing through the existing EOF path, retains the same merged
+redactor and held secret prefixes, and records Truncated without overriding the
+declared restart policy. Its successor cannot inherit unfinished CSI/OSC/CR or
+UTF-8 framing. A failed append/provenance boundary still poisons the writer and
+refuses further generations; a drain gap alone does not. Unsupported redaction
 replacement disables Standard capture without changing the workload outcome.
 A producer restart frames an unfinished pane line as a generation boundary,
 so a new generation cannot complete an old partial value. Ordinary
@@ -1405,6 +1409,13 @@ canonical offsets and never replays an untrusted prefix. A pane uses styles
 only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
+
+Launcher boolean metadata (`CLAUDECODE`, `AI_AGENT` and the named Corepack
+switches) has a closed recognized value domain. Unexpected values and unknown
+launcher-prefixed names remain secret; no prefix-wide exemption is used.
+Explicit schema sensitivity and aliases containing a known secret override all
+metadata exceptions. This avoids treating ordinary `0`/`1` flags as secret argv
+substrings without weakening the custody argv guard.
 
 The initiating TUI capability is non-secret and fixed before detached host
 handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI

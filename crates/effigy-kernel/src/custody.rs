@@ -1266,11 +1266,14 @@ impl ProcessCore {
         self.stdout = None;
         self.stderr = None;
         self.capture_eof_sent = true;
-        // Unobserved bytes may finish a held secret or terminal control.
-        // Poison the shared host writer rather than carrying that state into
-        // a successor generation or flushing a potentially joinable prefix.
+        // Both old pipes are closed. Reset terminal framing at this generation
+        // boundary while retaining merged secret lookahead for its successor.
+        // Real writer/provenance failure remains fatal; truncation alone does
+        // not override the host's declared restart policy.
         if let Some(output) = &self.canonical_output {
-            output.fail();
+            if output.abandon_generation().is_err() {
+                output.fail();
+            }
         }
     }
     /// One sanitize-then-redact over both streams in arrival order, before any

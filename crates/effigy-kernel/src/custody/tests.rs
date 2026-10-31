@@ -2252,8 +2252,13 @@ fn merged_log_is_plain_redacted_and_committed_before_fanout() {
 }
 
 #[test]
-fn timed_out_drain_poison_prevents_a_successor_from_inheriting_terminal_state() {
-    for partial in [b"super\x1b[".as_slice(), b"super\x1b]unfinished".as_slice()] {
+fn timed_out_drain_resets_terminal_framing_and_preserves_restart_redaction() {
+    for partial in [
+        b"super\x1b[".as_slice(),
+        b"super\x1b]unfinished".as_slice(),
+        b"super\r".as_slice(),
+        b"super\xc3".as_slice(),
+    ] {
         let cx = cx();
         let capture = FakeCapture::new(home(), &cx, vec![]);
         let path = capture._home.path().join("canonical.log");
@@ -2268,7 +2273,8 @@ fn timed_out_drain_poison_prevents_a_successor_from_inheriting_terminal_state() 
         capture.feed(STD, b"safe\n");
         capture.feed(STD, partial);
         lock(&capture.core).abandon_capture("drain deadline");
-        capture.feed(ERR, b"31msecret\nnext generation\n");
+        let successor = FakeCapture::new(home(), &cx, vec![]);
+        lock(&successor.core).canonical_output = Some(output.clone());
         let next = ProcessSpec {
             argv: vec!["/bin/true".into()],
             cwd: capture._home.path().into(),
@@ -2278,14 +2284,95 @@ fn timed_out_drain_poison_prevents_a_successor_from_inheriting_terminal_state() 
             terminal: Terminal::None,
             label: "successor".into(),
         };
-        assert!(output.validate(&next).is_err());
+        assert!(output.validate(&next).is_ok());
+        assert!(!output.is_failed());
+        successor.feed(ERR, b"secret\nnext generation\n");
+        successor.close();
         assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
-        assert_eq!(
-            MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
-            b"safe\n"
-        );
-        assert_eq!(capture.merged(), b"safe\n");
+        assert!(matches!(output.capture_state(), CaptureState::Truncated(_)));
+        assert!(!output.is_failed());
+        let read = MergedLog::read_plain(&path, None, 0, 4096).unwrap();
+        assert_eq!(read.bytes, b"safe\n[REDACTED]\nnext generation\n");
+        assert_eq!(capture.merged(), read.bytes);
+        assert!(output.take_styled_output().truncated);
     }
+}
+
+#[test]
+fn a_truncated_host_generation_can_spawn_a_safe_real_successor() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let path = home.path().join("canonical.log");
+    let output = CanonicalOutput::with_secrets(
+        MergedLog::prepare_test(&path).unwrap(),
+        vec![b"supersecret".to_vec()],
+        4096,
+        4096,
+    )
+    .unwrap();
+    let spec = |script: &str| ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        cwd: home.path().into(),
+        env: BTreeMap::from([(
+            "TOKEN".into(),
+            EnvValue::Secret(SecretValue::new(b"supersecret".to_vec()).unwrap()),
+        )]),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Open(OpenReason::DevServer),
+        terminal: Terminal::None,
+        label: "host generation".into(),
+    };
+    let mut first = Custody::spawn_logged_auxiliary(
+        &mut run,
+        spec("printf 'safe\\nsuper\\033]unfinished'; exec /bin/sleep 60"),
+        &cx,
+        output.clone(),
+    )
+    .unwrap();
+    wait(|| {
+        lock(&first.core).poll();
+        output.tail() == b"safe\n"
+    });
+    // Deterministic drain-deadline boundary: close the generation's owned
+    // descriptors while its parser still holds OSC and its redactor `super`.
+    lock(&first.core).abandon_capture("drain deadline");
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let first_report = first.stop(&cleanup);
+    if let Some(exit) = first_report.leader.verified() {
+        first.complete(&mut run, *exit).unwrap();
+    }
+    assert!(matches!(first_report.capture, CaptureState::Truncated(_)));
+    assert!(!output.is_failed());
+    let mut next = Custody::spawn_logged_auxiliary(
+        &mut run,
+        spec("printf 'secret\\nnext generation\\n'"),
+        &cx,
+        output.clone(),
+    )
+    .unwrap();
+    let exit = next.wait(cx.operation()).verified().copied();
+    let next_report = next.stop(&cleanup);
+    if let Some(exit) = exit {
+        next.complete(&mut run, exit).unwrap();
+    }
+    output.finish().unwrap();
+    run.settle(&cleanup, &mut Strict).unwrap();
+    assert_eq!(exit, Some(Exit { code: 0 }));
+    assert!(matches!(
+        first_report.group,
+        Observed::Verified(..) | Observed::Absent(_)
+    ));
+    assert!(matches!(
+        next_report.group,
+        Observed::Verified(..) | Observed::Absent(_)
+    ));
+    assert!(matches!(output.capture_state(), CaptureState::Truncated(_)));
+    assert_eq!(
+        MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
+        b"safe\n[REDACTED]\nnext generation\n"
+    );
 }
 
 #[cfg(feature = "fault-injection")]
