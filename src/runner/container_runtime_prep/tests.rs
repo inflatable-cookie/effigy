@@ -1202,3 +1202,333 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
         }
     }
 }
+
+// ------------------------------------------------- observed image platform
+
+#[test]
+fn the_observed_image_platform_reads_the_backend_report_and_refuses_the_rest() {
+    let container = br#"[{"Id": "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4", "Image": "sha256:abc"}]"#;
+    let image = br#"[{"Os": "linux", "Architecture": "arm64", "Variant": "v8"}]"#;
+    assert_eq!(
+        super::image_reference(container).expect("the container names its image"),
+        "sha256:abc"
+    );
+    assert_eq!(
+        super::parse_image_platform(image).expect("a complete image report"),
+        super::ObservedImagePlatform {
+            os: "linux".into(),
+            architecture: "arm64".into(),
+            variant: "v8".into(),
+        }
+    );
+    // An image that reports no variant is that image's answer, not an omission
+    // this host may fill in.
+    assert_eq!(
+        super::parse_image_platform(br#"[{"Os": "linux", "Architecture": "amd64"}]"#)
+            .expect("variant is optional")
+            .variant,
+        ""
+    );
+    // A container record that names no image, and an image record with no OS or
+    // architecture, are unknown rather than defaulted.
+    assert!(super::image_reference(br#"[{"Id": "9d1c"}]"#).is_err());
+    assert!(super::image_reference(b"not json").is_err());
+    assert!(super::parse_image_platform(br#"[{"Os": "linux"}]"#).is_err());
+    assert!(super::parse_image_platform(br#"[{"Os": "linux", "Architecture": 7}]"#).is_err());
+    assert!(super::parse_image_platform(b"[]").is_err());
+}
+
+// ------------------------------------------- live predecessor evidence
+
+#[test]
+fn the_compose_config_hash_parser_keeps_the_backends_own_pairs() {
+    let parsed =
+        super::parse_service_config_hashes(b"app 0123456789abcdef\nworker fedcba9876543210\n")
+            .expect("one pair per service");
+    assert_eq!(
+        parsed.get("app").map(String::as_str),
+        Some("0123456789abcdef")
+    );
+    assert_eq!(
+        parsed.get("worker").map(String::as_str),
+        Some("fedcba9876543210")
+    );
+    // An unsupported or empty answer is never treated as compatible.
+    assert!(super::parse_service_config_hashes(b"").is_err());
+    assert!(super::parse_service_config_hashes(b"app\n").is_err());
+    assert!(super::parse_service_config_hashes(b" app   \n").is_err());
+}
+
+#[test]
+fn the_inspected_config_hash_needs_a_service_and_a_hash() {
+    let inspect = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app", "com.docker.compose.config-hash": "abc123"}}}]"#;
+    assert_eq!(
+        super::inspected_config_hash(inspect).expect("both labels"),
+        ("app".to_owned(), "abc123".to_owned())
+    );
+    let no_hash = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app"}}}]"#;
+    assert!(super::inspected_config_hash(no_hash).is_err());
+    assert!(super::inspected_config_hash(b"[]").is_err());
+    assert!(super::inspected_config_hash(b"not json").is_err());
+}
+
+/// The preflight seals an unpublished frozen render through the kernel owner and
+/// hashes exactly those bytes, and the kernel publisher then accepts them.
+#[test]
+fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-seal-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
+        assert!(!render.path.exists(), "the render is unpublished");
+
+        let sealed = super::seal_render_for_preflight(
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("the kernel owner seals the frozen render");
+
+        // The sealed tree is the documented private staging layout, holds the
+        // frozen bytes with private modes, and the Compose inputs the preflight
+        // hashes name that tree rather than the canonical object directory.
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(sealed.receipt().digest(), render.closure.digest());
+        for (relative, bytes) in render.closure.files() {
+            let path = sealed.root.join(relative);
+            assert_eq!(fs::read(&path).expect("sealed object"), *bytes);
+            assert_eq!(
+                fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+                0o600,
+                "sealed files are private: {}",
+                path.display()
+            );
+        }
+        for file in &sealed.policy.compose_files {
+            assert!(
+                file.starts_with(&sealed.root),
+                "the hashed input is the sealed tree: {}",
+                file.display()
+            );
+        }
+        assert!(
+            !render.path.exists(),
+            "the preflight writes no canonical object"
+        );
+
+        // The receipt is retained and handed to the approved publisher: it is
+        // the only value `Objects::publish_sealed_desired` accepts, and it stays
+        // leased for as long as this returned value lives. The containers-side
+        // owner cannot call the publisher itself (it needs the environment's
+        // kernel `Run`), so the handoff is the proof available here.
+        assert!(
+            sealed.receipt().matches(&render.closure),
+            "the retained receipt describes this exact frozen closure"
+        );
+        assert_eq!(
+            sealed.closure().map(|closure| closure.digest()),
+            Some(render.closure.digest()),
+            "the handoff carries the frozen closure the receipt verified"
+        );
+        assert!(
+            sealed.root().exists(),
+            "the retained receipt's private tree is still leased at {}",
+            sealed.root().display()
+        );
+        assert!(
+            !render.path.exists(),
+            "the preflight writes no canonical object"
+        );
+
+        // The canonical publisher is the kernel's, under the environment gate,
+        // and it is exercised by #509's own kernel tests; the containers owner
+        // cannot call it (it needs the environment's kernel `Run`). This
+        // adapter's proof is that the receipt is retained, leased and describes
+        // exactly the frozen closure it hands over.
+        assert!(
+            sealed.receipt().matches(&render.closure),
+            "the retained receipt describes this exact frozen closure"
+        );
+        assert_eq!(
+            sealed.closure().map(|closure| closure.digest()),
+            Some(render.closure.digest())
+        );
+        assert!(
+            sealed.root().exists(),
+            "the receipt's private tree is leased"
+        );
+        assert!(!render.path.exists(), "no canonical object is written here");
+    });
+}
+
+/// An expired budget seals nothing at all.
+#[test]
+fn an_expired_preflight_budget_seals_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-expired-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
+        assert!(
+            super::seal_render_for_preflight(
+                &policy,
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
+            )
+            .is_err(),
+            "an expired budget refuses"
+        );
+        assert!(
+            !render.path.exists(),
+            "an expired preflight writes no canonical object"
+        );
+    });
+}
+
+/// Ownership resolution canonicalizes the checkout and reads its scope token. A
+/// stalled scope-token read must yield Unknown at the deadline instead of holding
+/// the caller.
+#[test]
+fn a_stalled_scope_token_makes_predecessor_ownership_unknown() {
+    use std::os::unix::ffi::OsStrExt;
+    let fixture = effigy_test_support::Fixture::new("effigy-predecessor-scope-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::create_dir_all(&home).expect("home");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+
+    effigy_containers::with_test_effigy_home(&home, || {
+        // Resolve the policy first: preparing it also reads the checkout identity,
+        // which would block on the FIFO below.
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        // Now the checkout is an ephemeral clone whose scope token is a stalled
+        // read: ownership resolution must refuse at the deadline, not hold.
+        fs::write(
+            checkout.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .expect("git config");
+        let token = checkout
+            .join(".git")
+            .join(effigy_core::worktree_scope::SCOPE_FILE);
+        let c_path = std::ffi::CString::new(token.as_os_str().as_bytes()).expect("path");
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0, "mkfifo");
+        let started = std::time::Instant::now();
+        let observed = super::observed_predecessor_compatibility(
+            &checkout,
+            &policy,
+            started + std::time::Duration::from_millis(50),
+        );
+        assert!(
+            matches!(observed, effigy_kernel::observe::Observed::Unknown(_)),
+            "a stalled scope token cannot become verified ownership"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "ownership resolution stopped at its deadline"
+        );
+    });
+}
+
+/// The production adapter, on an unpublished frozen render: it seals through the
+/// kernel owner and returns the receipt, which the environment's fenced publisher
+/// then promotes. The Compose-hash comparison needs a live stack, which this
+/// environment has not, so that half is exercised by the fake seam.
+#[test]
+fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-adapter-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
+        assert!(!render.path.exists(), "the render is unpublished");
+
+        let observed = super::observed_predecessor_compatibility(
+            &checkout,
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        );
+        let effigy_kernel::observe::Observed::Verified(observation, _) = observed else {
+            panic!("a project with nothing running is observed as such");
+        };
+        assert_eq!(
+            observation.compatibility,
+            super::PredecessorCompatibility::NoPredecessor
+        );
+        let sealed = observation.seal.expect("the adapter sealed the render");
+        assert!(sealed.receipt().matches(&render.closure));
+        assert!(!render.path.exists(), "no canonical object yet");
+
+        // The fenced publisher, under the environment's gate, promotes exactly
+        // that receipt.
+        let ctx = crate::runner::environment::context(&checkout).expect("environment context");
+        let env = crate::runner::environment::env_ref(&policy).expect("environment ref");
+        effigy_containers::environment::activate_with(&ctx, &env, &[], |run| {
+            run.publish_sealed_desired(sealed.receipt(), sealed.closure().expect("closure"))
+                .map(|_| ())
+        })
+        .expect("the gated publisher accepts the adapter's seal");
+        assert_eq!(
+            effigy_kernel::objects::Objects::resolve(
+                &ctx.observe(),
+                ctx.root,
+                &env.resource,
+                effigy_kernel::objects::Role::Desired,
+            )
+            .verified()
+            .map(|object| object.closure.digest()),
+            Some(render.closure.digest())
+        );
+    });
+}

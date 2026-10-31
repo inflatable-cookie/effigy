@@ -109,12 +109,13 @@ enum Fault {
     RecoveryDead,
     RecoveryUnknown,
     Hybrid,
+    ExpiredDeadline,
 }
 struct Probe {
     identity: GuestSelfObservation,
     fault: Fault,
     guest: Rc<RefCell<FakeGuest>>,
-    context_probed: bool,
+    context_probed: std::rc::Rc<std::cell::Cell<bool>>,
 }
 impl WorkspaceGuestProbe for Probe {
     fn context_dial(
@@ -124,7 +125,7 @@ impl WorkspaceGuestProbe for Probe {
         context: &GuestObject,
         budget: Duration,
     ) -> Observed<GuestDialEvidence> {
-        self.context_probed = true;
+        self.context_probed.set(true);
         if matches!(self.fault, Fault::ContextProbe) {
             return Observed::Unknown(UnknownReason::Inconsistent(
                 "context probe interrupted".into(),
@@ -392,7 +393,8 @@ home = "/home/vscode"
         let alias =
             ChannelAliasPlan::observed(Backend::LinuxDocker, "default", None, None).unwrap();
         let shared = Rc::new(RefCell::new(guest));
-        let mut probe = Probe {
+        let probed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let probe = Probe {
             identity: GuestSelfObservation {
                 container_id: identity.container_id.clone(),
                 vm_boot_id: identity.vm_boot_id.clone(),
@@ -401,7 +403,7 @@ home = "/home/vscode"
             },
             fault,
             guest: shared.clone(),
-            context_probed: false,
+            context_probed: probed.clone(),
         };
         let minted = Cell::new(0);
         let io_count = Rc::new(Cell::new(0));
@@ -428,9 +430,11 @@ home = "/home/vscode"
             },
             supervisor_id: "fixture-supervisor",
         };
-        let probe_ref = &mut probe;
+        let probe_identity = probe.identity.clone();
+        let probe_guest = probe.guest.clone();
+        let probe_probed = probe.context_probed.clone();
+        let probe_fault = probe.fault;
         let observe = |activation: &mut WorkspaceActivation<'static>| {
-            let probe = probe_ref;
             let target = ContainerIdentity {
                 container_id: identity.container_id.clone(),
                 vm_boot_id: identity.vm_boot_id.clone(),
@@ -494,7 +498,7 @@ home = "/home/vscode"
                     io_count.clone(),
                     fired.clone(),
                 )),
-                artifact: &artifact,
+                artifact: artifact.clone(),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
                         identity: target.clone(),
@@ -514,8 +518,13 @@ home = "/home/vscode"
                     },
                     evidence(),
                 ),
-                alias: &alias,
-                probe,
+                alias: alias.clone(),
+                probe: Box::new(Probe {
+                    identity: probe_identity.clone(),
+                    fault: probe_fault,
+                    guest: probe_guest.clone(),
+                    context_probed: probe_probed.clone(),
+                }),
                 context,
                 snapshots,
                 credential: Box::new(|session, g| {
@@ -534,7 +543,12 @@ home = "/home/vscode"
                         "ab".repeat(32),
                     ))
                 }),
-                budget: Duration::from_secs(20),
+                deadline: match fault {
+                    // The one absolute deadline is already past: the producer must
+                    // refuse rather than measure a fresh budget from now.
+                    Fault::ExpiredDeadline => std::time::Instant::now() - Duration::from_secs(1),
+                    _ => std::time::Instant::now() + Duration::from_secs(20),
+                },
             })
         };
         let result = match fault {
@@ -552,7 +566,7 @@ home = "/home/vscode"
             assert!(matches!(result, Ok(WorkspaceUp::Hybrid)));
             assert_eq!(minted.get(), 0);
             assert_eq!(io_count.get(), 0);
-            assert!(!probe.context_probed);
+            assert!(!probed.get());
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
         } else if matches!(
             fault,
@@ -562,7 +576,7 @@ home = "/home/vscode"
                 panic!("selected owner")
             };
             assert_eq!(minted.get(), 1);
-            assert!(probe.context_probed);
+            assert!(probed.get());
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("4"));
             let doc =
                 WorkspaceContextV2::parse(&guest.read_file(&context_path(4)).unwrap().unwrap())
@@ -588,7 +602,7 @@ home = "/home/vscode"
                 context_generation: 4,
             };
             let verified = doc
-                .verify(&mut IndependentIdentity(probe.identity.clone()), &live)
+                .verify(&mut IndependentIdentity(probe_identity.clone()), &live)
                 .expect("actual produced document independently verified");
             assert_eq!(
                 verified.session_generation,
@@ -597,7 +611,7 @@ home = "/home/vscode"
             let mut stale = live.clone();
             stale.session_generation = Some(owner.session.generation().get() + 1);
             assert!(doc
-                .verify(&mut IndependentIdentity(probe.identity.clone()), &stale)
+                .verify(&mut IndependentIdentity(probe_identity.clone()), &stale)
                 .is_err());
             assert_eq!(
                 crate::runner::workspace_client::context::v2::read_published_v2(&mut *guest)
@@ -616,6 +630,35 @@ home = "/home/vscode"
                 .supervisor
                 .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
                 .unwrap();
+        } else if matches!(fault, Fault::ExpiredDeadline) {
+            let error = match result.expect_err("an expired publication deadline refuses") {
+                WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Preparation(error) => error.to_string(),
+            };
+            assert!(error.contains("deadline expired"), "{error}");
+            assert_eq!(minted.get(), 0, "no credential is minted past the deadline");
+            assert_eq!(io_count.get(), 0, "an expired budget performs no guest I/O");
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+            assert_eq!(
+                guest.text(BINARY_CURRENT_PATH).as_deref(),
+                Some("/predecessor")
+            );
+            assert_eq!(
+                guest.link_target(ENTRY_SELECTOR).as_deref(),
+                Some("/predecessor")
+            );
+            // The refused publication is recorded unknown, so it neither
+            // publishes nor leaves a selection obligation a successor must settle.
+            let ctx = environment::context(&repo).unwrap();
+            let observed = effigy_kernel::store::Store::read(&ctx.observe(), ctx.root);
+            let journal = observed.verified().expect("journal");
+            assert!(
+                !matches!(
+                    effigy_kernel::workspace_session::unfinished_selection(journal, &env.resource),
+                    Observed::Verified(Some(_), _)
+                ),
+                "a publication that never started leaves no pending selection"
+            );
         } else if matches!(fault, Fault::Io(..)) {
             assert!(
                 fired.get(),
@@ -931,4 +974,9 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_expired_publication_deadline_refuses_without_guest_io() {
+    run(Fault::ExpiredDeadline);
 }

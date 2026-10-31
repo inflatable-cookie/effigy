@@ -864,3 +864,60 @@ mispinned-peer zero credential/Hello-byte proofs. Proposed test names and #452's
 Linux Docker qualification gate remains; safe refusal is not qualification.
 Rootless Linux and Apple Containers have no qualification claim. No production
 code or stop condition changes in this design-only seam.
+
+## Q-018 — Emulated execution and default Colima gateways have no observation
+
+Status: open
+Asked: 2026-10-30
+Owner: none yet; the reserved publication input builder (#506) refuses rather
+than guessing
+
+`052` §8.11 requires the host to select the guest artifact from the exact
+container image's backend-reported OS, architecture and variant plus one observed
+image loader family, and to claim execution only for native execution or verified
+emulation. The image half now has an owner: `container_runtime_prep` reads the
+platform from the backend's own `runtime image inspect` (via
+`effigy_containers::exec::inspect_image_for_policy`) and the loader family from
+the image root, and `#506` cross-checks the guest's diagnostic machine type
+against it.
+
+Two facts still have no observation owner, and `#506`'s builder refuses rather
+than inventing them:
+
+* **Verified emulation.** Nothing observes whether a backend can execute an image
+  built for another machine type. A guest whose image platform differs from this
+  host's machine type therefore refuses as unproven, so an emulated image cannot
+  publish a reserved workspace. The missing signature is a backend
+  emulation-qualification fact per image platform.
+* **A profile's guest-side gateway when the profile configures none.** The
+  renderer keeps Lima's `192.168.5.2` default for pre-start rendering;
+  `runtime_gateway_observation` reports a configured address, an absent profile,
+  an unreadable, oversized or non-regular one and a profile that configures no
+  gateway separately, and the reserved publication refuses all but the configured
+  address. Until an owner observes the
+  address actually reachable from the guest for a default-configured profile,
+  such a Colima workspace cannot publish through the reserved path.
+* **The render preflight seal (answered).** #509 supplies
+  `Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight` and
+  `Objects::publish_sealed_desired(run, sealed, closure)`; the reserved preflight
+  seals the plan's frozen render off-gate inside the publication deadline, retains
+  the receipt, hashes the sealed bytes, and the one apply promotes that exact
+  receipt through `EnvRun::publish_sealed_desired` under `Gate(Env)`. Nothing
+  canonical comes from the seal itself.
+* **A container's creator — still blocking the fresh-target path (pending
+  effigy#508).** No owner records
+  "this run created container X": the engine's apply effect names the engine,
+  context and project, Compose's labels name the project and service, and a
+  creation stamp inside this activation's window only proves *when* the container
+  appeared, not *who* created it — a competing Compose actor creates the same
+  project, service and labels. The reserved publication therefore refuses every
+  fresh target (`TargetEvidence::Absent`) at decision time and again at
+  observation, and names the missing signature:
+  `EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`, a
+  backend creation receipt naming the run and the exact full container id. A
+  re-observed target is exact identity matching and publishes normally, so a
+  workspace can publish after its container exists; the first up of a brand-new
+  environment cannot publish through the reserved path until that owner exists.
+  #508 owns the narrow backend receipt; timestamps, before/after absence and
+  matching Compose labels do not establish creator identity, so this refusal stays
+  until that receipt is integrated.

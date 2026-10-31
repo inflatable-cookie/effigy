@@ -78,6 +78,11 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
     policy_support::effigy_home_dir()
 }
 
+/// The gateway address a Colima profile's own configuration names, as an
+/// observation the workspace channel can refuse on. It distinguishes a
+/// configured address from an absent profile, an unreadable one and a profile
+/// that configures none, instead of promoting the renderer's default.
+pub use runtime::dns::observed_runtime_gateway_address as runtime_gateway_observation;
 pub use runtime::retire::{
     unique_resources, FailedResource, GatewayRelease, KeptResource, OwnedResource, ResourceKind,
     RetireOutcome,

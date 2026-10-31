@@ -41,6 +41,10 @@ use effigy_kernel::id::RunId;
 // deadlines still bound both phases without being extended.
 pub(in crate::runner) const OWNED_EXEC_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// One `compose config --hash` reads a small map: service names and hashes.
+const COMPOSE_HASH_STDOUT_BYTES: u64 = 64 * 1024;
+const COMPOSE_HASH_STDERR_BYTES: u64 = 16 * 1024;
+
 #[derive(Debug)]
 pub(in crate::runner) struct ContainerTaskActivation {
     /// The immutable snapshot used by every activation stage and its exec caller.
@@ -696,6 +700,543 @@ fn verify_live_checkout_mount_using(
             repo_root.display()
         ))
     })
+}
+
+/// What the backend reports about the exact image one verified container runs.
+///
+/// These are the image's own facts, read from the image the container names:
+/// the host never derives them from the guest's `uname`, from its own
+/// architecture or from the artifact it wants to publish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct ObservedImagePlatform {
+    pub(in crate::runner) os: String,
+    pub(in crate::runner) architecture: String,
+    pub(in crate::runner) variant: String,
+}
+
+/// Observe the image platform behind one verified container id.
+///
+/// Two bounded runtime reads: the container's own inspect names its image, then
+/// the image's inspect reports the OS, architecture and variant. A capture that
+/// fails, a missing or non-string field, or an expired deadline is `Unknown`; no
+/// default, host architecture or guest report stands in for it.
+pub(in crate::runner) fn observed_image_platform(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_id: &str,
+    deadline: Instant,
+) -> effigy_kernel::observe::Observed<ObservedImagePlatform> {
+    use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+
+    let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    let container = match effigy_containers::exec::inspect_containers_for_policy(
+        repo_root,
+        policy,
+        std::slice::from_ref(&container_id.to_owned()),
+        Some(deadline),
+    ) {
+        Ok(output) => output.stdout,
+        Err(error) => return unknown(format!("container inspect is unavailable: {error}")),
+    };
+    let image = match image_reference(&container) {
+        Ok(image) => image,
+        Err(reason) => return unknown(reason),
+    };
+    let inspected = match effigy_containers::exec::inspect_image_for_policy(
+        repo_root,
+        policy,
+        &image,
+        Some(deadline),
+    ) {
+        Ok(output) => output.stdout,
+        Err(error) => return unknown(format!("image inspect is unavailable: {error}")),
+    };
+    let platform = match parse_image_platform(&inspected) {
+        Ok(platform) => platform,
+        Err(reason) => return unknown(reason),
+    };
+    Observed::Verified(
+        platform,
+        Evidence::new("backend image inspect".into(), None).expect("fixed evidence"),
+    )
+}
+
+/// The image one container inspect record names.
+fn image_reference(container_inspect: &[u8]) -> Result<String, String> {
+    serde_json::from_slice::<serde_json::Value>(container_inspect)
+        .ok()
+        .and_then(|records| {
+            records
+                .as_array()?
+                .first()?
+                .get("Image")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .map(|image| image.trim().to_owned())
+        .filter(|image| !image.is_empty())
+        .ok_or_else(|| "the container inspect names no image".to_owned())
+}
+
+/// The platform one image inspect record reports. A missing or non-string OS or
+/// architecture is unknown; the variant may legitimately be absent.
+fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, String> {
+    let record = serde_json::from_slice::<serde_json::Value>(image_inspect)
+        .ok()
+        .and_then(|records| records.as_array()?.first().cloned())
+        .ok_or_else(|| "the image inspect returned no record".to_owned())?;
+    let field = |name: &str| {
+        record
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let (Some(os), Some(architecture)) = (field("Os"), field("Architecture")) else {
+        return Err("the image inspect names no OS or architecture".to_owned());
+    };
+    Ok(ObservedImagePlatform {
+        os,
+        architecture,
+        variant: field("Variant").unwrap_or_default(),
+    })
+}
+
+use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
+
+/// What proves that applying one rendered policy cannot recreate a live
+/// predecessor of this environment.
+///
+/// The environment record's historical `desired` digest is *not* live evidence: it
+/// says what Effigy last published, not what the running container was created
+/// from. The one fact that does is Compose's own config hash: the container carries
+/// the hash of the service config it was created from, and the render this
+/// activation is about to apply can be asked for the hash it would produce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum PredecessorCompatibility {
+    /// This project has no running container, so nothing can be recreated.
+    NoPredecessor,
+    /// Every running container of this project was created from exactly the
+    /// service config this render produces: `(full container id, config hash)`.
+    Matches(Vec<(String, String)>),
+}
+
+impl PredecessorCompatibility {
+    /// How many live containers were compared.
+    pub(in crate::runner) fn compared(&self) -> usize {
+        match self {
+            Self::NoPredecessor => 0,
+            Self::Matches(containers) => containers.len(),
+        }
+    }
+}
+
+/// Observe the live recreate risk of one rendered policy, within one deadline.
+///
+/// Unknown, a changed container id, a changed config hash and a backend that
+/// cannot report Compose config hashes all refuse; only a live stack whose every
+/// service config is byte-identical to what this render produces is compatible.
+///
+/// Interpolation is not replayed: the hash is computed from the frozen rendered
+/// closure and the project, so a service config that depends on apply-time
+/// environment values can differ and refuses, which is the safe direction.
+pub(in crate::runner) struct PredecessorObservation {
+    pub(in crate::runner) compatibility: PredecessorCompatibility,
+    /// The verified receipt this observation sealed, retained for the one apply's
+    /// gated publication. The caller publishes it and nothing else.
+    pub(in crate::runner) seal: Option<SealedRender>,
+}
+
+pub(in crate::runner) fn observed_predecessor_compatibility(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> effigy_kernel::observe::Observed<PredecessorObservation> {
+    use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+
+    let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    // Ownership resolution canonicalizes the checkout and reads its scope token:
+    // both are filesystem work that can stall, so it runs on the publication's
+    // bounded worker and an expired budget is unknown, never a held caller.
+    let owned_root = repo_root.to_path_buf();
+    let owned_policy = policy.clone();
+    let ownership = match crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "workspace-predecessor-ownership",
+        deadline,
+        move || {
+            effigy_containers::exec::OwnershipContext::resolve(&owned_root, &owned_policy)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        },
+    ) {
+        Ok(ownership) => ownership,
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "predecessor ownership".into(),
+            })
+        }
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::Unavailable(
+            reason,
+        )) => return unknown(format!("the checkout's ownership is unproven: {reason}")),
+    };
+    let rows = match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+        repo_root,
+        policy,
+        Some(deadline),
+    ) {
+        Ok(rows) => rows,
+        Err(error) => {
+            return unknown(format!("the project inventory is unavailable: {error}"));
+        }
+    };
+    let running = rows
+        .into_iter()
+        .filter(|row| {
+            row.project_name.as_deref() == Some(policy.project_name.as_str())
+                && !row.oneoff
+                && effigy_containers::exec::compose_status_is_running(&row.status)
+        })
+        .collect::<Vec<_>>();
+    // Seal the frozen render first: the receipt is the one ticket the apply may
+    // publish, and it is retained even when nothing is running.
+    let sealed = match seal_render_for_preflight(policy, deadline) {
+        Ok(sealed) => Some(sealed),
+        Err(BoundedReadRefusal::TimedOut) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace render preflight".into(),
+            })
+        }
+        Err(BoundedReadRefusal::Unavailable(reason)) => return unknown(reason),
+    };
+    if running.is_empty() {
+        return Observed::Verified(
+            PredecessorObservation {
+                compatibility: PredecessorCompatibility::NoPredecessor,
+                seal: sealed,
+            },
+            Evidence::new("project inventory".into(), None).expect("fixed evidence"),
+        );
+    }
+    let Some(sealed) = sealed else {
+        return unknown("the frozen render was not sealed".into());
+    };
+    let intended = match compose_service_config_hashes(repo_root, &sealed.policy, deadline) {
+        Ok(hashes) => hashes,
+        Err(error) => {
+            return unknown(format!(
+                "this backend cannot report the render's Compose config hashes: {error}"
+            ));
+        }
+    };
+    let mut compared = Vec::new();
+    for row in running {
+        let inspected = match effigy_containers::exec::inspect_containers_for_policy(
+            repo_root,
+            policy,
+            std::slice::from_ref(&row.container_name),
+            Some(deadline),
+        ) {
+            Ok(output) => output.stdout,
+            Err(error) => {
+                return unknown(format!(
+                    "the predecessor `{}` could not be inspected: {error}",
+                    row.container_name
+                ));
+            }
+        };
+        let verified = match ownership.verify_inspected(repo_root, policy, &row, &inspected) {
+            Ok(verified) => verified,
+            Err(error) => {
+                return unknown(format!(
+                    "the predecessor `{}` ownership or identity changed: {error}",
+                    row.container_name
+                ));
+            }
+        };
+        let (service, live_hash) = match inspected_config_hash(&inspected) {
+            Ok(facts) => facts,
+            Err(reason) => {
+                return unknown(format!(
+                    "the predecessor `{}` reports no Compose config hash: {reason}",
+                    row.container_name
+                ));
+            }
+        };
+        let Some(expected) = intended.get(&service) else {
+            return unknown(format!(
+                "the live predecessor runs service `{service}`, which this render does not declare"
+            ));
+        };
+        if expected != &live_hash {
+            return unknown(format!(
+                "the live predecessor for service `{service}` was created from config `{live_hash}`, \
+                 not the render's `{expected}`: applying would recreate it"
+            ));
+        }
+        compared.push((verified.id().to_owned(), live_hash));
+    }
+    // Listing order is not evidence: two reads of the same stack must compare
+    // equal, so the frozen facts are ordered by container id.
+    compared.sort();
+    Observed::Verified(
+        PredecessorObservation {
+            compatibility: PredecessorCompatibility::Matches(compared),
+            seal: Some(sealed),
+        },
+        Evidence::new("Compose config hash".into(), None).expect("fixed evidence"),
+    )
+}
+
+/// The verified private seal of one frozen render, for a read-only preflight.
+///
+/// The kernel owner (`Objects::seal_for_preflight`) stages the closure in a
+/// private tree, `O_EXCL`/0600, verifies it with the kernel's own closure
+/// verifier inside the deadline, and returns a receipt. Nothing canonical is
+/// written, no gate is taken and no desired state changes; only
+/// `Objects::publish_sealed_desired` under `Gate(Env)` can make those bytes
+/// canonical.
+pub(in crate::runner) struct SealedRender {
+    // Read by the handoff accessors below; the one apply consumes the receipt.
+    #[allow(dead_code)]
+    /// The kernel's verified receipt. Retaining it keeps the private tree leased
+    /// for as long as this value lives, and it is the only thing the approved
+    /// publisher (`Objects::publish_sealed_desired`) will promote.
+    receipt: effigy_kernel::objects::SealedPreflight,
+    /// A clone of the policy whose Compose inputs name the sealed tree, so the
+    /// backend hashes exactly the bytes the apply will publish.
+    policy: EffectiveContainerPolicy,
+    /// The sealed tree's root, from the kernel's documented staging layout
+    /// `state/staging/preflight-<token>/<digest>`.
+    root: PathBuf,
+}
+
+#[allow(dead_code)] // The consuming caller (#452) reads these in its gated apply.
+impl SealedRender {
+    /// The kernel receipt this preflight verified. The caller publishes it with
+    /// `Objects::publish_sealed_desired` under `Gate(Env)`, on the one apply.
+    pub(in crate::runner) fn receipt(&self) -> &effigy_kernel::objects::SealedPreflight {
+        &self.receipt
+    }
+
+    /// The frozen closure the receipt describes.
+    pub(in crate::runner) fn closure(&self) -> Option<&effigy_kernel::objects::Closure> {
+        self.policy.render.as_ref().map(|render| &render.closure)
+    }
+
+    /// The sealed tree the receipt names.
+    pub(in crate::runner) fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+/// Seal this policy's frozen render for the preflight, inside the publication's
+/// one deadline and without any authority a Prepare has.
+fn seal_render_for_preflight(
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> Result<SealedRender, BoundedReadRefusal> {
+    use effigy_kernel::ctx::{
+        CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement,
+    };
+
+    let live = |phase: &str| {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                BoundedReadRefusal::Unavailable(format!(
+                    "the render preflight deadline expired {phase}"
+                ))
+            })
+    };
+    live("before sealing the render")?;
+    let Some(render) = policy.render.as_ref() else {
+        return Err(BoundedReadRefusal::Unavailable(
+            "the workspace render has no frozen closure to seal".into(),
+        ));
+    };
+    let cx = OperationContext::new(
+        Deadline::At(deadline),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        EffectClass::Prepare,
+        Placement::Host,
+    )
+    .effects()
+    .map_err(|_| {
+        BoundedReadRefusal::Unavailable(
+            "the render preflight cannot take a Prepare capability".into(),
+        )
+    })?;
+    // Opening the state root walks and opens directories, and the seal stages and
+    // verifies files. Both are synchronous, so the pair runs on the owner's
+    // bounded worker: the caller stops waiting at the deadline. An abandoned seal
+    // only writes a private, leased staging tree that recovery reclaims; nothing
+    // canonical can come of it, because only a returned receipt can be published.
+    let closure = render.closure.clone();
+    let token_deadline = deadline;
+    let repo_root = policy.repo_root.clone();
+    let (sealed, sealed_root) =
+        match crate::runner::workspace_command::provisioning::bounded_publication_read(
+            "workspace-render-seal",
+            deadline,
+            move || {
+                let root = effigy_containers::environment::state_root(&cx, repo_root.as_path())
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+                    &cx,
+                    &root,
+                    &closure,
+                    token_deadline,
+                )
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                // The receipt names no canonical object; its private tree follows
+                // the documented layout `staging/preflight-<token>/<digest>`. A
+                // wrong guess is fail-closed: Compose cannot read it, so the guard
+                // refuses.
+                let sealed_root = root
+                    .state_directory()
+                    .path()
+                    .join("staging")
+                    .join(format!("preflight-{}", sealed.token()))
+                    .join(sealed.digest());
+                Ok((sealed, sealed_root))
+            },
+        ) {
+            Ok(pair) => pair,
+            Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut) => {
+                return Err(BoundedReadRefusal::TimedOut)
+            }
+            Err(
+                crate::runner::workspace_command::provisioning::BoundedReadRefusal::Unavailable(
+                    reason,
+                ),
+            ) => return Err(BoundedReadRefusal::Unavailable(reason)),
+        };
+    let mut policy = policy.clone();
+    for file in &mut policy.compose_files {
+        let Ok(relative) = file.strip_prefix(&render.path) else {
+            return Err(BoundedReadRefusal::Unavailable(
+                "a Compose input is outside the render's closure".into(),
+            ));
+        };
+        *file = sealed_root.join(relative);
+    }
+    live("after sealing the render")?;
+    Ok(SealedRender {
+        receipt: sealed,
+        policy,
+        root: sealed_root,
+    })
+}
+
+/// The service -> config-hash map one rendered policy produces.
+///
+/// `compose config --hash` is the backend's own answer, computed from the same
+/// frozen closure the apply uses. A backend without it (or an unparsable answer)
+/// refuses: an unsupported comparison is never treated as compatible.
+fn compose_service_config_hashes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+    let args = effigy_containers::compose::compose_args(policy, ["config", "--hash", "*"]);
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Status,
+        "workspace compose config hash",
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+        Instant::now(),
+        deadline,
+        COMPOSE_HASH_STDOUT_BYTES,
+        COMPOSE_HASH_STDERR_BYTES,
+    );
+    let captured = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            crate::runner::exec_command::BoundedCommandPhase::WorkspacePreparation,
+        )
+        .map_err(|failure| {
+            RunnerError::task_invocation(format!(
+                "compose config --hash did not complete in the {} phase; the backend cannot                  report this render's service hashes",
+                failure.phase.label()
+            ))
+        })?;
+    if !captured.status.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "compose config --hash failed: {}",
+            String::from_utf8_lossy(&captured.stderr).trim()
+        )));
+    }
+    parse_service_config_hashes(&captured.stdout)
+}
+
+/// Parse `compose config --hash` output: one `service hash` line per service.
+fn parse_service_config_hashes(
+    stdout: &[u8],
+) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut hashes = std::collections::BTreeMap::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Some((service, hash)) = line.split_once(char::is_whitespace) else {
+            return Err(RunnerError::task_invocation(
+                "compose config --hash printed no service hash pair",
+            ));
+        };
+        let hash = hash.trim();
+        if service.is_empty() || hash.is_empty() {
+            return Err(RunnerError::task_invocation(
+                "compose config --hash printed an empty service or hash",
+            ));
+        }
+        hashes.insert(service.to_owned(), hash.to_owned());
+    }
+    if hashes.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "compose config --hash reported no services",
+        ));
+    }
+    Ok(hashes)
+}
+
+/// The Compose service and config hash one inspected container records.
+fn inspected_config_hash(stdout: &[u8]) -> Result<(String, String), String> {
+    let raw: serde_json::Value =
+        serde_json::from_slice(stdout).map_err(|error| error.to_string())?;
+    let labels = raw
+        .as_array()
+        .and_then(|records| records.first())
+        .and_then(|record| record.get("Config"))
+        .and_then(|config| config.get("Labels"))
+        .ok_or_else(|| "the inspect names no labels".to_owned())?;
+    let label = |name: &str| {
+        labels
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("the inspect names no `{name}` label"))
+    };
+    Ok((
+        label("com.docker.compose.service")?,
+        label("com.docker.compose.config-hash")?,
+    ))
 }
 
 /// Verify the owned binding of `service`: the running container that this

@@ -42,17 +42,26 @@ pub(in crate::runner) trait WorkspaceGuestProbe: GuestChannelProbe {
 type CredentialFactory<'a> =
     Box<dyn FnOnce(&SessionRef, u64) -> Result<WorkspaceEnrolmentCredential, EnvError> + 'a>;
 
+/// The producer's input. Everything here is owned: the artifact path, the
+/// observed alias plan and the injected probe. The probe is boxed rather than
+/// borrowed because the target it must name is only known after apply, while the
+/// caller's publication closure returns this value: an owned probe lets the
+/// builder construct it from the verified target and hand it over with no
+/// self-reference and no local that dies at the closure boundary.
 pub(in crate::runner) struct ReservedGuestInput<'a> {
     pub(in crate::runner) guest: Box<dyn GuestWorkspace + 'a>,
-    pub(in crate::runner) artifact: &'a Path,
+    pub(in crate::runner) artifact: PathBuf,
     pub(in crate::runner) targets: Observed<Vec<TargetCandidate>>,
     pub(in crate::runner) platform: Observed<BoundPlatform>,
-    pub(in crate::runner) alias: &'a ChannelAliasPlan,
-    pub(in crate::runner) probe: &'a mut dyn WorkspaceGuestProbe,
+    pub(in crate::runner) alias: ChannelAliasPlan,
+    pub(in crate::runner) probe: Box<dyn WorkspaceGuestProbe + 'a>,
     pub(in crate::runner) context: WorkspaceContextInput,
     pub(in crate::runner) snapshots: Vec<(GuestObject, Vec<u8>)>,
     pub(in crate::runner) credential: CredentialFactory<'a>,
-    pub(in crate::runner) budget: Duration,
+    /// The one absolute deadline of the whole publication. It is the same clock
+    /// the planner, the backend observations and the guest staging read, so a
+    /// delay between observation and this call cannot extend any of them.
+    pub(in crate::runner) deadline: Instant,
 }
 
 impl std::fmt::Debug for ReservedGuestInput<'_> {
@@ -80,9 +89,8 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,
     mut input: ReservedGuestInput<'a>,
 ) -> Result<WorkspacePublication<'a>, EnvError> {
-    let until = Instant::now()
-        .checked_add(input.budget)
-        .ok_or_else(|| unavailable("workspace publication deadline overflow"))?;
+    // The caller's absolute deadline, not a fresh budget measured from now.
+    let until = input.deadline;
     let remaining = || {
         until
             .checked_duration_since(Instant::now())
@@ -132,7 +140,7 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
             activation.environment_mut(),
             &reservation,
             input.guest.as_mut(),
-            input.artifact,
+            input.artifact.as_path(),
             Observed::Verified(binding.clone(), evidence()),
         )?;
         let machine = match binding.platform.architecture.as_str() {
@@ -180,13 +188,13 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
         let mut channel = prepare_channel(
             ChannelPreparation {
                 container_mode: true,
-                plan: input.alias,
+                plan: &input.alias,
                 target: &container,
                 session: &session,
                 supervisor: &supervisor_id,
             },
             activation.session_run_mut(),
-            input.probe,
+            input.probe.as_mut(),
             remaining()?,
         )
         .map_err(|error| unavailable(error.to_string()))?
@@ -489,7 +497,7 @@ impl WorkspaceSelectionIo for OwnedSelectionIo<'_> {
 }
 
 #[cfg(test)]
-#[path = "reserved_guest_tests.rs"]
+#[path = "tests/reserved_guest.rs"]
 mod tests;
 
 /// Re-open I/O for the obligation's exact target; this carries no authority to
