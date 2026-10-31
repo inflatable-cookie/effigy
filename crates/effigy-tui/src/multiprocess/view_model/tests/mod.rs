@@ -6,6 +6,7 @@ pub(super) fn state_with_logs(lines: usize) -> SessionState {
     let buffer = state.logs.get_mut("api").expect("api log buffer");
     for idx in 0..lines {
         buffer.push_back(LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: format!("line-{idx}"),
         });
@@ -17,5 +18,7 @@ pub(super) fn state_with_logs(lines: usize) -> SessionState {
 mod cursor_tests;
 #[path = "plain_tests.rs"]
 mod plain_tests;
+#[path = "startup_tests.rs"]
+mod startup_tests;
 #[path = "vt_tests.rs"]
 mod vt_tests;

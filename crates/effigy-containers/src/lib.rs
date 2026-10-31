@@ -16,6 +16,7 @@ mod runtime;
 pub mod session;
 mod workspace;
 
+pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;
 pub use ops::{
     ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,
@@ -31,6 +32,7 @@ pub use ops::{
 pub use policy::data_from::{
     borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
 };
+pub use policy::host_alias::{DeclaredAlias, HostExecutionAliases};
 pub use policy::host_process_env::{
     validate_host_process_env, HostProcessEnvFacts, HostProcessUrls, ServiceEndpoint,
 };
@@ -44,9 +46,11 @@ pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
 };
 pub use policy::load::{
-    effective_attach_mode, load_all_container_policies, load_container_exec_target,
-    load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
+    declares_container_registry, effective_attach_mode, load_all_container_policies,
+    load_container_exec_target, load_container_exec_working_dir, load_container_policy,
+    load_container_policy_for_creation, load_container_policy_for_creation_observed,
     load_container_policy_with_workspace, prepare_container_policy, ContainerExecTarget,
+    CreationPolicyStage,
 };
 pub use policy::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -66,6 +70,7 @@ pub use report::{
     ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
+pub use workspace::resolve_operator_workspace_for_container;
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other
 /// shared state must resolve it here rather than reading `HOME` directly.

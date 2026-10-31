@@ -58,10 +58,9 @@ pub(super) fn state_home() -> Option<PathBuf> {
     #[cfg(test)]
     {
         static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
-        // Short: a detached run's control socket lives under this home, and
-        // a Unix socket path is bounded (SUN_LEN). `[scratch]` keeps the temp
-        // root on its volume; a nested run path uses a shorter `effigy/`
-        // ancestor for socket-backed fixture state.
+        // Prefer a short home inside this run's scratch root. On macOS and
+        // Linux the kernel also supports deep confined homes by binding and
+        // probing control sockets relative to verified directories.
         Some(
             TEST_HOME
                 .get_or_init(|| {
@@ -205,8 +204,7 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
         .keys()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
-    let cwd =
-        std::env::current_dir().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let cwd = crate::runner::command_context::current_working_dir()?;
     let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
         .map(|resolved| resolved.resolved_root)
         .unwrap_or(cwd);
@@ -561,6 +559,108 @@ pub(in crate::runner) fn valid_next(argv: &[OsString]) -> bool {
 /// Hidden kernel entry points (`__kernel-sentinel`, `__kernel-supervise`).
 /// `None` means an ordinary invocation.
 pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
+    // The workspace-serving process-lifetime proof's initiating front end: it
+    // starts one detached serving host, acknowledges the kernel detach and
+    // returns, leaving the host serving. Present only in a fixture build.
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_from_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-abandon" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_abandoning_from_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-deadline" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_deadline_from_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-drop" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_and_drop_stdin() {
+                Ok(_) => 0,
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-crash" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_then_crash_stdin() {
+                Ok(_) => 0,
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-client" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::client_identity_stdin() {
+                Ok(identity) => {
+                    println!("{identity}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-compete" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::compete_detached_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
     if !entry.starts_with("__kernel-") {
         return None;
     }

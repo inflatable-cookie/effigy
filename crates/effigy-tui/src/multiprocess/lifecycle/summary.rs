@@ -90,10 +90,35 @@ fn render_failure_output_section(
 }
 
 fn failure_log_tail(logs: &VecDeque<LogEntry>) -> Vec<String> {
+    if let Some(last) = logs.iter().rposition(|entry| entry.styles.is_some()) {
+        if !logs.iter().any(|entry| {
+            matches!(entry.kind, LogEntryKind::Exit) && !is_success_diagnostic(entry.line.trim())
+        }) {
+            return Vec::new();
+        }
+        let mut first = last;
+        while first > 0 && logs[first - 1].styles.is_some() {
+            first -= 1;
+        }
+        let text: String = logs
+            .range(first..=last)
+            .map(|entry| entry.line.as_str())
+            .collect();
+        let mut start = text.len().saturating_sub(4096);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        return vec![text[start..].to_owned()];
+    }
     let mut lines = logs
         .iter()
         .flat_map(|entry| match entry.kind {
             LogEntryKind::Exit => Vec::new(),
+            LogEntryKind::Stdout if entry.styles.is_some() => entry
+                .line
+                .split_inclusive('\n')
+                .map(str::to_owned)
+                .collect(),
             LogEntryKind::Stdout => normalized_log_lines("", &entry.line),
             LogEntryKind::Stderr => normalized_log_lines("", &entry.line),
         })

@@ -73,7 +73,7 @@ pub fn reconcile_observing(
     result
 }
 
-fn reconcile_in(
+pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
@@ -119,13 +119,24 @@ pub fn activate(
     env: &EnvRef,
     holders: &[(RunId, AttachMode)],
 ) -> Result<(), EnvError> {
+    activate_with(ctx, env, holders, |_| Ok(()))
+}
+
+/// Activate after the caller's required publication has completed, all under
+/// the same environment owner gate. No transaction spans the callback's I/O.
+pub fn activate_with(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    holders: &[(RunId, AttachMode)],
+    prepare: impl FnOnce(&mut EnvRun<'_>) -> Result<(), EnvError>,
+) -> Result<(), EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = run.activate(holders);
+    let result = prepare(&mut run).and_then(|()| run.activate(holders));
     let ok = result.is_ok();
     run.finish(ok)?;
     result
@@ -204,8 +215,11 @@ impl EnvRun<'_> {
     /// Drops this environment's render references (kernel refuses while any
     /// holder remains).
     pub fn reset_objects(&mut self) -> Result<(), EnvError> {
+        self.phase("dropping the environment's render references", None);
         let result = Objects::reset(&mut self.run);
-        self.kernel(result)
+        self.kernel(result)?;
+        self.publish_event("dropped the environment's render references");
+        Ok(())
     }
 }
 

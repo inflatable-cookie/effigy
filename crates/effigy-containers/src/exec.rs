@@ -21,14 +21,15 @@ mod ssh_agent_preflight;
 pub use colima_runtime::{
     colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,
     ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
-    ensure_runtime_backend_running_report, recover_colima_runtime, reset_colima_runtime,
+    ensure_runtime_backend_running_report, recover_colima_runtime,
+    recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
     running_colima_profiles, runtime_backend_is_running, selected_backend_label,
-    ColimaEnsureReport, ColimaRecoveryReport,
+    ColimaEnsureReport, ColimaRecoveryPhase, ColimaRecoveryReport,
 };
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
 };
-pub use compose_steps::{phase, ComposeSteps, TimedStep};
+pub use compose_steps::{runtime_wait, ComposeSteps, TimedStep};
 pub use healthcheck_pidfiles::{
     parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles, HealthCheckPidFilePrune,
     HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
@@ -50,11 +51,12 @@ pub use implementation::{
     list_running_compose_containers_profiled, owned_service_listing_args, run_backend_invocation,
     run_compose_capture, run_compose_capture_with_env, run_compose_invocation_capture,
     run_compose_invocation_capture_with_env, run_compose_invocation_streaming_with_env,
-    run_docker_capture, set_restart_policy, shared_project_containers, shutdown_container,
-    verify_owned_running_compose_identities, verify_owned_running_compose_rows,
-    verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
-    ContainerExecError, OwnershipContext, RunningComposeContainerInventory,
-    RuntimeInventoryFailure, SharedProjectContainer, VerifiedComposeContainer,
+    run_docker_capture, set_restart_policy, shared_project_containers, shared_render_identity,
+    shutdown_container, verify_owned_running_compose_identities, verify_owned_running_compose_rows,
+    verify_shared_render_container, verify_workspace_artifact_builder,
+    verify_workspace_artifact_builder_declaration, ContainerExecError, OwnershipContext,
+    RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
+    VerifiedComposeContainer,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use mounts::ensure_isolated_mount_host_points;

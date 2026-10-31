@@ -1,7 +1,13 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 mod anchor;
+mod canonical_output;
 pub(crate) mod capture;
+pub(crate) mod merged;
+mod styled_tap;
+pub use canonical_output::CanonicalOutput;
+pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
 pub(crate) mod platform;
+mod terminal;
 /// Signal one external process only after the caller's fresh authority check.
 pub fn signal_verified_process(
     identity: &ProcessIdentity,
@@ -10,7 +16,7 @@ pub fn signal_verified_process(
 ) -> Observed<SignalDelivered> {
     platform::signal_checked(identity, signal, authority)
 }
-pub use capture::Stream;
+pub use capture::{read_styles, Stream};
 pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
@@ -82,6 +88,10 @@ pub enum Terminal {
     /// and the child sees EOF when the owner drops it. Stdout and stderr are
     /// captured as for `None`.
     Pipe,
+    /// Managed pane capture: persist merged plain text and expose redacted style data.
+    Styled {
+        pty: bool,
+    },
     Pty,
     /// The owner's terminal as the child's stdin, with the child's own process
     /// group as the terminal's foreground group while it runs (a passphrase or
@@ -118,17 +128,30 @@ impl ProcessSpec {
                 _ => None,
             })
             .collect();
-        if self.argv.is_empty()
-            || self.argv.iter().any(|arg| {
-                secrets
-                    .iter()
-                    .any(|secret| arg.as_bytes().windows(secret.len()).any(|w| w == secret))
-            })
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "empty argv or secret in argv",
-            ));
+        if self.argv.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
+        }
+        if let Some((name, _)) = self.env.iter().find(|(_, value)| match value {
+            EnvValue::Secret(value) => self.argv.iter().any(|arg| {
+                arg.as_bytes()
+                    .windows(value.bytes().len())
+                    .any(|part| part == value.bytes())
+            }),
+            EnvValue::Plain(_) => false,
+        }) {
+            let name: String = name
+                .to_string_lossy()
+                .chars()
+                .take(128)
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() || ch == '_' {
+                        ch
+                    } else {
+                        '?'
+                    }
+                })
+                .collect();
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("secret in argv from classified environment key `{name}`; pass the value through environment access")));
         }
         Ok(secrets)
     }
@@ -234,19 +257,27 @@ pub struct OwnedProcess {
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
     anchor: Option<ProcessIdentity>,
-    /// stdout and stderr logs, fed from the one merged redaction.
+    /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
+    canonical_output: Option<CanonicalOutput>,
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
-    /// Each byte comes from the merged redaction, attributed to the stream
-    /// that produced it, so joining the two never reconstructs a secret.
+    /// Each is the redacted projection of its own stream over the merged,
+    /// sanitized result: a projection can join halves that arrival order kept
+    /// apart, so it is redacted again. The merged output and tail are the
+    /// canonical capture; two projections are never concatenated into one.
     streams: [VecDeque<u8>; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
     /// The owner's side of a `Terminal::Pipe` child's stdin.
     stdin: Option<OwnedFd>,
-    redactor: Redactor,
+    /// Sanitize then redact, once, over merged arrival order: every sink below
+    /// (per-stream logs, queues, merged output, tail) is a projection of it.
+    pipeline: OutputPipeline,
+    /// The canonical captured tail: the last bytes of that same merged,
+    /// sanitized and redacted arrival order. A reader never re-groups streams
+    /// to rebuild it.
     tail: VecDeque<u8>,
     tail_max: usize,
     capture: CaptureState,
@@ -256,18 +287,165 @@ pub(crate) struct ProcessCore {
     terminal: Option<spawn::TerminalLease>,
     pty: bool,
     registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
+    capture_eof_sent: bool,
 }
-pub(crate) struct Redactor {
-    display: RedactionPass,
-    final_check: RedactionPass,
+/// A bounded live projection of canonical output, with explicit queue loss.
+#[derive(Debug, Clone, Default)]
+pub struct StyledOutput {
+    pub chunks: Vec<effigy_core::terminal_text::StyledChunk>,
+    pub truncated: bool,
 }
-impl std::fmt::Debug for Redactor {
+/// The one path from a secret-bearing process's merged raw output to every
+/// sink (K12): terminal controls are removed first, so the redactor sees
+/// exactly the visible bytes a front end would show, then redaction runs.
+/// Splitting that order, or normalizing after redaction, reopens the split
+/// secret: `super` CSI `secret` is one value to a terminal and two
+/// non-matching runs to a redactor over the raw bytes.
+#[derive(Debug)]
+struct OutputPipeline {
+    /// `Some` only for a secret-bearing process. An ordinary process keeps its
+    /// terminal colour, exactly as before this seam existed.
+    sanitizer: Option<terminal::TerminalSanitizer>,
+    redactor: Redactor<OutputTag>,
+    plain: bool,
+    /// One redactor per stream, present only for a secret-bearing process.
+    ///
+    /// Splitting the merged result by origin stream is a byte removal, and a
+    /// removal can join two halves of a secret that the merged redaction
+    /// correctly left alone, because the other stream's *visible* bytes sat
+    /// between them (`super` on stdout, `noise` on stderr, `secret` on
+    /// stdout). Each projection is therefore redacted again over its own byte
+    /// stream before it reaches a stored log or a queue. Keeping both streams
+    /// in arrival order is the only capture that cannot be reordered, so the
+    /// merged output and the merged tail stay canonical, and a consumer that
+    /// wants both streams reads them, never a concatenation of projections.
+    projections: Option<[Redactor; 2]>,
+}
+impl OutputPipeline {
+    fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self::for_capture(secrets, false)
+    }
+    fn for_capture(mut secrets: Vec<Vec<u8>>, plain: bool) -> Self {
+        if plain {
+            secrets.extend(
+                secrets
+                    .iter()
+                    .map(|secret| {
+                        terminal::visible(secret)
+                            .into_iter()
+                            .filter(|byte| *byte != b'\r')
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|secret| !secret.is_empty())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        let secret_bearing = !secrets.is_empty();
+        Self {
+            sanitizer: (secret_bearing || plain).then(terminal::TerminalSanitizer::new),
+            plain,
+            projections: (secret_bearing && !plain).then(|| {
+                [
+                    Redactor::new(secrets.clone()),
+                    Redactor::new(secrets.clone()),
+                ]
+            }),
+            redactor: Redactor::with_tags(secrets),
+        }
+    }
+    /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
+    /// each byte's origin tag.
+    fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(OutputTag, u8)> {
+        self.push_terminal(bytes, eof, eof)
+    }
+    fn push_terminal(
+        &mut self,
+        bytes: &[(u8, u8)],
+        terminal_eof: bool,
+        eof: bool,
+    ) -> Vec<(OutputTag, u8)> {
+        match self.sanitizer.as_mut() {
+            Some(sanitizer) => {
+                let mut visible = sanitizer.push_styled(bytes, terminal_eof);
+                if self.plain {
+                    visible.retain(|(_, byte)| *byte != b'\r');
+                }
+                // Empty is not a no-op: EOF still flushes the redactor.
+                self.redactor.push_tagged(&visible, eof)
+            }
+            None => {
+                let tagged: Vec<_> = bytes
+                    .iter()
+                    .map(|(stream, byte)| {
+                        (
+                            OutputTag {
+                                stream: *stream,
+                                ..OutputTag::default()
+                            },
+                            *byte,
+                        )
+                    })
+                    .collect();
+                self.redactor.push_tagged(&tagged, eof)
+            }
+        }
+    }
+    /// Each stream's own safe projection of one merged result. A stream sink
+    /// is only ever written from this, never from a filtered merged slice.
+    fn project(&mut self, merged: &[(OutputTag, u8)], eof: bool) -> [Vec<u8>; 2] {
+        let mut raw: [Vec<u8>; 2] = Default::default();
+        for &(tag, byte) in merged {
+            if let Some(part) = raw.get_mut(usize::from(tag.stream)) {
+                part.push(byte);
+            }
+        }
+        let Some(projections) = self.projections.as_mut() else {
+            return raw;
+        };
+        for (stream, redactor) in projections.iter_mut().enumerate() {
+            // The projection is its own stream of bytes, so it is redacted as
+            // one: a secret its own bytes form is caught even when arrival
+            // order interleaved them with the other stream's.
+            raw[stream] = redactor.push(&raw[stream], eof);
+        }
+        raw
+    }
+}
+pub(crate) trait RedactionTag: Copy {
+    fn masked(self) -> Self;
+}
+impl RedactionTag for u8 {
+    fn masked(self) -> Self {
+        self
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct OutputTag {
+    stream: u8,
+    style: effigy_core::terminal_text::Style,
+}
+impl RedactionTag for OutputTag {
+    fn masked(self) -> Self {
+        Self {
+            stream: self.stream,
+            ..Self::default()
+        }
+    }
+}
+pub(crate) struct Redactor<T: RedactionTag = u8> {
+    /// `None` when no reader-safe byte is absent from every secret, so no
+    /// replacement can be emitted that a reader cannot join across: nothing is
+    /// redacted and the capture stops (`blocked`) rather than leak.
+    display: Option<RedactionPass<T>>,
+    final_check: Option<RedactionPass<T>>,
+}
+impl<T: RedactionTag> std::fmt::Debug for Redactor<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Redactor([REDACTED])")
     }
 }
-impl Redactor {
-    pub(crate) fn new(mut secrets: Vec<Vec<u8>>) -> Self {
+impl<T: RedactionTag> Redactor<T> {
+    fn with_tags(mut secrets: Vec<Vec<u8>>) -> Self {
         // A PTY's output processing expands LF to CRLF. Match that display
         // representation too, before it reaches logs, tails or a front end.
         let terminal = secrets
@@ -285,14 +463,64 @@ impl Redactor {
             })
             .collect::<Vec<_>>();
         secrets.extend(terminal);
+        // A secret can itself carry a terminal control. The sanitizer removes
+        // it, so the bytes a reader shows are that value's visible form; match
+        // it too, or stripping a control out of a secret would leave a visible
+        // remainder no pattern covers (K12).
+        secrets.extend(
+            secrets
+                .iter()
+                .map(|secret| terminal::visible(secret))
+                .filter(|visible| !visible.is_empty())
+                .collect::<Vec<_>>(),
+        );
+        secrets.sort();
+        secrets.dedup();
+        // A secret can itself contain the display marker, or a replacement can
+        // join adjacent bytes into another secret. A second streaming pass
+        // replaces such an occurrence with one byte: a byte *no reader drops*
+        // and no secret contains. Both halves matter. A control byte (a NUL,
+        // say) is dropped by a reader, which joins the bytes either side of it
+        // and can rebuild the very secret this pass removed; a byte a secret
+        // contains could be part of one. With a byte in neither class, the
+        // replacement can neither hold a secret nor be spanned by one.
+        let replacement = final_replacement(&secrets);
         Self {
-            display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
-            // A secret can itself contain the display marker, or a replacement
-            // can join adjacent bytes into another secret. A second streaming
-            // pass uses NUL, which SecretValue forbids, so its replacement can
-            // neither contain a secret nor create one across its boundaries.
-            final_check: RedactionPass::new(secrets, b"\0"),
+            display: replacement
+                .map(|_| RedactionPass::new(secrets.clone(), b"[REDACTED]".to_vec())),
+            final_check: replacement.map(|byte| RedactionPass::new(secrets, vec![byte])),
         }
+    }
+    fn has_pending(&self) -> bool {
+        self.display
+            .as_ref()
+            .is_some_and(|pass| !pass.pending.is_empty())
+            || self
+                .final_check
+                .as_ref()
+                .is_some_and(|pass| !pass.pending.is_empty())
+    }
+    /// Whether no reader-safe replacement byte exists for this secret set, so
+    /// nothing can be emitted at all.
+    pub(crate) fn blocked(&self) -> bool {
+        self.display.is_none()
+    }
+    /// Redacts `(stream, byte)` pairs in arrival order. A replacement takes
+    /// the stream of the secret's first byte, so a secret split across
+    /// stdout and stderr is redacted whole and attributed to one stream.
+    pub(crate) fn push_tagged(&mut self, bytes: &[(T, u8)], eof: bool) -> Vec<(T, u8)> {
+        let (Some(display), Some(final_check)) = (self.display.as_mut(), self.final_check.as_mut())
+        else {
+            return Vec::new();
+        };
+        let shown = display.push(bytes, eof);
+        final_check.push(&shown, eof)
+    }
+}
+
+impl Redactor<u8> {
+    pub(crate) fn new(secrets: Vec<Vec<u8>>) -> Self {
+        Self::with_tags(secrets)
     }
     pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
@@ -301,21 +529,29 @@ impl Redactor {
             .map(|(_, byte)| byte)
             .collect()
     }
-    /// Redacts `(stream, byte)` pairs in arrival order. A replacement takes
-    /// the stream of the secret's first byte, so a secret split across
-    /// stdout and stderr is redacted whole and attributed to one stream.
-    pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
-        let display = self.display.push(bytes, eof);
-        self.final_check.push(&display, eof)
-    }
 }
-struct RedactionPass {
+
+/// The byte a re-formed secret is replaced with: the first value a reader keeps
+/// and no secret contains, preferred in an order that keeps output readable.
+/// Every control is either dropped by a reader or moved by a renderer, so only
+/// printable ASCII is a candidate. `None` when the secrets cover them all: no
+/// replacement could then be both safe and readable.
+fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
+    const PREFERRED: &[u8] = b"~`^|\\{}<>$&*?!;:+=@%#/\"',()[]";
+    let absent = |byte: u8| !secrets.iter().any(|secret| secret.contains(&byte));
+    PREFERRED
+        .iter()
+        .copied()
+        .chain((0x20..=0x7e).filter(|byte| !PREFERRED.contains(byte)))
+        .find(|byte| absent(*byte))
+}
+struct RedactionPass<T: RedactionTag> {
     secrets: Vec<Vec<u8>>,
-    pending: Vec<(u8, u8)>,
-    replacement: &'static [u8],
+    pending: Vec<(T, u8)>,
+    replacement: Vec<u8>,
 }
-impl RedactionPass {
-    fn new(mut secrets: Vec<Vec<u8>>, replacement: &'static [u8]) -> Self {
+impl<T: RedactionTag> RedactionPass<T> {
+    fn new(mut secrets: Vec<Vec<u8>>, replacement: Vec<u8>) -> Self {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         Self {
             secrets,
@@ -323,17 +559,30 @@ impl RedactionPass {
             replacement,
         }
     }
-    fn push(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+    fn push(&mut self, bytes: &[(T, u8)], eof: bool) -> Vec<(T, u8)> {
         self.pending.extend_from_slice(bytes);
-        let keep = self.secrets.iter().map(Vec::len).max().unwrap_or(1);
         let mut out = Vec::new();
         let mut pos = 0;
-        while pos < self.pending.len() && (eof || self.pending.len() - pos >= keep) {
+        while pos < self.pending.len() {
             let rest = &self.pending[pos..];
+            // Only a suffix that could still complete a known value needs
+            // lookahead. Long inherited values must not stall unrelated live
+            // lines until max-secret-length bytes or process EOF arrive.
+            if !eof
+                && self.secrets.iter().any(|secret| {
+                    rest.len() < secret.len()
+                        && rest
+                            .iter()
+                            .zip(secret)
+                            .all(|((_, byte), expected)| byte == expected)
+                })
+            {
+                break;
+            }
             if let Some(secret) = self.secrets.iter().find(|s| {
                 rest.len() >= s.len() && rest.iter().zip(s.iter()).all(|((_, b), c)| b == c)
             }) {
-                let stream = rest[0].0;
+                let stream = rest[0].0.masked();
                 out.extend(self.replacement.iter().map(|byte| (stream, *byte)));
                 pos += secret.len();
             } else {
@@ -508,6 +757,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
 
@@ -527,6 +777,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
 
@@ -542,6 +793,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
             None,
         )
@@ -563,6 +815,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -582,6 +835,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -597,6 +851,7 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
             None,
         )
@@ -620,6 +875,7 @@ impl Custody {
             required,
             None,
             handoff,
+            None,
         )
     }
     pub fn spawn_foreground_with_handoff(
@@ -638,6 +894,7 @@ impl Custody {
             required,
             None,
             handoff,
+            None,
         )
     }
     /// `spawn_foreground_with_handoff` with a gate between the recorded receipt
@@ -658,6 +915,43 @@ impl Custody {
             true,
             Some(gate),
             handoff,
+            None,
+        )
+    }
+    /// Capture both child pipes into one append-only plain log. The destination
+    /// is installed before the child passes its execution barrier; inherited
+    /// output descriptors are refused rather than bypassing custody.
+    pub fn spawn_logged_auxiliary(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        output: CanonicalOutput,
+    ) -> Result<OwnedProcess, SpawnError> {
+        if !matches!(spec.terminal, Terminal::None | Terminal::Pipe) {
+            return Err(SpawnError::Refused(
+                "merged logs require captured pipes".into(),
+            ));
+        }
+        if spec
+            .validated_secrets()?
+            .iter()
+            .any(|secret| std::str::from_utf8(secret).is_err())
+        {
+            return Err(SpawnError::Refused(
+                "plain styled capture requires UTF-8 secrets".into(),
+            ));
+        }
+        output.validate(&spec)?;
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            false,
+            None,
+            None,
+            Some(output),
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -672,6 +966,7 @@ impl Custody {
         required: bool,
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
+        canonical_output: Option<CanonicalOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -687,6 +982,21 @@ impl Custody {
         let secrets = spec
             .validated_secrets()
             .map_err(|e| SpawnError::Refused(e.to_string()))?;
+        if matches!(spec.terminal, Terminal::Styled { .. })
+            && secrets
+                .iter()
+                .any(|secret| std::str::from_utf8(secret).is_err())
+        {
+            return Err(SpawnError::Refused(
+                "managed plain capture requires UTF-8 secret provenance".into(),
+            ));
+        }
+        let styled = matches!(spec.terminal, Terminal::Styled { .. });
+        let pipeline = OutputPipeline::new(if canonical_output.is_some() || styled {
+            Vec::new()
+        } else {
+            secrets.clone()
+        });
         let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
@@ -756,17 +1066,38 @@ impl Custody {
                 CaptureState::Truncated("log open failed".into())
             };
             let [stdout_log, stderr_log] = logs;
+            let (logs, canonical_output) = if styled {
+                let log = stdout_log
+                    .map_err(|_| SpawnError::Refused("managed plain log unavailable".into()))?
+                    .ok_or_else(|| {
+                        SpawnError::Refused("managed plain capture needs a durable log".into())
+                    })?;
+                (
+                    [None, stderr_log.ok().flatten()],
+                    Some(CanonicalOutput::for_run(
+                        log,
+                        secrets,
+                        cx.operation().limits(),
+                    )?),
+                )
+            } else {
+                (
+                    [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
+                    canonical_output,
+                )
+            };
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
                 anchor,
-                logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
+                logs,
+                canonical_output,
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
                 stdin,
-                redactor: Redactor::new(secrets),
+                pipeline,
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -777,8 +1108,12 @@ impl Custody {
                     Lifetime::Open(_) => None,
                 },
                 terminal,
-                pty: matches!(spec.terminal, Terminal::Pty),
+                pty: matches!(
+                    spec.terminal,
+                    Terminal::Pty | Terminal::Styled { pty: true }
+                ),
                 registration,
+                capture_eof_sent: false,
             }));
             run.retain_process(ticket.sequence(), core.clone());
             pending.transfer();
@@ -829,16 +1164,36 @@ impl OwnedProcess {
             .is_some_and(|at| Instant::now() >= at)
     }
     pub fn take_output(&self) -> Vec<u8> {
-        lock(&self.core).output.drain(..).collect()
+        let mut core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return output.take_output();
+        }
+        core.output.drain(..).collect()
     }
     /// Drains the separately redacted stdout and stderr queues.
+    /// Drain bounded, already-redacted style data. A gap is explicit; a front
+    /// may use the canonical plain file to recover it without interpreting ANSI.
+    pub fn take_styled_output(&self) -> StyledOutput {
+        let core = lock(&self.core);
+        core.canonical_output
+            .as_ref()
+            .map_or_else(StyledOutput::default, CanonicalOutput::take_styled_output)
+    }
+    /// Managed output is one canonical stream; no per-stream regrouping.
     pub fn take_stream_output(&self) -> (Vec<u8>, Vec<u8>) {
         let mut core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return (output.take_output(), Vec::new());
+        }
         let [stdout, stderr] = &mut core.streams;
         (stdout.drain(..).collect(), stderr.drain(..).collect())
     }
     pub fn tail(&self) -> Vec<u8> {
-        lock(&self.core).tail.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return output.tail();
+        }
+        core.tail.iter().copied().collect()
     }
     pub fn poll(&mut self) -> Observed<Exit> {
         lock(&self.core).poll()
@@ -906,36 +1261,70 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
-    /// One redaction over both streams in arrival order, before any sink:
-    /// per-stream redaction could reconstruct a secret split across them
-    /// wherever they are joined (a log reader, a tail, a terminal).
+    fn abandon_capture(&mut self, reason: &str) {
+        self.capture = CaptureState::Truncated(reason.to_owned());
+        self.stdout = None;
+        self.stderr = None;
+        self.capture_eof_sent = true;
+        // Both old pipes are closed. Reset terminal framing at this generation
+        // boundary while retaining merged secret lookahead for its successor.
+        // Real writer/provenance failure remains fatal; truncation alone does
+        // not override the host's declared restart policy.
+        if let Some(output) = &self.canonical_output {
+            if output.abandon_generation().is_err() {
+                output.fail();
+            }
+        }
+    }
+    /// One sanitize-then-redact over both streams in arrival order, before any
+    /// sink: per-stream work could reconstruct a secret split across streams
+    /// wherever they are joined (a log reader, a tail, a terminal), and a
+    /// terminal control inside a known secret could hide it from redaction
+    /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
-        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
-        let clean = self.redactor.push_tagged(&tagged, eof);
-        if clean.is_empty() {
+        if let Some(output) = &self.canonical_output {
+            if output.feed(index, bytes, eof).is_err() {
+                output.fail();
+                self.capture = CaptureState::Truncated("canonical capture failed".into());
+            }
             return;
         }
-        for stream in 0..2 {
-            let part: Vec<u8> = clean
-                .iter()
-                .filter(|(tag, _)| usize::from(*tag) == stream)
-                .map(|(_, byte)| *byte)
-                .collect();
+        // Nothing can be redacted into a form a reader cannot join across, so
+        // the capture stops instead of emitting a joinable marker (K12). The
+        // workload itself is untouched: this is capture state only.
+        if self.pipeline.redactor.blocked() {
+            if self.capture == CaptureState::Complete {
+                self.capture =
+                    CaptureState::Truncated("no reader-safe redaction replacement".into());
+            }
+            return;
+        }
+        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
+        let clean = self.pipeline.push_tagged(&tagged, eof);
+        // A stream's own sink is a projection, so it is written from its own
+        // redacted projection and never from a filtered merged slice: removing
+        // the other stream's bytes there could join halves of a secret the
+        // merged redaction could not see as one value.
+        let parts = self.pipeline.project(&clean, eof);
+        for (stream, part) in parts.iter().enumerate() {
             if part.is_empty() {
                 continue;
             }
             if let Some(log) = self.logs[stream].as_mut() {
-                if log.append(&part).is_err() {
+                if log.append(part).is_err() {
                     log.mark_truncated();
                     self.capture = CaptureState::Truncated("log write failed".into());
                     self.logs[stream] = None;
                 }
             }
             let queue = &mut self.streams[stream];
-            queue.extend(part);
+            queue.extend(part.iter().copied());
             while queue.len() > self.queue_max {
                 queue.pop_front();
             }
+        }
+        if clean.is_empty() {
+            return;
         }
         self.output.extend(clean.iter().map(|(_, byte)| *byte));
         while self.output.len() > self.queue_max {
@@ -976,6 +1365,9 @@ impl ProcessCore {
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) {
                         self.capture = CaptureState::Truncated("capture read failed".into());
+                        if let Some(output) = &self.canonical_output {
+                            output.fail();
+                        }
                         eof = true;
                     }
                     break;
@@ -1009,7 +1401,8 @@ impl ProcessCore {
         }
         // One stream closing cannot flush a prefix that the other stream may
         // finish. Only the merged stream's EOF flushes the bounded redactor.
-        if self.stdout.is_none() && self.stderr.is_none() {
+        if self.stdout.is_none() && self.stderr.is_none() && !self.capture_eof_sent {
+            self.capture_eof_sent = true;
             self.sink(0, &[], true);
         }
     }
@@ -1187,9 +1580,7 @@ impl ProcessCore {
         while self.stdout.is_some() || self.stderr.is_some() {
             self.drain();
             if stopped.operation().check("capture drain").is_err() {
-                self.capture = CaptureState::Truncated("drain deadline".into());
-                self.stdout = None;
-                self.stderr = None;
+                self.abandon_capture("drain deadline");
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -1237,7 +1628,13 @@ impl ProcessCore {
                 .map(|e| Observed::Verified(e, evidence()))
                 .unwrap_or_else(|| Observed::Unknown(unknown("leader not closed"))),
             group,
-            capture: self.capture.clone(),
+            capture: match &self.capture {
+                CaptureState::Truncated(_) => self.capture.clone(),
+                CaptureState::Complete => self
+                    .canonical_output
+                    .as_ref()
+                    .map_or(CaptureState::Complete, CanonicalOutput::capture_state),
+            },
             signals,
             residue,
         }
@@ -1276,6 +1673,16 @@ pub(crate) fn verify_foreground_receipt(
 /// log stream or historical record, and does not expose the process core.
 pub(crate) fn diagnostic_tail(core: &Arc<Mutex<ProcessCore>>) -> String {
     let core = lock(core);
+    if let Some(output) = &core.canonical_output {
+        let bytes = output.tail();
+        let mut start = bytes.len().saturating_sub(4096);
+        while start < bytes.len() && (0x80..=0xbf).contains(&bytes[start]) {
+            start += 1;
+        }
+        return std::str::from_utf8(&bytes[start..])
+            .map(str::to_owned)
+            .unwrap_or_default();
+    }
     let stderr = &core.streams[1];
     let bytes = stderr
         .iter()

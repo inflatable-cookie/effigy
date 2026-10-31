@@ -20,11 +20,11 @@ use super::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
 };
-use super::steps::{self, ComposeSteps};
+use super::steps::{self, ComposeSteps, ProgressSource, TimedStep};
 use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
-    annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
+    annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_observed,
     reconcile_primary_service_tcp_alias_hosts, resolve_repo_root_or_invocation_cwd_scope,
     wait_for_container_ready, ContainerRepoScope,
 };
@@ -47,7 +47,7 @@ use effigy_containers::{
         parse_compose_step_event, run_compose_invocation_streaming_with_env,
         shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
     },
-    load_container_policy, load_container_policy_for_creation, up_detached_report,
+    load_container_policy, load_container_policy_for_creation_observed, up_detached_report,
     validate_compose_backend_runtime, validate_container_policy,
     workspace_extra_mount_decision_lines, EffectiveAttachMode, EffectiveContainerPolicy,
     WorkspaceExtraMountDecision,
@@ -88,6 +88,9 @@ struct ContainerUpPlan {
 struct ContainerUpRuntimeIntegrations {
     gateway_routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
     managed_host_listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
+    /// Listeners that kept their own route withheld. Every other verified
+    /// route stays published, so this list is what exposure reports (effigy#455).
+    managed_host_listener_failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     tcp_alias_host_notes: Vec<String>,
     warnings: Vec<String>,
 }
@@ -172,6 +175,61 @@ fn detached_activation_failure(
     output_json: bool,
     error: RunnerError,
 ) -> RunnerError {
+    // Partial exposure is not an unverified activation: the environment
+    // settled, and the report names exactly which routes are published and
+    // which listener withheld its own. It gets its own envelope so a failing
+    // host listener never reads as a whole-activation exposure failure
+    // (effigy#455).
+    if let RunnerError::ManagedListenerExposure {
+        environment,
+        exposed,
+        failures,
+    } = &error
+    {
+        let withheld = failures
+            .iter()
+            .map(|failure| {
+                serde_json::json!({
+                    "kind": "host_listener",
+                    "listener": failure.name,
+                    "route_domain": failure.route_domain,
+                    "declared_route_domain": failure.declared_route_domain,
+                    "status": failure.status,
+                    "observed_status": failure.observed_status,
+                    "detail": failure.detail,
+                    "output_tail": failure.output_tail,
+                    "log": failure.log,
+                    "recovery": format!("effigy container {} restart {}", environment, failure.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        let message = format!(
+            "{error}\nDetached activation settled the environment with partial exposure: {} route(s) published, {} listener(s) withheld.\nnext: `effigy container up --detach` retries the withheld routes; `effigy container down` stops the scope.",
+            exposed.len(),
+            failures.len()
+        );
+        if output_json {
+            return RunnerError::CommandJsonFailure {
+                rendered: serde_json::json!({
+                    "state": "partial",
+                    "phase": "listener_exposure",
+                    "activation_stage": operation.stage.unwrap_or("runtime_integrations"),
+                    "identity": operation.identity,
+                    "environment": environment,
+                    "failure_kind": "managed_listener_exposure",
+                    "readiness": "verified",
+                    "exposure": "partial",
+                    "exposed_routes": exposed,
+                    "withheld_routes": withheld,
+                    "recovery": "effigy container up --detach",
+                    "stop": "effigy container down",
+                    "message": message,
+                })
+                .to_string(),
+            };
+        }
+        return RunnerError::task_invocation(message);
+    }
     let message = match &error {
         RunnerError::ManagedHostReadiness { diagnostic, .. } => {
             format!("Detached activation did not complete: {diagnostic}")
@@ -199,8 +257,7 @@ fn detached_activation_failure(
             | RunnerError::GatewayRuntimeTarget { .. } => "gateway_route_refusal",
             _ => "other",
         };
-        return RunnerError::CommandJsonFailure {
-            rendered: serde_json::json!({
+        let mut rendered = serde_json::json!({
                 "state": "unavailable",
                 "phase": "detached_activation",
                 "activation_stage": operation.stage.unwrap_or("preparation"),
@@ -214,8 +271,14 @@ fn detached_activation_failure(
                 "stop": "effigy container down",
                 "retirement_removes_mutable_data": true,
                 "message": message,
-            })
-            .to_string(),
+        });
+        // A wait the bring-up could not finish names its own kind and waits.
+        if let Some(details) = wait_refusal_details(&error) {
+            rendered["failure_kind"] = details["failure_kind"].clone();
+            rendered["waiting_on"] = details["waiting_on"].clone();
+        }
+        return RunnerError::CommandJsonFailure {
+            rendered: rendered.to_string(),
         };
     }
     RunnerError::task_invocation(format!(
@@ -245,6 +308,18 @@ fn run_container_up_inner(
 
     operation.stage = Some("preparation");
     let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
+    // A new bring-up owns its environment's published waits: a record left by
+    // an earlier session is never read as this one's (effigy#458). A run that
+    // holds this environment published its host graph before this `up` could
+    // block, so it owns that ledger and this child never clears it.
+    let waits = crate::runner::managed_wait::WaitLedger::environment(repo_root, &plan.policy.name);
+    if crate::runner::environment::requested_holder().is_none() {
+        waits.clear();
+    }
+    // Whether or not a run holds this environment, this bring-up's readiness
+    // phase begins settled and count-free: a previous run's counts are never
+    // reported while this one is still composing (effigy#458).
+    waits.settle_phase();
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
     operation.identity = Some(detached_activation_identity(&plan.policy));
 
@@ -337,15 +412,16 @@ fn run_container_up_inner(
 
     operation.stage = Some("runtime_integrations");
     let integrations = steps::during(
-        "registering routes",
+        ProgressSource::waiting_for("the runtime integrations of this environment"),
         "routes and host listeners registered",
-        || {
+        |progress| {
             complete_container_up_runtime_integrations(
                 repo_root,
                 &plan,
                 observation
                     .get()
                     .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
+                progress,
             )
         },
     )?;
@@ -353,13 +429,24 @@ fn run_container_up_inner(
     // Activation promotes the generation and attaches any requesting runs.
     // The stage keeps its documented name (closed JSON vocabulary).
     operation.stage = Some("persistent_owner");
-    let settling = steps::phase("settling the environment");
-    match environment::activate(&bring_up, holders) {
-        Ok(()) => settling.succeed("environment settled"),
-        Err(error) => {
-            settling.fail(error.to_string());
-            return Err(error);
+    // The environment transition already owns a live step (`EnvRun`, #461): it
+    // names the owner gate it waits behind, the record it reads and the holders
+    // it attaches, and ends with the settle. A second fixed label here would
+    // only repeat that wait with no state of its own (effigy#460, Q-017).
+    environment::activate(&bring_up, &plan.policy, holders)?;
+
+    if !integrations.managed_host_listener_failures.is_empty() {
+        // The environment is settled and every verified route is published;
+        // only the failing listeners' own routes are withheld. An attached
+        // session cannot leave a half-exposed stack open, so it keeps its
+        // existing closeout; a detached activation reports exactly which
+        // routes are exposed and which are not (effigy#455).
+        let failure = listener_exposure_failure(&plan.policy, &integrations);
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(failure);
         }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
+        return Err(finish_container_up_failure(failure, cleanup_result));
     }
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)
@@ -406,14 +493,20 @@ fn prepare_container_up(
                 }));
     operation.active = declared_detached;
     operation.preparation_step = Some("policy");
-    let ports_step = steps::phase("preparing ports and loopback");
-    // One render per `up`: the creation load allocates ports, prepares every
-    // mount source, renders the generation once and reports the extra-mount
-    // decisions it recorded. Every later stage uses this policy.
+    // One render per `up`: the creation load records the checkout identity,
+    // resolves the declaration and its ports and loopback, prepares render
+    // inputs, renders the generation once and prepares every mount source it
+    // binds. Each of those can take time, so the step follows the stage the
+    // load is in rather than holding one fixed label (effigy#460, Q-017).
+    let preparation =
+        ProgressSource::waiting_for("the container policy, its ports and mount sources");
+    let ports_step = TimedStep::live(preparation.clone());
     let (policy, workspace_mount_decisions) =
-        match load_container_policy_for_creation(repo_root, name) {
+        match load_container_policy_for_creation_observed(repo_root, name, &mut |stage| {
+            preparation.update(stage.description(), None, None)
+        }) {
             Ok(prepared) => {
-                ports_step.succeed("ports and loopback prepared");
+                ports_step.succeed("policy, ports and mount sources prepared");
                 prepared
             }
             Err(error) => {
@@ -421,12 +514,12 @@ fn prepare_container_up(
                 return Err(error.into());
             }
         };
-    let rendering_step = steps::phase("rendering the stack");
     operation.preparation_step = Some("rendering");
-    rendering_step.succeed(format!(
-        "stack rendered from {}",
-        policy.compose_file_display
-    ));
+    // Rendering is immediate, so it is one finished line and never a spinner.
+    effigy_ui::steps::finish_line(
+        true,
+        &format!("stack rendered from {}", policy.compose_file_display),
+    );
     operation.preparation_step = Some("validation");
     validate_container_policy(repo_root, &policy)?;
     crate::runner::host_process::validate_host_process_preflight(repo_root, &policy)?;
@@ -445,10 +538,24 @@ fn prepare_container_up(
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
-    let shared_service_notes =
-        steps::during("starting shared services", "shared services ready", || {
-            ensure_shared_services_running(&policy)
-        })?;
+    // A shared service is awaited by its own project, so the frame names the
+    // exact services it waits on until the ensure reports one of them.
+    let shared_names = policy
+        .shared_services
+        .iter()
+        .map(|service| format!("`{}`", service.service_name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let awaiting = if shared_names.is_empty() {
+        "the shared services to be ready".to_owned()
+    } else {
+        format!("shared services {shared_names} to be ready")
+    };
+    let shared_service_notes = steps::during(
+        ProgressSource::waiting_for(awaiting),
+        "shared services ready",
+        |progress| ensure_shared_services_observed(&policy, progress),
+    )?;
     operation.preparation_step = Some("dispatch");
     let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
         repo_root,
@@ -486,11 +593,15 @@ fn run_container_up_compose(
     compose_steps: &mut ComposeSteps,
     observation: &std::cell::Cell<Option<std::time::Instant>>,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
-    // A runtime whose progress this parser does not recognise still gets one
-    // honest step instead of a silent wait.
-    let whole_stack = steps::phase(format!("starting the `{}` stack", plan.policy.name));
+    // The stack's own step names the Compose call it waits on and the last
+    // runtime line it read, so a runtime whose progress this parser does not
+    // recognise still shows what it is waiting for (effigy#460, Q-017).
+    let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
+    let whole_stack = TimedStep::live(progress.clone());
+    let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
         if let Some(event) = parse_compose_step_event(line) {
+            progress.event(event.label(&project));
             compose_steps.observe(&event);
         }
     };
@@ -506,18 +617,25 @@ fn run_container_up_compose(
     );
     match output {
         Ok(_) => {
-            // The stack is started, so the runtime can be told to keep it up
-            // without racing Compose's create/start (effigy#383). This read is
-            // the first of the bring-up's observations, so it starts the one
-            // budget they all share (effigy#411).
+            // Compose has returned, but the runtime work is not over: the stack
+            // is told to keep its services running. The step follows that
+            // apply's own stages — the Compose declaration read, the runtime
+            // inventory read, then the update — so a stalled read never shows
+            // the finished Compose call or claims an update was sent
+            // (effigy#460, Q-017).
             let deadline = super::readiness::observation_deadline(&plan.policy);
             observation.set(Some(deadline));
-            effigy_containers::policy::restart::apply_after_start(
+            let subject = format!("the `{}` stack", plan.policy.name);
+            let mut restart_stage = |stage: steps::RestartPolicyStage| {
+                steps::restart_policy_stage(&progress, &subject, stage, None);
+            };
+            effigy_containers::policy::restart::apply_after_start_observed(
                 &plan.policy.repo_root,
                 &plan.policy,
                 &plan.policy.project_name,
                 &plan.policy.compose_files,
                 Some(deadline),
+                &mut restart_stage,
             );
             if compose_steps.touched() == 0 {
                 whole_stack.succeed("the stack is up");
@@ -537,6 +655,23 @@ fn run_container_up_compose(
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }
     }
+}
+
+/// The live state of one Compose activation's whole-stack step: the Compose
+/// call it waits on and the stack it brings up. Runtime lines move it with
+/// `event` (effigy#460, Q-017).
+fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
+    progress.update(format!("starting the `{stack}` stack"), None, None);
+    progress
+}
+
+/// The machine-readable details of a container wait that ended unfinished.
+fn wait_refusal_details(error: &RunnerError) -> Option<serde_json::Value> {
+    let RunnerError::ContainerWaitRefused { details_json, .. } = error else {
+        return None;
+    };
+    serde_json::from_str::<serde_json::Value>(details_json).ok()
 }
 
 fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {
@@ -559,16 +694,83 @@ fn render_container_up_interrupted(
     )
 }
 
+/// The integration stages `container up` runs after readiness, in order. The
+/// frame counts the stages finished before the one now running.
+const INTEGRATION_STAGES: u64 = 8;
+
+fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
+    // A new stage is a new wait: an earlier stage's blocker must not stay on
+    // screen for work it no longer describes (effigy#460, Q-017).
+    progress.clear_event();
+    progress.update(stage, Some((finished, INTEGRATION_STAGES)), None);
+}
+
+/// The route stage while the declared gateway service ports are polled: the
+/// runtime read in flight, then the blocker that read reported — naming the
+/// service and domain when the detail knows them — with the stage count and
+/// elapsed time (effigy#460, Q-017).
+fn gateway_port_wait_stage(
+    progress: &ProgressSource,
+    wait: super::gateway_registration::GatewayPortWait<'_>,
+) {
+    use super::gateway_registration::GatewayPortWait;
+    let count = Some((5, INTEGRATION_STAGES));
+    match wait {
+        // The next poll keeps the last blocker as its event: that is what the
+        // previous read observed about this same wait.
+        GatewayPortWait::Reading { attempt } => progress.update(
+            format!(
+                "reading the runtime's containers for the declared gateway service ports (attempt {attempt})"
+            ),
+            count,
+            None,
+        ),
+        GatewayPortWait::Blocked { attempt, detail } => progress.update(
+            format!("waiting for the declared gateway service ports (attempt {attempt})"),
+            count,
+            Some(detail.to_owned()),
+        ),
+        // The work after the poll is a different wait, so the poll's blocker is
+        // cleared rather than shown against it.
+        GatewayPortWait::ConfirmingOwnership => {
+            progress.clear_event();
+            progress.update("confirming the primary container still owns its binding", count, None);
+        }
+        GatewayPortWait::ResolvingRoutes => {
+            progress.clear_event();
+            progress.update(
+                "resolving the declared gateway routes against the published ports",
+                count,
+                None,
+            );
+        }
+        GatewayPortWait::ReconcilingRoutes => {
+            progress.clear_event();
+            progress.update("writing the gateway route table", count, None);
+        }
+        GatewayPortWait::ReadingExitedContainers => {
+            progress.clear_event();
+            progress.update(
+                "reading the exited gateway service containers for the timeout diagnostic",
+                count,
+                None,
+            );
+        }
+    }
+}
+
 fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
     deadline: std::time::Instant,
+    progress: &ProgressSource,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
     // Readiness is Running plus the service's own health check, decided by the
     // bring-up wait. This only proves the binding the later stages target, and
     // it shares the bring-up's one observation budget: a runtime that already
     // did not answer is refused here rather than asked a fresh question.
+    integration_stage(progress, 0, "reading the primary service binding");
     let binding = match crate::runner::container_runtime_prep::ensure_primary_service_binding(
         repo_root,
         policy,
@@ -589,6 +791,7 @@ fn complete_container_up_runtime_integrations(
     // reporting. `container up` is the one stage every first creation,
     // reuse and handover passes through; managed children and `container
     // shell` enter through exec without their own preparation.
+    integration_stage(progress, 1, "preparing workspace permissions");
     if let Err(error) = ensure_up_workspace_permissions(policy, || {
         crate::runner::workspace_command::ensure_workspace_permissions_ready(
             repo_root,
@@ -603,6 +806,7 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 2, "materializing secrets");
     if let Err(error) =
         materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
     {
@@ -612,6 +816,7 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 3, "checking pinned host ports");
     if let Err(error) =
         super::support::ensure_pinned_host_ports_available(repo_root, policy, Some(deadline))
     {
@@ -623,6 +828,7 @@ fn complete_container_up_runtime_integrations(
     }
     // A gateway stopped by a reboot comes back here: `up` starts or reconciles
     // it and prints one line naming it.
+    integration_stage(progress, 4, "starting the gateway");
     if let Err(error) = super::gateway_registration::ensure_gateway_running_for_container(policy) {
         if plan.attach_mode == EffectiveAttachMode::Detached {
             return Err(detached_activation_error(policy, error));
@@ -630,11 +836,20 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    integration_stage(progress, 5, "registering gateway routes");
+    // The registration polls the runtime for the declared gateway service
+    // ports, so the stage names the read in flight and the blocker it reported
+    // rather than holding the stage label for the whole wait (effigy#460,
+    // Q-017).
+    let mut route_wait = |wait: super::gateway_registration::GatewayPortWait<'_>| {
+        gateway_port_wait_stage(progress, wait);
+    };
     let gateway_routes =
-        match super::gateway_registration::register_gateway_routes_for_verified_container(
+        match super::gateway_registration::register_gateway_routes_for_verified_container_observed(
             repo_root,
             policy,
             Some(&binding),
+            &mut route_wait,
         ) {
             Ok(routes) => routes,
             Err(error) => {
@@ -646,6 +861,7 @@ fn complete_container_up_runtime_integrations(
                 ));
             }
         };
+    integration_stage(progress, 6, "reconciling tcp alias hosts");
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(
         repo_root,
         policy,
@@ -663,29 +879,35 @@ fn complete_container_up_runtime_integrations(
     };
 
     let mut warnings = plan.warnings.clone();
-    let managed_host_listeners = match start_host_processes_for_container(repo_root, policy) {
-        Ok(listeners) => listeners,
-        Err(error)
-            if policy
-                .host_processes
-                .iter()
-                .any(|process| process.listener.is_some()) =>
-        {
-            if plan.attach_mode == EffectiveAttachMode::Detached {
-                return Err(detached_activation_error(policy, error));
+    // Listener startup shares this bring-up's one observation budget: a
+    // listener that has not opened its port when it is spent withholds its own
+    // route instead of holding the activation open (effigy#455, effigy#411).
+    integration_stage(progress, 7, "starting host listeners");
+    let (managed_host_listeners, managed_host_listener_failures) =
+        match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
+            Ok(report) => (report.ready, report.failures),
+            Err(error)
+                if policy
+                    .host_processes
+                    .iter()
+                    .any(|process| process.listener.is_some()) =>
+            {
+                if plan.attach_mode == EffectiveAttachMode::Detached {
+                    return Err(detached_activation_error(policy, error));
+                }
+                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+                return Err(finish_container_up_failure(error, cleanup_result));
             }
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
-        Err(error) => {
-            warnings.push(format!("host-process supervisor failed to start: {error}"));
-            Vec::new()
-        }
-    };
+            Err(error) => {
+                warnings.push(format!("host-process supervisor failed to start: {error}"));
+                (Vec::new(), Vec::new())
+            }
+        };
 
     Ok(ContainerUpRuntimeIntegrations {
         gateway_routes,
         managed_host_listeners,
+        managed_host_listener_failures,
         tcp_alias_host_notes,
         warnings,
     })
@@ -738,6 +960,40 @@ fn detached_activation_error(policy: &EffectiveContainerPolicy, error: RunnerErr
         "{error}\ncontainer `{}` stays as Compose left it: gateway exposure is unverified and no teardown ran. Re-run `effigy container up --detach` to reconcile from what is running, or `effigy container down` to stop it.",
         policy.name
     ))
+}
+
+/// The routes this activation verified and published, as one line each, for
+/// the partial-exposure report.
+fn exposed_route_lines(integrations: &ContainerUpRuntimeIntegrations) -> Vec<String> {
+    let mut exposed = integrations
+        .gateway_routes
+        .iter()
+        .map(|route| match route.target.as_deref() {
+            Some(target) => format!("{} -> {target}", route.domain),
+            None => format!("{} (registered)", route.domain),
+        })
+        .collect::<Vec<_>>();
+    for listener in &integrations.managed_host_listeners {
+        exposed.push(format!(
+            "{} -> {}",
+            listener.route_domain, listener.public_url
+        ));
+    }
+    exposed
+}
+
+/// A settled environment whose exposure is partial: the container's verified
+/// routes and every ready listener are published, and each failed listener
+/// kept only its own route withheld.
+fn listener_exposure_failure(
+    policy: &EffectiveContainerPolicy,
+    integrations: &ContainerUpRuntimeIntegrations,
+) -> RunnerError {
+    RunnerError::ManagedListenerExposure {
+        environment: policy.name.clone(),
+        exposed: exposed_route_lines(integrations),
+        failures: integrations.managed_host_listener_failures.clone(),
+    }
 }
 
 fn prepare_sources_for_container_up(repo_root: &Path) -> Result<(), RunnerError> {
@@ -1241,15 +1497,6 @@ pub(super) fn run_container_shell(
     Ok(shell_output)
 }
 
-pub(in crate::runner) fn run_container_exec_capture(
-    repo_root: &Path,
-    name: Option<&str>,
-    service: Option<&str>,
-    command: &[String],
-) -> Result<Output, RunnerError> {
-    run_container_exec_capture_with_options(repo_root, name, service, command, None)
-}
-
 pub(in crate::runner) fn run_container_exec_capture_with_options(
     repo_root: &Path,
     name: Option<&str>,
@@ -1267,6 +1514,76 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
             cwd: None,
             env: BTreeMap::new(),
         },
+    )
+}
+
+/// Run one captured exec whose client credential travels by variable name only
+/// (effigy#487). The value reaches the spawned command's environment, never its
+/// argv: a checkout-local handoff puts it in the direct command's environment,
+/// and every Compose route sources it from a private file the bootstrap reads.
+pub(in crate::runner) fn run_container_exec_capture_with_credentials(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    command: &[String],
+    credential_env: &BTreeMap<String, String>,
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
+    if credential_env.is_empty() {
+        return run_container_exec_capture_with_options(
+            repo_root, name, service, command, stdin_file,
+        );
+    }
+    if command.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "container_exec requires at least one command argument",
+        ));
+    }
+    // Inside the workspace container the requested command is already local:
+    // the values go into its environment and never into its argv.
+    if let Some(resolved) =
+        crate::runner::container_runtime::resolve_handoff_local_execution(repo_root, name, service)
+    {
+        let execution = resolved?;
+        let env = credential_env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        return crate::runner::container_runtime::run_handoff_local_direct_command_with_options(
+            &execution, command, None, stdin_file, &env, true,
+        );
+    }
+
+    let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
+    let _operation_plan = exec_operation_plan(
+        repo_root,
+        &policy,
+        ContainerExecOperation::captured(
+            Some(service.clone()),
+            command.to_vec(),
+            stdin_file.map(Path::to_path_buf),
+        ),
+    );
+    maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
+    let credential_names = credential_env
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let plan = captured_exec_compose_plan(
+        repo_root,
+        name,
+        &policy,
+        &service,
+        command,
+        None,
+        &BTreeMap::new(),
+        &credential_names,
+    )?;
+    crate::runner::exec_command::run_compose_exec_plan_with_credentials(
+        &policy,
+        &plan,
+        stdin_file,
+        credential_env,
     )
 }
 
@@ -1347,32 +1664,59 @@ fn run_container_exec_operation(
         ),
     );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
-    let mut args = vec![OsString::from("exec"), OsString::from("-T")];
-    if let Some(working_dir) = resolve_container_exec_working_dir_for_operation(
+    let plan = captured_exec_compose_plan(
         repo_root,
         name,
         &policy,
         &service,
+        &operation.command,
         operation.cwd.as_deref(),
-    )? {
+        &operation.env,
+        &[],
+    )?;
+    run_compose_exec_plan_with_options(&policy, &plan, capture, operation.stdin_file.as_deref())
+}
+
+/// Build the Compose `exec` plan for one captured operation. The project,
+/// service, working directory and color/handoff environment are the same for
+/// every caller; `credential_names` adds name-only `-e NAME` passthroughs whose
+/// values the caller keeps out of argv.
+#[allow(clippy::too_many_arguments)]
+fn captured_exec_compose_plan(
+    repo_root: &Path,
+    name: Option<&str>,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    command: &[String],
+    cwd: Option<&Path>,
+    env: &BTreeMap<String, OsString>,
+    credential_names: &[&str],
+) -> Result<ContainerComposeInvocationPlan, RunnerError> {
+    let mut args = vec![OsString::from("exec"), OsString::from("-T")];
+    if let Some(working_dir) =
+        resolve_container_exec_working_dir_for_operation(repo_root, name, policy, service, cwd)?
+    {
         args.push(OsString::from("-w"));
         args.push(OsString::from(working_dir));
     }
     append_color_exec_env(&mut args, false);
-    append_container_exec_env(&mut args, &operation.env);
+    append_container_exec_env(&mut args, env);
+    for key in credential_names {
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(*key));
+    }
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
     args.push(OsString::from(service));
-    args.extend(operation.command.iter().map(OsString::from));
-    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+    args.extend(command.iter().map(OsString::from));
+    effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
-        &policy,
+        policy,
         args,
         ContainerAction::Exec,
         "docker compose exec",
     )
-    .map_err(RunnerError::from)?;
-    run_compose_exec_plan_with_options(&policy, &plan, capture, operation.stdin_file.as_deref())
+    .map_err(RunnerError::from)
 }
 
 fn probe_runtime_shell_capability(
@@ -1434,17 +1778,20 @@ mod tests {
         annotate_workspace_extra_mount_decisions, detached_activation_failure,
         detached_activation_identity, ensure_up_workspace_permissions,
         gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
-        run_container_down_command, sanitized_failure_cause, DetachedOperationState, RunnerError,
+        run_container_down_command, sanitized_failure_cause, DetachedOperationState,
+        ProgressSource, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::container_command::test_support::temp_repo;
+    use effigy_containers::policy::restart::RestartPolicyStage;
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
         down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
-        ContainerAction, EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
+        ContainerAction, CreationPolicyStage, EffectiveComposeSource, EffectiveContainerPolicy,
+        SharedServiceBinding,
     };
     use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
     use effigy_manifest::{
@@ -1575,6 +1922,228 @@ mod tests {
     }
 
     #[test]
+    fn activation_frames_name_the_compose_call_and_the_last_runtime_line() {
+        use std::time::Duration;
+
+        let progress = super::activation_source("docker compose up", "web");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; 12s elapsed"
+        );
+        // The runtime's own line, mapped through the same label production uses.
+        let started = effigy_containers::exec::ComposeStepEvent::Starting {
+            subject: "demo-web-1".to_owned(),
+        };
+        progress.event(started.label("demo"));
+        // The event never replaces the call still awaited: two reads after it
+        // both keep `docker compose up` and the elapsed wait.
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(20)),
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 20s elapsed"
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(90)),
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; last: starting web; 90s elapsed"
+        );
+        // Compose has returned and the restart-policy apply begins: each of its
+        // stages names itself as it starts, so a stalled read names that read
+        // and never the finished Compose call or its last event (effigy#460,
+        // Q-017).
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::ComposeDeclaration,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(30)),
+            "reading the Compose declaration of the `web` stack for services without a restart policy; waiting for `restart: unless-stopped` on the `web` stack; 30s elapsed"
+        );
+        // A stalled runtime inventory read keeps saying what it is reading.
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::RuntimeInventory,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(44)),
+            "reading the running containers of the `web` stack from the runtime; waiting for `restart: unless-stopped` on the `web` stack; 44s elapsed"
+        );
+        super::steps::restart_policy_stage(
+            &progress,
+            "the `web` stack",
+            RestartPolicyStage::Apply,
+            None,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(51)),
+            "asking the runtime to keep the containers of the `web` stack on `restart: unless-stopped`; waiting for `restart: unless-stopped` on the `web` stack; 51s elapsed"
+        );
+    }
+
+    #[test]
+    fn the_route_stage_names_the_port_read_and_the_blocker_it_reported() {
+        use std::time::Duration;
+
+        let progress = ProgressSource::waiting_for("the runtime integrations of this environment");
+        super::integration_stage(&progress, 5, "registering gateway routes");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(2)),
+            "registering gateway routes (5/8); waiting for the runtime integrations of this environment; 2s elapsed"
+        );
+        // The runtime read now in flight, with its attempt and the stage count.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 1 },
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(6)),
+            "reading the runtime's containers for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; 6s elapsed"
+        );
+        // The read answered and its blocker names the service and domain.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Blocked {
+                attempt: 1,
+                detail: "service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`",
+            },
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(7)),
+            "waiting for the declared gateway service ports (attempt 1) (5/8); waiting for the runtime integrations of this environment; last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 7s elapsed"
+        );
+        // The next poll keeps that blocker as the last thing this wait saw.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 2 },
+        );
+        assert!(
+            progress
+                .frame_at(Duration::from_secs(8))
+                .contains("reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; last: service `db`"),
+            "{}",
+            progress.frame_at(Duration::from_secs(8))
+        );
+        // The poll then succeeds, and the work after it is its own wait: the
+        // resolved blocker is not shown against it.
+        for (wait, expected) in [
+            (
+                super::super::gateway_registration::GatewayPortWait::ConfirmingOwnership,
+                "confirming the primary container still owns its binding (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+            (
+                super::super::gateway_registration::GatewayPortWait::ResolvingRoutes,
+                "resolving the declared gateway routes against the published ports (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+            (
+                super::super::gateway_registration::GatewayPortWait::ReconcilingRoutes,
+                "writing the gateway route table (5/8); waiting for the runtime integrations of this environment; 9s elapsed",
+            ),
+        ] {
+            super::gateway_port_wait_stage(&progress, wait);
+            assert_eq!(progress.frame_at(Duration::from_secs(9)), expected);
+            assert!(
+                !progress.frame_at(Duration::from_secs(9)).contains("last:"),
+                "the poll's blocker is cleared for the work that follows it"
+            );
+        }
+        // The timeout diagnostic's own read is named too.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::ReadingExitedContainers,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(10)),
+            "reading the exited gateway service containers for the timeout diagnostic (5/8); waiting for the runtime integrations of this environment; 10s elapsed"
+        );
+        // A later integration stage clears what the previous stage observed.
+        super::integration_stage(&progress, 6, "reconciling tcp alias hosts");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(11)),
+            "reconciling tcp alias hosts (6/8); waiting for the runtime integrations of this environment; 11s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_policy_load_frame_names_the_preparation_stage_now_running() {
+        use std::time::Duration;
+
+        let progress =
+            ProgressSource::waiting_for("the container policy, its ports and mount sources");
+        // The first frame names the exact wait before any stage is reported.
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(1)),
+            "waiting for the container policy, its ports and mount sources; 1s elapsed"
+        );
+        // Each preparation stage names itself as the load reaches it.
+        for (stage, expected) in [
+            (
+                CreationPolicyStage::CheckoutIdentity,
+                "recording the checkout identity",
+            ),
+            (
+                CreationPolicyStage::Declaration,
+                "resolving the container declaration, ports and loopback",
+            ),
+            (
+                CreationPolicyStage::RenderInputs,
+                "preparing render inputs and owned mount directories",
+            ),
+            (
+                CreationPolicyStage::ResolvedDeclaration,
+                "resolving the declaration again with the workspace and extra mounts",
+            ),
+            (CreationPolicyStage::Render, "rendering the Compose stack"),
+            (
+                CreationPolicyStage::MountSources,
+                "preparing the mount sources the stack binds",
+            ),
+        ] {
+            progress.update(stage.description(), None, None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(9)),
+                format!("{expected}; waiting for the container policy, its ports and mount sources; 9s elapsed")
+            );
+        }
+    }
+
+    #[test]
+    fn a_detached_readiness_refusal_json_names_the_waits_it_ended_on() {
+        let operation = DetachedOperationState {
+            active: true,
+            stage: Some("readiness"),
+            ..Default::default()
+        };
+        let error = RunnerError::container_wait_refused(
+            "demo",
+            "environment `demo` did not become ready within 60s".to_owned(),
+            serde_json::json!({
+                "failure_kind": "container_readiness",
+                "readiness": "unverified",
+                "waiting_on": [{
+                    "kind": "service",
+                    "service": "web",
+                    "problem": "web is unhealthy after 4 failed checks",
+                }],
+            }),
+        );
+        let RunnerError::CommandJsonFailure { rendered } =
+            detached_activation_failure(&operation, true, error)
+        else {
+            panic!("a detached readiness refusal renders its JSON envelope");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+        assert_eq!(document["failure_kind"], "container_readiness");
+        assert_eq!(document["readiness"], "unverified");
+        assert_eq!(document["waiting_on"][0]["service"], "web");
+        assert_eq!(
+            document["waiting_on"][0]["problem"],
+            "web is unhealthy after 4 failed checks"
+        );
+    }
+
+    #[test]
     fn sanitized_failure_cause_bounds_the_reported_detail() {
         let long = format!("first line\n{}", "detail ".repeat(600));
         let cause = sanitized_failure_cause(&RunnerError::task_invocation(long));
@@ -1584,6 +2153,139 @@ mod tests {
         assert!(cause.contains('…'), "{cause}");
         assert!(cause.ends_with("detail"), "{cause}");
     }
+    /// The bring-up's integrations, as `complete_container_up_runtime_integrations`
+    /// hands them to the partial-exposure report: one container route and one
+    /// healthy listener published, one listener withheld.
+    fn partial_exposure_fixture() -> (
+        EffectiveContainerPolicy,
+        super::ContainerUpRuntimeIntegrations,
+    ) {
+        let policy = test_policy(Vec::new());
+        let integrations = super::ContainerUpRuntimeIntegrations {
+            gateway_routes: vec![super::super::gateway_registration::RegisteredGatewayRoute {
+                domain: "web.test".to_owned(),
+                target: Some("127.0.0.1:18080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                service: Some("app".to_owned()),
+                external_target: false,
+            }],
+            managed_host_listeners: vec![crate::runner::host_process::ManagedHostListenerResult {
+                name: "api".to_owned(),
+                status: "ready".to_owned(),
+                runtime_generation: "runtime-1".to_owned(),
+                generation: "generation-1".to_owned(),
+                address: "127.0.0.1:21001".to_owned(),
+                internal_url: "http://127.0.0.1:21001".to_owned(),
+                public_url: "http://api.test".to_owned(),
+                declared_route_domain: "api.test".to_owned(),
+                route_domain: "api.test".to_owned(),
+                route_tls: false,
+                state_file: "/checkout/.effigy/runtime/api.listener.json".to_owned(),
+            }],
+            managed_host_listener_failures: vec![
+                crate::runner::host_process::ManagedHostListenerFailure {
+                    name: "front".to_owned(),
+                    status: "failed".to_owned(),
+                    declared_route_domain: "acowtancy.test".to_owned(),
+                    route_domain: Some("acowtancy.test".to_owned()),
+                    observed_status: Some(500),
+                    detail: "managed listener at 127.0.0.1:21002 answered /health with HTTP 500 where 200 is required (status_mismatch)".to_owned(),
+                    output_tail: Some("vite: internal server error".to_owned()),
+                    log: "/checkout/.effigy/runtime/front.log".to_owned(),
+                },
+            ],
+            tcp_alias_host_notes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        (policy, integrations)
+    }
+
+    /// Partial exposure names the routes that are published and the listener
+    /// that is not, instead of one blanket unverified-exposure refusal
+    /// (effigy#455).
+    #[test]
+    fn listener_exposure_failure_names_exposed_routes_and_the_withheld_listener() {
+        let (policy, integrations) = partial_exposure_fixture();
+        let error = super::listener_exposure_failure(&policy, &integrations);
+        let text = error.to_string();
+        assert!(
+            text.contains("web.test -> 127.0.0.1:18080"),
+            "the container's published route is named: {text}"
+        );
+        assert!(
+            text.contains("api.test -> http://api.test"),
+            "the ready listener's route is named: {text}"
+        );
+        assert!(
+            text.contains("host listener `front` kept route acowtancy.test withheld"),
+            "the withheld route is named with its listener: {text}"
+        );
+        assert!(
+            text.contains("HTTP 500") && text.contains("vite: internal server error"),
+            "the refusal carries the observed status and the child output tail: {text}"
+        );
+        assert!(
+            !text.contains("exposure are unverified") && !text.contains("readiness and exposure"),
+            "a settled environment with partial exposure is not an unverified activation: {text}"
+        );
+    }
+
+    /// The detached JSON envelope for the same state reports the exposure
+    /// per route: published routes and withheld routes, with the listener's own
+    /// status and bounded output tail.
+    #[test]
+    fn detached_listener_exposure_json_names_exposed_and_withheld_routes() {
+        let (policy, integrations) = partial_exposure_fixture();
+        let operation = DetachedOperationState {
+            active: true,
+            stage: Some("persistent_owner"),
+            identity: Some(detached_activation_identity(&policy)),
+            ..Default::default()
+        };
+        let failure = detached_activation_failure(
+            &operation,
+            true,
+            super::listener_exposure_failure(&policy, &integrations),
+        );
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["state"], "partial");
+        assert_eq!(document["phase"], "listener_exposure");
+        assert_eq!(document["failure_kind"], "managed_listener_exposure");
+        assert_eq!(document["exposure"], "partial");
+        assert_eq!(document["readiness"], "verified");
+        assert_eq!(document["recovery"], "effigy container up --detach");
+        assert_eq!(
+            document["exposed_routes"],
+            json!(["web.test -> 127.0.0.1:18080", "api.test -> http://api.test"])
+        );
+        let withheld = document["withheld_routes"]
+            .as_array()
+            .expect("withheld list");
+        assert_eq!(withheld.len(), 1, "{document}");
+        assert_eq!(withheld[0]["listener"], "front");
+        assert_eq!(withheld[0]["route_domain"], "acowtancy.test");
+        assert_eq!(withheld[0]["observed_status"], 500);
+        assert_eq!(withheld[0]["output_tail"], "vite: internal server error");
+        assert!(
+            withheld[0]["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("status_mismatch"),
+            "{document}"
+        );
+        let message = document["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("partial exposure") && !message.contains("unverified"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn lifecycle_reset_plan_requires_confirmation_only_for_wipe_data() {
         let policy = test_policy(Vec::new());
@@ -2766,5 +3468,112 @@ exit 0
             !log.lines().any(|line| line.starts_with("exec ")),
             "up runs no exec readiness probe: {log}"
         );
+    }
+}
+
+/// Proof for effigy#487: the captured data exec plan passes each database
+/// credential by variable name only, for every environment declaration, and
+/// keeps the declared Compose project.
+#[cfg(test)]
+mod credential_plan_tests {
+    use super::captured_exec_compose_plan;
+    use crate::contract_test_support::EnvGuard;
+    use effigy_containers::load_container_policy;
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    const MANIFEST: &str = r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "db"
+project_name = "credential-stack"
+working_dir = "/workspace"
+
+[containers.stack.services.db]
+catalog = "mariadb"
+version = "10.11"
+
+[containers.hybrid]
+primary_service = "db"
+project_name = "credential-hybrid"
+working_dir = "/workspace"
+
+[containers.hybrid.services.db]
+catalog = "postgres"
+version = "16"
+"#;
+
+    fn repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir home");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        fs::write(repo.join("effigy.toml"), MANIFEST).expect("write manifest");
+        (temp, repo)
+    }
+
+    #[test]
+    fn captured_data_exec_plan_passes_credentials_by_name_only() {
+        let (_temp, repo) = repo();
+        let home = repo.parent().expect("parent").join("home");
+        let _env = EnvGuard::set_many(&[
+            ("HOME", Some(home.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
+        let command = vec![
+            "mysqldump".to_owned(),
+            "-uroot".to_owned(),
+            "acowtancy".to_owned(),
+        ];
+
+        for (environment, project, credential_name) in [
+            ("stack", "credential-stack", "MYSQL_PWD"),
+            ("hybrid", "credential-hybrid", "PGPASSWORD"),
+        ] {
+            let policy = load_container_policy(&repo, Some(environment)).expect("policy");
+            let plan = captured_exec_compose_plan(
+                &repo,
+                Some(environment),
+                &policy,
+                "db",
+                &command,
+                None,
+                &BTreeMap::new(),
+                &[credential_name],
+            )
+            .expect("plan");
+            let args = plan
+                .args
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair[0] == "-e" && pair[1] == credential_name),
+                "the credential name must be passed through: {args:?}"
+            );
+            assert!(
+                !args
+                    .iter()
+                    .any(|arg| arg.starts_with(&format!("{credential_name}="))),
+                "the value must never appear in the argv: {args:?}"
+            );
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair[0] == "-p" && pair[1] == project),
+                "the declared Compose project must be unchanged: {args:?}"
+            );
+            assert_eq!(
+                args.windows(2)
+                    .filter(|pair| pair[0] == "-e" && pair[1] == credential_name)
+                    .count(),
+                1,
+                "exactly one name-only passthrough per credential: {args:?}"
+            );
+        }
     }
 }

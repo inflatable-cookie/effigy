@@ -236,6 +236,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Runs(_)
         | Command::InternalGateway(_)
         | Command::InternalGatewayIdentity(_)
+        | Command::InternalGuestProbe(_)
         | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
         | Command::Task(_)) => run_and_render_command(&context, command),
@@ -245,7 +246,8 @@ pub fn run_cli(raw_args: Vec<String>) {
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
     let task_stdout_owned = command_owns_task_stdout(&command);
     let stdout_is_terminal = std::io::stdout().is_terminal();
-    let clean_machine_output = (!stdout_is_terminal && command_emits_release_notes(&command))
+    let clean_machine_output = matches!(&command, Command::InternalGuestProbe(_))
+        || (!stdout_is_terminal && command_emits_release_notes(&command))
         || command_streams_run_logs(&command);
     let suppress_header = context.suppress_header || clean_machine_output;
     let mut renderer = PlainRenderer::stdout(context.output_mode);
@@ -257,13 +259,8 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             let _ = render_cli_header(&mut renderer, context.command_root);
         }
     }
-    let transient = should_show_transient_spinner(context, &command)
-        .then(|| effigy_ui::steps::step(transient_spinner_label(&command)));
     match crate::runner::run_command_with_context(command, context.runtime_context) {
         Ok(output) => {
-            if let Some(transient) = transient.as_ref() {
-                transient.finish_clear();
-            }
             if context.emit_json_envelope {
                 emit_json_envelope_success(context.command_kind, context.command_name, &output);
                 return;
@@ -277,9 +274,6 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             }
         }
         Err(err) => {
-            if let Some(transient) = transient.as_ref() {
-                transient.finish_clear();
-            }
             if let crate::runner::RunnerError::RunSettled { code } = err {
                 // An attached or followed run already wrote its output; exit
                 // with that run's own result and add nothing.
@@ -348,46 +342,6 @@ fn command_requests_local_qa_json(command: &Command) -> bool {
         | Some(TasksQaCommand::GroupRun { output_json, .. })
         | Some(TasksQaCommand::GroupStatus { output_json, .. }) => *output_json,
         Some(TasksQaCommand::GroupLogs { .. } | TasksQaCommand::GroupStop { .. }) | None => false,
-    }
-}
-
-fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Command) -> bool {
-    if context.emit_json_envelope || context.suppress_header {
-        return false;
-    }
-    // The terminal decision lives in the step sink; this only says which
-    // commands have a slow phase worth a label.
-    matches!(
-        command,
-        Command::Container(effigy_cli::ContainerArgs {
-            subcommand: effigy_cli::ContainerSubcommand::Cache {
-                name: _,
-                subcommand: effigy_cli::ContainerCacheSubcommand::List {
-                    global: true,
-                    project: _,
-                    kind: _,
-                },
-            },
-            ..
-        }) | Command::Container(effigy_cli::ContainerArgs {
-            subcommand: effigy_cli::ContainerSubcommand::Volume {
-                subcommand: effigy_cli::ContainerVolumeSubcommand::List { .. },
-            },
-            ..
-        })
-    )
-}
-
-fn transient_spinner_label(command: &Command) -> &'static str {
-    match command {
-        Command::Container(effigy_cli::ContainerArgs {
-            subcommand:
-                effigy_cli::ContainerSubcommand::Volume {
-                    subcommand: effigy_cli::ContainerVolumeSubcommand::List { .. },
-                },
-            ..
-        }) => "Inspecting managed volumes...",
-        _ => "Inspecting cache volumes...",
     }
 }
 

@@ -51,25 +51,22 @@ pub(super) fn drain_process_events(
         drained_events += 1;
         let render_startup_state = match event_item.kind {
             ProcessEventKind::Starting => {
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Starting);
+                state.record_startup_state(&event_item.process, ProcessStartupState::Starting);
                 true
             }
             ProcessEventKind::Started => {
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Running);
-                state
-                    .process_started_at
-                    .insert(event_item.process.clone(), Instant::now());
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
+                    crate::terminal_text::ingest_generation_boundary(buffer);
+                }
+                // It has started, so it no longer waits: the tab follows the
+                // process's own state from here (effigy#458).
+                state.entry_waits.remove(&event_item.process);
+                state.record_startup_state(&event_item.process, ProcessStartupState::Running);
                 state.pending_startup = state.pending_startup.saturating_sub(1);
                 true
             }
             ProcessEventKind::StartupFailed => {
-                state
-                    .startup_states
-                    .insert(event_item.process.clone(), ProcessStartupState::Failed);
+                state.record_startup_state(&event_item.process, ProcessStartupState::Failed);
                 state.exit_states.insert(
                     event_item.process.clone(),
                     crate::core::ProcessExitState::Failure,
@@ -94,6 +91,16 @@ pub(super) fn drain_process_events(
             | ProcessEventKind::StartupFailed => {}
             ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {
                 handle_chunk_event(&event_item, state, diagnostics, vt_emulator_enabled)
+            }
+            ProcessEventKind::Styled => {
+                if let Ok(chunk) = serde_json::from_str::<effigy_core::terminal_text::StyledChunk>(
+                    &event_item.payload,
+                ) {
+                    if let Some(buffer) = state.logs.get_mut(&event_item.process) {
+                        crate::terminal_text::ingest_styled_chunk(buffer, chunk);
+                    }
+                    state.mark_process_received_output(&event_item.process);
+                }
             }
             ProcessEventKind::Stdout => {
                 if handle_stdout_event(&event_item, state, diagnostics, vt_emulator_enabled) {

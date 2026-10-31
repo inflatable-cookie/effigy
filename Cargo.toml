@@ -90,6 +90,10 @@ workspace = true
 [features]
 # Engine fault points for run-control proofs; never in a product build.
 fault-injection = ["effigy-kernel/fault-injection"]
+# The disposable activation the workspace-serving process-lifetime proof runs
+# in a detached process. Enables the kernel's fixture-only active-publication
+# transaction; absent from every product build.
+workspace-serving-fixture = ["effigy-kernel/test-support"]
 
 [dependencies]
 base64 = "0.22"
@@ -147,9 +151,14 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 minijinja = "2"
 rpassword = "7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+x509-parser = "0.16"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 tempfile = "3"
 
 [dev-dependencies]
+
+effigy-json-schema = { path = "crates/effigy-json-schema" }
 effigy-test-support = { path = "crates/effigy-test-support" }
 # A settled-run proof asks the kernel whether a workload group still exists.
 libc = "0.2"

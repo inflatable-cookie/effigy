@@ -1,6 +1,6 @@
 use super::{
-    bootstrap_runtime_session_context, run_bootstrap_with_cwd, running_setup_label, starting_label,
-    BootstrapProgressReporter,
+    bootstrap_runtime_session_context, checkout_awaiting, phase_progress, run_bootstrap_with_cwd,
+    running_setup_label, starting_label, task_awaiting, BootstrapProgressReporter,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
 use effigy_bootstrap::BootstrapProgressEvent;
@@ -226,6 +226,38 @@ fn bootstrap_steps_name_the_setup_and_start_selectors() {
         "running setup record-one"
     );
     assert_eq!(starting_label("dev"), "starting dev");
+}
+
+#[test]
+fn a_phase_frame_names_its_action_and_what_it_waits_on_as_time_passes() {
+    let seconds = std::time::Duration::from_secs;
+    // One phase, read twice on the fake clock: the same wait moves, and both
+    // frames still name the selector it waits for.
+    let setup = phase_progress(
+        &running_setup_label("record-one"),
+        task_awaiting("record-one"),
+    );
+    assert_eq!(
+        setup.frame_at(seconds(4)),
+        "running setup record-one; waiting for `record-one` to finish; 4s elapsed"
+    );
+    assert_eq!(
+        setup.frame_at(seconds(50)),
+        "running setup record-one; waiting for `record-one` to finish; 50s elapsed"
+    );
+    // A checkout phase waits on the destination, not a selector.
+    let checkout = phase_progress(
+        "pulling https://example.test/app.git into app",
+        checkout_awaiting(Path::new("app")),
+    );
+    assert_eq!(
+        checkout.frame_at(seconds(12)),
+        "pulling https://example.test/app.git into app; waiting for the checkout at app; 12s elapsed"
+    );
+    assert_eq!(
+        checkout.frame_at(seconds(90)),
+        "pulling https://example.test/app.git into app; waiting for the checkout at app; 90s elapsed"
+    );
 }
 
 fn setup_started(selector: &str) -> BootstrapProgressEvent {

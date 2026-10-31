@@ -1,0 +1,934 @@
+//! A strict fake at the external I/O boundary, using the actual owner, journal,
+//! session custody, TLS listener, schema constructor and commit/CAS path.
+use super::*;
+use crate::runner::environment::{self, workspace::*};
+use crate::runner::workspace_client::guest_fake::FakeGuest;
+use crate::runner::workspace_transport::qualification::{
+    Backend, GuestDialEvidence, ResolvedAlias,
+};
+use crate::runner::workspace_transport::TlsChannelTransport;
+use effigy_kernel::ctx::{EffectClass, Placement};
+use effigy_kernel::gate::Wait;
+use effigy_kernel::id::{
+    ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId, Surface, TaskId,
+};
+use effigy_kernel::run::BeginOpts;
+use effigy_kernel::workspace_session::{
+    ArtifactEvidence, GuestContextInputs, ImagePlatform, LoaderFamily, PublishInputs,
+    TargetEvidence,
+};
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+struct Guest(
+    Rc<RefCell<FakeGuest>>,
+    Option<(usize, bool)>,
+    Rc<Cell<usize>>,
+    Rc<Cell<bool>>,
+);
+impl Guest {
+    fn effect<T>(
+        &mut self,
+        action: impl FnOnce(&mut FakeGuest) -> Result<T, RunnerError>,
+    ) -> Result<T, RunnerError> {
+        let index = self.2.get() + 1;
+        self.2.set(index);
+        let injected = self.1.filter(|(at, _)| *at == index);
+        if injected == Some((index, false)) {
+            self.3.set(true);
+            return Err(RunnerError::task_invocation("crash before guest I/O"));
+        }
+        let result = action(&mut self.0.borrow_mut());
+        if injected == Some((index, true)) {
+            self.3.set(true);
+            return Err(RunnerError::task_invocation("crash after guest I/O"));
+        }
+        result
+    }
+}
+impl GuestReader for Guest {
+    fn read_file(&mut self, p: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+        self.0.borrow_mut().read_file(p)
+    }
+    fn file_sha256(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
+        self.0.borrow_mut().file_sha256(p)
+    }
+}
+impl GuestWorkspace for Guest {
+    fn read_link(&mut self, p: &str) -> Result<Option<String>, RunnerError> {
+        self.0.borrow_mut().read_link(p)
+    }
+    fn ensure_dir(&mut self, p: &str, m: u32) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.ensure_dir(p, m))
+    }
+    fn write_file(&mut self, p: &str, b: &[u8], m: u32) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.write_file(p, b, m))
+    }
+    fn write_no_replace(&mut self, p: &str, b: &[u8], m: u32) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.write_no_replace(p, b, m))
+    }
+    fn install_no_replace(&mut self, s: &str, p: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.install_no_replace(s, p))
+    }
+    fn set_owner(&mut self, p: &str, o: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.set_owner(p, o))
+    }
+    fn stage_host_file(&mut self, h: &Path, p: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.stage_host_file(h, p))
+    }
+    fn install_executable(&mut self, s: &str, p: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.install_executable(s, p))
+    }
+    fn replace_pointer(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.replace_pointer(p, t))
+    }
+    fn replace_link(&mut self, p: &str, t: &str) -> Result<(), RunnerError> {
+        self.effect(|guest| guest.replace_link(p, t))
+    }
+    fn probe_container_identity(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
+        self.0.borrow_mut().probe_container_identity()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    None,
+    Identity,
+    UnknownIdentity,
+    Alias,
+    Peer,
+    Pin,
+    Publication,
+    ContextProbe,
+    ContextPeer,
+    ContextPin,
+    StaleDocument,
+    Io(usize, bool),
+    Recovery(usize),
+    RecoveryDead,
+    RecoveryUnknown,
+    Hybrid,
+}
+struct Probe {
+    identity: GuestSelfObservation,
+    fault: Fault,
+    guest: Rc<RefCell<FakeGuest>>,
+    context_probed: bool,
+}
+impl WorkspaceGuestProbe for Probe {
+    fn context_dial(
+        &mut self,
+        target: &WorkspaceContainerIdentity,
+        object: &GuestObject,
+        context: &GuestObject,
+        budget: Duration,
+    ) -> Observed<GuestDialEvidence> {
+        self.context_probed = true;
+        if matches!(self.fault, Fault::ContextProbe) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "context probe interrupted".into(),
+            ));
+        }
+        self.identity
+            .compare(target)
+            .expect("independent fake observation");
+        if matches!(self.fault, Fault::StaleDocument) {
+            let bytes = self
+                .guest
+                .borrow_mut()
+                .read_file(&context.path)
+                .unwrap()
+                .unwrap();
+            let mut copied: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            copied["session"]["generation"] =
+                (copied["session"]["generation"].as_u64().unwrap() + 1).into();
+            self.guest.borrow_mut().put_file(
+                &context.path,
+                serde_json::to_vec(&copied).unwrap(),
+                0o444,
+            );
+        }
+        let bytes = self
+            .guest
+            .borrow_mut()
+            .read_file(&context.path)
+            .unwrap()
+            .expect("complete staged document");
+        if Digest::of(&bytes) != context.digest {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "actual guest document digest differs".into(),
+            ));
+        }
+        let document = WorkspaceContextV2::parse(&bytes).expect("guest cross-parser");
+        assert_eq!(
+            document.artifact_digest,
+            format!("sha256:{}", object.digest.hex())
+        );
+        assert_eq!(
+            self.guest.borrow().text(CONTEXT_CURRENT_PATH).as_deref(),
+            Some("3"),
+            "context probe precedes every selector switch"
+        );
+        let pin = Digest::parse_hex(document.locator.pin.strip_prefix("sha256:").unwrap()).unwrap();
+        match self.dial(target, &document.locator.endpoint, &pin, budget) {
+            Observed::Verified(mut reply, _) => {
+                if matches!(self.fault, Fault::ContextPeer) {
+                    reply.peer.set_ip("127.0.0.2".parse().unwrap());
+                }
+                if matches!(self.fault, Fault::ContextPin) {
+                    reply.pin = Digest::of(b"changed full context pin");
+                }
+                Observed::Verified(reply, evidence())
+            }
+            _ => panic!("fixture context dial did not verify"),
+        }
+    }
+    fn identity(
+        &mut self,
+        _: &WorkspaceContainerIdentity,
+        _: &GuestObject,
+        _: Duration,
+    ) -> Observed<GuestSelfObservation> {
+        if matches!(self.fault, Fault::UnknownIdentity) {
+            return Observed::Unknown(UnknownReason::Inconsistent("fixture unknown".into()));
+        }
+        let mut identity = self.identity.clone();
+        if matches!(self.fault, Fault::Identity) {
+            identity.vm_boot_id = "another-boot".into();
+        }
+        Observed::Verified(identity, evidence())
+    }
+}
+impl GuestChannelProbe for Probe {
+    fn resolve(
+        &mut self,
+        target: &WorkspaceContainerIdentity,
+        alias: &str,
+        _: Duration,
+    ) -> Observed<ResolvedAlias> {
+        assert_eq!(alias, "effigy-host");
+        if matches!(self.fault, Fault::Alias) {
+            return Observed::Unknown(UnknownReason::Inconsistent("ambiguous alias".into()));
+        }
+        Observed::Verified(
+            ResolvedAlias {
+                target: target.clone(),
+                address: "127.0.0.1".parse().unwrap(),
+            },
+            evidence(),
+        )
+    }
+    fn dial(
+        &mut self,
+        target: &WorkspaceContainerIdentity,
+        endpoint: &str,
+        pin: &Digest,
+        budget: Duration,
+    ) -> Observed<GuestDialEvidence> {
+        let port = endpoint
+            .strip_prefix("effigy-host:")
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        // A real pinned TLS handshake, with no application frames or credentials.
+        let transport =
+            TlsChannelTransport::connect(peer, pin.clone(), budget).expect("fixture TLS");
+        drop(transport);
+        let mut observed = GuestDialEvidence {
+            target: target.clone(),
+            peer,
+            pin: pin.clone(),
+        };
+        if matches!(self.fault, Fault::Peer) {
+            observed.peer.set_ip("127.0.0.2".parse().unwrap());
+        }
+        if matches!(self.fault, Fault::Pin) {
+            observed.pin = Digest::of(b"other pin");
+        }
+        Observed::Verified(observed, evidence())
+    }
+}
+
+fn elf() -> Vec<u8> {
+    let interpreter = "/lib64/ld-linux-x86-64.so.2";
+    let mut b = vec![0; 512];
+    b[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    b[18..20].copy_from_slice(&62u16.to_le_bytes());
+    b[32..40].copy_from_slice(&64u64.to_le_bytes());
+    b[54..56].copy_from_slice(&56u16.to_le_bytes());
+    b[56..58].copy_from_slice(&1u16.to_le_bytes());
+    b[64..68].copy_from_slice(&3u32.to_le_bytes());
+    b[72..80].copy_from_slice(&128u64.to_le_bytes());
+    b[96..104].copy_from_slice(&((interpreter.len() + 1) as u64).to_le_bytes());
+    b[128..128 + interpreter.len()].copy_from_slice(interpreter.as_bytes());
+    b
+}
+
+fn run(fault: Fault) -> usize {
+    let fixture = effigy_test_support::Fixture::new("workspace-reserved-").expect("fixture");
+    std::fs::create_dir(fixture.path().join("home")).unwrap();
+    effigy_containers::with_test_effigy_home(&fixture.path().join("home"), || {
+        let repo = fixture.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[containers]
+default = "dev"
+[containers.dev]
+compose_file = "compose.yml"
+primary_service = "app"
+working_dir = "/workspace"
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "app"
+[systems.dev.workspaces.app]
+container = "dev"
+working_dir = "/workspace"
+user = "vscode"
+home = "/home/vscode"
+"#,
+        )
+        .unwrap();
+        let mut policy = crate::runner::test_support::effective_container_policy(
+            "dev",
+            "dev",
+            "app",
+            repo.join("compose.yml"),
+        );
+        policy.repo_root = repo.clone();
+        policy.workspace_user = Some("vscode".into());
+        policy.workspace_home = Some("/home/vscode".into());
+        if matches!(fault, Fault::Hybrid) {
+            let text = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
+            std::fs::write(
+                repo.join("effigy.toml"),
+                text.split_once("[systems]").unwrap().0,
+            )
+            .unwrap();
+        }
+        let env = environment::env_ref(&policy).expect("environment");
+        let task = TaskId::new(env.checkout, "", Surface::Published, "workspace", None).unwrap();
+        let invocation = ResolvedInvocation::new(InvocationSpec {
+            owner: task.resource(),
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![],
+            attachments: vec![],
+            class: EffectClass::Mutate,
+            placement: Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let version = effigy_core::build_info::active_version();
+        let paths = WorkspacePathMap {
+            host_checkout: repo.to_string_lossy().into(),
+            guest_checkout: "/workspace".into(),
+            workdir: "/workspace".into(),
+            user: "vscode".into(),
+            home: "/home/vscode".into(),
+        };
+        let inputs = PublishInputs {
+            artifact: ArtifactEvidence::Unselected {
+                image_reference: "fixture".into(),
+                backend: "docker".into(),
+            },
+            selection: Digest::of(b"selection"),
+            inputs_digest: Digest::of(b"inputs"),
+            target: TargetEvidence::Absent {
+                project: policy.project_name.clone(),
+                backend: "docker".into(),
+            },
+            platform: None,
+            guest: Some(GuestContextInputs {
+                version: version.clone(),
+                protocol: 1,
+                host_user: "1000".into(),
+                checkout_id: env.checkout.text(),
+                environment_resource: env.resource.name().to_string(),
+                profile: "default".into(),
+                runtime: None,
+                vm_type: None,
+                routes: vec![],
+                paths: paths.clone(),
+                sources: vec![],
+            }),
+        };
+        let identity = WorkspaceContainerIdentity {
+            container_id: "a1".repeat(32),
+            vm_boot_id: "3a7c86df-0045-472e-b065-c1295816ab22".into(),
+            platform: "x86_64".into(),
+            libc: "gnu".into(),
+        };
+        let mut guest = FakeGuest::new().with_container(identity.clone());
+        // A predecessor inode and selectors are retained throughout staging failures.
+        guest.put_file(BINARY_CURRENT_PATH, b"/predecessor", 0o644);
+        guest.put_link(ENTRY_SELECTOR, "/predecessor");
+        guest.put_file(CONTEXT_CURRENT_PATH, b"3", 0o644);
+        guest.put_file("/predecessor", b"old bytes", 0o555);
+        let artifact = repo.join("artifact");
+        let bytes = elf();
+        std::fs::write(&artifact, &bytes).unwrap();
+        std::fs::write(workspace_effigy_active_version_file(&artifact), &version).unwrap();
+        std::fs::write(
+            workspace_artifact_receipt_path(&artifact),
+            format!(
+                "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
+                Digest::of(&bytes).hex()
+            ),
+        )
+        .unwrap();
+        let object = GuestObject {
+            path: format!("/run/effigy/objects/bin/{}", Digest::of(&bytes)),
+            digest: Digest::of(&bytes),
+        };
+        let alias =
+            ChannelAliasPlan::observed(Backend::LinuxDocker, "default", None, None).unwrap();
+        let shared = Rc::new(RefCell::new(guest));
+        let mut probe = Probe {
+            identity: GuestSelfObservation {
+                container_id: identity.container_id.clone(),
+                vm_boot_id: identity.vm_boot_id.clone(),
+                platform: identity.platform.clone(),
+                libc: identity.libc.clone(),
+            },
+            fault,
+            guest: shared.clone(),
+            context_probed: false,
+        };
+        let minted = Cell::new(0);
+        let io_count = Rc::new(Cell::new(0));
+        let fired = Rc::new(Cell::new(false));
+        let io_fault = match fault {
+            Fault::Io(index, after) => Some((index, after)),
+            _ => None,
+        };
+        let request = WorkspaceUpRequest {
+            policy: &policy,
+            retention: effigy_containers::environment::Retention::Persistent,
+            inputs: &inputs,
+            invocation: &invocation,
+            options: BeginOpts {
+                id: RunId::new(1_760_000_000_000, [1; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                custody: None,
+                next: effigy_kernel::outcome::Invocation::validated(
+                    vec!["effigy".into(), "container".into(), "status".into()],
+                    |_| true,
+                )
+                .unwrap(),
+            },
+            supervisor_id: "fixture-supervisor",
+        };
+        let probe_ref = &mut probe;
+        let observe = |activation: &mut WorkspaceActivation<'static>| {
+            let probe = probe_ref;
+            let target = ContainerIdentity {
+                container_id: identity.container_id.clone(),
+                vm_boot_id: identity.vm_boot_id.clone(),
+                backend: "docker".into(),
+            };
+            let image = ImagePlatform {
+                os: "linux".into(),
+                architecture: "amd64".into(),
+                variant: String::new(),
+                loader: LoaderFamily::Gnu,
+            };
+            let generation = activation.reservation().generation().get().to_string();
+            let context = WorkspaceContextInput {
+                generation: 0,
+                host: WorkspaceHostIdentity {
+                    version: version.clone(),
+                    protocol: 1,
+                },
+                binary: GuestBinaryIdentity {
+                    version: version.clone(),
+                    digest: format!("sha256:{}", object.digest.hex()),
+                    protocol: 1,
+                },
+                activation: WorkspaceActivationIdentity {
+                    host_user: "1000".into(),
+                    checkout_id: env.checkout.text(),
+                    environment: WorkspaceEnvironmentIdentity {
+                        resource_id: env.resource.name().to_string(),
+                        generation: generation.clone(),
+                    },
+                    container: identity.clone(),
+                },
+                session_run_id: None,
+                session_generation: None,
+                backend: WorkspaceBackendDescriptor {
+                    kind: "docker".into(),
+                    profile: "default".into(),
+                    runtime: None,
+                    vm_type: None,
+                },
+                paths: paths.clone(),
+                sources: vec![],
+                routes: vec![],
+                channel: WorkspaceChannelLocator::default(),
+            };
+            let snapshots = if matches!(fault, Fault::Publication) {
+                vec![(
+                    GuestObject {
+                        path: "/run/effigy/bad".into(),
+                        digest: Digest::of(b"expected"),
+                    },
+                    b"wrong".to_vec(),
+                )]
+            } else {
+                vec![]
+            };
+            Ok(ReservedGuestInput {
+                guest: Box::new(Guest(
+                    shared.clone(),
+                    io_fault,
+                    io_count.clone(),
+                    fired.clone(),
+                )),
+                artifact: &artifact,
+                targets: Observed::Verified(
+                    vec![TargetCandidate {
+                        identity: target.clone(),
+                        project: policy.project_name.clone(),
+                        created_by: Some(activation.environment_mut().id()),
+                    }],
+                    evidence(),
+                ),
+                platform: Observed::Verified(
+                    BoundPlatform {
+                        target,
+                        platform: image.clone(),
+                        artifact_platform: image,
+                        artifact: object.clone(),
+                        artifact_version: version.clone(),
+                        execution_available: true,
+                    },
+                    evidence(),
+                ),
+                alias: &alias,
+                probe,
+                context,
+                snapshots,
+                credential: Box::new(|session, g| {
+                    minted.set(minted.get() + 1);
+                    assert_eq!(g, 4);
+                    assert_eq!(
+                        session.environment_generation().get().to_string(),
+                        generation
+                    );
+                    // A canonical channel credential: the serving facts keep
+                    // the exact bytes the guest presents, so publication
+                    // refuses any other shape.
+                    Ok(WorkspaceEnrolmentCredential::new(
+                        generation,
+                        identity.container_id.clone(),
+                        "ab".repeat(32),
+                    ))
+                }),
+                budget: Duration::from_secs(20),
+            })
+        };
+        let result = match fault {
+            Fault::Recovery(partial) => {
+                recover_fixture(request, observe, shared.clone(), partial, fault)
+            }
+            Fault::RecoveryDead | Fault::RecoveryUnknown => {
+                recover_fixture(request, observe, shared.clone(), 0, fault)
+            }
+            _ => up_prepared(request, || Ok(()), observe),
+        };
+        let mut guest = shared.borrow_mut();
+        assert_eq!(guest.text("/predecessor").as_deref(), Some("old bytes"));
+        if matches!(fault, Fault::Hybrid) {
+            assert!(matches!(result, Ok(WorkspaceUp::Hybrid)));
+            assert_eq!(minted.get(), 0);
+            assert_eq!(io_count.get(), 0);
+            assert!(!probe.context_probed);
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+        } else if matches!(
+            fault,
+            Fault::None | Fault::Recovery(_) | Fault::RecoveryUnknown
+        ) {
+            let WorkspaceUp::Selected(mut owner) = result.expect("selected") else {
+                panic!("selected owner")
+            };
+            assert_eq!(minted.get(), 1);
+            assert!(probe.context_probed);
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("4"));
+            let doc =
+                WorkspaceContextV2::parse(&guest.read_file(&context_path(4)).unwrap().unwrap())
+                    .unwrap();
+            assert_eq!(doc.session.run_id, owner.session.run().to_string());
+            assert_eq!(doc.session.generation, owner.session.generation().get());
+            assert_eq!(doc.context_generation, 4);
+            assert_eq!(
+                doc.locator.endpoint,
+                owner.channel.locator.channel().endpoint.clone().unwrap()
+            );
+            assert_eq!(guest.mode(&doc.credential.path), Some(0o600));
+            let live = crate::runner::workspace_client::context::LiveGuestRun {
+                binary: GuestBinaryIdentity {
+                    version: doc.version.clone(),
+                    digest: doc.artifact_digest.clone(),
+                    protocol: 1,
+                },
+                container: identity.clone(),
+                environment_generation: owner.session.environment_generation().get().to_string(),
+                session_run_id: Some(owner.session.run().to_string()),
+                session_generation: Some(owner.session.generation().get()),
+                context_generation: 4,
+            };
+            let verified = doc
+                .verify(&mut IndependentIdentity(probe.identity.clone()), &live)
+                .expect("actual produced document independently verified");
+            assert_eq!(
+                verified.session_generation,
+                owner.session.generation().get()
+            );
+            let mut stale = live.clone();
+            stale.session_generation = Some(owner.session.generation().get() + 1);
+            assert!(doc
+                .verify(&mut IndependentIdentity(probe.identity.clone()), &stale)
+                .is_err());
+            assert_eq!(
+                crate::runner::workspace_client::context::v2::read_published_v2(&mut *guest)
+                    .unwrap()
+                    .unwrap(),
+                doc
+            );
+
+            owner.channel.launch.stop();
+            let cleanup = owner
+                .effect
+                .operation()
+                .cleanup(Duration::from_secs(10))
+                .unwrap();
+            owner
+                .supervisor
+                .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
+                .unwrap();
+        } else if matches!(fault, Fault::Io(..)) {
+            assert!(
+                fired.get(),
+                "every enumerated I/O boundary was reached: {fault:?}"
+            );
+            assert!(
+                result.is_err(),
+                "a partial guest effect cannot return success: {fault:?}"
+            );
+            let binary = guest.text(BINARY_CURRENT_PATH).unwrap();
+            assert!(binary == "/predecessor" || binary == object.path);
+            let entry = guest.link_target(ENTRY_SELECTOR).unwrap();
+            assert!(entry == "/predecessor" || entry == object.path);
+            assert!(matches!(
+                guest.text(CONTEXT_CURRENT_PATH).as_deref(),
+                Some("3" | "4")
+            ));
+            // If a committed switch was interrupted, abort settles the exact
+            // successor then abandons its obligation. No Pending is waved away.
+            let ctx = environment::context(&repo).unwrap();
+            let observed = effigy_kernel::store::Store::read(&ctx.observe(), ctx.root);
+            let journal = observed.verified().expect("journal");
+            assert!(
+                !matches!(
+                    effigy_kernel::workspace_session::unfinished_selection(journal, &env.resource),
+                    Observed::Verified(Some(_), _)
+                ),
+                "failed selection must complete bounded abandonment: {fault:?}"
+            );
+        } else {
+            assert!(result.is_err(), "{fault:?}");
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+            assert_eq!(
+                guest.text(BINARY_CURRENT_PATH).as_deref(),
+                Some("/predecessor")
+            );
+            assert_eq!(
+                guest.link_target(ENTRY_SELECTOR).as_deref(),
+                Some("/predecessor")
+            );
+            if matches!(fault, Fault::Identity | Fault::UnknownIdentity) {
+                assert_eq!(minted.get(), 0);
+            } else {
+                assert_eq!(
+                    minted.get(),
+                    1,
+                    "fault reached its intended boundary: {fault:?}"
+                );
+            }
+            assert!(
+                guest.file_sha256(&object.path).unwrap().is_some(),
+                "actual staging ran before injected fault"
+            );
+        }
+        io_count.get()
+    })
+}
+
+#[test]
+fn workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection() {
+    run(Fault::None);
+}
+#[test]
+fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_without_selector_switch(
+) {
+    for fault in [
+        Fault::Identity,
+        Fault::UnknownIdentity,
+        Fault::Alias,
+        Fault::Peer,
+        Fault::Pin,
+        Fault::Publication,
+        Fault::ContextProbe,
+        Fault::ContextPeer,
+        Fault::ContextPin,
+        Fault::StaleDocument,
+    ] {
+        run(fault);
+    }
+}
+
+#[test]
+fn workspace_reserved_every_guest_write_boundary_crash_before_after_preserves_authority() {
+    let count = run(Fault::None);
+    assert!(count >= 10, "enumerate real staging and selection effects");
+    for index in 1..=count {
+        for after in [false, true] {
+            run(Fault::Io(index, after));
+        }
+    }
+}
+
+struct TlsProbe;
+impl effigy_kernel::workspace_session::ServingProbe for TlsProbe {
+    fn pinned_handshake(
+        &mut self,
+        endpoint: std::net::SocketAddr,
+        pin: &Digest,
+        budget: Duration,
+    ) -> Observed<()> {
+        match TlsChannelTransport::connect(endpoint, pin.clone(), budget) {
+            Ok(transport) => {
+                drop(transport);
+                Observed::Verified((), evidence())
+            }
+            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        }
+    }
+}
+struct ExactTarget(Rc<RefCell<FakeGuest>>);
+impl effigy_kernel::workspace_session::TargetProbe for ExactTarget {
+    fn verify_target(&mut self, container: &str, boot: &str, _: Duration) -> Observed<()> {
+        match self.0.borrow_mut().probe_container_identity() {
+            Ok(actual) if actual.container_id == container && actual.vm_boot_id == boot => {
+                Observed::Verified((), evidence())
+            }
+            Ok(_) => Observed::Absent(effigy_kernel::observe::AbsenceProof::ContainerGone {
+                id: container.into(),
+            }),
+            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        }
+    }
+}
+fn recover_fixture<'a>(
+    request: WorkspaceUpRequest<'_>,
+    observe: impl FnOnce(&mut WorkspaceActivation<'static>) -> Result<ReservedGuestInput<'a>, EnvError>,
+    shared: Rc<RefCell<FakeGuest>>,
+    partial: usize,
+    fault: Fault,
+) -> Result<WorkspaceUp, WorkspaceUpError> {
+    use effigy_containers::environment::{Up, WorkspaceBegin};
+    let failure = |cause| WorkspaceUpError::Owner {
+        cause: Box::new(cause),
+        cleanup: None,
+    };
+    let ctx = environment::context(&request.policy.repo_root).unwrap();
+    let env = environment::env_ref(request.policy).unwrap();
+    let WorkspaceBegin::Activate(mut activation) = WorkspaceActivation::begin(
+        &ctx,
+        &env,
+        request.inputs,
+        request.invocation,
+        request.options,
+        request.supervisor_id,
+    )
+    .map_err(failure)?
+    else {
+        panic!("fresh reservation");
+    };
+    let before = shared.borrow().tree_digest();
+    assert!(
+        WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            request.inputs,
+            request.invocation,
+            BeginOpts {
+                id: RunId::new(1_760_000_000_000, [2; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                custody: None,
+                next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| {
+                    true
+                })
+                .unwrap()
+            },
+            "competing-supervisor"
+        )
+        .is_err(),
+        "concurrent actor cannot reserve or enter the held Env"
+    );
+    assert_eq!(before, shared.borrow().tree_digest());
+    let backend = environment::backend(&request.policy.repo_root, request.policy);
+    activation
+        .apply_with(
+            Up {
+                render: request.policy.render.as_ref().map(|render| &render.closure),
+                project: &request.policy.project_name,
+                backend: &backend,
+                retention: request.retention,
+            },
+            || Ok(()),
+        )
+        .map_err(failure)?;
+    let input = observe(&mut activation).map_err(failure)?;
+    let mut publication = prepare_reserved_guest(&mut activation, input).map_err(failure)?;
+    let committed = activation
+        .commit(&publication.receipt, &publication.channel.launch)
+        .map_err(failure)?;
+    let obligation = committed.selection_obligation().unwrap();
+    for change in obligation
+        .receipt()
+        .selection()
+        .switches
+        .iter()
+        .take(partial)
+    {
+        if change.path == ENTRY_SELECTOR {
+            shared
+                .borrow_mut()
+                .replace_link(&change.path, &change.next)
+                .unwrap();
+        } else {
+            shared
+                .borrow_mut()
+                .replace_pointer(&change.path, &change.next)
+                .unwrap();
+        }
+    }
+    // The activation ends; the independently retained supervisor stays alive.
+    let (supervisor, session) = activation.interrupt_for_recovery().map_err(failure)?;
+    let mut owner = WorkspaceOwner {
+        supervisor,
+        session,
+        serving: crate::runner::workspace_client::ServingFacts::fixture(
+            &publication.channel.locator,
+            std::path::PathBuf::from("/workspace"),
+        ),
+        channel: publication.channel,
+        effect: std::sync::Arc::new(ctx.cx.clone()),
+        observe: std::sync::Arc::new(ctx.observe()),
+        root: ctx.root,
+    };
+    if matches!(fault, Fault::RecoveryDead) {
+        owner.channel.launch.stop();
+    }
+    if matches!(fault, Fault::RecoveryUnknown) {
+        assert!(recover_selection(
+            &mut owner,
+            obligation,
+            publication.guest.as_mut(),
+            &mut UnknownTarget,
+            &mut TlsProbe
+        )
+        .is_err());
+        assert_eq!(
+            shared.borrow().text(CONTEXT_CURRENT_PATH).as_deref(),
+            Some("3"),
+            "unknown liveness cannot switch"
+        );
+    }
+    let recovered = recover_selection(
+        &mut owner,
+        obligation,
+        publication.guest.as_mut(),
+        &mut ExactTarget(shared.clone()),
+        &mut TlsProbe,
+    );
+    if matches!(fault, Fault::RecoveryDead) {
+        assert!(recovered.is_err());
+        assert_eq!(
+            shared.borrow().text(CONTEXT_CURRENT_PATH).as_deref(),
+            Some("3"),
+            "dead listener cannot switch"
+        );
+        let cleanup = owner
+            .effect
+            .operation()
+            .cleanup(Duration::from_secs(10))
+            .unwrap();
+        owner
+            .supervisor
+            .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
+            .unwrap();
+        let closed = || Observed::Absent(effigy_kernel::observe::AbsenceProof::GateFreeRunClosed);
+        effigy_kernel::workspace_session::selection_abandoned(
+            &owner.effect,
+            owner.root,
+            obligation,
+            &effigy_kernel::workspace_session::SelectionLiveness {
+                session: closed(),
+                target: Observed::Verified((), evidence()),
+                listener: closed(),
+            },
+            "fixture observed dead listener after commit",
+            Wait::FailFast,
+        )
+        .unwrap();
+        return Err(failure(refused("fixture listener is established dead")));
+    }
+    recovered.map_err(failure)?;
+    Ok(WorkspaceUp::Selected(Box::new(owner)))
+}
+#[test]
+fn workspace_reserved_crash_after_commit_and_each_partial_switch_resumes_under_real_env_guard() {
+    for partial in 0..=3 {
+        run(Fault::Recovery(partial));
+    }
+}
+
+struct UnknownTarget;
+impl effigy_kernel::workspace_session::TargetProbe for UnknownTarget {
+    fn verify_target(&mut self, _: &str, _: &str, _: Duration) -> Observed<()> {
+        Observed::Unknown(UnknownReason::Injected)
+    }
+}
+#[test]
+fn workspace_reserved_recovery_unknown_retries_but_dead_listener_abandons_without_switch() {
+    run(Fault::RecoveryUnknown);
+    run(Fault::RecoveryDead);
+}
+
+struct IndependentIdentity(GuestSelfObservation);
+impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIdentity {
+    fn observe(
+        &mut self,
+    ) -> Result<GuestSelfObservation, crate::runner::workspace_client::identity::GuestIdentityRefusal>
+    {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
+    run(Fault::Hybrid);
+}

@@ -26,19 +26,27 @@ pub(in crate::runner) use closeout::maybe_confirm_container_shell_exit_cleanup;
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
 };
+pub(in crate::runner) use hosts::scoped_host_map;
 pub(in crate::runner) use lifecycle::{
-    release_managed_environment, run_container_exec_capture_with_options,
+    release_managed_environment, run_container_exec_capture_with_credentials,
     run_container_exec_operation_capture, run_container_exec_stream,
 };
 pub(in crate::runner) use liveness::{
     is_primary_service_running, is_primary_service_running_with_deadline,
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
+pub(in crate::runner) use shared_data::{
+    resolve_shared_data_binding, run_shared_data_command, verify_shared_data_target,
+};
 
 mod bounded_exec;
 mod cache;
 mod closeout;
 mod data;
+pub(in crate::runner) mod data_credentials;
+#[cfg(test)]
+#[path = "data_custody_tests.rs"]
+mod data_custody_tests;
 mod gateway_registration;
 mod handover;
 mod hosts;
@@ -53,6 +61,8 @@ mod restart;
 mod retire;
 mod scope;
 pub(in crate::runner) mod secret_env;
+mod shared_credentials;
+mod shared_data;
 mod shell_prep;
 mod steps;
 pub(in crate::runner) mod support;

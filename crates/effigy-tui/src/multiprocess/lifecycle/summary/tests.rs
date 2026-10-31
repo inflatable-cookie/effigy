@@ -53,14 +53,17 @@ fn format_process_status_plain_success_and_failure_are_deterministic() {
 fn failure_log_tail_returns_recent_lines_for_failed_process_only() {
     let logs = VecDeque::from([
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: "line one".to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stderr,
             line: "bad thing".to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Exit,
             line: "exit=1".to_owned(),
         },
@@ -76,10 +79,12 @@ fn failure_log_tail_returns_recent_lines_for_failed_process_only() {
 fn failure_log_tail_ignores_successful_processes() {
     let logs = VecDeque::from([
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: "all good".to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Exit,
             line: "exit=0".to_owned(),
         },

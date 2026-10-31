@@ -82,6 +82,92 @@ pub fn prepare_inputs(
 }
 
 impl EffectiveContainerPolicy {
+    /// Render the workspace channel alias supplied by backend qualification.
+    /// This is an in-memory render only: it neither chooses an address nor
+    /// creates a network. Its resulting closure is what activation must freeze.
+    pub fn with_workspace_host_alias(&self, address: &str) -> Result<Self, ContainerPolicyError> {
+        if address != "host-gateway"
+            && !address
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| !ip.is_unspecified() && !ip.is_multicast())
+        {
+            return Err(error(
+                "workspace alias needs an observed address or the backend host-gateway token",
+            ));
+        }
+        let render = self
+            .render
+            .as_ref()
+            .ok_or_else(|| error("workspace alias requires a snapshotted Compose render"))?;
+        let mut existing = false;
+        for path in &self.compose_files {
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&self.read_compose(path)?).map_err(error)?;
+            let Some(hosts) = document
+                .get("services")
+                .and_then(|services| services.get(&self.primary_service))
+                .and_then(|service| service.get("extra_hosts"))
+            else {
+                continue;
+            };
+            let values = match hosts {
+                serde_yaml::Value::Mapping(mapping) => mapping
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("effigy-host"))
+                    .map(|(_, value)| value.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>(),
+                serde_yaml::Value::Sequence(entries) => entries
+                    .iter()
+                    .filter_map(|entry| {
+                        entry
+                            .as_str()
+                            .and_then(|entry| {
+                                entry
+                                    .strip_prefix("effigy-host:")
+                                    .or_else(|| entry.strip_prefix("effigy-host="))
+                            })
+                            .map(|value| Some(value.to_owned()))
+                    })
+                    .collect::<Vec<_>>(),
+                _ => return Err(error("workspace extra_hosts must be a mapping or sequence")),
+            };
+            for value in values {
+                if existing || value.as_deref() != Some(address) {
+                    return Err(error(
+                        "workspace alias conflicts with an existing Compose entry",
+                    ));
+                }
+                existing = true;
+            }
+        }
+        if existing {
+            return Ok(self.clone());
+        }
+        let name = "checkout/.effigy/runtime/workspace-channel.override.yml";
+        let mut files = render.closure.files().clone();
+        let bytes = serde_yaml::to_string(&serde_json::json!({
+            "services": { (&self.primary_service): { "extra_hosts": { "effigy-host": address } } }
+        }))
+        .map_err(error)?
+        .into_bytes();
+        if files.insert(name.into(), bytes).is_some() {
+            return Err(error("workspace alias render path is already occupied"));
+        }
+        let closure = Closure::new(files).map_err(error)?;
+        let path = publication::object_directory(&self.repo_root)?.join(closure.digest());
+        let mut next = self.clone();
+        for file in &mut next.compose_files {
+            let relative = file.strip_prefix(&render.path).map_err(error)?;
+            *file = path.join(relative);
+        }
+        next.compose_files.push(path.join(name));
+        if let Some(render) = &mut next.render {
+            render.path = path;
+            render.closure = closure;
+        }
+        Ok(next)
+    }
+
     /// Whether this render binds a workspace to a service it defines.
     pub(crate) fn has_selected_workspace_service(&self) -> bool {
         let Some(render) = &self.render else {

@@ -11,7 +11,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{Deadline, OpenReason};
@@ -28,6 +28,7 @@ use super::host_tabs::{HostFollower, HostProcessTab};
 use super::wire::{self, EngineEvent, Front, Payload};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
+use effigy_tui::waits::EntryState;
 
 /// How long a client waits for one supervisor event before its next turn.
 const TURN: Duration = Duration::from_millis(50);
@@ -40,6 +41,11 @@ pub(in crate::runner) struct ClientStart<'a> {
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) front: Front,
     pub(in crate::runner) terminal: Option<(u16, u16)>,
+    /// Values the client resolved for this checkout's scope (an inherited
+    /// alias, say), handed to the supervisor so its workloads inherit the
+    /// resolved value and the supervisor repeats no proof it cannot make
+    /// (effigy#431 review).
+    pub(in crate::runner) resolved_env: &'a [(String, String)],
 }
 
 /// A started run: its owning client, until it detaches or the run closes.
@@ -55,6 +61,94 @@ pub(in crate::runner) struct Started {
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
 pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
+    start_with(request, None)
+}
+
+/// [`start`] for the run a workspace dispatcher already reserved (052 §8.11).
+///
+/// The ticket travels unchanged into the supervisor's private config frame and
+/// reaches the engine as `EngineSession::admission()`; the engine then admits
+/// exactly the run the reservation names with `Run::begin_admitted`. Nothing
+/// here mints an id or admits a second run, and a refusal leaves the
+/// reservation for the client's retry to read from the host's own record.
+#[allow(dead_code)] // The production channel `Admission` adapter calls this once the
+                    // activation supplies the serving owner's negotiation and fence facts.
+pub(in crate::runner) fn start_admitted(
+    request: &ClientStart<'_>,
+    ticket: effigy_kernel::run::AdmissionTicket,
+) -> Result<Started, RunnerError> {
+    start_with(request, Some(ticket))
+}
+
+/// [`start`] for a task the workspace channel re-resolved and reserved.
+///
+/// The reservation travels unchanged into the supervisor's private config
+/// frame, so the engine admits exactly `ticket.run()` with `Run::begin_admitted`
+/// under the canonical Task gate. Nothing here mints an id or admits a second
+/// run, and the caller keeps the returned owning client for the run's life: a
+/// serving owner that drops it stops the run as an owner loss, never as
+/// detached success.
+#[allow(dead_code)] // The workspace dispatcher's `Admission` is its only caller.
+pub(in crate::runner) fn start_reserved(
+    host_checkout: &Path,
+    invocation: &effigy_cli::TaskInvocation,
+    cwd: PathBuf,
+    admission: effigy_kernel::run::AdmissionTicket,
+) -> Result<Started, RunnerError> {
+    let home = task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
+        )
+    })?;
+    let payload = Payload {
+        task: invocation.name.clone(),
+        args: invocation.args.clone(),
+        front: Front::Detached,
+        state_home: home,
+        terminal: None,
+    };
+    let mut env: Vec<(OsString, OsString)> =
+        crate::runner::secret_session::workload_ambient_environment()
+            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+            .collect();
+    if let Some(grant) = crate::runner::secret_session::take_child_grant() {
+        let (key, value) = grant.env_entry();
+        env.push((OsString::from(key), OsString::from(value)));
+    }
+    let executable = task_engine::startup_executable()?;
+    let cx = task_engine::effect_context(OpenReason::DevServer);
+    let root = task_engine::checkout_effects_root(host_checkout)?;
+    let run = admission.run();
+    let client = start_engine_at(
+        &cx,
+        root,
+        EngineLaunch {
+            payload: wire::encode(&payload),
+            cwd,
+            env,
+            handoff: None,
+            admission: Some(admission),
+        },
+        &executable,
+        ClientMode::Owning,
+    )
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the reserved workspace task `{}` did not start its engine: {error}",
+            invocation.name
+        ))
+    })?;
+    Ok(Started {
+        client,
+        run,
+        root: root.clone(),
+    })
+}
+
+fn start_with(
+    request: &ClientStart<'_>,
+    admission: Option<effigy_kernel::run::AdmissionTicket>,
+) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
             "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
@@ -79,6 +173,12 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         let (key, value) = grant.env_entry();
         env.push((OsString::from(key), OsString::from(value)));
     }
+    env.extend(
+        request
+            .resolved_env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+    );
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let root = task_engine::checkout_effects_root(&request.addressed.target.root)?;
@@ -90,7 +190,7 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
             cwd: request.cwd.clone(),
             env,
             handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
-            admission: None,
+            admission,
         },
         &executable,
         ClientMode::Owning,
@@ -117,6 +217,8 @@ pub(in crate::runner) struct OutputFollower {
     root: effigy_kernel::root::StateRoot,
     run: RunId,
     offsets: [u64; 2],
+    failed: [bool; 2],
+    warned: [bool; 2],
 }
 
 impl OutputFollower {
@@ -125,6 +227,8 @@ impl OutputFollower {
             root,
             run,
             offsets: [0, 0],
+            failed: [false; 2],
+            warned: [false; 2],
         }
     }
 
@@ -140,11 +244,33 @@ impl OutputFollower {
                 self.offsets[slot],
                 READ_MAX,
             ) {
+                let mut bytes = Vec::new();
+                if read.from != self.offsets[slot] {
+                    bytes.extend_from_slice(
+                        b"\n[effigy] output gap: older canonical bytes expired\n",
+                    );
+                }
                 self.offsets[slot] = read.from + read.bytes.len() as u64;
+                if read.truncated && !self.warned[slot] {
+                    self.warned[slot] = true;
+                    bytes.extend_from_slice(
+                        b"\n[effigy] capture truncated: inspect the run before restarting\n",
+                    );
+                }
+                if !self.failed[slot] {
+                    if std::str::from_utf8(&read.bytes)
+                        .is_ok_and(|text| !text.chars().any(|ch| ch.is_control() && ch != '\n'))
+                    {
+                        bytes.extend_from_slice(&read.bytes);
+                    } else {
+                        self.failed[slot] = true;
+                        bytes.extend_from_slice(b"\n[effigy] output follow stopped: invalid plain text; inspect the run before reopening\n");
+                    }
+                }
                 if slot == 0 {
-                    out.0 = read.bytes;
+                    out.0 = bytes;
                 } else {
-                    out.1 = read.bytes;
+                    out.1 = bytes;
                 }
             }
         }
@@ -163,13 +289,77 @@ struct TextFollower {
     /// The environment's host processes: `[name] [host] status` and
     /// `[name] line`, from the logs their own supervisors write.
     hosts: Vec<HostFollower>,
+    /// The last wait line printed for each entry, so a live wait is printed
+    /// when it advances and a settled one prints once (effigy#458).
+    waits: std::collections::BTreeMap<String, String>,
 }
 
 struct FollowedWorkload {
     name: String,
     sequence: i64,
-    offsets: [u64; 2],
-    partial: [Vec<u8>; 2],
+    lines: [FollowedLines; 2],
+}
+
+#[derive(Default)]
+pub(super) struct FollowedLines {
+    pub(super) offset: u64,
+    partial: String,
+    failed: bool,
+    warned: bool,
+}
+impl FollowedLines {
+    pub(super) fn render(
+        &mut self,
+        name: &str,
+        read: Option<&effigy_kernel::run::LogRead>,
+        finish: bool,
+    ) -> String {
+        let mut rendered = String::new();
+        if let Some(read) = read {
+            if read.from != self.offset {
+                self.partial.clear();
+                rendered.push_str(&format!(
+                    "\n[{name}] [effigy] output gap: older canonical bytes expired\n"
+                ));
+            }
+            self.offset = read.from + read.bytes.len() as u64;
+            if read.truncated && !self.warned {
+                self.warned = true;
+                rendered.push_str(&format!(
+                    "\n[{name}] [effigy] capture truncated: inspect the run before restarting\n"
+                ));
+            }
+            if !self.failed {
+                let text = std::str::from_utf8(&read.bytes)
+                    .ok()
+                    .filter(|text| !text.chars().any(|ch| ch.is_control() && ch != '\n'));
+                if let Some(text) = text {
+                    for piece in text.split_inclusive('\n') {
+                        if self.partial.len() + piece.len() > READ_MAX {
+                            self.failed = true;
+                            break;
+                        }
+                        self.partial.push_str(piece);
+                        if self.partial.ends_with('\n') {
+                            rendered.push_str(&format!("[{name}] {}", self.partial));
+                            self.partial.clear();
+                        }
+                    }
+                } else {
+                    self.failed = true;
+                }
+                if self.failed {
+                    self.partial.clear();
+                    rendered.push_str(&format!("\n[{name}] [effigy] output follow stopped: invalid plain text or line exceeds 64 KiB; inspect the canonical log\n"));
+                }
+            }
+        }
+        if finish && !self.partial.is_empty() {
+            rendered.push_str(&format!("[{name}] {}\n", self.partial));
+            self.partial.clear();
+        }
+        rendered
+    }
 }
 
 impl TextFollower {
@@ -180,6 +370,29 @@ impl TextFollower {
             run,
             workloads: Vec::new(),
             hosts: hosts.into_iter().map(HostFollower::new).collect(),
+            waits: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Prints the entries whose own wait changed: the same line the TUI tab
+    /// shows, so the text and interactive planes never disagree.
+    fn relay_waits(&mut self, states: impl IntoIterator<Item = EntryState>) {
+        let mut lines = String::new();
+        for state in states {
+            let Some(line) = state.headless_line() else {
+                continue;
+            };
+            if self.waits.get(&state.entry) == Some(&line) {
+                continue;
+            }
+            self.waits.insert(state.entry.clone(), line.clone());
+            lines.push_str(&line);
+            lines.push('\n');
+        }
+        if !lines.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(lines.as_bytes());
+            let _ = stdout.flush();
         }
     }
 
@@ -212,8 +425,7 @@ impl TextFollower {
                     self.workloads.push(FollowedWorkload {
                         name: view.name,
                         sequence: view.sequence,
-                        offsets: [0, 0],
-                        partial: [Vec::new(), Vec::new()],
+                        lines: Default::default(),
                     });
                 }
             }
@@ -221,33 +433,19 @@ impl TextFollower {
         let mut rendered = [String::new(), String::new()];
         for workload in &mut self.workloads {
             for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
-                if let Observed::Verified(read, _) = read_run_log(
+                let read = read_run_log(
                     &self.root,
                     self.run,
                     workload.sequence,
                     stream,
-                    workload.offsets[slot],
+                    workload.lines[slot].offset,
                     READ_MAX,
-                ) {
-                    workload.offsets[slot] = read.from + read.bytes.len() as u64;
-                    workload.partial[slot].extend_from_slice(&read.bytes);
-                }
-                let pending = &mut workload.partial[slot];
-                let whole = if finish {
-                    pending.len()
-                } else {
-                    pending
-                        .iter()
-                        .rposition(|byte| *byte == b'\n')
-                        .map_or(0, |end| end + 1)
-                };
-                if whole == 0 {
-                    continue;
-                }
-                let lines = pending.drain(..whole).collect::<Vec<_>>();
-                for line in String::from_utf8_lossy(&lines).lines() {
-                    rendered[slot].push_str(&format!("[{}] {line}\n", workload.name));
-                }
+                );
+                rendered[slot].push_str(&workload.lines[slot].render(
+                    &workload.name,
+                    read.verified(),
+                    finish,
+                ));
             }
         }
         if !rendered[0].is_empty() {
@@ -345,6 +543,9 @@ pub(in crate::runner) fn attach_text(
         output.relay(false);
         match next_event(&mut client) {
             Ok(Some(Event::Engine(bytes))) => {
+                if let Some(EngineEvent::Entry { state }) = wire::decode(&bytes) {
+                    output.relay_waits(std::iter::once(state));
+                }
                 if let Some(EngineEvent::Outcome { error, code }) = wire::decode(&bytes) {
                     output.relay(false);
                     // Closed follows the outcome on the same pipe.
@@ -542,4 +743,68 @@ pub(in crate::runner) fn stop_command(addressed: &Addressed<'_>) -> String {
         addressed.task,
         profile_suffix(addressed)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn read(from: u64, text: &str) -> effigy_kernel::run::LogRead {
+        effigy_kernel::run::LogRead {
+            from,
+            bytes: text.as_bytes().to_vec(),
+            end: from + text.len() as u64,
+            truncated: false,
+        }
+    }
+    #[test]
+    fn expired_text_never_completes_a_previous_partial_value() {
+        let mut lines = FollowedLines::default();
+        assert!(lines
+            .render("api", Some(&read(0, "super")), false)
+            .is_empty());
+        let text = lines.render("api", Some(&read(100, "secret\n")), false);
+        assert!(text.contains("output gap") && text.ends_with("[api] secret\n"));
+        assert!(!text.contains("supersecret") && lines.partial.is_empty());
+        assert!(lines.render("api", Some(&read(107, "")), false).is_empty());
+    }
+    #[test]
+    fn independent_sources_keep_split_writes_in_one_line_and_flush_at_close() {
+        let mut api = FollowedLines::default();
+        let mut jobs = FollowedLines::default();
+        assert!(api.render("api", Some(&read(0, "hel")), false).is_empty());
+        assert_eq!(
+            jobs.render("jobs", Some(&read(0, "work\n")), false),
+            "[jobs] work\n"
+        );
+        assert_eq!(
+            api.render("api", Some(&read(3, "lo\nlast")), false),
+            "[api] hello\n"
+        );
+        assert_eq!(api.render("api", None, true), "[api] last\n");
+    }
+    #[test]
+    fn headless_partial_lines_are_bounded_and_invalid_text_fails_closed_once() {
+        for invalid in ["x".repeat(READ_MAX + 1), "super\x1b[31msecret".to_owned()] {
+            let mut lines = FollowedLines::default();
+            let text = lines.render("api", Some(&read(0, &invalid)), false);
+            assert!(text.contains("output follow stopped"));
+            assert!(lines.failed && lines.partial.is_empty());
+            assert!(!text.contains("supersecret") && !text.contains('\x1b'));
+            assert!(lines
+                .render("api", Some(&read(invalid.len() as u64, "late\n")), true)
+                .is_empty());
+        }
+    }
+    #[test]
+    fn partial_plain_text_keeps_spaces_blank_lines_and_utf8() {
+        let mut lines = FollowedLines::default();
+        assert!(lines
+            .render("api", Some(&read(0, "  café")), false)
+            .is_empty());
+        assert_eq!(
+            lines.render("api", Some(&read(7, "\n\nlast")), false),
+            "[api]   café\n[api] \n"
+        );
+        assert_eq!(lines.render("api", None, true), "[api] last\n");
+    }
 }

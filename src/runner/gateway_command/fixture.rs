@@ -1,5 +1,7 @@
 //! Private-fixture start-up knobs. Inert outside a private (test) gateway.
-use super::{GatewayConfig, RunnerError};
+use super::GatewayConfig;
+#[cfg(debug_assertions)]
+use super::RunnerError;
 #[cfg(debug_assertions)]
 use std::time::Duration;
 use std::{io, process::Command};

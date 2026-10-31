@@ -51,16 +51,70 @@ when the real cause was two named services failing their health checks.
   each step ends with a one-line success or failure. Spinners write to stderr
   and never appear in `--json`, piped or non-terminal output. A managed TUI
   owns its screen: nested Effigy processes in its panes use plain start and
-  finish lines without banners or spinner redraws. Application output remains
-  unfiltered.
+  finish lines without banners or spinner redraws.
+- **Managed producer colour belongs behind custody.** Tom reversed the v0.16
+  colour deferral on 2026-10-30: Cargo/Oxide colour in ANSI-capable managed
+  panes is a v0.15 requirement. The canonical host log must contain only
+  writer-sanitized, writer-redacted plain text; live style is separate data
+  from that same parsed/redacted stream. Underlay's path/offset follower must
+  continue to read that plain file directly. Reader-time normalization,
+  inherited raw child log descriptors and unclassified known secrets do not
+  satisfy this boundary. Producer colour must remain disabled until the
+  fault/security harness, strict touched-crate Clippy and independent exhaustive
+  review qualify the boundary. Host supervisor message appends and environment
+  provenance still require that qualification; a child-pipe capture alone is
+  insufficient.
+  Tom's same-day durability ruling distinguishes presentation from commit:
+  Effigy-owned readers honor the durable committed extent and hide failed or
+  torn suffixes; Underlay/direct file reads can show already-safe bytes awaiting
+  sync, acknowledge no durability and may show a line later lost on crash.
 - **A spinner must carry live state.** Tom confirmed on 2026-10-29 that a
   canned label fixed for the whole wait is noise. Show the current sub-step or
   object (service, image, dependency, layer or gate), known counts or ratios,
   elapsed time, and the last meaningful event or exact blocker. If no further
   event can be observed, name the precise wait and probe alongside elapsed
-  time. A changing glyph alone is not progress. Managed TUI entries have their
-  own dependency-derived state; a waiting entry never borrows another entry's
-  label. This rule applies to every command plane for the v0.15 gate (Q-017).
+  time. An event is additive: a frame keeps naming the thing it still awaits
+  next to the last event, so publishing a progress line never hides the
+  operation for the rest of the phase. A changing glyph alone is not progress.
+  Managed TUI entries have their own dependency-derived state; a waiting entry
+  never borrows another entry's label. This rule applies to every command plane
+  for the v0.15 gate (Q-017).
+- **A managed entry's wait comes from the ordering graph.** Each entry's tab
+  and status say what actually blocks it: the entry the resolved start order or
+  a host process's `depends_on` puts first and that entry's current phase, the
+  environment phase with the containers that are healthy, the listener's
+  declared readiness request with its elapsed time, or the accepted legacy
+  `start_after_ms` delay with what remains of it. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts, and a host tab is never announced as started while its
+  published wait still holds it (a missing record is never evidence of a start),
+  the scheduler's own hold names the launch being performed now and that
+  entry's actual phase (never a queued neighbour, never an invented dependency),
+  an aborted plan leaves every unstarted entry terminal with the plan's own
+  attribution, and each publisher of the environment's entries stages a
+  complete snapshot and commits it atomically. The same state reaches the tab, the
+  `--headless` text and `status --json` (`waiting_on`, and a `waits` list scoped
+  `workload`, `host` or `environment`), published before the environment phase
+  can block; nothing derives a label from screen or tab order, and no wait
+  borrows another entry's clock (effigy#458).
+  The UI's `ProgressSource` supplies the current subject, count, latest event
+  and elapsed wait to `live_step`. When no event is available, it names the
+  exact awaited object or probe with the elapsed time. `lint:feedback` is the
+  gate, and `validate`, `qa` and `qa:gates` all run it: `effigy-ui` keeps its
+  legacy fixed-label constructors only as deprecated anchors, and the check
+  fails on every compiler-resolved use in any workspace target, including
+  through an alias or wrapper in another crate, naming the file, the line and
+  the migration. There is no allowlist, no exemption to add and no ceiling: a
+  new fixed-label spinner fails the lint instead of joining an inventory, and
+  a suppressed diagnostic fails it too. The gate also owns the spinner crate
+  itself: `indicatif` may be named in exactly one production file (the reviewed
+  step sink), and that file may build exactly one bar with one style and one
+  steady tick, so a fixed-label spinner built through another constructor
+  (`ProgressBar::no_length`, `ProgressBar::new`, `ProgressStyle::default_spinner`,
+  `enable_steady_tick`) fails at its own file and line whether it is written
+  directly or behind a wrapper. `clippy::disallowed_methods` rejects every
+  bar constructor as a second gate. Every site's disposition is recorded in
+  [live progress sites](036-live-progress-sites.md).
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

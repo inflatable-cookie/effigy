@@ -46,8 +46,15 @@ fn operator_fixture(
         std::fs::Permissions::from_mode(0o600),
     )
     .expect("receipt mode");
-    let environment =
-        effigy_test_support::env::ScopedEnv::set("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", &gateway);
+    // The test process resolves HOME too (operator identity reads it), so it
+    // points at this fixture for the test's duration, not the machine's home.
+    let environment = effigy_test_support::env::ScopedEnv::set_many(&[
+        (
+            "EFFIGY_GATEWAY_PRIVATE_STATE_ROOT",
+            gateway.as_os_str().to_owned(),
+        ),
+        ("HOME", home.path().as_os_str().to_owned()),
+    ]);
     (home, config, environment)
 }
 
@@ -63,19 +70,24 @@ fn operator_fixture_private_root_is_valid() {
     effigy_gateway::private_state::validate_root(&root).expect("valid operator fixture root");
 }
 
-/// Both selector and direct lifecycle tests refuse while the machine gateway runs.
-fn require_machine_gateway_free() {
-    assert!(
-        std::process::Command::new("/bin/sh")
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/scripts/gateway-operator-guard.sh"
-            ))
-            .status()
-            .expect("check machine gateway listeners")
-            .success(),
-        "operator fixture refused while the machine gateway is running"
-    );
+/// The daemon gets only fixture paths and fixture endpoints. The machine
+/// gateway lives under the real `~/.effigy/gateway` and listens on
+/// 127.0.0.1:80/:443/:15353, so a config that passes this check cannot reach it,
+/// and the cases run beside a running machine gateway.
+fn assert_fixture_owns_daemon(home: &effigy_test_support::Fixture, config: &GatewayConfig) {
+    let gateway = home.path().join(".effigy/gateway");
+    for path in [&config.pid_file_path, &config.route_table_path] {
+        assert!(path.starts_with(&gateway), "{}", path.display());
+    }
+    let endpoints = [
+        Some(config.dns.bind_addr),
+        Some(config.proxy.bind_addr),
+        config.proxy.tls_bind_addr,
+    ];
+    for addr in endpoints.into_iter().flatten() {
+        assert!(addr.ip().is_loopback() && addr.port() >= 1024, "{addr}");
+        assert!(!matches!(addr.port(), 80 | 443 | 15353), "{addr}");
+    }
 }
 
 /// A refused start must settle its admitted run without leaving a daemon.
@@ -97,8 +109,8 @@ fn settled_status(config: &GatewayConfig) -> operator::Status {
 #[test]
 fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     use std::os::unix::fs::PermissionsExt;
-    require_machine_gateway_free();
     let (home, config, _private) = operator_fixture("g219-");
+    assert_fixture_owns_daemon(&home, &config);
 
     // The actor gets a strict PATH. Any accidental elevation writes evidence
     // and fails; all fixture writes stay under this HOME.
@@ -221,9 +233,9 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
 #[test]
 fn operator_startup_bounds_admission_and_readiness_separately() {
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
-    require_machine_gateway_free();
 
-    let (_unadmitted_home, unadmitted, private) = operator_fixture("g248a-");
+    let (unadmitted_home, unadmitted, private) = operator_fixture("g248a-");
+    assert_fixture_owns_daemon(&unadmitted_home, &unadmitted);
     let refusal = operator::up_with_executable_within(
         &unadmitted,
         executable,
@@ -242,7 +254,8 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
     );
 
     drop(private);
-    let (_unready_home, unready, _private) = operator_fixture("g248b-");
+    let (unready_home, unready, _private) = operator_fixture("g248b-");
+    assert_fixture_owns_daemon(&unready_home, &unready);
     let started = Instant::now();
     let refusal = operator::up_with_executable_within(
         &unready,

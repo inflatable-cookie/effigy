@@ -406,7 +406,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor, and are redacted before any sink. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output is reduced to well-formed text whose only control is `LF` (plus the `CR` of a line ending) and then redacted, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. A redaction replacement is a byte readers keep and no secret contains, so no reader can join across it. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a secret split by a C1 control or an invalid byte a renderer drops; a secret split by a lone carriage return or a TAB, which a display moves the next bytes with; a redaction replacement a reader drops (a NUL or other control); a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1257,8 +1257,10 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   is residue only while the member is still present: a member that exited
   between the group inventory and its evidence read is re-inventoried, so a
   clean settle cannot report residue for a process that is already gone.
-- I-P5: capture is bounded (tail ring plus rotating log) and redacted at the
-  source, before any sink (K12).
+- I-P5: capture is bounded (tail ring plus rotating log) and, for a
+  secret-bearing process, sanitized of terminal controls and then redacted at
+  the source, in merged arrival order, before any sink (K12; output capture
+  below).
 - I-P6: secrets never appear in argv; no `set_var`.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
@@ -1271,6 +1273,198 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   by number. PGID, boot identity and a start after launch alone cannot prove
   continuity across an emptied and reused group. Guest-placement Effigy
   never creates sessions or clears the nonce.
+
+#### Output capture
+
+Capture is one pipeline over merged arrival order (K12, effigy#486). For a
+secret-bearing process — one whose spawn spec carries a `SecretValue` — the
+merged stdout/stderr bytes carry each byte's origin stream and pass through a
+bounded streaming terminal-control sanitizer *before* redaction. CSI, OSC,
+DCS, SOS, PM and APC strings, escape intermediates, two-byte escapes, the
+other C0 controls, TAB and DEL are dropped; `LF` is the only control that
+passes, because it is a line break no reader joins across. A carriage return
+survives only as the CR of a `CR LF` line ending. The two horizontal controls
+are dropped for the same reason: a display applies a lone CR by erasing what it
+covers and expands a TAB to the next tab stop, so the bytes after either are
+moved rather than printed where they stand — and a reader that strips the
+control, or a soft wrap a TAB forces, is a join no separator breaks. A value
+split by one would never be one run to the redactor; dropping them joins the
+halves before redaction, which is the frame a display could show.
+
+What reaches a sink is well-formed text: a multi-byte character is validated
+before any of it is emitted, and a C1 control (`U+0080`..=`U+009F`, the UTF-8
+class a terminal renderer drops, CSI and OSC among them) or an invalid byte —
+a stray continuation, an overlong lead, a surrogate, a scalar past
+`U+10FFFF` — is dropped. A renderer drops those, so retaining them would hand
+it a join; dropping them here, before redaction, joins the halves in the
+frame the redactor sees. A sequence's bytes are emitted with the tag of the
+stream that began it, so a per-stream projection stays well-formed too. The
+sanitizer holds at most one partial character, which EOF drops. Sanitizing first is what makes the redactor see the bytes a front
+end shows: a value a child split with `ESC [ 1 m` is one value on screen and
+two non-matching runs to a redactor over raw bytes, and a reader that
+interprets controls reassembles it.
+
+The sanitizer's state carries across reads and across streams and is O(1): a
+sequence's bytes are discarded as they arrive, so no read or stream boundary
+can split a decision and nothing is buffered. It fails closed — a malformed
+or unterminated control drops its bytes, an open sequence never completes at
+EOF, and no byte the machine cannot classify is emitted. Only the visible
+bytes it emits keep their origin tags. Keeping the streams apart is itself a
+byte removal, and a removal can join two halves of a secret that arrival order
+kept apart — `super` on stdout, `noise` on stderr, `secret` on stdout leaves
+the merged stream safe and would leave the stdout projection unsafe — so each
+stream's stored log and queue is redacted again over its own byte stream
+before it is written. The merged output queue and the merged tail stay
+canonical: they are the only capture that keeps arrival order, and no consumer
+concatenates two projections into one. A process whose spec carries no secret
+skips both the sanitizer and the projection pass and keeps its colour. A
+secret whose own bytes hold a control is also matched in its visible form, so
+stripping the control from it cannot leave an unredacted remainder.
+
+Redaction's own replacement has the same rule (effigy#486). A secret can itself
+contain the display marker, or a marker can join adjacent bytes into another
+secret, so a second streaming pass removes that occurrence. What it removes it
+*with* must survive a reader: a control byte (a NUL, say) is dropped by the
+front end's `sanitize_log_text`, which joins the bytes either side of it and
+rebuilds the secret the pass took out. The replacement is therefore one byte
+value that every reader keeps and no secret contains — printable ASCII, in a
+fixed preference order — so it can neither hold a secret nor be spanned by one,
+and every control, TAB included, is excluded because a reader drops it or a
+renderer moves with it. When the secret set covers every such byte, no replacement is
+both safe and readable: the capture then stops and reports `Truncated` with the
+reason, emitting nothing, rather than write a marker a reader would join across.
+The workload itself is unaffected; this is capture state only.
+
+Every reader draws from that one result: the per-stream rotating logs, the
+per-stream queues, the merged output queue, the bounded merged arrival-order
+tail (`tail()`, the canonical captured tail), the bounded diagnostic excerpt a
+settle or doctor report quotes, and any JSON envelope carrying their bytes.
+Nothing normalizes terminal bytes after redaction; a post-redaction
+normalization path would recreate the split. A consumer that needs both
+streams reads the merged capture, never a concatenation of the projections,
+and a consumer that wants a bounded tail takes the merged tail.
+
+Host producers use `Custody::spawn_logged_auxiliary` with captured pipes and
+one `CanonicalOutput` shared across child generations and supervisor messages. The
+existing custody sanitizer records style data and feeds the existing two-pass
+redactor in merged observed arrival order. Child EOF resets terminal framing;
+only supervisor completion finishes the shared redactor. CR is removed from
+CRLF before redaction. Complete UTF-8 text is appended and synced before any
+live/tail fanout. A failed append poisons capture; no unwritten output is
+acknowledged. A partial failed append can leave an unacknowledged plain suffix.
+Effigy readers never expose that suffix. Host and managed journal writers
+publish a durable committed extent after syncing data. A synced pending record
+retains the prior extent until publication completes; a failed or interrupted
+append bounds reads to that prior extent and refuses a host restart for explicit
+operator recovery. Effigy reads use the existing nonblocking kernel file-lock
+boundary to avoid observing an in-flight publication. Writer lock acquisition
+is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
+Failure syncing removal of a pending record after data and extent are durable
+does not uncommit those bytes: capture reports truncation and stops further
+appends, while recovery may require handling a resurrected pending record.
+Managed Standard workloads opt into `Terminal::Styled`, which uses the same
+writer with a journal destination and persists merged plain output in stdout
+(the stderr log is empty). The managed supervisor's own sequence-0 pipe capture
+uses that same writer; it never filters the result back into separate streams.
+A sequence-0 setup failure nulls both descriptors and records a typed journal
+capture-truncation effect before setup may continue; its readers report
+`Truncated` with no payload. Failure to make descriptors safe or record that
+state refuses startup. A host generation drain timeout closes both old pipes,
+resets terminal framing through the existing EOF path, retains the same merged
+redactor and held secret prefixes, and records Truncated without overriding the
+declared restart policy. Its successor cannot inherit unfinished CSI/OSC/CR or
+UTF-8 framing. A failed append/provenance boundary still poisons the writer and
+refuses further generations; a drain gap alone does not. Unsupported redaction
+replacement disables Standard capture without changing the workload outcome.
+A producer restart frames an unfinished pane line as a generation boundary,
+so a new generation cannot complete an old partial value. Ordinary
+custody callers retain their existing separate-stream contract.
+Text followers discard a held partial line at an expired-byte gap, emit an
+explicit gap, and stop a line exceeding 64 KiB with a diagnostic. They validate
+plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
+select the last nonempty contiguous child block without joining across owner
+messages or letting a later blank frame hide an earlier error.
+Multi-source log following keeps separate bounded partial lines and flushes
+them on closure. Pane lifecycle status comes from the owner journal and a
+listener record bound to the current run and custody nonce. Child text cannot
+forge it, and unavailable, failed, stopped or stale generations clear Ready.
+
+Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
+an untrusted historical prefix safe. Under the newly admitted host owner gate,
+with predecessors settled, an owned regular no-follow legacy log moves to the
+same runtime directory's private `.legacy-host-logs` quarantine. Its name ends
+in `.legacy`, not `.log`; discovery never includes it. A new 0600 canonical
+inode is created exclusively in a private stage, bound to durable migration
+intent, then published with an atomic no-replace move at the same public path.
+A foreign empty file is never adopted. Intent, file and parent
+directory syncs precede producer admission. The durable private ready record
+`.<sha256(log basename)>.host-log-ready` is version 2, with an `owner` array of
+32 digest bytes, `canonical: {device, inode}` and a `committed` byte extent.
+A matching ready identity
+allows subsequent generations to append without another cutover. Changed,
+foreign, symlinked or uncertain identities fail closed, preserving operator
+data. Crash retries retain the original intent and quarantined identity and
+sync both rename directories even when the legacy entry was already moved.
+Exclusive rename plus moved-inode verification prevents destination clobbering;
+uncertain source or record replacements are retained privately and refused.
+
+Effigy readers require matching durable ready provenance before opening
+payload bytes and recheck identity before exposure. Bounded followers reset
+both offset and partial text on inode replacement or shrink, reporting a gap;
+replacement is detected even when the new file grew beyond the old offset.
+The bundled Underlay presentation follower tracks device/inode and offset,
+resets on replacement/shrink and reports one gap. It does not enforce Effigy
+ready provenance or committed extents. The owner's 2026-10-30 ruling keeps it
+presentation-only: it and an operator reading the file directly can see already
+sanitized/redacted bytes between write and sync. Those reads acknowledge no
+durability and can show a line later lost on crash. Effigy TUI, JSON, doctor,
+status, excerpts and Queue readers honor the committed extent. Before cutover
+Underlay's behavior remains the pre-existing owner
+file contract. An already-open pre-upgrade POSIX descriptor cannot be revoked
+by rename/chmod: stop and reopen older attached followers after upgrading.
+Continuity across that transition is not guaranteed, and numeric offsets are
+never preserved by padding or replay of raw bytes.
+
+Style primitives and the existing ANSI line/parser/SGR implementation live in
+`effigy-core::terminal_text`; the TUI facade reuses them. The writer records SGR
+as bounded style data. Redaction clears style on masked ranges. A bounded
+private `.styled-tap` sidecar publishes a window of typed, already-redacted
+spans only after successful plain append. It is optional presentation data,
+not a log checkpoint: it grants no durability acknowledgement, changes no
+canonical offsets and never replays an untrusted prefix. A pane uses styles
+only where identity, byte offset and text exactly match its canonical read;
+missing, stale or expired style data renders plain. TUI typed ingest renders
+those spans directly, without ANSI interpretation or a second redactor.
+
+Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
+non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
+Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
+nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
+`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
+and aliases containing a known secret also override all metadata exceptions.
+Non-boolean values and unknown names outside the namespace remain Secret;
+the established exact launcher flags keep their closed-domain classification.
+The custody argv guard is unchanged. This policy avoids an expanding list of
+individual Claude flags without trusting arbitrary environment values.
+
+Canonical shared-lock reads intentionally return `WouldBlock` during writer
+commit. TUI followers retry on their next poll without blocking all panes;
+one-shot consumers may retry within their own deadline or report temporary
+unavailability. They never fall back to raw or uncommitted suffixes. Tests wait
+for a committed extent, rather than a raw visible write, before asserting text.
+The full-pipe/unconsumed-tap stop proof requires closure before half the kernel
+drain margin and a non-truncated durable capture report, distinguishing prompt
+stop from waiting for a drain deadline.
+
+The initiating TUI capability is non-secret and fixed before detached host
+handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI
+destination in the absence of NO_COLOR, CI, a dumb terminal or an explicit
+colour preference. Text/headless/detached starts do not force colour.
+
+**Known qualification limit:** the migration, complete fault/security matrix,
+combined bundled follower proof and independent exact-head reviews must pass
+before the provisional host-log limit and manual merge hold can be released.
+A writer primitive alone does not qualify the delivered path.
 
 #### Failure model
 
@@ -1357,6 +1551,64 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   gateway setup`) through `command(…, terminal = true)` twice in one run
   against fake absolute programs, settling with `Complete` cleanup.
 - No secret bytes appear in `ps -o args` during any run.
+- `redaction_sanitizes_controls_split_into_known_secrets_before_every_sink`
+  drives the shipping capture pipeline and capture logs with no live child:
+  a known secret split by CSI, OSC (BEL and ST), a CSI or an OSC split across
+  reads, a CSI or an OSC split across streams, interleaved streams, a
+  malformed CSI and a two-byte escape. Every sink — both per-stream logs,
+  both queues, the merged output, the merged tail, the settle excerpt and a
+  JSON envelope — is free of the value and of any terminal control, and the
+  merged tail keeps the redaction marker.
+- `redaction_drops_an_unterminated_control_and_its_tail_at_eof` shows the
+  fail-closed rule: an unterminated OSC, CSI or DCS word drops everything
+  after its introducer, and a later read never resumes inside it.
+- `redaction_redacts_a_projection_that_joins_a_secret_across_an_interleaved_stream`
+  pins the projection rule: with the halves on one stream and the other
+  stream's visible bytes between them, the merged capture never held the
+  value, and the stream's own log and queue show the marker instead of the
+  joined halves.
+- `redaction_drops_utf8_c1_controls_and_invalid_bytes_before_redaction` splits
+  a value with a C1 CSI, a C1 OSC/ST pair, C1 padding, an invalid byte, a
+  stray continuation, an overlong lead, a surrogate and a scalar past
+  `U+10FFFF`, across reads and across streams: every sink is well-formed,
+  control-free and free of the value, ordinary non-ASCII text survives, and a
+  secret that itself carries a C1 control is matched in its C1-free form.
+- `redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with` splits
+  a value with a TAB in one read, across reads and across streams, and with
+  padding that wraps a row: every sink is free of the value and of the TAB, and
+  an ordinary process keeps its own TABs.
+- `redaction_drops_a_lone_carriage_return_and_keeps_a_line_ending` drops a CR
+  inside a value, at a read boundary, at a stream boundary and at EOF, so the
+  halves reach redaction as one value and no sink holds a lone CR; a `CR LF`
+  line ending keeps its CR, and a secret that itself carries a CR is matched
+  in the CR-free form a display shows.
+- `redaction_replaces_a_reformed_secret_with_a_byte_no_reader_drops` puts a
+  secret that is a substring of the display marker, and a marker that joins
+  adjacent bytes into another secret, through the shipping pipeline: every sink
+  is free of the value, holds no byte the front end drops, and the reader's own
+  filter of the sink is the sink.
+- `redaction_stops_capture_when_no_reader_safe_replacement_exists` covers the
+  corner where the secrets cover every kept replacement byte: every stored sink
+  is empty and the capture reports `Truncated`.
+- `redaction_keeps_terminal_colour_for_a_process_without_secrets` and
+  `redaction_covers_the_visible_form_of_a_secret_that_carries_a_control`
+  keep ordinary colour intact and redact a secret that itself holds a
+  control, in its visible form.
+- `managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_them`
+  is the end-to-end counterexample on the managed path: a live secret-bearing
+  child writes the split value, and the managed TUI's own reader
+  (`ingest_log_payload` then `ansi_line`, the existing main path) shows the
+  redaction marker and never the value, and its last case is a real
+  pseudo-terminal whose display goes through the session's terminal emulator
+  (`LiveTerminalBuffer`), which applies carriage returns, and a third split by
+  a UTF-8 C1 control, whose break probe shows the emulator dropping that
+  character and joining its neighbours. A fourth proof feeds a TAB-split value
+  to the same emulator and shows the pane dropping the cursor-forward escape a
+  TAB renders as, which is the join this task removes. Its break probe feeds
+  the pre-fix arrival shape to that same reader, which reassembles it, so the
+  assertion fails if the sanitizer is removed. The companion
+  `managed_delivery_redaction_keeps_colour_for_a_child_without_secrets`
+  keeps an ordinary child's colour.
 - A Rhai script cannot swallow a stop.
 
 ### 5.8 Placement, supervisor and sentinel
@@ -2192,7 +2444,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; only the owning durable settle removes it |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree only by the fenced publisher that consumed its receipt or by recovery of a dead lease |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2204,6 +2456,57 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
+
+Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
+preflight seal (§7.1–§7.4, effigy#509) **never publishes**: one helper thread
+mints a random token, creates and locks the owner lease
+(`preflight-<token>.lock`, `flock`) **before** creating the tree, writes
+`preflight-<token>/` (`O_EXCL`/0600, content and directories synced), verifies it
+with the kernel closure verifier inside the caller's deadline, and hands back
+`SealedPreflight { digest, token, verified_at, inventory }`. The sealing thread
+performs no filesystem work at all — it only spawns that helper and waits with a
+bounded receive — so the deadline bounds every wait and decision it takes, and a
+stalled syscall can finish late only inside that private tree. The seal takes no
+gate and no `Gate(Env)`.
+
+Because the lease is created and locked before the tree exists, and only a
+publisher that already holds the objects gate ever unlinks a lease, a tree is
+dead exactly when its lease is acquirable; a live helper's or a live returned
+receipt's tree always carries a held lease and is never removed or raced.
+Recovery never inspects a lease that has no tree, so it cannot unlink one a
+helper is about to lock. The token also records the minting process's pid and
+process incarnation *before* any file exists, so liveness never depends on the
+lease: a live helper is skipped even in the instant between creating its lease
+and locking it, and a crash in that instant leaves a bare lease that a later
+publication provably reclaims (its pid is gone or names another incarnation)
+instead of accumulating. Removal otherwise needs positive proof: the lease is
+absent, or present and acquirable; a lease it cannot open or inspect — a trust
+failure, a hard link or symlink, an I/O error, descriptor exhaustion — proves
+nothing, so that tree is left untouched for a later publication.
+
+Canonical promotion stays exactly where it was: the fenced publisher.
+`publish_sealed_desired` is that same publisher — one journalled intent, one
+objects gate, one reference transaction — consuming a receipt as its source: it
+re-verifies the private tree under the gate against the receipt's verified
+inventory (bytes, digest and every entry's private mode, so a tree whose modes
+drifted is refused even though its digest still matches), moves it with one
+exclusive no-replace rename, and verifies the canonical byte/mode inventory
+against the receipt even for existing objects and concurrent winners. Any
+still-present seal is verified before consumption even when the canonical
+object already exists; replay with a consumed seal verifies the canonical
+inventory too. The publisher records
+the object row and desired reference exactly as `publish_desired` does. There is no second
+publisher, no direct preflight promotion and no revocable-rename primitive. It
+refuses any run whose owner is not an environment or whose owner gate is not
+held, so a receipt is only ever consumed by its environment's activation under
+`Gate(Env)`; the objects gate and a run fence never substitute for that
+authority. That publisher also reclaims **one** provably dead seal tree per
+publication, under the same gate and after its own fenced commit. Recovery is
+infallible: an over-full or unreadable staging family, a trust refusal, an I/O
+error or a stalled removal leaves residue for a later publication and can never
+turn a committed publication into a failure. Both together keep recovery one
+bounded, post-commit gate-held critical section (§5.5). Seal trees never name a run and a run's own staging tree is
+still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
@@ -2362,7 +2665,16 @@ services run in containers, has no guest.
 | Authority | the owning engine | requests over the host authority channel (§8.3) |
 
 The mode boundary is the environment's declared operator workspace, never a
-mode or environment name. Hybrid mode provisions no guest binary, no context,
+mode or environment name. Prepare and entry match the selected container against
+workspace declarations across all systems, including explicitly selected
+non-default systems and workspaces; the default binding is not a mode filter.
+Declarations sharing a named container must have identical effective workspace
+configuration (including mounts, checkout path and identity). Conflicting
+declarations refuse by name even when a task supplies a workspace override;
+use distinct container names for distinct workspaces. A declared workspace
+without a non-empty resolved user and absolute home refuses Prepare and entry
+with configuration and host re-prepare guidance; it never becomes hybrid.
+Hybrid mode provisions no guest binary, no context,
 no channel listener and no enrolment credential. Its service lifecycle uses
 the same host engines.
 
@@ -2378,7 +2690,7 @@ workspace is admitted:
 
 | Field | Content |
 | --- | --- |
-| Identity | host user, `CheckoutId`, environment `(ResourceId, Generation)`, full container id and VM boot id, the workspace session `RunId` (§8.7) |
+| Identity | host user, `CheckoutId`, environment `(ResourceId, Generation)`, full container id and VM boot id, the workspace session's `RunId` and generation (§8.7, §8.11) |
 | Path map | host checkout path ↔ guest mount path, workdir, configured workspace user and `HOME` |
 | Sources | pinned bundle and catalog digests, manifest digests, and the rendered bundle and catalog snapshot they name |
 | Backend | backend descriptor: kind, profile or context, runtime, VM type |
@@ -2389,11 +2701,39 @@ workspace is admitted:
 - Location: `/run/effigy/context/<generation>/` inside the container,
   outside the bind-mounted checkout, owned by root and read-only to the
   workspace user. `/run/effigy/context/current` names the published
-  generation.
+  generation. The document is `context.json`, schema
+  `effigy.workspace-context.v2`; a guest reads the pointer and then one
+  generation, and an unknown schema or field is unprepared rather than a
+  newer version to guess at.
 - Refresh: the host publishes a new complete generation on every Prepare and
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
   generation for its whole run.
+- Sources closure: the pins name the root manifest, the source lock, every
+  bundle and catalog source the host composed from, each composition fragment,
+  and the rendered composed manifest. The rendered document is published once
+  at `/run/effigy/snapshots/<digest>/manifest.toml`, so a bundle- or
+  catalog-provided task is guest-readable without the guest reading a cache the
+  host did not approve. A bundle or catalog pin's snapshot is the rendered
+  result it contributed.
+- The environment fence is the environment record's activation generation,
+  which the activation run advances; `container up`, a task's environment apply
+  and the workspace handoff all publish through the same Prepare, so the
+  recovery a refusal names prepares the workspace rather than repeating it.
+- Entry fences: the host verifies the backend's full container id and targets
+  that exact id for context reads, image/boot probes and publication. The
+  context's container id must match in full; a hostname, cgroup claim or id
+  prefix never proves placement. VM boot id, image platform/libc and environment
+  generation must also match. A replaced container, a reboot that retained the
+  filesystem, or a re-activation with unchanged files refuses and names the
+  host re-prepare. No additional state ledger is needed for this binding.
+- Local reads: version, the pinned task list and the pinned source identities
+  come from the context, the immutable rendered snapshot and the mounted
+  checkout alone. The pins whose snapshot is checkout-visible are
+  digest-checked before anything is parsed, so a checkout that changed since
+  Prepare refuses instead of reading bytes the host never approved. A local
+  reader holds no capability, so a Static or Observe read cannot enrol, and an
+  authority-bearing command refuses rather than enrol.
 - Staleness: the context is input, not liveness proof. Every request carries
   the context generation; the host refuses a stale one (K7) and the client
   rereads `current`. A missing context means the workspace is unprepared:
@@ -2408,6 +2748,37 @@ workspace is admitted:
   its previous generation, key wraps and unlock credentials (§7.3 families
   10–11) with an empty read-only overlay. Vault reads and writes are channel
   requests to the secrets engine.
+- Mount isolation validates the complete effective mount set the primary
+  service will have: injected and retained entries, short and long form, with
+  absolute guest targets checked before comparison. Parent (`..`) traversal
+  refuses; redundant separators and current-directory (`.`) components normalize
+  before private-store overlap, mask ownership and duplicate-target checks.
+  This also applies to checkout destinations and every Compose overlay.
+  Compose interpolation is expanded and a bind-backed named volume is resolved
+  through its local driver options. External volumes, explicit volume-name
+  aliases, unknown volume names and drivers whose host source cannot be
+  established are refused without a backend source inspection receipt.
+  Exact aliases from the host catalog's owned-volume inventory remain usable;
+  their driver and external options still undergo verification.
+  Effigy-generated disposable volumes remain owned by the workspace; a source
+  declaration that collides with one still undergoes the same checks. Volume
+  mappings merge recursively across inputs, preserving inherited external flags
+  and driver options. Mount interpolation accepts `.env` literal assignments,
+  including simple single/double quotes and Compose inline comments. Dotenv
+  expansion, escapes, multiline or alternate assignments, duplicate names,
+  environment-file selection overrides, tilde paths and nested Compose interpolation are
+  refused when their meaning cannot be proven; they are never partially read
+  as a safe host path. Every Compose input file Compose is handed is
+  rewritten and validated, not only the first: an overlay, later or
+  intermediate, replaces an entry at the same guest target, so a state root
+  bound at another target in any overlay is refused and an overlay entry at a
+  masked target is stripped. The
+  workspace mounts are injected into the first file that defines the primary
+  service and the masks are appended to the last one, so they are applied after
+  every source file and own their guest paths. A host state root, an ancestor of
+  one mounted anywhere but the masked checkout mount, a second source for one
+  guest path, an entry whose source cannot be proven, and anything overlapping
+  the guest's `/run/effigy` store are refused by name.
 
 Ordinary source edits and task outputs in the mounted checkout are workspace
 files, not host records. The context's authoritative inputs are host
@@ -2542,10 +2913,16 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
 ### 8.7 Workspace session run
 
 - The workspace session is a `Detached` run owned by `Task(TaskId)` of the
-  environment's workspace entry. It holds a `Borrow` attachment to the
-  environment and serves the channel (§8.3). Activating an environment that
-  declares an operator workspace admits it; its starter detaches, so no
-  terminal is its owning client.
+  environment's workspace entry — the **same logical owner** at every generation,
+  exactly as the kernel holds it. The owner is never re-labelled with the
+  environment generation and never becomes a second Task resource: what keeps two
+  `workspace` invocations from colliding is the mapping plus the successor's
+  *run-specific private liveness slot* (`session_run_gate`, a Task-ranked slot
+  whose durable binding grants no generic Task admission), so a session serving a
+  superseded generation can coexist with its successor until its own client or
+  `down` ends it (§8.11). It holds a `Borrow` attachment to the environment and
+  serves the channel (§8.3). Activating an environment that declares an operator
+  workspace admits it; its starter detaches, so no terminal is its owning client.
 - It outlives `dev`. A `dev` invoked from the workspace terminal is a child
   run (`runs.parent run`) with the guest client as owning client. Exiting it
   settles its own workloads and attachment, then returns to the terminal;
@@ -2558,10 +2935,68 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   same session run as secondary clients (§5.8), and a host UI and a guest UI
   can attach to one managed child run. A secondary client's death stops
   nothing.
-- Duplicates are impossible. An environment has one workspace entry, and
-  K5 admits one unresolved run per owner, so a second `workspace` invocation
-  attaches instead of starting a session. Every `dev` or task request takes
-  its own owner gate on the host, whatever its origin.
+- An environment has one published workspace session, so another `workspace`
+  invocation attaches to that mapping. Generic Task admission keeps K5. The
+  typed activation reservation below is the only successor overlap; it does
+  not admit another ordinary task run.
+- **Reserved successor activation (Tom's ruling, 2026-10-29).** Preserve the live
+  predecessor, its selected bytes, listener and holders until the successor's
+  atomic commit. `WorkspaceActivationReservation::reserve` briefly takes and
+  releases `Gate(Env)`, returning a durable reservation id and E. Staging freezes
+  the exact workspace Task owner, successor RunId and its own generation S;
+  S and E are separate fences. Another contender cannot replace that staging,
+  even before admission. Cancellation and a new reservation are explicit.
+  `SessionRef::admit_reserved` authenticates the frozen claim and takes only its
+  run-specific liveness slot, before the Env activation is admitted. The logical
+  Task owner stays the same. Staging/admission never settle the predecessor or
+  advance its current fence. A staged run cannot create generic effects before
+  commit; earlier sessions retain run-bound callbacks, controls and settlement
+  afterwards, without authority to create new shared-owner effects.
+  `claim`/`Run::begin_claimed` bind the Env run at E. The guest must acknowledge
+  `WorkspacePublicationReceipt { publication, activation_run, session }`, including
+  the actual session owner, RunId and S; `ActivationPlan::validate_receipt` checks
+  those fields and E before commit. `Attachments::workspace_guest_published`
+  records that acknowledgement; a generic guest receipt cannot publish a reserved
+  workspace activation. `EnvRun::publish_workspace_guest_with` is the container
+  engine's typed handoff. The host never fills the session into a generic receipt
+  after publication.
+  `WorkspaceActivationReservation::commit` checks the frozen admitted session,
+  exact Env run, its ability to act and all required effects. Commit takes the
+  owning successor `Run` by reference, retaining its Task-ranked private slot
+  throughout the transaction; a read-only liveness probe is insufficient. The
+  session owner must perform the commit with that held handle, and
+  `EnvRun::commit_activation(reservation, session_run)` carries it into the kernel.
+  Detached custody registration authenticates this same run-specific owner slot.
+  One transaction compares the Task's preceding generation, advances it to S,
+  and writes active(E),
+  the session mapping and its Borrow attachment. Generic `publish_active` and
+  `publish_active_for` refuse an uncommitted workspace reservation, so neither
+  can bypass that atomic publication. No Task gate wait happens under Env. Private liveness identities remain durable across later mapping changes;
+  recovery takes the exact dead run's slot and never substitutes the shared Task
+  gate. Ordinary admission refuses reserved, live or unsettled private sessions,
+  including checkout-equivalent owner spellings. Read-only workspace replay on
+  older schema-1 journals does not install these additive tables: absent overlap
+  tables retain strict current-generation fencing and the shared Task owner gate.
+  Missing requests remain absent, and malformed existing tables remain unknown.
+  A failed or crashed pre-commit
+  activation leaves the predecessor authoritative: new Borrow attachments and
+  their remote intents may still use its exact mapped environment generation
+  while that generation remains `last_applied` and the state is active or pending.
+  Ordinary held/no-op reconciliation and activation preserve that applied fence,
+  even after reservation cancellation; newly attached holders may only Borrow it.
+  The current Env transition counter may advance without changing the published
+  workspace's applied generation. Only the atomic successor commit replaces it.
+  Exclusive attachment and transition authority retain the current generation
+  check. The predecessor exception ends when the atomic mapping changes or the
+  applied environment stops; it never authorizes the unpublished successor.
+  Immutable orphan publication
+  is retained without replay; recovery settles the failed successor and cancels
+  its reservation, then rolls forward. Both reserve and recover prefer the oldest
+  unfinished reservation, including a claimed fence after a crash; a later empty
+  fence never hides its bound runs. Reservation rules expose `ActivationRefusal`
+  and its stable `as_str()` names through `RunError::Refused`; admission also uses
+  the existing RunError refusal/gate types. Unreadable or unknown state stays
+  Broken/Unknown, and does not grant admission.
 - Down from inside (Tom's ruling, 2026-10-18) uses only existing
   primitives; no run settles another by cascade:
   1. The session supervisor observes the environment's holders. A live or
@@ -2614,11 +3049,41 @@ only, and host access needs a terminal opened through Effigy.
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
-- Workspace Prepare acquires the artifact on the host, verifies its digest,
-  and installs it into a guest-private executable store, selected per
+- The artifact family is the image's platform **and** its C library, never a
+  host `uname` and never a default: a glibc image takes the `*-gnu` artifact and
+  a musl image the `*-musl` one. The guest reports the loader it can see, and an
+  image whose C library the host cannot prove refuses Prepare rather than
+  guessing. An image with no artifact for its own family refuses with the host
+  re-prepare command and the missing target named.
+- The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
+  digest, selected by the digest in `/run/effigy/bin/current`. An artifact is
+  authenticated before it is published: its producer receipt names the target
+  and the digest its bytes must have, a release download also matches the
+  checksum published beside the artifact, and the installed executable is
+  re-hashed in the container. A release that publishes no checksum cannot be
+  installed, and an image without a SHA-256 utility refuses Prepare. A local
+  producer builds with the requested Rust `--target` and copies from that
+  target's release directory; unavailable target libraries or linkers fail
+  before publication. Each artifact has its own `<binary>.receipt` containing
+  its target and digest, so producing another target cannot replace its
+  evidence. An aggregate rehearsal receipt is not artifact evidence. The guest
+  authenticates installed executables with bounded digest probes, never by
+  reading the file into a bounded command's output. The stable
+  entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
+  store, so a running invocation keeps the bytes it resolved and only a new
+  invocation sees a new generation. Before handoff, entry verification requires
+  that symlink to point directly to the pinned immutable executable and hashes
+  the bytes reached through the stable entry; missing or retargeted entries
+  refuse with host re-prepare guidance.
+- Workspace Prepare consumes the produced artifact on the host, verifies its
+  digest, and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
+- No consumer-time build: Prepare consumes bytes a release download or an
+  explicit `effigy workspace:linux:artifact` already produced, and otherwise
+  refuses naming that command. It never discovers a checkout to build from and
+  never writes a host source pointer at consumer runtime.
 - No run-time build or download: task, exec and terminal entry never fetch
   or compile Effigy or look for a sibling checkout. A contributor's explicit
   Prepare may build the artifact and record the same digest receipt.
@@ -2636,288 +3101,748 @@ only, and host access needs a terminal opened through Effigy.
 
 ### 8.11 Workspace-client interface v1
 
-This is the implementation seam for §8, not a claim that the client or any
-transport is implemented or qualified. The channel is separate from the
-kernel's remote custody protocol: the former requests host authority; the
-latter proves and controls a workload already admitted by the host.
+The guest locator lease retains two addresses: the numeric host bind socket for
+host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
+guest for selection. `SessionLaunch::qualify_guest` issues a launch-local
+challenge binding session, target container/boot, listener, pin and resolved
+guest peer. Only its verified response permits alias publication; evidence from
+another challenge refuses. Qualification rechecks custody after guest I/O.
+Selection requires guest evidence, exact target equality and exact document
+endpoint/pin equality. A numeric host socket is never a guest selection locator.
+Retries retain the same lease; stop, owner loss and settlement revoke publication.
+The numeric `SessionLaunch::qualify` route proves host liveness only; its lease
+cannot authorize a guest selection without `qualify_guest` evidence.
 
-**Wire.** TLS pins the server identity from the selected context before the
-client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte
-big-endian length, at most 1 MiB; malformed, oversized, duplicate-key or
-unknown-version frames close the connection before dispatch. Binary stream
-payloads are base64 in frames, at most 32 KiB decoded. Limits apply before
-allocation and decoding. Each connection begins with `hello` containing
-`schema: "effigy.workspace-channel.v1"`, supported protocol versions,
-client Effigy version and binary digest, context generation and session run
-id. The server returns `hello_ok` with the selected version and its Effigy
-version, or a refusal. V1 selects only protocol 1, and requires the client version and digest to match the context and the
-host-pinned guest artifact, and the client, context and host version and
-protocol to match §8.9;
-there is no downgrade. Authentication follows negotiation inside TLS: an
-`authenticate` frame presents the capability, or an `enrol` frame presents
-the enrolment credential. Neither credential is echoed or logged. No
-request is accepted before authentication; enrolment only issues a
-capability and cannot execute another operation. Version, identity or
-credential failures refuse before effects and tell the client to re-prepare
-where applicable.
+This is the normative production seam (effigy#481), not implemented transport or backend qualification. Only APIs marked
+implemented below are the merged #484 seam. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
+E-step/fault/retry proposals remain [non-normative,
+unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates), with no acceptance claims; [existing API
+detail](#appendix-a-existing-workspace-api-reference) is informative. Other signatures below are proposed code-first handoffs.
 
-An authenticated `request` frame has `id` (128-bit random hex), `method`,
-`context_generation`, `environment_generation`, `session_run_id`,
-`container_id`, `vm_boot_id`, and `body`. The host binds these to its grant,
-not to the client's claims. An invocation body contains a selector or typed
-operation, checkout-relative cwd, intended target, argument array and output
-mode; it contains no resolved plan, executable path, entry point or state
-root. At most 256 arguments of at most 4096 bytes each are allowed, with a
-64 KiB total body; cwd and target are bounded to 4096 bytes and must resolve
-within the allowed checkout or target. Invalid encoding, traversal, unknown
-fields or methods and excess limits refuse before admission. Request IDs are
-unique per session generation, including across reconnects.
+**Authority and wire.** One host authority and session channel, separate from remote custody: re-resolve every request into
+`ResolvedInvocation`, check grants/fences, and take canonical gates before effects. Guests have no Docker socket, store writer,
+host effect context or failed-request local fallback. Hybrid provisions no guest artifacts/listener/credentials. Static/local
+Observe stays local (§8.6). TLS verifies the pin before any Hello/credential frame. V1 frames: four-byte big-endian length, UTF-8
+JSON, 1 MiB maximum, decoded stream payload ≤32 KiB. Invalid encoding, duplicate keys, unknown versions/fields and excess limits
+close before dispatch. Hello selects protocol 1 and matching host/client/context version and pinned artifact digest (§8.9), never
+downgrade; only `hello_ok` permits auth or enrol. Enrolment issues a capability, executes nothing. Credentials never enter
+logs/stdout/JSON envelopes; responses preserve host typed results/safe refusals. Invocation: selectors/typed operations, relative
+cwd/target/args, never executable paths/state roots/guest plans; ≤256 args, ≤4096 bytes each, ≤64 KiB body, cwd/target ≤4096 bytes
+within scope. Grants are memory-only, bound to host user, checkout, session run/generation, environment generation, full
+container/boot and operations/targets (§8.3). Enrolment credentials: generation/container-bound, 0600 guest-private, revoked with
+generation. Observe creates no admission/access journal. Mutating requests record `(session generation, request id, canonical
+digest)` before admission: same-intent retry returns the record, conflicts `id_conflict`, indeterminate recovery `unknown`, never
+another admission; `lookup` before `reserve`. One connection/attachment; secondary EOF stops nothing; owner EOF without acked
+detach stops its owned workload through custody. Detach preserves a Detached run. Controls cannot target another client's run.
+Streams: one increasing sequence per stream id across kinds; retained log/cursor coordinates agree; rotation is `gap`, never
+complete output. ≤16 unacked data frames, ≤512 KiB queued decoded data; control remains serviceable. Never replay terminal input;
+resize latest-wins; check attachment lifetime before terminal writes; missing delivery refuses. Kernel record tests do not qualify
+a production terminal writer/serving loop/transport. §8.7 governs down and live holders.
 
-A `response` carries `id` and exactly one of `observed`, `accepted`,
-`completed`, or `refused`. `observed` contains the host's typed Observe
-result; `accepted` contains the host `RunId` and placement; `completed`
-contains the typed outcome and exit status; `refused` contains a stable code
-and safe diagnostic. Codes include `invalid_request`, `unauthenticated`,
-`forbidden`, `stale_context`, `identity_mismatch`, `version_mismatch`,
-`held_by`, `unavailable`, `unknown` and `id_conflict`. Preserve the host
-CLI's result and error types: `--json` is rendered as the existing
-`effigy.command.v1` envelope, not as a channel frame. Channel control frames
-and credentials never enter stdout or that envelope.
+**Guest-local identity — #482 (C).** The context-free reader is in `src/runner/workspace_client/identity.rs`:
 
-Mutating or admission requests are recorded by the host before admission,
-keyed by session generation and request ID with a canonical request digest.
-A concurrent or later retry with the same digest returns the recorded
-admission, run or outcome; a different digest returns `id_conflict`. The
-record survives a disconnect and supervisor restart and is retained for the
-session generation and its recoverable outcomes; it is never silently
-forgotten and readmitted. If recovery cannot establish the record or outcome,
-return `unknown`, not a new run. Observe requests have no admission record or
-side effects; retries re-observe and may return newer facts. Neither retry
-rule grants authority after capability revocation or generation change.
+```rust
+struct ProcGuestIdentity; // bounded real proc files; pure byte/ELF fixtures in tests
+struct GuestSelfObservation { container_id: String, vm_boot_id: String, platform: String, libc: String }
+trait GuestIdentity { fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal>; }
+impl ProcGuestIdentity { fn process() -> Self; }
+```
 
-A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
-`kind` and payload. Kinds are `event`, `stdout`, `stderr`, `terminal_output`,
-`terminal_input`, `resize`, `ack`, `end` and `gap`; events carry typed host
-status or outcome, resize carries positive rows and columns, and `end`
-carries the final sequence and outcome where known. Per stream, the receiver
-acknowledges consumed sequence numbers; the sender permits at most 16
-unacknowledged data frames and at most 512 KiB of queued decoded data, then
-backpressures. Control and cancellation must remain serviceable under backpressure.
-A reconnect may request a sequence cursor; retained frames resume in order,
-otherwise `gap` reports the missing range and the client obtains current
-status or logs from the host. A gap is never presented as complete output.
-Terminal input is neither replayed nor buffered across reconnects; resize is
-latest-wins. Frames for an unknown stream, out-of-order input, invalid cursor
-or exhausted limits are refused or closed without dispatching effects.
+Requests take container/boot claims from that observation. The published context is a host claim to compare against it, never
+independent evidence of the caller. The candidate independent source is the full 64-hex id in a backend-qualified kernel
+`/proc/self/mountinfo` root under `containers/`; boot is the canonical UUID in `/proc/sys/kernel/random/boot_id`. Exactly one
+distinct full id is required; zero, conflicting, unreadable or malformed facts refuse before credentials. Consistent with §8.2,
+`/proc/self/cgroup` is diagnostic only: reading a full id there is still a cgroup claim, never independent placement evidence,
+even when it matches the context. Cgroup-only availability must refuse `Unproven`; neither qualification nor context agreement
+promotes it. Hostnames, markers, environment variables and id prefixes also prove nothing. Each backend's fixture and native
+qualification must distinguish a valid mountinfo observation from cgroup-only and copied-context cases; the latter refuse without
+credentials or publication.
 
-**Methods and custody.** `observe` is host `ObserveContext` only; it makes no
-run, token, journal or access log. `invoke` admits the host-resolved command;
-its actual effect class is determined by host policy, never by the method
-label or a guest claim. `attach` observes an authorised session or run and
-opens a bounded stream; `cancel` requests stop of an authorised run;
-`detach` explicitly releases the owning client without stopping a Detached
-run. Enrolment, invocation, cancellation and detach are authorised operations;
-the host checks the grant's operation and target scope and the same operator
-authorisation and elevation as the host CLI. A client cannot cancel or detach
-another client's run merely by naming its ID. A secondary attachment cannot
-stop the workspace session by disconnecting. EOF without detach cancels an
-Inline owner or stops its owned Detached child; EOF after acknowledged detach
-leaves that child running. Disconnect, capability loss, generation mismatch
-or host probe timeout yields `Unknown` for unfinished work and refuses further
-Mutate; reconnect queries the recorded ID. Host-side cancellation still
-settles through the run's custody, and an unproven stop remains Unknown.
+The hidden `__guest-identity` and `__guest-reach --resolve|--dial` entries execute
+from the staged digest object, without reading a context or credential or writing
+host state. The host adapter runs them against the exact bound container with the
+caller's remaining execution/capture budget. Resolve reads only the unique
+`effigy-host` hosts entry; dial performs a pinned TLS handshake with no channel
+frames. Guest mount-root/boot observation precedes both operations. ELF64 machine
+and the single known interpreter verify the executing object; static, unknown or
+conflicting loader evidence refuses. Native Colima, Desktop and Linux Docker
+qualification remains required before treating a candidate mount-root source as
+qualified placement evidence.
 
-The grant is memory-only in the session supervisor and binds host user,
-checkout, session run and generation, environment generation, full container
-identity and VM boot id, and allowed operations and targets. TLS pinning and
-this binding are both mandatory. The enrolment credential is a separate,
-versioned, environment-generation and container-bound credential for enrolment
-only; it is 0600 in guest-private storage and is revoked on generation
-change. A first Effigy-opened terminal receives its capability as part of
-entry; direct terminals enrol only for authority-bearing operations. Static
-and local Observe do not enrol. All workspace-user processes share this trust
-boundary. Capability issuance is a session Mutate; authentication with an
-existing capability is read-only.
+The canonical full-v2 wire type is the kernel's exported `WorkspaceContextDocument`;
+`workspace_client/context_v2.rs` uses a transparent wrapper around that exact type.
+Host user, checkout/environment resource, protocol, profile/runtime/VM descriptor,
+paths, source pins and routes are compared with frozen `GuestContextInputs`.
+Platform and libc are checked against the applied required binary stage's image
+facts read into `ActivationPlan`; a fresh reservation never guesses them before
+apply, and an absent or uncertain stage cannot validate a context receipt.
+The C full-v2 producer/reader is `workspace_client/context_v2.rs`. Its session block
+comes from `ActivationPlan::session()`, its channel from `QualifiedHostLocator`,
+and it refuses v1 documents and unknown fields. The reserved owner orchestration
+is `environment_workspace.rs` over the container engine's `WorkspaceActivation`:
+Task admission precedes claimed Env admission. The admitted Run is adopted once
+before channel construction; its already-adopted `SessionSupervisor` and exact
+listener are moved together to serving. Successful completion requires durable
+selection readback. `up_prepared` calls the C `prepare_reserved_guest` producer:
+required publication intent, target/platform binding, required immutable binary
+stage, independent guest identity, the merged qualified advertised-locator API,
+full-v2 document, staged-guest context-bound TLS-only probe, canonical kernel
+receipt, commit, CAS and readback. No credential is minted before independent
+identity or staged before pinned qualification. Recovery re-reads the exact
+Pending obligation under an actual Env guard; unknown target/listener evidence
+switches nothing, while a settled failed successor can be abandoned without
+restoring its predecessor. Its typed source boundary supplies no default locator
+or successful publication fallback. The workspace-client owner installs the
+serialized CLI/serving consumer after this producer, moving the already-adopted
+supervisor, exact session/listener and original Arc effect/observe contexts and
+root together; it owns final serving E2E and durable custody close. Legacy local
+preparation remains separate from that reserved authority path. Native Colima,
+Docker Desktop and Linux Docker identity/reachability qualification is still
+required at the candidate gate.
 
-For every request the host verifies the current context, environment and
-container fences and re-resolves selector, cwd, target, placement, privileges
-and effect class from host records into `ResolvedInvocation`. It acquires
-the canonical engine gates and journals effects before execution (§5 and §9).
-Origin does not change resource identity. The guest has no state root,
-store writer or gate: guest placement rejects `Gate::acquire` with
-`HostAuthorityRequired`, and dispatch cannot construct host effect contexts
-locally. State and vault mounts remain masked. No failed channel request falls
-back to guest execution. Hybrid provisions no guest binary, context, listener
-or enrolment credential.
+The host selects the first artifact from the exact container image's backend OS/architecture/variant and one observed image loader
+family, before executing it. `/proc/self/exe` ELF machine/interpreter verifies those staged bytes; it does not select them.
+`uname` is diagnostic, including under emulation. Unknown or conflicting platform/libc, or an artifact that cannot execute,
+refuses. Prepare runs the staged binary's context-free `__guest-identity` in the exact target and compares its observation with
+the host-bound container, boot, platform and libc before publishing. No source is qualified merely by naming a backend. If a
+required backend cannot supply these facts, report the missing capability and smallest contract decision; do not fabricate an
+identity or invent a fallback.
 
-The kernel seam is `run::{reserve, lookup, Run::begin_admitted,
-resume_owner, attach_secondary}`. A `Session` must identify an admitted,
-nonclosed session run at its current resource generation. The reservation
-records that session's owner, and admission, replay and attachment operations
-recheck it. A legacy reservation with no recorded session owner is refused;
-it never gains one by inference. `lookup(&ObserveContext, &StateRoot,
-AdmissionKey, Digest)` reads a fresh journal snapshot. An unfinished admission
-is returned only while its current owner process identity and held owner gate
-can be established. An orphan is `Unknown` and cannot acquire handles or be
-readmitted; ordinary custody recovery must settle it before its recorded
-outcome becomes available. The keyed run and consumed ticket commit before
-predecessor cleanup, so interruption during cleanup retains that binding.
-Client release revalidates the current session, owner and exact attachment in
-its write transaction. A registered liveness watch instead releases through
-the live Run's owner-gated custody, so session expiry cannot retain a lost
-terminal. Owner EOF releases its row and queues one matching stop in that same
-transaction; persistent foreign or resolved request-ID collisions select another
-identity without deleting the existing row. Control and release deadlines also
-bound schema initialization and additive migration.
+**Qualified TLS locator — #483 (A).** Proposed context and guest transport seams:
 
-During keyed predecessor recovery, the current owner gate and successor fence
-keep the predecessor's already-fenced escalation serviceable. New controls use
-the admitted successor's current RunId and fence; escalation there also shortens
-predecessor cleanup. Stale public requests remain refused. Reading either
-mailbox checks its exact serialized run and generation binding, and no journal
-transaction spans custody I/O.
+```rust
+// src/runner/workspace_client/context.rs — #482
+struct WorkspaceSessionBinding { run_id: String, generation: u64 } // S
+struct WorkspaceChannelLocator { endpoint: String, server_identity: String, protocol: u32 }
+// server_identity = sha256:<hex> of DER SubjectPublicKeyInfo
+// src/runner/workspace_client/transport.rs — #483
+struct TlsChannelTransport { /* workspace_channel::Transport */ } struct PinnedChannelOpener { deadline: Deadline }
+impl ChannelOpener for PinnedChannelOpener { fn open(&mut self, context: &VerifiedWorkspaceContext) -> Result<Box<dyn Transport>, ChannelError>; }
+```
 
-**Owners and coverage.** Paths below name the intended owners, including new
-modules; they do not imply those modules already exist. The only integration
-file allowed to join these lanes is `src/runner/workspace_client.rs`.
+The A adapter is `src/runner/workspace_transport`: `TlsChannelTransport` verifies
+TLS 1.3, the SHA-256 DER-SPKI pin, leaf validity and the P-256 handshake signature
+before exposing a writable transport. `opener::PinnedChannelOpener` consumes the
+verified context, requires protocol 1 and a known pin, and resolves only the
+unique rendered `effigy-host` entry in a bounded `/etc/hosts` snapshot (no DNS or
+OS-trust fallback). Connect/handshake, each read/write and close have absolute
+budgets; fresh connections retain no TLS session or application state.
 
-| Interface or command class from §8.6 | Owner and boundary |
-| --- | --- |
-| Wire types, framing, authentication, replay and host dispatcher | New `crates/effigy-kernel/src/workspace_channel.rs`; delegates resolution and effects to owning host engines, never to remote custody. |
-| Workspace session, attachments, terminal control and down coordination | New `crates/effigy-kernel/src/workspace_session.rs`; runner entry adapts `src/runner/workspace_command/session.rs`. Existing `crates/effigy-kernel/src/remote/{session,stream}.rs` remain remote workload custody. |
-| Context, artifact and enrolment Prepare; placement detection and guest local reads | `src/runner/workspace_command/provisioning.rs` and new `src/runner/workspace_client/context.rs`; `crates/effigy-containers/src/workspace.rs` owns mount isolation. |
-| Help, version, plans, config and static task, bundle, service, graph, docs, scan, contracts, changelog, skill, state and artifact reads | Guest local reader in `src/runner/workspace_client/context.rs`, using the pinned snapshot and mounted checkout, with no refresh. |
-| Tasks, shell, references, Rhai, tests, drafts, QA, skill run, defer outside a workload, managed runs and workspace/system entry | Host task engine and session via dispatcher; defer inside a workload stays under that workload's custody. |
-| Managed status, logs, stop; task status and cache; doctor | Host task/run and store engines for live facts and mutations; local manifest/tool checks stay local. Unlock is refused. |
-| Container shell/exec, lifecycle, status, stats, logs, data, cache, volume, profile, migrate, hosts, scope and ports | `crates/effigy-containers/src/environment.rs` and its owning operations; static declarations local, live reads Observe, changes host requests. |
-| Secrets, deps, graph index, bundle sync, user config | Their host store engines; read or mutate as §8.6 specifies. Secret grants belong to the admitted run. |
-| State apply/capture, artifact stage/capture/push, init, docs index writes, release, deploy, bootstrap, uninstall and gateway | Respective host engines under their canonical policy and gates; gateway never runs in the guest. |
-| Hidden internal entry points | Refused at guest CLI and dispatcher; never a channel method. |
+`listener::SessionTlsListener` implements the kernel's `ChannelListener`.
+`SessionLaunch::launch` takes its listener and memory-only `ServingKey`; the
+weak `HostChannelAcceptor` requires the exact live launch/owning run before
+handing a server transport to the existing kernel dispatcher. Holding probes
+never enter that dispatch queue. Stop/owner settlement shuts down accepted
+sockets, revokes the signing key even from retained TLS configurations/signers,
+and joins the bounded worker. Process death releases its socket and key; a
+successor generates a new key, never reuses the old locator. No grant registry,
+credential storage or request authority exists in this adapter.
 
-Session activation is one Detached run owned by the environment workspace
-entry's `Task(TaskId)` and holds a Borrow attachment. Additional terminals
-attach, not create a second session. Down from within follows §8.7's holder
-check, child settlement, detached down operation and final gate recheck; the
-session does not cascade-settle other runs. This boundary requires the
-supervisor to expose replay-safe admission and attachment handles to the
-dispatcher; if that cannot be provided without a second authority, stop the
-integration and resolve the kernel interface before implementing a substitute.
+`qualification::prepare_channel` is the engine handoff after ordinary apply:
+resolve in the exact created container/boot, choose Direct or an observed Proxy
+bind, launch under session custody, then require the guest's TLS-only evidence
+to match target, resolved peer, assigned port and pin before constructing the
+private `QualifiedHostLocator`. Its accessors expose the existing context
+locator and kernel `ChannelBound`/lease to the C publisher; the C publisher still
+owns immutable publication and commit. Hybrid returns no listener/key/probe.
+The owning activation retains one launch; retries use that launch, and a failed
+unpublished preparation closes its candidate before returning. The module does
+not render/apply Compose, dispatch guest commands, or implement the engine's
+`GuestChannelProbe`: those integrations stay with C and #452. The protocol
+module and its frame/admission rules are unchanged.
 
-#### Implemented: the session layer (effigy#438)
+Bounded source qualification uses private TLS listeners for all three backend
+plans and exact-target fake guest adapters, not live engine qualification.
+The proxy fixtures dial IPv6 loopback and forward to a different IPv4 host bind;
+the Linux fixture dials the directly resolved bind address:
+`test:workspace:channel:colima`, `test:workspace:channel:docker-desktop` and
+`test:workspace:channel:linux-docker:fresh`. `test:workspace:transport:tls` also
+covers pin/validity/signature refusal, reconnect, frame limit, operation budgets,
+hybrid, failed qualification, owner drop/crash and retained-signer revocation. The unchanged kernel protocol
+and deterministic workspace-session recovery model run through
+`test:workspace:transport:kernel`.
+These receipts do not claim a native backend passed. Before candidate native
+qualification, execute these checks through the selected engine adapter:
 
-The kernel records this boundary needs are implemented and proven (the kernel
-seam below, and lane A's channel). `crates/effigy-kernel/src/workspace_session.rs`
-is the lane B session layer on top of them and owns no second authority:
+1. Record exact engine/Compose and host versions, selected backend/profile,
+   rootful/rootless mode, VM runtime/type and boot identity. Rootless Linux and
+   Apple Containers have no qualified plan. For Colima cover Docker/containerd
+   and VZ/QEMU separately; for Desktop record proxy/firewall/VPN settings.
+2. Observe the selected proxy's host-bind address and Colima gateway; unknown or
+   multiple observations refuse. Render `effigy-host` before ordinary gated
+   apply creates the network and target. On Linux distinguish daemon
+   host-gateway from Compose IPAM gateway; do not read a project network before
+   its creation. Exercise configured host-gateway and custom subnets/networks.
+3. In that exact full container ID/boot, run the staged guest adapter's bounded
+   hosts resolver. Require one alias address and the independent target
+   identity; copied context/cgroup claims are insufficient. Pass that result to
+   `channel_bind`; never attempt to host-bind a proxy's guest-facing IP.
+4. Bind the session listener at port zero and run the staged guest's bounded
+   TLS-only dial to the rendered alias/assigned port. Compare its actually
+   connected peer, pin and exact container/boot to the frozen target before
+   `SessionLaunch::qualify`/`publish`. Exercise IPv4/IPv6, custom DNS/hosts,
+   loopback settings, firewall/VPN denial and unreachable/ambiguous answers.
+   No Hello or credential is sent by this probe.
+5. Feed the qualified locator/lease into C's immutable receipt/commit, then
+   dispatch through #452 only after the exact session is serving. Exercise
+   prepare interruption, owner EOF, supervisor kill, target replacement and
+   retry: old pins/endpoints refuse, no listener survives settlement, and only
+   a newly qualified successor is published. Record selected versions and all
+   observed addresses/identities plus the exact-head proof results; never infer
+   native success from the private fixture's backend name.
 
-- `SessionRef` resolves the environment's one session through its own additive
-  record (`workspace_sessions`), not by guessing from an attachment: a child run
-  or a host `dev` hold on a persistent environment can borrow the same
-  environment, so a `Borrow` row names a holder, never the session. Every read
-  validates the record against the journal — the run is at the recorded
-  generation and not closed, it still borrows the environment at the recorded
-  generation, and the environment has not advanced — and an invalid record
-  resolves as absent, so a stale session is never mistaken for a live one and a
-  successor can be admitted. `SessionRef::admit` refuses any placement other than
-  `Detached`, holds the environment `Borrow` attachment for the run's life and
-  records the mapping, refusing to replace a live one. The entry itself is guarded
-  by the workspace entry's owner gate, and request ids inside the session are the
-  kernel seam's `run::reserve` records — one admission authority, not two.
-- `SessionHandle` hands the kernel seam's `run::Session` to reservation, attach
-  and bounded control, and exposes the down coordination. `OwnerLoss` maps EOF,
-  a disconnect and TERM/HUP to the kernel's owner release (`Release::Eof`) and to
-  the stop cause the supervisor settles with (`StopCause::OwnerLost` or
-  `Signal(n)`); an acknowledged detach is `Release::Detach` and stops nothing.
-- Down: `DownCoordination::begin` refuses every holder other than the session and
-  its own child runs, live or `Unknown`; `DownChildren` stops only those children
-  with an ordinary journalled `run::request` (idempotent by request id) and takes
-  its permit through `Attachments::permit_exempt` once the session has entered
-  its settle.
-- The runner entry `src/runner/workspace_command/session.rs` maps each front end
-  to its `TerminalKind` and prints the one resolved identity.
+A session owns one memory-only ECDSA P-256 key/leaf and listener. The TLS verifier checks the SPKI pin and handshake signature
+(key possession); copying a leaf is insufficient. `Transport::verified_peer` reports the verified identity, and
+`WorkspaceClient::connect` calls the existing `check_server_pin` before its first frame, including Hello. Missing/wrong pin or
+unqualified transport means zero Hello, authentication, enrolment and credential bytes. No plaintext fallback. A dead listener/key
+is never recreated under an old locator; the next activation uses a new session, generation, endpoint and pin. Superseded live
+sessions keep their own listener and holders until their own settlement.
 
-Still owned elsewhere by the lane split: the supervisor's serving loop over its
-control listener, the channel frames and dispatcher (lane A), Prepare and context
-(lane C) and the client glue (`src/runner/workspace_client.rs`). Proofs are the
-fake-owner, fake-runtime cases under `workspace_session::tests::`; the admission,
-attachment and stream records they consume are proven by lane A's
-`test:kernel:workspace-channel`. Neither exercises an engine, container, gateway
-or live supervisor.
+Proposed #483 host handoff: `BackendSelection` names the backend/profile; `ContainerIdentity` the host-bound container/boot.
+Modules own the following types:
 
-**Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
-A session is its run and its generation, so two sessions at one generation stay
-distinct. `reserve` records `(session, request ID, canonical request digest)`
-with the one run it reserved, and `Run::begin_admitted` commits that binding, the
-run row and the owning client's attachment in one transaction. One run identity
-belongs to exactly one key: a second key proposing the same run id is refused in
-that transaction and by a unique index, and an ordinary run may not take a
-reserved id, so a reservation is never swapped for another workload. A key with
-a record is classified before any proposed id is judged, so a same-key retry
-recovers its admission or reports its digest conflict whatever entropy it
-offers. Both replay outcomes first validate the recorded session owner and
-current generation; a conflicting digest never bypasses that fence. Only the
-binding that actually admitted a run answers for attachment and
-records its outcome; a reservation that never committed keeps answering
-`Unknown`. `lookup` answers a reconnect from the same records, `Unknown`
-included, and never admits again. A
-reservation whose admission cannot be established is `Unknown` and names no run:
-an id the client offered is not evidence that the request produced it. The run's
-close transaction records the keyed request's outcome and ends its client
-attachments in the same commit that closes it. The ticket is transferable — a
-dispatcher hands it to a detached engine supervisor through
-`supervise::EngineLaunch::admission`, and the engine reads it as
-`EngineSession::admission` — but admission re-checks the durable reservation, so
-the ticket alone binds nothing. `attach_secondary` gives a second terminal its
-own attachment row, a bounded stream cursor that reports a rotation gap, and
-stop/escalate control bounded at four waiting requests, counted in the same
-transaction that records one; every read re-checks the attachment row, and a
-control re-checks it in the transaction that records the request, so a release
-cannot be overtaken and a released attachment or a closed run stops both. An
-owning client's EOF records its run's stop in the same commit as the release,
-while an acknowledged detach records none and leaves the run going, including
-when its original owning pipe closes. `EngineSession::watch_attachment` binds an
-attachment to a separate client liveness pipe; the supervisor's control turn
-releases a killed secondary's row without stopping the owner, and reclaims its
-slot. If the attaching caller loses the creation response or dies before watch
-registration, `resume_secondary` reopens the exact still-attached secondary ID
-under the current recorded session and live workload fence. It allocates no
-slot and revives no released row; the authorised dispatcher can register the
-recovered handle or release it to reclaim the slot without stopping the owner.
-Watches are bounded to eight secondaries and one owner. Reservation replay,
-attachment opening and attachment status derive finite observation phases even
-when the engine's workload lifetime is open, preserving any shorter caller
-deadline. Workspace controls respect the caller's remaining budget, capped at
-one second, including a busy store; a timeout records no control and the caller may retry. Output reads do
-not hold the writer or share the liveness pipe. `resume_owner` reopens
-the owning client's handle and no other. Both refuse a run this session did not
-admit and grant nothing: the dispatcher's grant check remains the authority.
-`test:kernel:workspace` owns these proofs.
+```rust
+// crates/effigy-containers/src/workspace_channel.rs
+pub enum BindRoute { Proxy { host_bind: IpAddr }, Direct }
+pub struct ChannelAliasPlan { pub alias: String, pub render_value: String, pub route: BindRoute }
+pub struct ResolvedAlias { pub target: ContainerIdentity, pub address: IpAddr }
+pub struct ChannelBind { pub listen: SocketAddr, pub alias: String, pub expected_peer: IpAddr }
+pub fn channel_alias_plan(cx: &ObserveContext, selected: &BackendSelection) -> Observed<ChannelAliasPlan>;
+pub fn channel_bind(plan: &ChannelAliasPlan, resolved: &ResolvedAlias) -> Observed<ChannelBind>;
+// src/runner/workspace_command/channel.rs
+struct HostChannelIdentity { session: SessionBinding, /* memory-only key/leaf */ }
+struct BoundHostChannel { session: SessionBinding, bind: ChannelBind, listener: HostChannelListener, locator: WorkspaceChannelLocator }
+struct QualifiedHostLocator { session: SessionBinding, target: ContainerIdentity, locator: WorkspaceChannelLocator }
+struct GuestDialEvidence { target: ContainerIdentity, peer: SocketAddr, pin: Digest }
+trait GuestChannelProbe {
+    fn resolve(&mut self, target: &ContainerIdentity, plan: &ChannelAliasPlan, deadline: Deadline) -> Observed<ResolvedAlias>;
+    fn dial(&mut self, target: &ContainerIdentity, locator: &WorkspaceChannelLocator, deadline: Deadline) -> Observed<GuestDialEvidence>;
+}
+impl HostChannelIdentity {
+    fn generate(session: &SessionBinding) -> Result<Self, ChannelError>;
+    fn bind(self, bind: ChannelBind) -> Result<BoundHostChannel, ChannelError>;
+}
+impl BoundHostChannel {
+    fn qualify(&mut self, target: &ContainerIdentity, guest: &mut dyn GuestChannelProbe, deadline: Deadline) -> Observed<QualifiedHostLocator>;
+}
+```
 
-**Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
-v1 wire, its framing and limits, the server pin check, negotiation, grants,
-enrolment and the typed entry points. It reads the key with `run::lookup`
-before it calls `run::reserve`, so a retry spends no entropy and reaches no
-engine, and an unreadable record is answered `unknown` rather than admitted
-again. Resolution, admission and observation stay with the owning host engines
-through four small seams — `Resolver`, `Admission`, `Observer` and `RunIds` —
-and `Admission` receives the reservation's `AdmissionTicket`, which the engine
-hands to `EngineLaunch::admission`, so the run an engine admits is the run the
-record names. `observe` reserves nothing and attaches nothing; a capability is
-memory-only, checked before every effect, and its operation and target scope is
-the host's, never the client's. Every request is checked against the grant's
-server-side binding as well as its own claims, and enrolment issues a capability
-for the session the host recorded, never the one an `enrol` frame names.
-Revoking a generation ends the enrolment credential with the capabilities it
-issued, so re-enrolment cannot mint a live capability for a dead generation.
-A connection owns at most one attachment: attaching to another run refuses,
-replacing this connection's own secondary releases the replaced row, and only
-the connection that admitted a run holds its owner handle. Captured output is
-published through a pump bounded by the acknowledgement window, so a control
-request is answered while data is backpressured; the connection's lifetime is
-its session's, and a closed connection whose frames were malformed releases no
-owner lifetime. Each connection starts and ends with no queued stream state, so
-a server that serves a reconnect publishes nothing from the previous connection
-and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
-remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
+`GuestChannelProbe::dial` is TLS-only: verify pin/signature, send no frames. Order: observe alias plan → render/apply →
+`guest.resolve` in exact staged guest → `channel_bind` → generate/bind → `qualify` → #482 immutable context/receipt. The plan
+contains observed proxy bind/gateway facts, not guessed loopback; Direct uses the guest-resolved IP. `channel_bind` sets port 0
+and expected guest peer; `bind` builds the locator from its OS-assigned port, alias, SPKI digest and protocol 1. `qualify` checks
+target/boot, peer IP against `bind.expected_peer`, assigned port and listener pin. Proxy peer may differ from listen IP; Direct
+must match it. Only its verified result supplies the context locator, never an unqualified bind. Unknown/ambiguous backend facts,
+wrong target/peer/pin, timeout, key/bind/dial failure publish nothing (`unavailable`/`identity_mismatch`), before credentials.
+Required qualification routes:
+
+| Backend | Candidate reachability, always proved from the guest | Bounded local test proposal / native qualification |
+| --- | --- | --- |
+| Docker Desktop | Render `effigy-host:host-gateway`; bind only a host address its proxy reaches, then verify the guest's pinned dial | `test:workspace:channel:docker-desktop`; record Desktop/Engine versions, custom networks, proxy/firewall/VPN and IPv4/IPv6 |
+| Colima | Render the observed profile gateway alias; bind only a qualified host endpoint, then verify the guest's pinned dial | `test:workspace:channel:colima`; record docker/containerd × VZ/QEMU, custom gateway/DNS and loopback settings |
+| Linux Docker Engine | Render `effigy-host:host-gateway`, resolve it in the created guest, bind the observed host-reachable address and verify the pinned dial | `test:workspace:channel:linux-docker:fresh`; record Engine/Compose, configured host-gateway, custom subnet, firewall and IPv6 |
+
+The fresh Linux order is mandatory: render the alias before service creation; ordinary gated apply creates the project network and
+container; only then resolve and probe from that guest. Never require a project-network read before the apply that creates it.
+`host-gateway` is the daemon's configured/default host address, not the Compose network's IPAM gateway. The bounded test must
+distinguish those addresses. Unknown, multiple, unbindable or unreachable addresses publish no locator. Proxy addresses are not
+assumed host-bindable. Rootless Linux and Apple Containers remain unqualified. Q-017 still requires the three required backends
+before v0.15; refusing safely is not backend qualification.
+
+**Actual session/publication seam — #482 (C), consuming #484.** These types exist in
+`crates/effigy-kernel/src/workspace_session.rs`:
+
+```rust
+pub struct SessionBinding { pub owner: ResourceId, pub run: RunId, pub generation: Generation }
+pub struct WorkspacePublicationReceipt { pub publication: run::GuestPublicationReceipt, pub activation_run: RunId, pub session: SessionBinding }
+// Existing ActivationPlan accessors/validation:
+fn environment_generation(&self) -> Generation; // E
+fn session(&self) -> SessionRef; // the frozen owner, run and S
+fn validate_receipt(&self, receipt: &WorkspacePublicationReceipt) -> Result<(), RunError>;
+```
+
+The existing order is `WorkspaceActivationReservation::reserve` (briefly hold `Gate(Env)`, reserve E, release),
+`stage_session_binding` (freeze owner/run/S), `SessionRef::admit_reserved` (hold the successor's Task-ranked private slot), then
+`EnvRun::begin_claimed`/`Run::begin_claimed` (hold Env at E). Task rank precedes Env; no Task gate wait occurs under Env. The
+actual owning successor `Run` stays held through commit; a liveness observation cannot replace that handle. The predecessor keeps
+its mapping, applied fence, bytes, attachment and listener throughout a failed or unfinished pre-commit activation (§8.7).
+
+`EnvRun::publish_workspace_guest_with` journals intent before guest I/O and records `Attachments::workspace_guest_published` only
+after receipt validation against the claimed Env run/E and frozen `SessionBinding`. No transaction spans guest I/O. The publisher
+returns the actual acknowledged session identity; the host cannot fill it into a generic receipt afterwards.
+`EnvRun::commit_activation` calls `WorkspaceActivationReservation::commit`: one transaction advances the workspace Task fence to S
+and writes active(E), session mapping and Borrow. Generic publication cannot bypass an uncommitted reservation. E and S are
+separate resources' generations; never derive either from the other.
+
+Proposed `effigy.workspace-context.v2` publishes `session: {run_id, generation}` from `ActivationPlan::session()`, qualified
+locator, immutable context/artifact identity and generation-bound credential selection. It replaces bare `session_run_id`;
+incompatible schemas refuse with re-prepare guidance. Absent/incomplete session or locator permits local reads only, host
+`unavailable`. Never overwrite immutable objects or retarget a live predecessor's selected bytes.
+
+**Durable selection handoff — implemented in the kernel (effigy#488).** Kernel types in
+`crates/effigy-kernel/src/workspace_session{,/selection,/serving}.rs` and `run/attachments.rs`:
+
+```rust
+pub struct GuestObject { pub path: String, pub digest: Digest }
+pub struct SelectionObjects { pub binary: GuestObject, pub context: GuestObject, pub credential: GuestObject, pub context_generation: Generation, pub credential_generation: Generation }
+pub struct SelectorChange { pub path: String, pub expected: Option<String>, pub next: String }
+pub struct ServingLease { /* session, supervisor, endpoint, pin; only SessionLaunch::publish builds one */ }
+pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3] }
+pub struct SelectionReceipt { /* publication + selection + the lease its own launch published */ }
+pub struct SelectorReadback { pub path: String, pub value: String }
+pub struct SelectionSwitchReceipt { /* private: digests, generation, serving pin, [SelectorReadback; 3] */ }
+pub trait SelectorReader {
+    fn target(&self) -> ContainerIdentity;
+    fn read_selector(&mut self, path: &str) -> Observed<String>;
+    fn read_object(&mut self, path: &str) -> Observed<Digest>;
+}
+pub enum SelectionState { Pending, Switched, Abandoned }
+pub struct SelectionObligation { /* id, reservation, E, activation run, session run, receipt, state */ }
+impl SelectionReceipt {
+    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8], session_run: &Run<'_>, launch: &mut SessionLaunch, prior: &mut dyn SelectorReader) -> Result<Self, RunError>;
+    pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError>;
+}
+impl SessionLaunch {
+    pub fn launch(session_run: &mut Run<'_>, session: &SessionRef, supervisor_id: impl Into<String>, key: ServingKey, listener: Box<dyn ChannelListener>) -> Result<Self, ServingRefusal>;
+}
+impl WorkspaceActivationReservation {
+    pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt, launch: &SessionLaunch) -> Result<CommittedActivation, RunError>;
+}
+impl CommittedActivation { pub fn selection_obligation(&self) -> Option<&SelectionObligation>; }
+impl Attachments {
+    pub fn selection_switched(run: &mut Run<'_>, obligation: &SelectionObligation, launch: &SessionLaunch, reader: &mut dyn SelectorReader) -> Result<(), RunError>;
+}
+pub struct SelectionLiveness { pub session: Observed<()>, pub target: Observed<()>, pub listener: Observed<()> }
+pub fn unfinished_selection(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SelectionObligation>>;
+pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, launch: &SessionLaunch, target: &mut dyn TargetProbe, probe: &mut dyn ServingProbe, reader: &mut dyn SelectorReader, wait: Wait) -> Result<(), RunError>;
+pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reason: &str, wait: Wait) -> Result<(), RunError>;
+```
+
+`commit_selection` takes the validated `SelectionReceipt`, not a bare `GuestSelection`: the receipt is the only value that has
+parsed and hashed the context document, and a selection that never did cannot be committed. It also takes the session's live
+`SessionLaunch` and requires that launch's binding to be this plan's session and its published lease to be the receipt's locator, so
+a generation is never committed for a session nothing is serving. The document itself is parsed as `effigy.workspace-context.v2` and
+every field — schema, context generation, E, session run/S, artifact digest, credential generation/path/digest, locator endpoint/pin —
+is checked against the frozen plan and selection; a document for another activation is refused, not hashed and trusted. It is the **only** commit: the generic
+`commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects, and a
+reservation that was never *decided* refuses `unfrozen` because nothing was frozen to publish. The commit re-checks the frozen
+`PublishInputs`: the artifact the activation acknowledged must be the decided digest and, when the decision observed a target, the
+published container and boot must be that observation — and the context document names the same container and boot, so a target
+fact is fenced at both the decision and the published context. A fresh project's `ArtifactEvidence::Unselected` decision is published once:
+that commit freezes the artifact the run actually selected into the reservation, in its own transaction, and every later activation
+compares against it. `SelectionReceipt::new` takes the session's live `SessionLaunch` and
+publishes the locator from it, so a selection can only name an endpoint and pin that a bound, qualified, session-owned listener
+holds; a launch serving another session, or one whose listener was never qualified, publishes nothing. A receipt's `ServingLease`
+names its own session, so a lease another session's launch published is refused.
+Recovery is completion, not assumption: `selection_recovered` takes `Gate(Env)` first and then revalidates *under that gate* —
+it probes the successor session's owner state (Held required; Interrupted/absent is `ServingLost`; unknown refuses), runs the
+pinned handshake against the committed lease itself, and fences the target first: a frozen or re-observed target that is not the
+published container and boot refuses `TargetEvidenceMismatch` before any artifact or selection comparison can reserve a successor, verifies through a `TargetProbe` that the publication's container and boot are
+still the exact ones it names, and only then reads the selectors and objects back through a `SelectorReader`. The kernel reads every selector and every selected object back through that reader under
+that same gate (a read taken before it could describe a target another activation replaced), compares each answer with the committed
+target, and only then builds the `SelectionSwitchReceipt` it records — its fields are private and nothing else constructs one. A
+third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
+never a completed selection. The same reader drives `Attachments::selection_switched` on the live path, so both complete exactly
+what was observed. Reader identity (backend, container and boot) must match the publication before and after readback;
+a reader for target B cannot satisfy target A's observation. Construction also reads the exact prior selector values from
+that target and refuses missing, unknown or different evidence rather than accepting caller-guessed expected values.
+Only constructor-validated receipts can commit; deserialization restores journal data, not document-validation authority.
+Custody is rooted in the detached session owner: `SessionSupervisor::adopt` consumes the admitted Run, and
+`SessionLaunch::launch` borrows that Run mutably plus the exact `SessionRef`. `Run::session_owner` yields an identity
+proof only after custody registration; `SessionOwner` contains no duplicate gate and holds no independent custody.
+The Run's gate guard owns listener/key release actions. Settlement, unsettled drop and `abandon_owner` close the
+listener and wipe the key. Both live-path and recovery completion require the retained launch and pin its custody
+through the final journal transaction, revalidating the exact bound lease before marking Switched. Cross-process
+recovery must request this completion at the retaining supervisor; a persisted lease or an earlier Held/handshake
+observation cannot replace that typed custody. Unknown target/listener results leave Pending and grant no abandonment.
+`reserve` as well as `decide` refuses a Pending obligation; abandonment revalidates the exact Pending receipt and active
+publication under Gate(Env) before revoking it. `SessionRef::of_run` resolves only an open recorded workspace session,
+not an arbitrary borrower or closed run.
+Qualification is this launch's own attested pinned handshake —
+`SessionLaunch::qualify(probe, deadline)` dials the bound endpoint with the key the launch holds — and only a verified answer sets
+the launch's qualified flag, so a listener that merely advertises a serving phase mints no locator. Serving is a fact about the live
+session, not a latch: `SessionLaunch::serve`/`serving`/`liveness` take the session `Run` and refuse once it is stopping or closed, so a
+settled session has no callable locator, and the session's gate stays with its run so settlement releases it for the successor. The launch
+registers itself with the run: settlement (or an un-settled drop) closes the listener and wipes the key, so custody never outlives the session. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
+`Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
+or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
+host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
+is what they call.
+
+Order: journal intent → stage/verify immutable objects → return/store `SelectionReceipt` → `commit_selection` → switch →
+acknowledge. The typed wrapper journals before guest I/O, validates/stores the immutable complete receipt (changed retries refuse)
+and replaces the generic wrapper for this path. `SelectionReceipt::new` hashes the supplied document bytes and validates their
+generation, E, session run/S, artifact, credential generation/path/digest and locator/pin against its immutable objects and frozen
+activation plan; record no secret bytes. Staging moves no selector and preserves the predecessor. Credential objects are
+generation-addressed, 0600, no-replace; the context selects one without a fourth pointer. `commit_selection` revalidates the
+stored receipt, reservation and held runs, then writes active(E), mapping, Borrow and a Pending obligation containing that receipt
+in the **same transaction**, or none. Retry returns the same obligation id; merged #484 `commit` alone is insufficient and cannot
+bypass this requirement. Under `Gate(Env)` at committed E, switch `binary/current`, stable entry link, then `context/current`,
+using the three stored expected→next comparisons in that order. Already-next is idempotent; any third value, missing/wrong object
+or Unknown leaves Pending and refuses completion. Read expected values from the exact target under Env, never guess absence. The
+constructor accepts only these selector paths and next values matching the objects. Read back/hash every selected object before
+recording Switched; no transaction spans guest I/O. Mixed reads report `stale_context`, never dispatch. After a crash,
+`unfinished_selection` identifies the exact reservation, receipt, E, session and intended selectors. `recover_selection` re-reads
+it under the same Env gate, revalidates target/objects/session/listener and repeats the same ordered comparisons, then atomically
+records Switched. No later attach/reservation may bypass Pending. If completion is impossible under the liveness rules below,
+release Env, stop/settle only the exact successor on its private slot, then reacquire Env and revalidate the same Pending
+obligation before atomically revoking its mapping/grants and marking Abandoned. Retained credential objects/selectors confer no
+authority; mixed or revoked selections report unavailable. Never restore predecessor authority or overwrite a third value during
+abandonment. Unknown remains Pending; no replayed container activation, new session or pointer guess.
+
+The post-#484 correction is implemented as `WorkspaceActivationReservation::decide` (effigy#488). It takes `Gate(Env)` once and,
+in one transaction, re-reads the live mapping, the committed reservation that names it, the selection that generation committed,
+the publication it recorded and the frozen `PublishInputs` it was decided on, then either answers `Attach(SessionRef)` or
+recovers/reserves exactly the successor E. Frozen inputs (`ArtifactEvidence`, `Selection`, `inputs_digest`, `TargetEvidence`) are
+recorded on the reservation before anything is applied, so two callers that both observed `Absent` recover one reservation and a
+third intent meets the reserved fence by name. Identical inputs attach without advancing any generation; a changed policy,
+profile, backend or artifact reserves a fenced successor and leaves the predecessor authoritative. A target that disagrees with
+the published container or boot refuses `TargetEvidenceMismatch`, and an unfinished selection refuses `SelectionPending`: no later
+attach or reservation bypasses Pending.
+
+Selection recovery must distinguish session, target and listener liveness. While selection is unfinished, a bounded pinned
+TLS-only probe must be available on the same listener, including any Holding phase; it carries no application frames, credentials,
+admission or channel authority. Complete selection only with a live session, verifying target and verified listener. An
+established dead listener or lost target requires stopping/settling the exact successor under its own private slot before
+revoking/abandoning its generation; a dead session can be abandoned without stopping it. Never stop the predecessor or publish an
+unserved generation. Unknown liveness stays unresolved/`unknown` and grants no publication or new admission. Abandonment must not
+refuse merely because session and target are live when the listener is established dead. The kernel now implements this judgement as
+`selection_recovered` (all three facts verified) and `selection_abandoned` (at least one fact positively absent; unknown liveness
+stays Pending and refuses). Session-owned listener/key custody is implemented in `workspace_session/serving.rs`:
+`SessionLaunch` holds the `ServingKey` and a bound `ChannelListener` for the session's durable lifetime, `ChannelBound` (the only
+value naming a locator) is produced only by `SessionLaunch::publish` from a bound, qualified listener, `ServingLease` is the
+endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake liveness check. Transport, the server key's
+generation and TLS verification remain #483; ownership transfer over a real supervisor pipe remains #452's glue. Appendix B adds
+no normative requirements or implementation claims to this compact seam.
+
+**Glue and proofs.** #452 owns `src/runner/workspace_client.rs` integration only: read context → observe guest → verify
+context/artifact/session → open qualified TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity and
+context failures precede credential access; no credential frame precedes pin verification and negotiation. Proposed reconnect seam
+in that same glue:
+
+```rust
+struct PendingIntent { id: RequestId, digest: Digest, session: WorkspaceSessionBinding, context_generation: u64 }
+impl WorkspaceClient<Box<dyn Transport>> {
+    fn reconnect(&mut self, context: &mut dyn ContextReader, identity: &mut dyn GuestIdentity, opener: &mut dyn ChannelOpener, pending: &PendingIntent) -> Result<ReconnectOutcome, ChannelError>;
+}
+trait ContextReader { fn read_current(&mut self) -> Result<WorkspaceContext, ChannelError>; }
+enum ReconnectOutcome { Recorded(run::Recovered), Unknown, StaleContext }
+```
+
+Reconnect reads current → observes/verifies → opens/checks pin → Hello/hello_ok → authenticates → looks up the same intent
+id/digest. A changed session/context returns `StaleContext` without replay; invalid identity/pin refuses before auth. An
+indeterminate outcome returns `Unknown`; no reconnect outcome admits anew.
+
+#482 owns identity, context and publication in `workspace_client/{identity,context}.rs`,
+`workspace_command/provisioning.rs`, kernel `workspace_session.rs` and
+`run/attachments.rs`, with container `environment/reconcile.rs` for typed handoff.
+#483 owns guest `transport.rs`, host `workspace_command/channel.rs`, container
+`workspace_channel.rs` and kernel `workspace_channel.rs` for pin-before-Hello.
+Serialize edits to shared kernel/session, provisioning and reconcile files;
+#452 consumes these seams after their independent code review and targeted proofs.
+
+Code-first tasks must prove crash families around staging/receipt/commit/selection (including kill just after commit, partial
+switch, third-value refusal and lost acknowledgement), concurrent attach-or-activate, the fresh Linux bootstrap, independent
+listener loss and mispinned-peer zero credential/Hello bytes. Each backend needs its bounded local fixture test plus a recorded
+native identity/dial/observe/invoke/reconnect qualification. Proposed selectors above are not implemented or run here. #452's 239
+fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
+#452's stop conditions.
+
+#### Implemented: the client glue (effigy#452)
+
+`src/runner/workspace_client.rs` is the one integration file this section
+allows to join the lanes, and it takes the module root lane C left as
+`src/runner/workspace_client/mod.rs`. It owns no authority: no store, no gate,
+no run, no resolution and no second credential.
+
+- **Dispatch.** `runner::run_command`, `run_command_with_context` and
+  `run_skill_passthrough_with_context` consult the guest dispatch first. It
+  returns `None` when no context is published, so an ordinary host command and
+  a hybrid workspace take the unchanged host dispatch and nothing is written.
+  Every other entry point — `effigy container …` and `effigy workspace …`
+  included — reaches it through that one seam, so those two command modules
+  needed no adaptation of their own.
+- **Local reads.** Version, the pinned task list from the context's composed
+  manifest snapshot, the pinned sources and a checkout-relative file read are
+  served by lane C's `GuestLocalReads` from the published generation and the
+  mounted checkout. They open no connection, hold no capability and write
+  nothing.
+- **Host authority.** Everything else becomes one channel request: `observe`
+  for a live read (`doctor`, run and container status, logs, hosts, scope) and
+  `invoke` for anything with authority (tasks, `container down` and the rest of
+  the container lifecycle, the workspace entry, stores, delivery). The method
+  label grants nothing — the host decides the effect class from its own policy.
+  The body carries a selector, the checkout-relative cwd, the host target, the
+  operator's own arguments and the output mode; it carries no plan, executable,
+  entry point or state root.
+- **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
+  authentication) and a request-level refusal both return an error that names
+  lane A's stable code; nothing falls back to guest state or guest execution.
+  One request is one `Intent` — its id and body together — so a connection that
+  dies before answering is replayed on a fresh connection under the same id and
+  the host answers from its record instead of admitting a second run. Detach is
+  accepted only for the run this connection admitted, so a secondary terminal
+  leaving writes no control frame. Stream frames are acknowledged and dropped:
+  output belongs to the session front end that attaches.
+- **Pin before hello.** The server identity the selected context pinned is
+  checked against what the transport verified *before* the first byte is
+  written: a mispinned peer receives no `hello`, no version, no digest and no
+  capability (§8.11). The negotiation follows, then the credential, then the
+  request.
+- **Attach, cursor and reconnect.** An attach is an `Intent` like any other, so
+  its request id is its attachment identity: the same intent on the same
+  connection is the same attachment, never a second one. The client
+  acknowledges data frames and records the highest consumed sequence per stream;
+  a `gap` never advances it, and `Intent::resume_attach` asks from where the
+  reader truly stopped. A cursor the host cannot resume is a typed refusal, not
+  a silent restart.
+- **Typed refusals.** A refusal code is preserved (`identity_mismatch`,
+  `stale_context`, `unauthenticated`, `forbidden`, `held_by`, `invalid_request`,
+  …) and a transport failure is reported as unavailable/`unknown`, never as a
+  success or a refusal. Neither becomes a different claim on the way out.
+
+Three facts the merged lanes do not give a guest are refused for rather than
+guessed at. Each refusal names what is missing; none of them falls back:
+
+- **The container identity.** `context::GuestWorkspace::probe_container_identity`
+  is the host's Prepare probe. Nothing in the guest observes its own container
+  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
+  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
+  refuses host access and leaves local reads working.
+- **The transport.** Every context published today carries
+  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
+  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
+  a backend with no qualified transport.
+- **The session generation.** A direct terminal must present
+  `workspace_channel::EnrolRequest::session_generation`, and the published
+  context names only `session_run_id`. `enrolment_session` refuses instead of
+  presenting a generation nobody published (§8.8: a missing credential leaves
+  local reads working and reports host access unavailable).
+
+Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
+pinned read and its stability, hybrid detection writing nothing, the dispatch
+table for command and container entry, each refusal (version, identity,
+generation, capability, unqualified channel) before any effect, the host's real
+`Server` over an in-memory transport reaching resolution and the kernel's own
+admission record, a repeated intent answered from that record, and a secondary
+terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
+and lane B's `test:kernel:workspace` own the wire and session halves. The
+transport, the guest container observation and the published session
+generation remain their own tasks.
+
+**Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
+consumes what a prepared channel was waiting for. `ServingOwner` holds the
+adopted `SessionSupervisor`, the `SessionLaunch` with its listener and key, the
+accept source and the kernel dispatcher. Its turn marks the launch serving for
+the adopted run *before* it accepts anything, so no connection is taken for a
+session nothing owns or a locator that was never published; it then feeds the
+accepted transport to the kernel's `Server::serve`, which keeps its own pin
+check, session fence, grants and frame limits. Accepting is bounded and returns
+"nothing waiting", so the supervisor owns the cadence; `run` polls until its own
+stop flag. Dropping or stopping the owner stops the listener and wipes the key,
+and the run's settlement takes the same custody — so neither the socket nor the
+signing key outlives its owner. `ChannelAccept` is the typed seam: production
+binds `HostChannelAcceptor`, and a proof supplies scripted transports.
+
+Proofs for it: a connection is refused acceptance until the run serves (the
+fake acceptor asserts `launch.serving(run)` on every hand-over), an accepted
+connection's negotiation reaches the dispatcher and is answered, and both
+`stop` and dropping the owner close the bound socket and wipe the key.
+
+**Frozen activation handoff (effigy#452, trace finding 11).**
+`ServingOwner::adopt_owned` is the consuming entry the environment calls once,
+after its environment commit, CAS receipt and `selection_switched` record, with
+the owned values it produced:
+
+```rust
+ServingOwner::adopt_owned(
+    OwnedWorkspaceChannel {
+        supervisor,            // the run already adopted under its supervisor id
+        session: SessionRef,
+        channel: PreparedHostChannel,
+        effect: Arc<EffectContext>,     // the activation's own retained operation
+        observe: Arc<ObserveContext>,   // derived from that same operation
+        root: &'a StateRoot,            // the environment's cached state root
+    },
+    dispatcher,
+) -> Result<ServingOwner, AdoptError>
+```
+
+**#452 integration scope and its binding state (owner ruling, 2026-10-30).**
+With #482 and #504 merged, two adapters are this task's own work rather than
+another lane's.
+
+*Bound (this branch):*
+
+- **Guest-local reads over the one strict canonical document.**
+  `workspace_client::context::LocalReadSource` is the narrow view a local read
+  uses, and `LocalReadSource for v2::WorkspaceContextV2` serves
+  `context_generation`, version/artifact digest/protocol, `paths` and `sources`
+  from the canonical `WorkspaceContextDocument`. `GuestLocalReads` therefore
+  has one bounded read implementation for both the producer's v1 projection and
+  the guest's v2 document; it holds no capability and no writer, so
+  `LocalRead`/`Static`/local `Observe` still admit nothing and enrol nothing.
+- **`detect()` binds v2 after an independent identity observation.**
+  `context::v2::read_published_guest(&mut dyn GuestReader, &mut dyn
+  identity::GuestIdentity) -> Result<Option<v2::PublishedGuestContext>,
+  ContextReadError>` strictly parses the published generation (v1 bytes refuse,
+  nothing is reinterpreted) and compares the document's container id, VM boot,
+  platform and libc against `ProcGuestIdentity::process()`'s own observation
+  before selecting `GuestPlacement::Guest`. An unproven or disagreeing
+  observation refuses before any local read or connection. The placeholder
+  identity seam (`GuestIdentity`, `UnobservedContainer`, `live_guest_run` over
+  v1) is deleted in the same binding.
+- **Pin, then credential.** `WorkspaceClient::connect` performs
+  `check_server_pin` and the `hello`/`HelloOk` negotiation only;
+  `ChannelRequest::authenticate` presents the capability or enrolment
+  credential after that, and the guest reads the credential from private
+  storage only once the connection's peer verified as the pinned host. A
+  mispinned peer therefore receives zero `hello` bytes and causes zero
+  credential reads. The v2 document's `credential.path` and
+  `credential.digest` are the ones used, and bytes that differ from the pinned
+  digest refuse instead of being presented. A direct terminal presents the
+  published `session { run_id, generation }`.
+
+*Bound (owner ruling 2026-10-30, bounded engine-owned handoff):*
+
+- **The exact reservation reaches the admitting run.** `managed_run::client::start_admitted`
+  carries a dispatcher's `AdmissionTicket` unchanged into the same
+  `EngineLaunch.admission` field the supervisor config already had; the engine reads it
+  back as `EngineSession::admission()` and `managed_run::engine::own` threads it into
+  `task_engine::run::TaskRunRequest::workspace_admission` (a new field beside the existing
+  Q-006 `admission`). A ticketed top-level task run uses `opts.id = ticket.run()` and
+  `Run::begin_admitted(…, ticket)` under the same gate, predecessor settlement, custody
+  and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
+  calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
+  admission transaction, so the ticket alone binds nothing.
+- **Shapes that cannot honour the exact run refuse before any effect.**
+  `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
+  run, a nested task run, a caller-keyed run and a run that would take a task-declared
+  shared lock first: each would own another run or another id, so each refuses instead of
+  admitting a second run or discarding the reservation. Ordinary no-ticket runs take the
+  unchanged `Run::begin` / `begin_child` paths.
+- **Proofs.** `task_engine::tests` reserves a key against a live session run and shows the
+  admitted run id equals the ticket's, that the key replays from `Recorded` rather than
+  admitting again, that the spent ticket refuses a second admission, and the full refusal
+  matrix. `task_engine`, `run_control`, `managed_secrets` and `remote` fixtures prove the
+  ordinary paths keep their shape with `workspace_admission: None`.
+
+*Bound (owner ruling 2026-10-30, C-to-glue serving-facts handoff):*
+
+- **One typed serving value crosses the publication handoff.**
+  `workspace_client::ServingFacts::validated(document, receipt, selection, credential,
+  locator)` freezes `workspace_channel::Negotiation`, `SessionFence`, the TLS `pin`, the
+  host checkout and the narrow enrolment secret/scope from the strict v2 document, the
+  committed `SelectionReceipt`, the switched `GuestSelection` and the session-owned
+  qualified channel. It runs in `prepare_reserved_guest` **before** the Env commit and
+  the selector switch, and refuses when any equality disagrees: receipt vs document
+  (context generation, container, VM boot, artifact digest, environment generation),
+  selection vs session (binary digest, context/credential generations, run and
+  generation) and qualified channel vs document (session, pin, exact bound endpoint).
+  The numeric host bind stays distinct from the guest alias: only `ServingLease::endpoint`
+  names it.
+- **The value is carried, never rebuilt.** `WorkspacePublication` and `WorkspaceOwner`
+  gain the typed field, and `OwnedWorkspaceChannel` forwards it into `ServingOwner`,
+  which retains it for the session's whole life. Its `Debug` redacts the enrolment
+  secret; it is never serialized, logged or copied into a guest-visible field, and the
+  session's `GrantBook` is seeded from it only (`grant_book()`), so revocation and drop
+  follow the owner.
+- **The enrolment credential must be a canonical channel secret.** The 64-hex text the
+  guest presents is the exact bytes the grant book matches, so publication refuses any
+  other shape instead of installing an unusable credential. No production mint site
+  exists yet (the activation caller is still #482-owned); the focused fixtures mint a
+  canonical secret.
+
+*Remaining binding:*
+
+- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
+  now supplies every fact `channel::Server::new` needs, so the remaining work is the
+  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
+  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
+  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
+  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
+  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
+  no kernel or lane module changes are needed.
+
+**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+call site, and the binding replaces the bridge entirely rather than adding a
+second seam:
+
+- `workspace_client::context::v2::read_published_v2(&mut dyn GuestReader) ->
+  Result<Option<WorkspaceContextV2>, ContextReadError>` strictly parses the
+  canonical kernel document; v1 refuses and nothing is reinterpreted. An
+  unprepared workspace still reads as "not a guest".
+- `WorkspaceContextV2::verify(&mut dyn identity::GuestIdentity, &LiveGuestRun) ->
+  Result<VerifiedWorkspaceContext, ContextRefusal>` takes the shared identity
+  trait `workspace_client::identity::GuestIdentity { fn observe(&mut self) ->
+  Result<GuestSelfObservation, GuestIdentityRefusal> }`, whose production
+  implementation is `ProcGuestIdentity::process() -> Self` — infallible, stateless
+  and zero-sized, and not `Clone`. One mutable instance is held for one command and
+  handed to `verify` as `&mut`; `verify` re-observes independently before it grants
+  a `VerifiedWorkspaceContext`, so nothing is cached, retained or reused between
+  commands. The observation carries the full container id, VM boot, platform and
+  libc and compares them itself (`GuestSelfObservation::compare`), so no guest
+  trusts the context's own claim.
+- The verified value carries `session_run_id: String` and a nonzero exact
+  `session_generation: u64`, the admitted session's own S, distinct from the
+  environment generation and the context generation. A direct terminal's
+  enrolment therefore takes `SessionIdentity { run: RunId parsed from
+  session_run_id, generation: Generation::new(session_generation) }` from it, and
+  the "no published session generation" refusal disappears.
+
+The binding commit deleted this module's placeholder identity seam
+(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and bound the paths
+above at the same call site: `detect` now selects the strict document only after
+`ProcGuestIdentity` observed and compared the container itself, and every
+authority request re-verifies that same document against the retained
+observation before it opens a connection.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+two contexts are retained as owned `Arc` handles rather than borrowed for
+`'static`: the environment context is local to the activation, and the activation
+hands over its own operation and cancellation state instead of leaking it or
+building a self-referential owner. The root is the environment's cached
+`StateRoot` reference. The entry refuses a prepared channel whose locator names
+another session, and retains run, listener, key, advertised locator and both
+contexts for the session's whole life; the activation must move them and not
+keep, drop or recreate them when its call returns. `settle` stops serving, stops
+the listener, wipes the key and settles the adopted run through the kernel's
+close transaction; dropping the owner stops the listener and wipes the key
+without settling, so the supervisor decides the outcome.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+entry refuses a prepared channel whose locator names another session, and
+retains run, listener, key and advertised locator for the session's whole life;
+the activation must move them and not keep, drop or recreate them when its call
+returns. `settle` stops serving, stops the listener, wipes the key and settles
+the adopted run through the kernel's close transaction; dropping the owner
+stops the listener and wipes the key without settling, so the supervisor decides
+the outcome.
+
+The pinned TLS connection is the production transport now that #504 merged: a
+context that qualifies a locator is opened through `PinnedChannelOpener`
+(alias resolution, exact bound port, SPKI pin during the handshake) and the
+guest client's own `check_server_pin` still runs before the first byte. A
+context whose locator is not a qualified alias refuses `unavailable` and local
+reads keep working. #482's production context and the guest-local identity
+observation are bound by `read_published_guest` (§8.1: the context's own
+container claim is never trusted).
+
+Session custody is durable and released in the close. `SessionSupervisor::adopt`
+records `workspace_session_custody`, and a run's close transaction now deletes
+the row for that exact run in the same commit that writes `phase='closed'`
+(`run/settle.rs`, beside `workspace::closed`). Nothing releases it earlier: a
+crash or a stopped listener before the close keeps the row, so a successor still
+finds the recorded owner and settles or refuses instead of silently dropping
+authority, and a settled session is never an owner.
 
 ## 9. Authority map
 
@@ -3201,3 +4126,1293 @@ and replays the real composed step graphs with harmless leaf commands, preservin
 nested references and injecting failures at step boundaries. These fixtures prove
 orchestration behavior; live database, deployment and full workflow qualification
 is separate and requires the operator's go.
+
+## Appendix A: Existing workspace API reference
+
+INFORMATIVE REFERENCE. Retained pre-reduction API detail for the existing session,
+wire and dispatcher implementation. This is not a second normative production
+seam: §8.11 and §8.7 govern, and source remains the authority for implemented
+signatures. References below to proposed publication/selection sequencing do not
+claim those extensions are implemented or qualified. Fake kernel tests cover
+kernel records only, not production transport or guest integration.
+
+This is the implementation seam for §8, not a claim that the client or any
+transport is implemented or qualified. The channel is separate from the
+kernel's remote custody protocol: the former requests host authority; the
+latter proves and controls a workload already admitted by the host.
+
+**Prepare publication.** Container-mode activation uses the actual environment
+owner run and `Gate(Env)`. A typed kernel-owned additive publication obligation
+commits before guest staging, immutable file writes or pointer switches, and the
+pinned guest binary's own object-staging obligation sits inside it, before any
+probe that runs that binary (§8.11). Its
+receipt names the activation fence, full container identity, VM boot identity,
+artifact digest and context generation. Only after that receipt is applied and
+the required obligation is completed may activation publish active and attach
+requesting holders. The three guest pointers that select the published
+generation — `context/current`, `binary/current` and the stable entry link — are
+themselves one obligation written by the activation commit and executed after
+it, never a side effect of staging or guest I/O. Container up, task activation
+and workspace handoff use
+this same boundary; publication never follows settlement as a separate effect.
+
+Existing holders remain attached to their original selections. This narrow
+operation permits only additive immutable binary, snapshot
+and context objects and atomic pointers for future invocations; it grants no
+stop, reset, runtime replacement or generic environment-effect permission. Those transitions still
+require `TransitionPermit` and its holder checks. Guest identity is re-probed
+before publishing the context. An existing object with wrong bytes is refused;
+recovery skips retained orphan context documents instead of overwriting them.
+Partial publication or a missing receipt leaves activation unsuccessful and
+pending. Recovery retains additive bytes without replaying container I/O; a
+fresh activation verifies or publishes a complete generation under the gate.
+No database transaction spans guest I/O. Hybrid activation emits no guest
+publication obligation or artifacts.
+
+**Wire.** TLS pins the server identity from the selected context before the
+client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte
+big-endian length, at most 1 MiB; malformed, oversized, duplicate-key or
+unknown-version frames close the connection before dispatch. Binary stream
+payloads are base64 in frames, at most 32 KiB decoded. Limits apply before
+allocation and decoding. Each connection begins with `hello` containing
+`schema: "effigy.workspace-channel.v1"`, supported protocol versions,
+client Effigy version and binary digest, context generation and session run
+id. The server returns `hello_ok` with the selected version and its Effigy
+version, or a refusal. V1 selects only protocol 1, and requires the client version and digest to match the context and the
+host-pinned guest artifact, and the client, context and host version and
+protocol to match §8.9;
+there is no downgrade. Authentication follows negotiation inside TLS: an
+`authenticate` frame presents the capability, or an `enrol` frame presents
+the enrolment credential. Neither credential is echoed or logged. No
+request is accepted before authentication; enrolment only issues a
+capability and cannot execute another operation. Version, identity or
+credential failures refuse before effects and tell the client to re-prepare
+where applicable.
+
+An authenticated `request` frame has `id` (128-bit random hex), `method`,
+`context_generation`, `environment_generation`, `session_run_id`,
+`container_id`, `vm_boot_id`, and `body`. The host binds these to its grant,
+not to the client's claims. An invocation body contains a selector or typed
+operation, checkout-relative cwd, intended target, argument array and output
+mode; it contains no resolved plan, executable path, entry point or state
+root. At most 256 arguments of at most 4096 bytes each are allowed, with a
+64 KiB total body; cwd and target are bounded to 4096 bytes and must resolve
+within the allowed checkout or target. Invalid encoding, traversal, unknown
+fields or methods and excess limits refuse before admission. Request IDs are
+unique per session generation, including across reconnects.
+
+A `response` carries `id` and exactly one of `observed`, `accepted`,
+`completed`, or `refused`. `observed` contains the host's typed Observe
+result; `accepted` contains the host `RunId` and placement; `completed`
+contains the typed outcome and exit status; `refused` contains a stable code
+and safe diagnostic. Codes include `invalid_request`, `unauthenticated`,
+`forbidden`, `stale_context`, `identity_mismatch`, `version_mismatch`,
+`held_by`, `unavailable`, `unknown` and `id_conflict`. Preserve the host
+CLI's result and error types: `--json` is rendered as the existing
+`effigy.command.v1` envelope, not as a channel frame. Channel control frames
+and credentials never enter stdout or that envelope.
+
+Mutating or admission requests are recorded by the host before admission,
+keyed by session generation and request ID with a canonical request digest.
+A concurrent or later retry with the same digest returns the recorded
+admission, run or outcome; a different digest returns `id_conflict`. The
+record survives a disconnect and supervisor restart and is retained for the
+session generation and its recoverable outcomes; it is never silently
+forgotten and readmitted. If recovery cannot establish the record or outcome,
+return `unknown`, not a new run. Observe requests have no admission record or
+side effects; retries re-observe and may return newer facts. Neither retry
+rule grants authority after capability revocation or generation change.
+
+A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
+`kind` and payload. `id` is the attach request that opened the connection's
+attachment, `stream_id` 0 is that attachment's terminal, and `seq` is one
+strictly increasing series per stream id shared by every kind on it — retained
+output's series is the absolute log position of each frame, and a source that
+keeps no position numbers frames instead. Kinds are `event`, `stdout`,
+`stderr`, `terminal_output`, `terminal_input`, `resize`, `ack`, `end` and
+`gap`; events carry typed host
+status or outcome, resize carries positive rows and columns, and `end`
+carries the final sequence and outcome where known. Per stream, the receiver
+acknowledges consumed sequence numbers; the sender permits at most 16
+unacknowledged data frames and at most 512 KiB of queued decoded data, then
+backpressures. Control and cancellation must remain serviceable under backpressure.
+A reconnect may request a sequence cursor; retained frames resume in order,
+otherwise `gap` reports the missing range and the client obtains current
+status or logs from the host. A gap is never presented as complete output.
+Terminal input is neither replayed nor buffered across reconnects; resize is
+latest-wins. Frames for an unknown stream, out-of-order input, invalid cursor
+or exhausted limits are refused or closed without dispatching effects.
+
+**Methods and custody.** `observe` is host `ObserveContext` only; it makes no
+run, token, journal or access log. `invoke` admits the host-resolved command;
+its actual effect class is determined by host policy, never by the method
+label or a guest claim. `attach` observes an authorised session or run and
+opens a bounded stream; `cancel` requests stop of an authorised run;
+`detach` explicitly releases the owning client without stopping a Detached
+run. Enrolment, invocation, cancellation and detach are authorised operations;
+the host checks the grant's operation and target scope and the same operator
+authorisation and elevation as the host CLI. A client cannot cancel or detach
+another client's run merely by naming its ID. A secondary attachment cannot
+stop the workspace session by disconnecting. EOF without detach cancels an
+Inline owner or stops its owned Detached child; EOF after acknowledged detach
+leaves that child running. Disconnect, capability loss, generation mismatch
+or host probe timeout yields `Unknown` for unfinished work and refuses further
+Mutate; reconnect queries the recorded ID. Host-side cancellation still
+settles through the run's custody, and an unproven stop remains Unknown.
+
+The grant is memory-only in the session supervisor and binds host user,
+checkout, session run and generation, environment generation, full container
+identity and VM boot id, and allowed operations and targets. TLS pinning and
+this binding are both mandatory. The enrolment credential is a separate,
+versioned, environment-generation and container-bound credential for enrolment
+only; it is 0600 in guest-private storage and is revoked on generation
+change. A first Effigy-opened terminal receives its capability as part of
+entry; direct terminals enrol only for authority-bearing operations. Static
+and local Observe do not enrol. All workspace-user processes share this trust
+boundary. Capability issuance is a session Mutate; authentication with an
+existing capability is read-only.
+
+For every request the host verifies the current context, environment and
+container fences and re-resolves selector, cwd, target, placement, privileges
+and effect class from host records into `ResolvedInvocation`. It acquires
+the canonical engine gates and journals effects before execution (§5 and §9).
+Origin does not change resource identity. The guest has no state root,
+store writer or gate: guest placement rejects `Gate::acquire` with
+`HostAuthorityRequired`, and dispatch cannot construct host effect contexts
+locally. State and vault mounts remain masked. No failed channel request falls
+back to guest execution. Hybrid provisions no guest binary, context, listener
+or enrolment credential.
+
+Detached channel custody is handed to `workspace_session::SessionSupervisor::adopt`,
+which consumes the admitted session Run. Only this retained supervisor registers
+custody; a client keeps a session reference, never the owning Run. Listener and
+key release actions belong to the Run's gate guard and execute on settlement or
+unsettled owner drop even when a launch handle remains. Live-path selection
+completion requires that retained launch, and holds its custody lock through the
+journal update so owner cleanup cannot release the private gate mid-completion.
+Publication retries, lease access, activation commit and switch completion
+revalidate the held listener phase, endpoint and key against the published lease. A Pending committed
+selection fences every new decision under Gate(Env), including when its owner
+is interrupted or absent; settlement and explicit abandonment precede replacement.
+
+The kernel seam is `run::{reserve, lookup, Run::begin_admitted,
+resume_owner, attach_secondary}`. A `Session` must identify an admitted,
+nonclosed session run at its current resource generation. The reservation
+records that session's owner, and admission, replay and attachment operations
+recheck it. A legacy reservation with no recorded session owner is refused;
+it never gains one by inference. `lookup(&ObserveContext, &StateRoot,
+AdmissionKey, Digest)` reads a fresh journal snapshot. An unfinished admission
+is returned only while its current owner process identity and held owner gate
+can be established. An orphan is `Unknown` and cannot acquire handles or be
+readmitted; ordinary custody recovery must settle it before its recorded
+outcome becomes available. The keyed run and consumed ticket commit before
+predecessor cleanup, so interruption during cleanup retains that binding.
+Client release revalidates the current session, owner and exact attachment in
+its write transaction. A registered liveness watch instead releases through
+the live Run's owner-gated custody, so session expiry cannot retain a lost
+terminal. Owner EOF releases its row and queues one matching stop in that same
+transaction; persistent foreign or resolved request-ID collisions select another
+identity without deleting the existing row. Control and release deadlines also
+bound schema initialization and additive migration.
+
+During keyed predecessor recovery, the current owner gate and successor fence
+keep the predecessor's already-fenced escalation serviceable. New controls use
+the admitted successor's current RunId and fence; escalation there also shortens
+predecessor cleanup. Stale public requests remain refused. Reading either
+mailbox checks its exact serialized run and generation binding, and no journal
+transaction spans custody I/O.
+
+**Owners and coverage.** Paths below name the intended owners, including new
+modules; they do not imply those modules already exist. The only integration
+file allowed to join these lanes is `src/runner/workspace_client.rs`.
+
+| Interface or command class from §8.6 | Owner and boundary |
+| --- | --- |
+| Wire types, framing, authentication, replay and host dispatcher | New `crates/effigy-kernel/src/workspace_channel.rs`; delegates resolution and effects to owning host engines, never to remote custody. |
+| Workspace session, attachments, terminal control and down coordination | New `crates/effigy-kernel/src/workspace_session.rs`; runner entry adapts `src/runner/workspace_command/session.rs`. Existing `crates/effigy-kernel/src/remote/{session,stream}.rs` remain remote workload custody. |
+| Context, artifact and enrolment Prepare; placement detection and guest local reads | `src/runner/workspace_command/provisioning.rs` and new `src/runner/workspace_client/context.rs`; `crates/effigy-containers/src/workspace.rs` owns mount isolation. |
+| Help, version, plans, config and static task, bundle, service, graph, docs, scan, contracts, changelog, skill, state and artifact reads | Guest local reader in `src/runner/workspace_client/context.rs`, using the pinned snapshot and mounted checkout, with no refresh. |
+| Tasks, shell, references, Rhai, tests, drafts, QA, skill run, defer outside a workload, managed runs and workspace/system entry | Host task engine and session via dispatcher; defer inside a workload stays under that workload's custody. |
+| Managed status, logs, stop; task status and cache; doctor | Host task/run and store engines for live facts and mutations; local manifest/tool checks stay local. Unlock is refused. |
+| Container shell/exec, lifecycle, status, stats, logs, data, cache, volume, profile, migrate, hosts, scope and ports | `crates/effigy-containers/src/environment.rs` and its owning operations; static declarations local, live reads Observe, changes host requests. |
+| Secrets, deps, graph index, bundle sync, user config | Their host store engines; read or mutate as §8.6 specifies. Secret grants belong to the admitted run. |
+| State apply/capture, artifact stage/capture/push, init, docs index writes, release, deploy, bootstrap, uninstall and gateway | Respective host engines under their canonical policy and gates; gateway never runs in the guest. |
+| Hidden internal entry points | Refused at guest CLI and dispatcher; never a channel method. |
+
+Session activation is one Detached run owned by the environment workspace
+entry's `Task(TaskId)` and holds a Borrow attachment. Additional terminals
+attach, not create a second session. Down from within follows §8.7's holder
+check, child settlement, detached down operation and final gate recheck; the
+session does not cascade-settle other runs. This boundary requires the
+supervisor to expose replay-safe admission and attachment handles to the
+dispatcher; if that cannot be provided without a second authority, stop the
+integration and resolve the kernel interface before implementing a substitute.
+
+#### Implemented: the session layer (effigy#438)
+
+The kernel records this boundary needs are implemented and proven (the kernel
+seam below, and lane A's channel). `crates/effigy-kernel/src/workspace_session.rs`
+is the lane B session layer on top of them and owns no second authority:
+
+- `SessionRef` resolves the environment's one session through its own additive
+  record (`workspace_sessions`), not by guessing from an attachment: a child run
+  or a host `dev` hold on a persistent environment can borrow the same
+  environment, so a `Borrow` row names a holder, never the session. Every read
+  validates the record against the journal — the run is at the recorded
+  generation and not closed, it still borrows the environment at the recorded
+  generation. Advancing the environment counter alone does not revoke the
+  predecessor: only a successor's atomic activation commit replaces its mapping.
+  An invalid record resolves as absent. `SessionRef::admit` refuses any placement other than
+  `Detached`, holds the environment `Borrow` attachment for the run's life and
+  records the mapping, refusing to replace a live one. The entry itself is guarded
+  by the workspace entry's owner gate, and request ids inside the session are the
+  kernel seam's `run::reserve` records — one admission authority, not two.
+- `SessionHandle` hands the kernel seam's `run::Session` to reservation, attach
+  and bounded control, and exposes the down coordination. `OwnerLoss` maps EOF,
+  a disconnect and TERM/HUP to the kernel's owner release (`Release::Eof`) and to
+  the stop cause the supervisor settles with (`StopCause::OwnerLost` or
+  `Signal(n)`); an acknowledged detach is `Release::Detach` and stops nothing.
+- Down: `DownCoordination::begin` refuses every holder other than the session and
+  its own child runs, live or `Unknown`; `DownChildren` stops only those children
+  with an ordinary journalled `run::request` (idempotent by request id) and takes
+  its permit through `Attachments::permit_exempt` once the session has entered
+  its settle.
+- The runner entry `src/runner/workspace_command/session.rs` maps each front end
+  to its `TerminalKind` and prints the one resolved identity.
+
+Still owned elsewhere by the lane split: the supervisor's serving loop over its
+control listener, the channel frames and dispatcher (lane A), Prepare and context
+(lane C) and the client glue (`src/runner/workspace_client.rs`). Proofs are the
+fake-owner, fake-runtime cases under `workspace_session::tests::`; the admission,
+attachment and stream records they consume are proven by lane A's
+`test:kernel:workspace-channel`. Neither exercises an engine, container, gateway
+or live supervisor.
+
+**Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
+A session is its run and its generation, so two sessions at one generation stay
+distinct. `reserve` records `(session, request ID, canonical request digest)`
+with the one run it reserved, and `Run::begin_admitted` commits that binding, the
+run row and the owning client's attachment in one transaction. One run identity
+belongs to exactly one key: a second key proposing the same run id is refused in
+that transaction and by a unique index, and an ordinary run may not take a
+reserved id, so a reservation is never swapped for another workload. A key with
+a record is classified before any proposed id is judged, so a same-key retry
+recovers its admission or reports its digest conflict whatever entropy it
+offers. Both replay outcomes first validate the recorded session owner and
+current generation; a conflicting digest never bypasses that fence. Only the
+binding that actually admitted a run answers for attachment and
+records its outcome; a reservation that never committed keeps answering
+`Unknown`. `lookup` answers a reconnect from the same records, `Unknown`
+included, and never admits again. A
+reservation whose admission cannot be established is `Unknown` and names no run:
+an id the client offered is not evidence that the request produced it. The run's
+close transaction records the keyed request's outcome and ends its client
+attachments in the same commit that closes it. The ticket is transferable — a
+dispatcher hands it to a detached engine supervisor through
+`supervise::EngineLaunch::admission`, and the engine reads it as
+`EngineSession::admission` — but admission re-checks the durable reservation, so
+the ticket alone binds nothing. `attach_secondary` gives a second terminal its
+own attachment row, a bounded stream cursor that reports a rotation gap, and
+stop/escalate control bounded at four waiting requests, counted in the same
+transaction that records one; every read re-checks the attachment row, and a
+control re-checks it in the transaction that records the request, so a release
+cannot be overtaken and a released attachment or a closed run stops both. An
+owning client's EOF records its run's stop in the same commit as the release,
+while an acknowledged detach records none and leaves the run going, including
+when its original owning pipe closes. `EngineSession::watch_attachment` binds an
+attachment to a separate client liveness pipe; the supervisor's control turn
+releases a killed secondary's row without stopping the owner, and reclaims its
+slot. If the attaching caller loses the creation response or dies before watch
+registration, `resume_secondary` reopens the exact still-attached secondary ID
+under the current recorded session and live workload fence. It allocates no
+slot and revives no released row; the authorised dispatcher can register the
+recovered handle or release it to reclaim the slot without stopping the owner.
+Watches are bounded to eight secondaries and one owner. Reservation replay,
+attachment opening and attachment status derive finite observation phases even
+when the engine's workload lifetime is open, preserving any shorter caller
+deadline. Workspace controls respect the caller's remaining budget, capped at
+one second, including a busy store; a timeout records no control and the caller may retry. Output reads do
+not hold the writer or share the liveness pipe. `resume_owner` reopens
+the owning client's handle and no other. Both refuse a run this session did not
+admit and grant nothing: the dispatcher's grant check remains the authority.
+`test:kernel:workspace` owns these proofs.
+
+**Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
+v1 wire, its framing and limits, the server pin check, negotiation, grants,
+enrolment and the typed entry points. It reads the key with `run::lookup`
+before it calls `run::reserve`, so a retry spends no entropy and reaches no
+engine, and an unreadable record is answered `unknown` rather than admitted
+again. Resolution, admission and observation stay with the owning host engines
+through four small seams — `Resolver`, `Admission`, `Observer` and `RunIds` —
+and `Admission` receives the reservation's `AdmissionTicket`, which the engine
+hands to `EngineLaunch::admission`, so the run an engine admits is the run the
+record names. `observe` reserves nothing and attaches nothing; a capability is
+memory-only, checked before every effect, and its operation and target scope is
+the host's, never the client's. Every request is checked against the grant's
+server-side binding as well as its own claims, and enrolment issues a capability
+for the session the host recorded, never the one an `enrol` frame names.
+Revoking a generation ends the enrolment credential with the capabilities it
+issued, so re-enrolment cannot mint a live capability for a dead generation.
+A connection owns at most one attachment: attaching to another run refuses,
+replacing this connection's own secondary releases the replaced row, and only
+the connection that admitted a run holds its owner handle. A connection that
+ends on a refused or malformed frame releases its own secondary row with it, so
+a rejected frame can neither exhaust the run's secondary slots nor orphan one,
+while an owning client's lifetime is still released only by its own end of
+stream: malformed traffic records no owner stop. Captured output is
+published through a pump bounded by the acknowledgement window, so a control
+request is answered while data is backpressured; the connection's lifetime is
+its session's, and a closed connection whose frames were malformed releases no
+owner lifetime. Each connection starts and ends with no queued stream state, so
+a server that serves a reconnect publishes nothing from the previous connection
+and never carries an unpublished chunk or a full window into it.
+
+Stream sequences are numbered once per stream id and shared by every kind on
+it, so a stream's stdout and stderr form `0, 1` rather than restarting each
+other, and the acknowledgement window frees frames in that one series. A source
+that reads a retained log publishes each chunk with its absolute position, and
+the sequence is then that position: one frame's sequence is its first byte's
+offset, so a cursor, a frame sequence and the retained log are one coordinate
+system across reconnects and chunk boundaries with no replay store or second
+cursor. `RetainedStreams` is the kernel's own
+endpoint over `run::read_log`. Retained streams have independent logs and
+independent lengths, so an attach reports the position it consumed on each
+stream id it read (`cursors`), with `cursor` as the default for the primary
+stream; one position for the whole connection would skip the bytes a client
+never read on a shorter stream or replay the bytes it had consumed on a longer
+one. Negotiation is per stream and pure: `resume(run, cursors)` answers the
+start position of **every** stream the endpoint publishes, and refuses the
+attach — opening none — when a stream the client did not name individually
+would have to be guessed, when a cursor names a stream the endpoint does not
+carry, when a position is past that stream's retained end, or when a position
+cannot be established because no retained log exists (a nonzero cursor cannot be
+resumed after retention removed the bytes). A stream's position at or before its
+retained end continues from there; bytes the log rotated past become one `gap`
+frame naming the first missing offset, ahead of the data that resumes there — and
+that gap is published even when the surviving segment is empty and no data
+follows it, so a run that ends there does not leave the client believing it saw
+everything. Every emitted frame on a stream keeps a strictly increasing sequence
+and no gap is presented as complete output. Nothing moves until
+`start(attachment, positions)` runs for the attachment that actually opened, so a
+replacement the host then refuses leaves the connection's working attachment
+exactly where it was. The endpoint re-checks the connection's attachment with
+`Attachment::attached_observed` on every read, so a released or replaced row
+stops publication. `input` delivers one validated terminal input frame exactly
+once to the terminal owner — `Terminal::input` — and `resize` hands over the
+newest size with no queue behind it. Delivery is fenced on the attachment's own
+lifetime twice: the channel re-reads the row immediately before the call, and
+`Terminal` receives the live `Attachment` rather than its identifier, so the
+owner's final check before writing is `Attachment::attached_observed` and a row
+released, replaced or ended by its run's closure in between writes nothing. An
+inbound frame is accepted only for the connection's own attach request id, its
+own terminal stream and the stream's next sequence, and only as
+`terminal_input`, `resize` or `ack`; an acknowledgement must also be shape-only
+and name a data frame this connection published and has not freed. An unknown
+stream, a foreign request, a repeated, out-of-order, duplicate, stale or
+resumed-unsent sequence, a malformed payload or an outbound kind refuses and
+closes with no host effect — no input reaches a terminal, no size is recorded
+and no frame is freed. A replacement attachment is rebound in one step: the
+previous attachment's window, held chunk, numbering and inbound sequence are
+dropped before the requested cursor positions its own stream, so a replacement
+resumes at its own cursor and its acknowledgements cannot free the previous
+attachment's frames. The acknowledgement window is shared by every stream on a
+connection while each frame stays its own stream's: an acknowledgement releases
+that stream's frames that sit between other streams' frames, so an interleaved
+stream's consumption is never blocked by another stream's order. A host with no
+terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
+delivery it did not make. The kernel has no per-run terminal input/resize
+writer, and no host front end owns a session terminal yet (the transport, the
+guest client and the runner integration are separate tasks), so channel-owned
+delivery stops at the `Terminal` contract: the production runner terminal writer
+and the serving-loop binding are a separately owned follow-up, and nothing here
+claims production terminal delivery.
+`test:kernel:workspace-channel` owns these proofs.
+
+## Appendix B: NON-NORMATIVE post-v0.15 sequence candidates
+
+NON-NORMATIVE — UNIMPLEMENTED / POST-v0.15 DESIGN EXPLORATION.
+Tom's 2026-10-30 scope reduction (decision 8c0ef812) parks the detailed E-step,
+fault, retry, selection and ownership-transfer prose below. It is retained as
+candidate material, not a required v0.15 sequence, approved API, acceptance
+criterion, proof result or product guarantee. Imperatives, signatures, phase
+names and test names in this appendix are draft proposals only. None of its
+proposed proofs has run; it supplies no acceptance claims. The normative core in
+§8.11 wins wherever the historical draft differs, especially for Unknown liveness.
+Implementation tasks must establish their own code-backed behavior and proofs.
+The required identity/TLS/session core and Q-017 backend release gate remain in
+§8.11; this deferral does not waive them.
+
+**The publication matrix.** Every boundary below is a cell of the crash,
+concurrency and retry matrix this seam must answer; the last column names the
+proof family that has to hold each one. None of these selectors has been run:
+they are plans, and this section is a design, not evidence.
+
+| Candidate boundary | Draft idea (not a guarantee) | Proposed proof name (not evidence) |
+| --- | --- | --- |
+| Inputs, alias and target observed, before the decision | A frozen `PublishInputs` naming the artifact, the selection, the frozen policy/profile and `TargetEvidence` — `Observed` when a container exists, `Absent { project, backend }` on a fresh project — all re-observed under the decision's gate and recorded in the reservation. A changed input refuses; a changed or ambiguous target refuses rather than re-targeting. | `test:workspace:publish-inputs-freeze` |
+| The apply creates the target (fresh project) | `bind_target` records the container and boot the apply actually created in one fenced transaction under the held `Gate(Env)`; `Observed` targets must match it, `Absent` targets become bound here, zero or several candidate containers refuse `TargetAmbiguous`, and another activation's claim refuses `ClaimedByAnotherRun`. Every later step reads the bound target. | `test:workspace:fresh-target-binding` |
+| Decide attach or reserve E | One gate-held transaction writes the reservation or nothing; a loser re-reads under the gate and attaches only to a live session whose full published evidence matches, else joins or is refused by name. E+1 is never allocated over an unresolved E. | `test:kernel:workspace:activation-decide` |
+| Freeze `{owner, run, S}`, admit the session | The frozen tuple is recovered idempotently; the exact run is recovered, never invented, and E is never confused with S; a dead run is never treated as live. P keeps its slot, listener and `Borrow`. | `test:workspace:admission-sequence` |
+| Claim the environment run and apply | The claimed run and each applied effect are recovered exactly, or the successor is settled before cancellation. `down`, reconcile and another decision are fenced by the reservation and by live holders. | `test:workspace:interrupted-admission` |
+| Adding the alias must not recreate the predecessor's container | The alias value is a function of backend and profile only, so it never changes across generations of one environment. Before applying, the activation compares the container's Compose identity with the render and **refuses** rather than recreating a container a live predecessor's generation names; an unreadable identity is `Unknown` and also refuses. | `test:workspace:apply-refusal` |
+| Image platform observed before artifact selection | The platform that selects the artifact is an image fact read by the host before anything is staged — the backend's `Os`/`Architecture`/`Variant` for the bound container's image plus one loader family from the image root — never a fact read back from a running binary. It is frozen by `bind_platform` into the reservation; the staged executable's `e_machine`/`PT_INTERP` and the guest's own `/proc/self/exe` read must agree with it, and a cross-architecture emulated image selects the image's artifact, not the host's. | `test:workspace:platform-selection` |
+| Alias render and project network creation | The alias is rendered before service creation and resolved in the created guest; the project network is created by the same apply and never read before it. The listener binds what the backend's `BindPlan` allows, from the input that plan requires — `ReachabilityInput::Resolved` for `ResolvedGuestAddress`, `ReachabilityInput::Proxy` for `ProxyLoopback` — never the project IPAM gateway and never a guessed proxy address. | `test:workspace:channel:linux-docker:fresh`, `test:workspace:channel:colima` |
+| Binary intent, copy, hash, receipt | Target-bound, no-replace, immutable staging: intent before the copy, exclusive creation, hash of the exact object in the exact container; matching bytes complete, absent retries, mismatched or unreadable is `Unknown` and never overwritten. | `test:kernel:workspace:binary-stage` |
+| Binary, context and credential selection | One selection binds all three to one generation, and no shared selector moves before the commit. The credential is generation-addressed, so it is selected by the context rather than by a pointer of its own. | `test:workspace:selection-switch` |
+| Identity probe and alias resolution | Probes run the staged object by path under the same container and boot; zero, conflicting or unproven observations refuse before any credential, and a container or boot change between probe and publication invalidates the receipt. | `test:workspace:identity-qualification` |
+| Supervisor key, bind and handoff | The key is memory-only and dies with the serving supervisor, which is a different process from the session owner until E10. The commit records the `ServingLease { supervisor_id, endpoint, pin_digest }`; before E8 the activation refuses on its pipe EOF, and after E8 recovery probes the lease's endpoint with a pinned handshake. The activation hands the run over with `release_owner`/`adopt_owner` (never `run::resume_owner`), the registry keeps the only gate-owning `Run`, and a lost handoff is reconciled against the transfer record and never re-bound under the same pin. | `test:workspace:commit-ownership` |
+| Serving liveness across commit and recovery | The supervisor's listener and key live in its own process, so serving is judged independently of the session run: a bounded pinned `LivenessProbe` that the listener serves in `Holding` is required for recovery to complete, and a live session whose supervisor died is stopped, settled and abandoned rather than published as an unserved generation. The two livenesses are never collapsed into one fact. | `test:workspace:supervisor-loss` |
+| Post-commit terminal states | Exactly five: live session + verifying target + `LivenessProbe::Verified` completes; dead session + healthy target abandons; live session + verifying target but no serving liveness stops, settles, then abandons (the independent supervisor-death window); live session + lost target stops, settles, then abandons; dead session + lost target abandons. Abandonment is refused only in the one combination that must be completed, and only the committed successor is ever stopped. | `test:workspace:selection-abandoned` |
+| Guest dial and TLS proof | The pre-commit probe completes a TLS handshake against the bound listener in its `Qualifying` phase, verifies the pin before any frame, sends no application frame and reports the peer; the host compares that peer under the bind's `PeerExpectation`, so address equality is required only for a directly bound listener and the alias resolution is required for a proxy one. Unreachable, ambiguous or mismatched refuses `unavailable`, and an early frame fails qualification. | `test:workspace:precommit-tls-probe`, per-backend rows in `test:workspace:channel:{docker-desktop,colima,linux-docker:fresh}` |
+| Context and credential staging | Both are immutable generation-scoped objects written no-replace, verified by digest and mode; a successor never overwrites the bytes P's context selects. | `test:workspace:context-generation` |
+| Publication receipt | The receipt is rejected unless it binds the reservation, the claimed run, E, the frozen `{owner, run, S}`, the target container and boot, the artifact and document digests, the credential generation, the locator and pin, and the dial peer; every required effect must be applied. | `test:workspace:publication-evidence` |
+| Commit `active(E)`, mapping, `Borrow`, obligation | One transaction commits all four or none, the caller holds both the session `Run` and its own environment run, and it carries the complete selection and the expected prior values. Before it, P is authoritative; after it, a dead successor has a terminal path instead of an obligation that blocks forever. | `test:workspace:selection-kill-before-switch` |
+| Execute the switch and acknowledge | Each selector is written with an expected-previous comparison under the held gate and rechecks the committed E, the reservation, the receipt, the target container and boot, the document digest and the live session at the boundary; a third value is never overwritten. | `test:workspace:selection-cas` |
+| Detach, serving, reconnect, retirement | One owner lifetime resolves; a stale context refuses, replay is the same intent only, and retention is by exact generation and holder so a superseded session cannot remove its successor's files. | `test:workspace:recovery` |
+| Credential read, connect, hello, enrol | Local identity and context verify first, only the matching generation's credential is loaded, the pinned TLS handshake proves possession, `verified_peer` is checked, and only then `hello` and — after `hello_ok` — the credential. A wrong or missing pin means zero frames. | `test:workspace:connect-order` |
+
+**Five seams, closed together.** The matrix is one problem, not fifteen: the
+cells share five closures, and every closure below names the API that does not
+exist yet, its owning lane, and what refuses when it cannot be established. All
+of them are **proposed**; none is merged, and no selector named anywhere in this
+section has run.
+
+1. **One generation selection for binary, context and credential.** A live
+   predecessor P must keep working on artifact A while a successor prepares B,
+   so nothing shared moves before the commit. The credential stops being a
+   shared file: `publish_enrolment_credential` writes a generation-scoped,
+   0600, no-replace object (`enrol/<g>`), and the v2 context names
+   `credential_generation`, so a client loads the credential its own context
+   selects. `GuestSelection` (proposed, C1) carries `credential_generation` and
+   the digest of the credential object alongside the binary and context facts,
+   and the commit records it. The stable entry link and `binary/current` are the
+   remaining shared selectors and are written only by the switch; the legacy
+   `active-version` and install-identity files are advisory metadata written
+   last and never read as authority, so a mismatch in them cannot grant or deny
+   anything.
+2. **Target-bound immutable staging and receipt.** `GuestBinaryStage` (proposed,
+   C1) gains the target and the owner evidence the matrix asks for:
+   `{ environment: Fence, run: RunId, reservation: ActivationReservationId,
+   target: ContainerIdentity { container_id, vm_boot_id }, backend: BackendId,
+   digest, object }`. Creation is exclusive (`create_new`/`O_EXCL`), so two
+   writers cannot replace a digest object; `guest_binary_staged` records the
+   target it verified, and `unfinished_guest_binary` returns the whole record so
+   recovery can tell "object absent in a replaced container" (retry under the
+   new target, and only if the plan names it) from "object present with wrong
+   bytes" (`Unknown`, refusal, never overwrite). `WorkspacePublicationReceipt`
+   (proposed fields, C1) gains `document_digest`, `credential_generation`,
+   `locator`, `pin` and `dial_peer`, so a receipt is evidence about one target
+   and one generation rather than a claim about bytes nobody re-read.
+3. **Pointer execution fenced by compare-and-swap, with a terminal path.**
+   `replace_pointer`/`replace_link` are set-and-hope; the matrix's TOCTOU needs
+   an expected-previous compare at the guest write itself.
+   `GuestWorkspace` (proposed on the trait, C1, implemented in
+   `provisioning.rs`) gains
+   `compare_and_swap_pointer(path, expected: Option<&str>, next: &str) ->
+   Result<CasOutcome, RunnerError>` and `compare_and_swap_link(...)`, returning
+   `CasOutcome::{Swapped, AlreadyNext, Mismatch(current), Missing}`. The
+   activation holds `Gate(Env)` for the whole execution, so no other host writer
+   can interleave; the CAS closes the guest-side window and makes a third value
+   a refusal rather than a clobber. After the commit the obligation is terminal
+   in exactly one of five states, and the two recovery writers cover them
+   without ever blocking. Recovery judges **two independent livenesses**, never
+   one: the session run's, and the *serving* one — the listener and its key, which
+   live in the serving supervisor and are never re-bindable:
+
+   - **live session + verifying target + `LivenessProbe::Verified`** →
+     `selection_recovered` completes the switch. The third fact is the
+     `LivenessProbe`: a bounded pinned TLS handshake against the lease's endpoint,
+     which the listener serves from `Holding` for exactly this purpose, proving the
+     key that hashes to the published pin is still alive. A session that is alive
+     while its supervisor is not therefore *fails* this arm.
+   - **dead session + healthy target** → `selection_abandoned`, because a
+     generation with no server cannot be published no matter how healthy the
+     container is, and waiting for the target to fail is what would block the
+     environment forever.
+   - **live session + lost target** → the session is stopped first and then
+     settled, and only then abandoned.
+   - **live session + verifying target but no serving liveness** → the
+     independent supervisor-death window: the session cannot serve and the
+     endpoint cannot be rebound, so the run is stopped with the bounded control,
+     settled, and the generation abandoned. Recovery never completes a switch
+     into a dead listener.
+   - **dead session + lost target** → abandoned directly.
+
+   Stopping a live session for the last two states uses the ordinary bounded
+   control the session layer already has (`run::request`, then `Run::settle`
+   under the run's own private slot, never the shared Task gate), and only the
+   committed successor is ever touched — a live predecessor is never stopped to
+   clear its successor's obligation. Abandonment is refused only in the one arm
+   that must be recovered (all three facts good), and no new generation is
+   reserved over an unresolved obligation.
+
+   The serving fact is fenced across the commit as well, not only in recovery.
+   The commit transaction records a `ServingLease { supervisor_id, endpoint,
+   pin_digest }` beside the selection obligation, so the obligation always names
+   the one process that owns the key. Before E8 the activation watches that
+   supervisor's pipe: EOF before the commit means the endpoint is gone, so the
+   activation refuses and settles without committing anything. After E8, the
+   lease is what recovery probes; a lease whose endpoint does not answer is the
+   fourth arm above, never a reason to publish.
+4. **A non-destructive apply, or a refusal.** The alias value depends only on
+   backend and profile (`host-gateway`, the profile gateway, or a sentinel), so
+   it is stable across an environment's generations: the first publication
+   renders it, later ones render the same bytes. The case the matrix names —
+   adding an alias or changing inputs would make Compose recreate P's container
+   while P is live — is therefore an unexpected transition, and the rule is to
+   refuse it rather than destroy P. Before the apply, the activation compares the
+   container's Compose identity (Compose's own `config-hash`, already the value
+   this repository reasons about for byte-identical re-ups, read through the
+   existing inventory) with the hash the render would give:
+   `workspace_apply_would_recreate(selection, repo_root, project) ->
+   Observed<RecreateRisk>` (proposed, containers lane A2). `Verified(would
+   recreate)` while a live predecessor's generation names that container refuses
+   with the down/hold guidance and publishes nothing; `Unknown` refuses too, and
+   the reservation is cancelled. The only path that recreates is an explicit
+   operator `down`, which already refuses under R4 while a holder is live.
+5. **Frozen identity, TLS and pin-before-credential evidence.** `PublishInputs`
+   (proposed, C1) gains the frozen input digest and `TargetEvidence` — an
+   observed container and boot, or `Absent` with the project and backend for a
+   fresh project — and the decision re-observes both under its gate, recording
+   them in the reservation. The apply then binds the target it created
+   (`bind_target`), which is the only way an `Absent` decision becomes
+   observable and the only target any later step may use; a different or
+   ambiguous target refuses rather than re-targets. The document is created once,
+   after the endpoint, pin and identity are known, so a receipt can never
+   describe a document that was written from incomplete facts. The receipt binds the target
+   container and boot, the artifact and document digests, the credential
+   generation, the locator and pin, and the dial peer; `validate_receipt` checks
+   them against the plan, and the supervisor serves only when its own pin and
+   session match that receipt. The client's order is fixed: verify local
+   identity and context, load only the matching generation's credential, complete
+   the pinned handshake with signature proof, check `verified_peer`, send
+   `hello`, and only after `hello_ok` send the credential. A wrong or missing pin
+   means zero frames; there is no plaintext or local-execution fallback.
+
+**The decision is one serialized step.** The engagement between admission and
+activation is a single kernel call, `WorkspaceActivationReservation::decide`,
+because the attach-or-activate answer and the reservation of E must be read and
+written under one `Gate(Env)` hold. `reserve` already takes that gate and writes
+the reservation in one transaction, but it does not read the environment's live
+session, so "a second invocation attaches to the published mapping" would rest on
+a read taken outside the gate — which is how a second invocation that resolved
+`Absent` just before another activation committed could reserve the next
+generation and revoke a live session.
+
+```rust
+// crates/effigy-kernel/src/workspace_session.rs — proposed by this task
+pub struct PublishInputs<'a> {
+    /// The artifact this Prepare will publish, or the honest statement that it
+    /// is not selected yet. A fresh project cannot name a digest before the
+    /// image platform selects one, so absence is its own evidence here exactly
+    /// as it is for the target: the digest is frozen by `bind_platform`.
+    pub artifact: ArtifactEvidence<'a>,
+    /// The resolved selection digest the generation names.
+    pub selection: &'a Digest,
+    /// The frozen policy, profile and backend the render was made from: the same
+    /// artifact and selection are not enough evidence on their own.
+    pub inputs_digest: &'a Digest,
+    /// What the decision knows about the target. A fresh project has no
+    /// container yet, so an observed identity cannot be required before the
+    /// apply that creates it: absence is its own evidence, recorded with the
+    /// project and backend it names.
+    pub target: TargetEvidence,
+    /// What it knows about the image platform that selects the artifact. Same
+    /// shape, same reason: a fresh project's image platform is read after the
+    /// apply, before anything is staged.
+    pub platform: Option<ImagePlatform>,
+    /// Frozen local-read paths, source pins and version; absent legacy inputs cannot publish.
+    pub guest: Option<GuestContextInputs>,
+}
+pub enum TargetEvidence {
+    /// Reobserved under the decision's gate. Any later observation that differs
+    /// refuses; the activation never re-targets a live publication.
+    Observed(ContainerIdentity), // { container_id, vm_boot_id, backend }
+    /// A project with no container yet: the activation must create and bind the
+    /// target after its apply, and may only publish the target it bound.
+    Absent { project: String, backend: BackendId },
+}
+pub enum ArtifactEvidence<'a> {
+    /// Reactivation: the digest this Prepare already resolved, compared like the
+    /// target and refused if the bound platform later selects another.
+    Selected { digest: &'a str, object: &'a str },
+    /// Fresh project: nothing is selected until E1c reads the image platform.
+    Unselected { image_reference: String, backend: BackendId },
+}
+pub enum ActivationDecision {
+    /// The current generation already serves these exact inputs: attach, change nothing.
+    Attach(SessionRef),
+    /// Nothing serves the current generation with these inputs: E is reserved for it.
+    Activate(WorkspaceActivationReservation),
+}
+impl WorkspaceActivationReservation {
+    /// Take `Gate(Env)` once and, in that one transaction, read the live mapping
+    /// and the publication its generation recorded, then either report `Attach`
+    /// or reserve/recover E. The decision and the reservation are one write, so
+    /// two callers that resolved `Absent` cannot reserve two generations. The
+    /// reservation records `PublishInputs` — including `TargetEvidence::Absent`
+    /// when the project has no container yet — so the decision is durable before
+    /// anything is applied.
+    pub fn decide(
+        cx: &EffectContext, root: &StateRoot, environment: &ResourceId,
+        publishing: &PublishInputs<'_>, wait: Wait,
+    ) -> Result<ActivationDecision, RunError>;
+    /// Bind the target the apply actually created, in one fenced transaction.
+    /// `authority` is the environment run that claimed *this* reservation and
+    /// still holds its `Gate(Env)`; the reservation, not a bare target, is what
+    /// the transaction checks, so two environments can never be confused:
+    /// `authority.fence()` must name this reservation's environment and E; the row must still be
+    /// `reserved` and name `authority.id()`, the environment's current
+    /// generation must be this reservation's E, and the caller must hold the
+    /// gate the claim was bound under. Refuses `TargetEvidenceMismatch` when
+    /// the decision
+    /// observed a different container or boot, `TargetAmbiguous` when the
+    /// project names zero or several containers, `WrongGeneration` for a fence
+    /// mismatch, and `WrongReservation`/`ClaimedByAnotherRun` for the stored
+    /// reservation identity or claim above.
+    /// Repeating the exact evidence returns the original binding; contradictory
+    /// evidence refuses. The write is at most once and idempotent to read.
+    pub fn bind_target(
+        &self, authority: &mut Run<'_>,
+        candidates: Observed<Vec<TargetCandidate>>,
+    ) -> Result<ContainerIdentity, RunError>;
+
+    // Target binding uses the claimed Run's own store and held gate; it never
+    // accepts a second root. TargetCandidate carries identity, project and
+    // created_by. An Absent decision requires this activation's creation
+    // identity and project/backend. An Observed decision requires exact
+    // container/boot/backend equality. The kernel records one Applied
+    // kernel:workspace-target fact atomically in the activation journal;
+    // replay returns the same identity and contradictory evidence refuses.
+
+    /// Bind the image platform and the artifact it selects, in one fenced
+    /// transaction with the same authority checks as `bind_target`: this
+    /// reservation, the claimed run's fence and E, and the gate the claim was
+    /// bound under. It runs after the apply and **before** any staging, so the
+    /// artifact is chosen from the image and never from a running binary.
+    /// `EnvRun::bind_platform` is the typed wrapper the activation calls; it
+    /// supplies this run as `authority`. It is the **only** writer of the
+    /// artifact the activation will publish: the digest and object it returns are
+    /// what staging installs, what the receipt names, and what a later `Attach`
+    /// compares against. Platform/artifact failures return `RunError::refused`
+    /// prose: the decision froze a different platform, a selected artifact has
+    /// another digest or object, the image has no supported Linux artifact
+    /// family, image and artifact platform/loader disagree, or the backend
+    /// cannot execute the artifact natively or through verified emulation.
+    /// A contradictory existing binding also refuses; an exact replay returns
+    /// the binding unchanged. A target disagreement uses
+    /// `ActivationRefusal::TargetEvidenceMismatch`; unknown image observations
+    /// remain unavailable rather than being guessed.
+    pub fn bind_platform(
+        &self, authority: &mut Run<'_>, observed: Observed<BoundPlatform>,
+    ) -> Result<BoundPlatform, RunError>;
+    // BoundPlatform records exact target, image platform, independently pinned
+    // artifact platform/version, digest object and backend execution evidence
+    // (`execution_available`, true for native execution or verified emulation;
+    // the retained journal key remains `emulation_available`).
+    // The kernel admits Linux amd64 or arm64 (empty variant or arm64 v8), with
+    // one GNU or musl loader, and requires image and artifact facts to agree.
+}
+```
+
+The image binding and required stage use the activation's existing journal and held
+Env gate; neither acquires another owner. The binary stage is required even when a
+caller omits its intent entirely: `commit_selection` requires exactly one Applied
+stage matching the bound target/platform and the selected binary. Unknown installs
+remain unresolved, including after additive retention at settlement. Verified
+readback may finish the same intent without another copy. The commit records the
+bound target, platform and selected artifact in the reservation alongside publication.
+
+The v2 receipt parser remains closed and validates `version`, `paths` (host and guest
+checkout, workdir, user and home), `sources` (kind/name/digest/snapshot), `binary_path`
+and `backend` as well as its existing identity, generation, credential and locator
+fields. `PublishInputs.guest` freezes the local-read fields before staging; the
+activation plan carries them to document validation. A legacy reservation without these
+fields remains readable but cannot be attached as a complete v2 context. New decisions
+without frozen guest inputs refuse before reserving a generation. The artifact manifest's version
+must equal the exact host active version frozen in the guest inputs, including any
+local-build identity; it is never substituted with the kernel crate's package version. Source digests are
+`sha256:<hex>`; source identities are unique. Credential paths are scoped to their
+context/credential generation. A deserialized receipt still cannot commit, and the
+kernel never accepts unvalidated document bytes as proof.
+
+`Attach` compares the **whole** published evidence, never a subset: a live
+mapping at the environment's current generation (`live_session_row`), the
+publication that generation recorded naming the same artifact digest, the same
+selection digest **and the same `inputs_digest`** (policy, profile, backend), the
+session's run still open at S, and — when the decision observed a target — the
+container and boot that publication names being exactly the ones re-observed
+under the gate. It also needs a selected artifact to compare: an
+`ArtifactEvidence::Unselected` input can never satisfy `Attach`, because there is
+no digest to hold against the live publication, so such a decision is `Activate`
+(and a fresh project has no live session to attach to anyway). A `Selected`
+input whose digest differs from the live publication is `Activate` too; only a
+matching digest attaches. A changed policy or profile therefore cannot reuse the old
+session: the inputs digest differs, so the decision is `Activate`, which is how
+a changed configuration is published as a successor generation while the
+predecessor keeps serving. A target that disagrees with what the live
+publication names (a replaced container, a boot change, or two observations that
+do not agree) is not attachable either, and there the decision **refuses** with
+`ActivationRefusal::TargetEvidenceMismatch` and names re-preparation rather than
+re-targeting the live session or silently superseding it. The refusal variants
+this needs — `TargetEvidenceMismatch` and `TargetAmbiguous` — are
+`ActivationRefusal` variants; platform and artifact disagreements instead use
+`RunError::refused` prose.
+
+Losing callers are refused without invalidating
+anything: a caller that loses the staging race gets
+`ActivationRefusal::SessionAlreadyStaged` from `stage_session_binding`, one that
+loses the run race gets `ClaimedByAnotherRun` from `Run::begin_claimed`, and any
+ordinary `Run::begin` on the environment is refused by name while a successor
+generation is reserved ("reserved by a workspace activation"). Such a caller
+reports the in-progress activation and changes nothing.
+
+Then the command, in the order the reservation forces. **The activation process is
+the session owner until the handoff**: it stages and admits the successor while
+`Gate(Env)` is free, keeps that `Run` handle, takes `Env` afterwards — `Task`
+before `Env` is canonical — commits with both handles in E8, and only then
+releases `Env` and transfers the run to the serving supervisor with
+`release_owner`/`adopt_owner` (not `run::resume_owner`, which returns an
+attachment). The serving supervisor is spawned before the commit and holds no
+gate and no run until it adopts; it binds the listener when the activation tells
+it to, qualifies exactly one TLS-only probe in that window, and serves the
+channel only after it holds the run. Every guest step happens inside the
+publication obligation's closure, so each is journalled before it starts and the
+context document is written once, after the probes succeed.
+
+| # | Process | Call | Failure |
+| --- | --- | --- | --- |
+| P1 | caller | `channel_alias_plan(policy)` — render input only, no backend read | `Observed::Unknown`: refuse `unavailable`, nothing published |
+| P2 | caller | `WorkspaceActivationReservation::decide(&cx, &root, &env.resource, &publishing, Wait::Until(deadline))` | `Attach(session)`: return it and attach (§8.7); `Unknown`: refuse `unavailable`, nothing published |
+| S1 | activation | `reservation.stage_session_binding(&cx, &root, &entry_owner, run)` → frozen `SessionBinding { owner, run, S }`, taking no gate on the workspace owner | `SessionAlreadyStaged` (another invocation is staging) or `WrongSessionOwner` (owner not canonically before Env): refuse, change nothing |
+| S2 | activation | `SessionRef::admit_reserved(..., &reservation, Placement::Detached)` — `Run::begin_claimed` with the session claim on its private Task-rank slot, no attachment and no mapping — and **the activation keeps the owning `Run` handle itself**, because it is the session owner until the handoff at E10. Report `SessionEvent::Admitted { run, S }` to the serving supervisor over the pipe | refusal: report it and settle itself; the activation publishes nothing |
+| E0 | activation | `reservation.claim()`, then `EnvRun::begin_claimed(&ctx, env, Operation::Up, deadline, &reservation)`; E is the reserved generation. This is one process holding `Task(session)` and then `Env`, which is canonical order; nothing in it waits on another process's gate | `ClaimedByAnotherRun`, `Cancelled`, `AlreadyCommitted`: refuse, nothing published |
+| E1 | activation | the ordinary `Up` apply: render with the alias from P1 through `add_extra_host`, and let Compose create the project network and the containers. Before it, `workspace_apply_would_recreate` compares the live container's Compose `config-hash` with the render, and after it `env_run.bind_target(&reservation, bound)` records the container and boot the apply created; the wrapper supplies its own held run as the kernel's `authority`, so the transaction checks this reservation, this run's fence and E | a render that would recreate a container a live predecessor names, an unreadable hash, a target that differs from the decision's `Observed` one, zero or several candidate containers (`TargetAmbiguous`), or another activation's claim: refuse, never re-target, publish nothing, cancel after settle |
+| E2 | activation | `plan = reservation.plan(&reader)`, then `env_run.publish_workspace_guest_with(&plan, publish)`; the call journals the publication intent (state `pending`) before the closure runs, and E3–E7 are that closure's guest I/O | a refused intent: publish nothing |
+| E1c | activation | `env_run.bind_platform(&reservation, observed)` — the wrapper passes its own held run and gate as the kernel's `authority` — with the `ImagePlatform` read from the bound container's image (`Os`/`Architecture`/`Variant`), the image root's single loader family, and the `uname -m` diagnostic; then `LinuxWorkspaceTarget::from_image(machine, libc)` selects the artifact family, and the binding freezes `{ platform, artifact_digest, object }` for E3's staging, E7's receipt `artifact_digest`, and every later `Attach` comparison; an `ArtifactEvidence::Selected` input that names another digest refuses with artifact-disagreement prose | a backend that cannot report the image platform, an unsupported machine/libc, a platform that differs from the decision's `Observed` one, or an artifact that cannot execute (no `binfmt`/Rosetta): return `RunError::refused` prose identifying the unsupported, conflicting or unexecutable image/artifact evidence (unknown observations remain unavailable), publish nothing |
+| E3 | activation | **stage only what is independent of the endpoint and the verified identity** — `Attachments::intend_guest_binary(&mut run, &reservation.guest_binary_stage(&run)?)` for exactly the digest and object E1c bound (otherwise `RunError::refused` describes the artifact disagreement), exclusive creation of the digest object, re-hash of the exact bytes in the exact container, ELF `e_machine`/`PT_INTERP` compared with the bound `ImagePlatform`, then `Attachments::guest_binary_staged(&mut run, &ticket, receipt)`; the generation-scoped credential (`enrol/<g>`, 0600) is written the same no-replace way. **The context document is not written here**: it needs the endpoint and pin from E5 and the verified identity from E6. Additive and digest-addressed, never rewritten, and **no selector is touched**, so a live predecessor keeps its own binary, context and credential | a mismatched or failed install records `guest_binary_unknown`: settle, publish nothing, and no probe runs against an unstaged object |
+| E4 | activation | `__guest-reach --resolve` runs the staged **object by path** (`<binary-object> --resolve`) in the exact target, never through `binary/current`, and returns a typed `ResolvedAlias { address }`: the single address the guest's own resolver returned. It is the bind input for `BindPlan::ResolvedGuestAddress` and the peer input for every plan | zero, several, an in-container loopback address or an unreadable file: publish nothing, refuse `unavailable` |
+| E5 | activation → supervisor | `workspace_channel_reachability(&alias, input, port)` with `ReachabilityInput::Proxy` (before E4) or `ReachabilityInput::Resolved(resolved)` (after E4) yields the typed `ChannelBind { plan, bind, advertise }`; the activation sends it with the qualification deadline and the supervisor generates the key, binds `bind`, enters its **qualifying** accept phase and reports `SessionEvent::ChannelBound { endpoint, pin }` | a call with the other plan's input (`WrongBindPlan`), a bind this host cannot perform, a gone supervisor, or a bind or key failure: publish nothing; neither plan falls back to a guessed address |
+| E5b | activation | after E4, `channel_peer_expectation(&bind, &resolved)` yields the final `PeerExpectation`: `ResolvesAlias { alias: resolved.address }` for a proxy bind, `EqualsBound` for a directly bound one | a resolution that disagrees with a bound address (`AddressMismatch`), or an expectation that cannot be built: publish nothing |
+| E6 | activation | `guest.probe_container_identity()` **and** the guest's own `__guest-identity`, again as `<binary-object> --identity`, compared with the backend's verified id and boot | disagreement or an unqualified evidence source: settle, publish nothing |
+| E7 | activation | **create the complete `effigy.workspace-context.v2` document exactly once**, now that E5 gave the endpoint and pin and E6 verified the identity and boot: one no-replace write of a fully rendered generation naming `{ run, S }`, the endpoint, the pin, the credential generation and the bound target, then `<binary-object> --dial` runs the **pre-commit TLS probe** (below): it completes a TLS handshake against the qualifying listener with the context's pin, sends no application frame, and reports the verified peer, which the activation checks against the `PeerExpectation` built at E5b (`EqualsBound` compares with the bound address, `ResolvesAlias` with the guest's alias resolution); the receipt `{ publication, activation_run: run.id, session: SessionBinding }` comes back to `publish_workspace_guest_with` | a failed or mismatched document write, handshake, peer mismatch or pin records `guest_publication_unknown`, so no receipt and no publication; a crash before this row leaves no document at all |
+| E8 | activation | `env_run.commit_activation(&reservation, &session_run, &selection)` — the activation holds **both** handles here, the session `Run` it admitted at S2 and its own environment run at E, so no other process is asked to borrow either. One transaction: the Task counter advances to S, `active(E)` is published, the mapping and the session's `Borrow` attachment are written, **and the complete selection obligation (binary, context, credential, expected previous values) is recorded** | `Frozen`, `NotStaged`, `SessionGone`, `ClaimedByAnotherRun`: publish nothing; the predecessor keeps A and stays authoritative |
+| E9 | activation | execute the recorded selection under the held gate, each write a compare and swap: `binary/current`, the entry link, `context/current`, then the advisory legacy metadata; then `Attachments::selection_switched(&mut run, &obligation, receipt)` | a `Mismatch`, a failed or partially applied switch leaves the obligation unfinished; the run does not finish `ok` and recovery resolves it (see the terminal table) |
+| E10 | activation → serving supervisor | **ownership transfer**: the activation finishes its own environment run (releasing `Gate(Env)`), then `SessionRef::release_owner(&cx, &root, session_run, &session, nonce)` — which **consumes the owning `Run`**, writes the transfer record while the slot is still held, and releases the slot by dropping that handle — the pipe carries `SessionOwnership { run, S, owner, slot }` and the nonce, and the serving supervisor calls `SessionRef::adopt_owner(&cx, &root, &mut registry, &claim, &nonce)`, which takes the slot gate, moves the one `Run` into the process-local `SessionOwners` table and returns a `SessionOwnerHandle` (a retry returns the same handle as `AlreadyHeld`; the registry, never the caller, owns the gate-owning run and `with_owner` borrows it); only then does its listener leave `Holding` for `Serving`. A retry returns `Adoption::AlreadyHeld` with that same handle rather than a second one, and a dead adopter reads `AdopterLost`. The commit recorded the `ServingLease` this supervisor holds. `run::resume_owner` is **not** this interface: it takes a workspace `Session` and a child `RunId` and returns an owning-client `Attachment`, so it neither carries nor transfers a `Run` or its gate | a lost handoff leaves the run without a serving owner: the supervisor cannot adopt without the nonce, its listener closes on EOF, the generation is published but `unavailable`, and recovery settles the run and resolves the obligation (terminal table). A second claimant never adopts: the slot is exclusive and the record names one nonce |
+| E11 | activation | acknowledge `Detach`; the caller drops the owning pipe and the session outlives it (§8.11) | — |
+
+**The pre-commit TLS probe.** E7 proves reachability and the pin *before* the
+receipt, but the channel may not accept a connection before the commit, so the
+listener has exactly three accept phases and no ambiguity about which one is in
+force:
+
+| Phase | Entered | What one connection may do | Refusal |
+| --- | --- | --- | --- |
+| `Qualifying { deadline }` | E5, with the bind | complete the TLS handshake with the server's ephemeral key and close; it may send nothing after the handshake | any application byte, a second connection, or no connection by the deadline fails qualification: the connection is closed, nothing is dispatched, and the activation refuses `unavailable` with no publication |
+| `Holding` | qualification succeeded, before E10, and after adoption while the selection obligation is still unfinished | exactly one **liveness probe** at a time: a TLS handshake with the server's ephemeral key that is closed with no reply. No application byte, no `hello`, no credential, no admission record. Ordinary connections (anything that is not a liveness probe) are still not accepted here | a probe that sends anything after the handshake is closed and counts as no liveness evidence; a second concurrent probe waits for the first or times out under its own deadline |
+| `Serving` | after E10's `adopt_owner` **and** the Phase C checks | the v1 channel exactly as specified elsewhere | every rule above applies unchanged |
+
+The probe is deliberately not the channel. It carries no schema, no version
+negotiation, no `hello`, no `enrol`, no credential and no admissibility record,
+so "no credential before `hello_ok`" is untouched: this generation's credential
+does not exist yet, and nothing on the probe path can present or receive one. A
+`hello` or any other frame arriving during `Qualifying` is a failed
+qualification, not a refused request — the server closes before dispatch and
+records nothing. The listener accepts the probe only on the address and port it
+bound for this generation, so the connection proves possession of the published
+pin by the same listener the context names, and the guest reports the peer it
+reached. That is exactly the E7 evidence: the pin verified inside the handshake,
+the peer address that the bind and the alias agree on, and no credential in
+either direction. `test:workspace:precommit-tls-probe` proves the three phases
+and each refusal, including a `hello` sent early, a second connection, an
+expired deadline and a pin mismatch.
+
+**The liveness probe.** Recovery must be able to tell a live listener from a dead
+one *while the selection obligation is still unfinished*, and it cannot use the
+channel for that: Phase C only accepts after the obligation completes. The
+listener therefore serves one non-channel operation from the moment it is bound,
+in `Qualifying` at E7 (where it is the same handshake E7 already needs) and in
+`Holding`. It is:
+
+- **pinned, not authenticated.** It proves exactly one thing — the process that
+  holds the private key for `ServingLease.pin_digest` is alive and accepting —
+  by completing a TLS handshake whose certificate SPKI hashes to that pin. A
+  party without the key cannot produce it; a guest that triggers one learns
+  nothing and is granted nothing.
+- **frame-free.** The server writes no reply and reads no byte after the
+  handshake; the connection is closed. No schema negotiation, no `hello`, no
+  `enrol`, no credential, no admission record, and no effect of any kind, so it
+  cannot be mistaken for channel traffic and does not weaken "no credential
+  before `hello_ok`".
+- **bounded and serialized.** One probe at a time, each under the caller's own
+  deadline, and only while the obligation is unfinished. Once the obligation
+  completes and the listener enters `Serving`, probes are no longer needed and
+  ordinary Phase C rules apply.
+
+`ServingLease` therefore gains `probe: LivenessProbe`:
+
+```rust
+// crates/effigy-kernel/src/workspace_session.rs — proposed by this task (C1)
+pub struct LivenessProbe { pub endpoint: SocketAddr, pub pin_digest: String }
+impl LivenessProbe {
+    /// One bounded pinned handshake, then close. `Verified` means the key that
+    /// hashes to `pin_digest` answered at `endpoint`; `Absent`/`Unknown` are
+    /// both "no serving liveness" for recovery, and neither authorises anything.
+    pub fn run(&self, deadline: Deadline) -> Observed<()>;
+}
+```
+
+Phase C, after the handoff: the serving supervisor accepts a connection only when
+it owns the run (E10's `adopt_owner` succeeded), `guest_publication_of` names its
+own `Session` and context generation, and its own pin and session still match;
+every request is then fenced by that read and by its own attachment, and anything
+else refuses `stale_context`, `identity_mismatch` or `unavailable`.
+
+Five things fall out of that order, and each is why the order is what it is.
+
+- **The binary object is staged before any probe, and the selection waits.**
+  Both probes *are* the pinned binary, so a fresh container has nothing to run
+  until E3 has installed and verified the object; the probes then execute that
+  object by path. The staging is its own additive obligation — journalled before
+  the copy, digest-verified after it, never rewritten because the object is
+  digest-addressed — and it moves no pointer, so a live predecessor's selection
+  is untouched until E8 commits. It also writes no context document: that
+  document names the endpoint, pin and verified identity, so it is created
+  exactly once at E7 from the values E5 and E6 established.
+- **The receipt precedes the mapping, because the mapping is staged first.** The
+  frozen `SessionBinding` is the mapping the receipt is validated against
+  (`ActivationPlan::validate_receipt`, then the reservation row in
+  `workspace_guest_published`); the committed `workspace_sessions` row appears
+  only in E8's transaction, together with `active(E)`, the attachment and the
+  selection obligation. A crash between E7 and E8 therefore leaves no mapping
+  and no pointer move, never a mapping without its receipt.
+- **The environment generation E is the reservation's.** E0 adopts the reserved
+  generation, so nothing is predicted and no other caller can advance the counter
+  behind the reservation (§8.7).
+- **The session serves E and owns S.** The mapping records E as the environment
+  generation it serves and S as the session run's own generation;
+  `ActivationPlan::fence()` is E and `SessionBinding.generation` is S, and
+  nothing compares them.
+- **Nothing is published before it is verified.** The staged object, the
+  identity probe, the alias resolution, the bind and the guest's own dial all
+  precede the receipt, and each refuses into `unavailable` rather than publishing
+  an unproven locator.
+
+**The pinned guest binary: stage the object, publish the selection later.** A
+fresh container has no `binary/current`, no digest-addressed object and no
+context, so the two guest probes cannot exist before the artifact does. Staging
+is therefore an obligation of its own, and it is **object-only**: it writes the
+digest-addressed immutable object and touches no pointer. A live predecessor
+keeps its own selection (context A, `binary/current` A and the stable entry
+link A) while B is staged, so nothing about a staged-but-uncommitted successor
+can make the predecessor's next invocation resolve the wrong executable.
+
+```rust
+// crates/effigy-kernel/src/run/attachments.rs — proposed by this task
+pub struct GuestBinaryStage {
+    pub environment: Fence,
+    pub run: RunId,
+    pub reservation: ActivationReservationId,
+    /// Exact target, platform, version and digest object frozen by E1c.
+    pub binding: BoundPlatform,
+}
+// reservation.guest_binary_stage(&run) constructs this from journal facts.
+// EnvRun::intend_guest_binary(&reservation) uses that constructor itself.
+
+impl Attachments {
+    /// Journal `kernel:workspace-guest-binary` before the copy, under the same
+    /// additive, no-stop, no-replace rule as the publication obligation. It
+    /// writes `object` only; every pointer stays exactly as it was.
+    pub fn intend_guest_binary(run: &mut Run<'_>, stage: &GuestBinaryStage)
+        -> Result<GuestBinaryTicket, RunError>;
+    /// Record the digest the guest actually holds. Refuses unless it matches.
+    pub fn guest_binary_staged(run: &mut Run<'_>, ticket: &GuestBinaryTicket,
+        receipt: Observed<GuestBinaryReceipt> /* exact target, ELF platform and object digest/path */)
+        -> Result<(), RunError>;
+    /// An attempt that could not be verified is uncertain, never success.
+    pub fn guest_binary_unknown(run: &mut Run<'_>, ticket: &GuestBinaryTicket,
+        reason: UnknownReason) -> Result<(), RunError>;
+}
+/// Recovery reads the one unfinished staging, including retained uncertainty.
+pub fn unfinished_guest_binary(reader: &StoreReader, environment: &Fence)
+    -> Observed<Option<GuestBinaryStage>>;
+```
+
+The same step writes the generation-scoped credential object (`enrol/<g>`, 0600,
+no-replace), so a successor's credential is a different path from its
+predecessor's and neither overwrites the other. It writes **no context
+document**: the v2 document cannot be rendered before E5 knows the endpoint and
+pin and E6 has verified the container and boot, so it is created exactly once at
+E7, from the values those steps established, and a crash before E7 leaves no
+document behind at any generation path. Both probes then execute **the staged
+object by path**, never `binary/current`:
+`__guest-reach --resolve`, `__guest-identity` and the closing `__guest-reach
+--dial` are spawned as `<binary-object> <verb>` with the digest the activation
+is publishing, so E4–E7 need no pointer at all and cannot observe the
+predecessor's selection. Recovery reconciles the stage by hashing the object it
+names: a matching digest completes the effect without copying again, a missing
+object is a staging that never happened and is retried by the next activation,
+and a mismatched digest is refused and never overwritten (`I-S4`'s no-replace
+rule). An object B staged by an activation that never commits stays as a
+retained orphan: it is additive, digest-addressed and never selected.
+
+**The selection switch.** `/run/effigy/context/current`, `binary/current` and the
+stable entry link are guest state, so no database transaction can span their
+writes, and the existence of an immutable object is not the same fact as a guest
+resolving it. Today's publisher switches `binary/current` and the entry link
+while it stages, and `current` before it returns its receipt. Both are defects
+this seam replaces: with a live predecessor on artifact A, a successor staging B
+and then failing anywhere before its commit would leave the predecessor's
+context on A while `binary/current` already named B, so the predecessor's next
+invocation would resolve B against A's context and refuse on the digest fence —
+and the staging recovery does not put A back. The selection therefore moves only
+through an obligation recorded by the commit itself, never by staging and never
+by a later call:
+
+```rust
+// crates/effigy-kernel/src/workspace_session.rs and run/attachments.rs — proposed
+pub struct GuestSelection {
+    /// The context generation the guest must resolve after this switch, the
+    /// document digest that generation names, and the credential generation it
+    /// selects (credential objects are generation-scoped, so they need no
+    /// pointer of their own).
+    pub generation: u64,
+    pub document_digest: String,
+    pub credential_generation: u64,
+    pub credential_digest: String,
+    /// The pinned binary digest this generation names, and its object path.
+    pub binary_digest: String,
+    pub binary_object: String,
+    /// What each selector named before this activation; 0 and "" for none.
+    /// They are written as expected-previous values, not as prose: a selector
+    /// that no longer matches refuses instead of being clobbered.
+    pub previous_generation: u64,
+    pub previous_binary_digest: String,
+    pub previous_binary_object: String,
+}
+impl WorkspaceActivationReservation {
+    /// The committed activation, now including the selection obligation this
+    /// commit's own transaction inserted as a `kernel:workspace-selection` effect
+    /// of the environment run. There is no window in which the generation is
+    /// committed and no durable record of the pointers it needs. `EnvRun::commit_activation`
+    /// carries the same parameter into the kernel, and `provisioning.rs` splits its
+    /// install step so the object and the selection are separate writes.
+    pub fn commit(&self, cx: &EffectContext, root: &StateRoot,
+        environment_run: &Run<'_>, session_run: &Run<'_>,
+        selection: &GuestSelection) -> Result<CommittedActivation, RunError>;
+}
+impl CommittedActivation {
+    /// The effect the commit inserted, handed to E9 and to recovery.
+    pub fn selection_obligation(&self) -> &GuestSelectionObligation;
+}
+impl Attachments {
+    /// Record the three selector values the guest actually holds, read back
+    /// after the compares. Refuses unless they are the obligation's targets, the
+    /// objects still hash, and the environment is active at E.
+    pub fn selection_switched(run: &mut Run<'_>, obligation: &GuestSelectionObligation,
+        receipt: SelectionSwitchReceipt /* { generation, document_digest,
+        credential_digest, binary_digest } */) -> Result<(), RunError>;
+    /// Recovery-only completion, for the one case that can still be completed:
+    /// the committed session is live, the target it names still verifies, **and**
+    /// its `LivenessProbe` returns `Verified` — a bounded pinned handshake against
+    /// the lease's endpoint, which the listener serves in `Holding` precisely so
+    /// this decision is possible before the obligation completes. It re-observes
+    /// all three, runs the same compares and completes, and it needs no handle
+    /// from the dead activation run. A live session whose probe is `Absent` or
+    /// `Unknown` refuses `ServingLost`, which routes to `selection_abandoned`.
+    pub fn selection_recovered(cx: &EffectContext, root: &StateRoot,
+        obligation: &GuestSelectionObligation, serving: &ServingLease,
+        probe: &LivenessProbe, receipt: SelectionSwitchReceipt) -> Result<(), RunError>;
+    /// Terminally resolve an obligation that can no longer be completed: the
+    /// committed session is **resolved** (closed, or settled by this caller
+    /// after a bounded stop), whatever the target's health. It revokes the
+    /// published generation, so guests report `unavailable`, and the next
+    /// activation may reserve E+1. Recovery-only; it refuses **only** when
+    /// `selection_recovered` is still possible — the same three facts together:
+    /// live session, verifying target, and `LivenessProbe::Verified`. Any other
+    /// combination abandons, including a live session with a verifying target
+    /// whose probe is dead, because there completion would publish an unserved
+    /// generation.
+    pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot,
+        obligation: &GuestSelectionObligation, reason: UnknownReason) -> Result<(), RunError>;
+}
+/// Recovery reads the committed generation's unfinished selection, if any.
+pub fn unfinished_selection(reader: &StoreReader, environment: &Fence)
+    -> Observed<Option<GuestSelection>>;
+```
+
+`GuestWorkspace` gains the compare the execution needs, because a read followed
+by an unforced replace is the TOCTOU the matrix names:
+
+```rust
+// src/runner/workspace_client/context.rs (trait; proposed) and
+// src/runner/workspace_command/provisioning.rs (guest impl)
+pub(crate) enum CasOutcome { Swapped, AlreadyNext, Mismatch(String), Missing }
+impl dyn GuestWorkspace {
+    fn compare_and_swap_pointer(&mut self, path: &str, expected: Option<&str>,
+        next: &str) -> Result<CasOutcome, RunnerError>;
+    fn compare_and_swap_link(&mut self, path: &str, expected: Option<&str>,
+        next: &str) -> Result<CasOutcome, RunnerError>;
+}
+```
+
+The handoff at E10 needs a real session-run transfer, and no merged API provides
+one: `run::resume_owner(cx, root, session, run)` reopens the *owning client's
+attachment* for a `run::Session` and returns an `Attachment`; it carries no `Run`
+and no gate, and the admitted session at S2 has no such attachment. The transfer
+is therefore its own proposed interface, owned by C1 in
+`crates/effigy-kernel/src/workspace_session.rs`:
+
+```rust
+// crates/effigy-kernel/src/workspace_session.rs — proposed by this task (C1)
+pub struct SessionOwnership { run: RunId, generation: Generation, owner: ResourceId, slot: ResourceId }
+pub struct OwnershipNonce([u8; 16]); // one handoff, one adopter
+
+impl SessionRef {
+    /// Hand the admitted run to a successor process. It **consumes the owning
+    /// `Run`**, because that handle is what holds the private slot's
+    /// `GateGuard`: one transaction writes `workspace_session_owners` (session,
+    /// run, S, slot, nonce digest) while the caller still holds the slot, and
+    /// dropping the consumed handle right after is the release. Refuses unless
+    /// the run is open at S, still owns this session and holds that slot.
+    ///
+    /// Failure is explicit and keeps the caller whole: on error the run is
+    /// returned still owning its slot (`ReleaseError { run, error }`), so the
+    /// caller retries within its deadline or drops it, which is an ordinary
+    /// owner loss. There is no state in which a record exists and the old handle
+    /// is still usable, and no state in which the handle is dropped with a
+    /// half-written record.
+    pub fn release_owner<'a>(cx: &EffectContext, root: &'a StateRoot,
+        run: Run<'a>, session: &SessionRef, nonce: OwnershipNonce,
+    ) -> Result<SessionOwnership, ReleaseError<'a>>;
+
+    /// Take the handed-over run, idempotently and at most once per process.
+    ///
+    /// `registry` is the caller's process-local ownership table
+    /// (`SessionOwners`, below). The order is fixed:
+    ///
+    /// 1. **This process already owns the run**: `adopt_owner` returns the same
+    ///    `SessionOwnerHandle` (`AlreadyHeld`) and the registry keeps the only
+    ///    `Run`. A retry after a lost response therefore never re-takes the slot,
+    ///    never writes a second owner row and never creates a second gate-owning
+    ///    handle — a `Run` is not duplicable, so it is never handed out by value.
+    /// 2. Otherwise try the run-specific private slot with `FailFast` (a
+    ///    Task-ranked gate only, legal with no `Env` held). Busy with no local
+    ///    handle means **another live process is the adopter**: refuse
+    ///    `OwnedElsewhere`. The slot is never stolen.
+    /// 3. The slot is free: read the record. `released { nonce }` matching this
+    ///    nonce adopts — one transaction rechecks the run at S and the frozen
+    ///    owner, rewrites the recorded owner identity, marks it adopted, and the
+    ///    `Run` is moved into the registry, which returns its handle. A record marked `adopted` with a free
+    ///    slot means the previous adopter is gone: refuse `AdopterLost`, which is
+    ///    **owner loss**, not a retryable adoption, and recovery settles the run.
+    ///    An absent record or another nonce refuses `NotReleased`/`WrongNonce`.
+    pub fn adopt_owner(cx: &EffectContext, root: &StateRoot,
+        registry: &mut SessionOwners, claim: &SessionOwnership,
+        nonce: &OwnershipNonce) -> Result<Adoption, RunError>;
+}
+pub struct ReleaseError<'a> { pub run: Run<'a>, pub error: RunError }
+
+/// Process-local ownership table. **It owns the one `Run`**, so the gate has
+/// exactly one owner and no caller ever receives the handle by value. Entries are
+/// memory only, never durable, and are removed when the run settles, which is
+/// what makes a later attempt read `AdopterLost` rather than revive an owner.
+/// Proposed (C1), `session_owners.rs` beside the transfer record.
+pub struct SessionOwners { /* (session, run) -> owned Run<'static> */ }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SessionOwnerHandle(/* registry slot */);
+
+impl SessionOwners {
+    /// The only way to touch the owned run: a scoped borrow. A retry asks for
+    /// the same handle again — `adopt_owner` returns `AlreadyHeld(handle)` when
+    /// this registry already owns the run — and never a second handle.
+    pub fn with_owner<'a, R>(&'a mut self, handle: SessionOwnerHandle,
+        f: impl FnOnce(&mut Run<'a>) -> R) -> Result<R, RunError>;
+}
+
+pub enum Adoption {
+    /// First adoption in this process; the registry owns the run from now on.
+    Adopted(SessionOwnerHandle),
+    /// A lost-response retry: this process already owns it, same handle.
+    AlreadyHeld(SessionOwnerHandle),
+}
+```
+
+Acknowledgement is a notification, not a fence: once the slot is held and the
+record is adopted, the adopter sends `SessionEvent::Adopted { run, S }` to the
+releaser and starts serving whether or not that message is delivered. A lost ack
+changes nothing (the releaser's pipe is going away anyway), and a retry never
+waits for it. This is how an **alive adopter** is told apart from **owner loss**:
+alive means a local handle (registry hit) or a held slot (another process,
+`OwnedElsewhere`); owner loss means an adopted record whose slot is free and
+whose handle settled (`AdopterLost`), which recovery settles rather than
+re-adopts.
+
+The fence is five facts checked together: the reservation is committed to this
+session, the obligation names the same `context_generation` the receipt
+recorded, the document at that generation still hashes to `document_digest`, the
+object at `binary_object` still hashes to `binary_digest`, and the environment is
+active at E. A selection that names another generation, an uncommitted one, a
+rewritten document or a missing object refuses before it moves anything.
+
+E9 executes it in one order, each write a compare and swap against the expected
+previous value: `binary/current` → `binary_digest`, the stable entry link →
+`binary_object`, then `context/current` → `generation`, and finally the advisory
+legacy metadata (`active-version`, install identity), which no guest reads as
+authority. The binary selection is written first so the context never names a
+binary the container does not already hold; both objects were written by staging,
+so every intermediate step selects bytes that exist. The activation holds
+`Gate(Env)` across the whole execution, so no other host writer interleaves, and
+the guest-side compare closes the read-then-write window the matrix names: a
+selector whose value is neither the expected previous value nor already the
+target is `CasOutcome::Mismatch`, which refuses and leaves the obligation
+unfinished rather than clobbering a third value. `CasOutcome::AlreadyNext`
+completes that selector without writing, so replay is idempotent.
+
+The selectors can therefore be mid-switch for a moment, and the guest treats
+that as stale, never as incompatibility: resolving `current` and
+`binary/current` together and finding a pair that does not name one committed
+generation is `stale_context`, re-read under the invocation's deadline, not the
+permanent re-prepare refusal that a genuinely replaced container earns. The
+supervisor closes the same window from the other side: it accepts a channel
+connection only after `guest_publication_of` names its generation, the selection
+obligation is completed, and its own pin and session still match. The credential
+is not part of that window at all: it is generation-scoped, so the context's
+`credential_generation` selects an object that was written whole at staging and
+that a successor never overwrites, and P's credential keeps naming P's
+generation while P's context remains selected.
+
+The crash windows then have defined behaviour, and the predecessor's selection is
+untouched in every one of them until E8 commits:
+
+**Creator attribution ruling (Tom, 2026-10-31, amended after the #510 design
+review).** Never adopt a container created by another checkout, project or
+stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
+Compose apply and exact full-ID inventories before and after it. Only an ID
+new in that window, with the complete expected created set and exact managed,
+project, service, checkout/scope, generation and immutable-image evidence, may
+bind a fresh target. Missing, extra, ambiguous, changed or unreadable evidence
+refuses publication; attached/reused containers never receive a new creator
+receipt. Recheck preflight identity under the gate and keep the complete-set
+decision and its journal evidence tied to that activation. A same-user actor
+that can create an identically labelled container inside the gate window is
+**explicitly outside this v0.15 threat model**: same-user access already permits
+reading the render and replacing the binary or vault material. The ID-set
+difference is gate-scoped attribution under that stated limit, not proof that
+the engine returned the created IDs. This supersedes the earlier 2026-10-31
+engine-create-only ruling and the rejection of Option C; it does not permit
+label-only, timestamp-only or unbounded post-apply guessing.
+
+| Window | What the guest resolves | Recovery |
+| --- | --- | --- |
+| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a container from another checkout, project or stale generation is never adopted, and no later step may re-target |
+| Before E8 (no commit) | the predecessor's pair, A and A, and its own credential generation; the staged B objects are unselected orphans, and a crash before E7 leaves no context document at all | no selector moved, so there is nothing to restore; the reservation is cancelled after both bound runs settle and `preserve_active_predecessor` keeps the predecessor's applied fence, so a live predecessor and **its next invocation** stay fully usable on A |
+| Killed immediately after E8, before E9 runs at all | still A and A, with A's environment generation now superseded, so requests refuse `stale_context` | the obligation was written by E8's own transaction, so `unfinished_selection` names every selector, its expected previous value and every digest; `reserve` and `recover` prefer the oldest unfinished reservation, so a retry cannot roll past it, and recovery runs the same compares before any new generation is reserved |
+| Killed during E9 (some selectors moved, completion lost) | a mixed pair, reported as `stale_context` and re-read | each selector reports `AlreadyNext` or `Swapped`; recovery writes only what is still behind and then completes, so the set converges on g, B and the credential generation |
+| A selector names a third value | that value | `Mismatch` → `Unknown`: recovery refuses, names the host re-prepare path, and never overwrites it |
+| The activation run dies after E8 while its session still lives, its target verifies **and** its `LivenessProbe` returns `Verified` | the old pair | `selection_recovered` completes the switch from the obligation alone — it re-observes the target, the live session and the serving lease, runs the same compares and never needs the dead run's handle — so a live successor is not stranded on A |
+| **The serving supervisor dies after E7 or just after E8**, while the session is still live and the container still verifies | a committed generation whose listener and key are gone; the endpoint is not re-bindable | `ServingLost`: recovery stops the session with the bounded control, settles it under its own private slot, and then `selection_abandoned` revokes the generation so guests report `unavailable`. It never completes a switch into a dead listener and never publishes an unserved generation. Before E8 the same death is caught as pipe EOF: the activation refuses and commits nothing |
+| The committed session dies while its target stays healthy | the old pair, and a generation no server can serve | `selection_abandoned` after the session is resolved: the generation is revoked, guests report `unavailable`, the environment stays active without a session, and the next activation reserves E+1. Target health is not a reason to keep waiting — waiting is what would block the environment |
+| The target is lost while the session still lives | the old pair and a session whose container is gone | the session is stopped with the ordinary bounded control and settled under its own private slot, then `selection_abandoned` resolves the obligation; no successor is published and the predecessor is untouched |
+| The session dies and the target is lost | the old pair | `selection_abandoned` directly: nothing can serve and nothing can be recovered |
+| Death after the commit, before `release_owner` | a published generation with no serving owner | the owner process is gone, so the run reads as interrupted owner loss with no transfer record: recovery settles it and the obligation is abandoned as above; nothing may adopt a run that was never released |
+| `release_owner` fails its transaction | the run, still holding its slot | the error returns the run intact (`ReleaseError`), so the activation retries within its deadline or drops it as an ordinary owner loss; the old handle can never survive a committed record |
+| Death between `release_owner` and `adopt_owner` | a transfer record naming one nonce, and a run with no live owner | only that nonce may adopt; recovery reads a released-but-unadopted record, and when the adopter is gone it settles the run and abandons rather than letting a third party take it |
+| The `adopt_owner` response is lost, adopter alive | that process holds the slot and its own handle | re-running with the same claim and nonce hits the process-local `SessionOwners` table and returns the same handle: no second gate acquisition, no second owner row, no second handle. A retry from another process sees the held slot and refuses `OwnedElsewhere`; a different nonce refuses `WrongNonce` |
+| The adopter dies after adopting (slot free, record adopted) | an adopted record and a settled handle | `AdopterLost`: this is owner loss, not a retry. The run is settled by recovery and the terminal table applies; the record is never re-adopted under a new nonce and the listener is never re-bound |
+| The supervisor never receives the run | no claim and no nonce in that process | it cannot adopt, so it never leaves `Holding`; its listener closes on EOF, the generation reports `unavailable`, and the terminal table resolves the obligation |
+| The container was replaced mid-stage, so the staged object is gone | the old pair | `Unknown`: recovery re-observes the target; an object absent in a *different* container is a staging that never happened under that target, retried only if the plan names it; a wrong-bytes object is refused and never overwritten |
+| The guest is unreachable | nothing | `Unknown`: the obligation stays unfinished and nothing new is published until it is readable |
+
+Retention follows the same rule: objects are named by exact generation, a
+successor never deletes a predecessor's binary, document or credential, and a
+generation's objects become removable only when no run, context or holder
+selects them. A superseded session's cleanup therefore cannot remove its
+successor's files, and a dead committed session gets a fresh generation only
+after its obligation is recovered or abandoned — never by skipping it.
+
+A selection written by the pre-change publisher has no journalled `previous`; the
+A selection written by the pre-change publisher has no journalled `previous`; the
+first activation under this seam reconciles it by reading the document and the
+binary its pointers name and refusing, with the re-prepare guidance, when either
+has no committed receipt — it is never adopted as evidence. Nothing here rewrites
+an object: sibling generations stay exactly as written, and a predecessor's
+document and binary are retained for the runs that selected them.
+
+**Interrupted admission.** The owning pipe from E5 is the recovery mechanism, and
+a failed activation never disturbs the live predecessor: cancellation keeps its
+fence until both bound runs have settled, and ordinary held or no-op
+reconciliation republishes the predecessor's applied generation
+(`preserve_active_predecessor`). `current` moves only after the commit, so every
+failure before it leaves the predecessor's pointer where it was.
+
+| Interruption | What survives | Recovery |
+| --- | --- | --- |
+| Fails before S2 (no session run) | a reservation at E with nothing bound to it, and its recorded `TargetEvidence` | the caller settles what it started and cancels the reservation; the environment stays where it was |
+| Fails between the decision and the apply on a fresh project | a reservation whose target evidence is `Absent` | nothing was created, so recovery re-decides; if the apply did create a container, `bind_target` runs first and either binds the one candidate or refuses `TargetAmbiguous`, never re-targeting |
+| Fails between S2 and E0 (an admitted run, no activation) | an admitted successor on its private slot, no mapping | the caller cancels once the run has settled; the predecessor keeps serving |
+| Fails between E0 and E3 (no binary staged) | a claimed reservation and an unactive environment | settle both bound runs, cancel, publish nothing; the retry re-decides and starts clean |
+| Fails at E3 after the intent but before the digest check | a journalled binary-object obligation, at most a staging temp file, and **every pointer unchanged** | `guest_binary_unknown`; recovery hashes the object, completes what matches, retries what is absent, and refuses what differs; the predecessor's selection is A throughout |
+| Fails between E3 and E7 (objects staged, no document) | the binary object and the generation credential, no context document at any generation | the staging obligation completes or is retried by hashing the object; nothing is published, and no guest can resolve a half-built generation |
+| Fails between E7 and E8 (a verified document and receipt, no commit) | one complete document, a validated receipt or none, no mapping, both selectors still A | the same settle-and-cancel; a receipt without a commit names no generation, the document stays an unselected orphan, and a new predecessor invocation still runs A |
+| Killed immediately after E8, before E9 (a commit, both pointers still A) | an active environment at E, a committed mapping, and the selection obligation written by that same transaction | recovery completes the switch from the obligation (see the selection table above); until then guests refuse `stale_context` and never a fabricated generation, and recovery finishes the pointers before any new generation is reserved |
+| Killed after E9 before the detach | an active environment at E, a live session with no owning client | EOF cancels the session, which releases its attachment and its listener; guests report host access `unavailable` until the next activation admits one |
+| Supervisor dies | its run settles under §5.8 and its listener closes | the next activation reserves a new generation and publishes a new session, endpoint and pin; nothing re-binds the dead endpoint |
+| A session of a superseded generation is still live | its attachment, its bytes and its own listener | it is preserved, refuses connections as stale, and ends through its own client or `down`; a successor has its own private slot and endpoint, so neither collides |
+| Host reboot, replaced container | the previous generation and its objects | the identity probe disagrees, so publication refuses and names the host re-prepare, which runs under a new reservation and generation |
+| Two invocations at once | the winner's decision and its reservation | the loser either attaches or is refused by name and invalidates nothing |
+| Guest holds an older context generation | the published pointer | the guest re-reads `current`, re-verifies and reconnects; its old requests refuse `stale_context` |
+
+**Reconnect.** A broken connection is never a reason to admit twice or to fall
+back. `src/runner/workspace_client.rs` keeps one pending intent and re-enters the
+same order:
+
+```rust
+pub(crate) struct PendingIntent {
+    intent: Intent,                        // id + body, one canonical digest
+    session: WorkspaceSessionBinding,
+    context_generation: u64,
+}
+impl<T: Transport> WorkspaceClient<T> {
+    pub(crate) fn reconnect(&mut self, /* re-read context, identity, transport */)
+        -> Result<(), ChannelError>;
+}
+```
+
+Reconnect re-observes the guest identity, re-reads `current`, re-verifies, opens
+a new connection, re-checks the pin before any frame, negotiates, authenticates
+with the same capability and replays the same `Intent`. A session binding that
+changed, a session record that no longer resolves, or a capability the host
+revoked refuses `identity_mismatch`/`unauthenticated`; the client then reports
+`Unknown` for every unfinished run and refuses further Mutate (R3) and never
+executes locally. An unchanged binding at a newer context generation continues
+under the new generation. The host answers the replayed id from its admission
+record (`completed`, `accepted` or `unknown`) and a different digest is
+`id_conflict`; `observe` re-observes and never returns a recorded result. A
+stream resumes by `AttachBody.cursor`, a rotated-away range is a `gap` and never
+complete output, terminal input is not replayed and resize is latest-wins.
+Attempts are bounded by the invocation's own `OperationContext` budget, and an
+exhausted budget is `unavailable`, never an unbounded retry.
+
+**Owners and serialization.** These are the minimal disjoint tasks; the order is
+the dependency order, and the last column names the file that forces
+serialization.
+
+| Task | Scope | Serialized by |
+| --- | --- | --- |
+| A1 pin, receipt and recovery read | `server_pin`/`ServerIdentity::of_spki_der`, `guest_publication_of`, and the `WorkspacePublicationReceipt` checks the existing activation already performs | `crates/effigy-kernel/src/workspace_channel.rs`, `crates/effigy-kernel/src/run/attachments.rs` |
+| A2 host transport | per-session key, endpoint, listener, serving loop, dispatcher wiring, `channel_alias_plan` and `workspace_channel_reachability`, the `ChannelBind` reply, the guest-resolved bind address, the `SessionLaunch` payload and `ChannelBound` frame | `src/runner/workspace_command/channel.rs` (new), `src/runner/workspace_command/session.rs`, `crates/effigy-containers/src/workspace_channel.rs` (new), `crates/effigy-containers/src/backend.rs`, `runtime/dns.rs`, `policy_support/generated_compose.rs` |
+| B1 guest identity and alias | `ProcGuestIdentity`, `probe_channel_alias`, the `__guest-identity` and `__guest-reach` (resolve and dial) entries and their refinement, and the host probe's platform alignment | `src/runner/workspace_client/identity.rs` (new), `crates/effigy-cli/src/command_parsing.rs`, `src/runner/workspace_command/provisioning.rs` |
+| B2 guest transport | `TlsChannelTransport`, `PinnedChannelOpener`, `PinnedServerVerifier` | `src/runner/workspace_client/transport.rs` (new), workspace `Cargo.toml` |
+| C1 decision, context v2 and publication | `WorkspaceActivationReservation::decide` with `ActivationDecision` and `PublishInputs`; the binary **object** staging obligation (`intend_guest_binary`, `guest_binary_staged`, `guest_binary_unknown`, `unfinished_guest_binary`) and the `provisioning.rs` split that stops switching pointers while staging; the **selection** obligation written by `commit` and completed by `selection_switched`; the session block and locator with schema v2; and the staged, admitted, staged-object, probed, verified, published, committed, selected handoff in `publish_workspace_guest_in` — `stage_session_binding`, `admit_reserved`, `begin_claimed`, `publish_workspace_guest_with`, `commit_activation` — with the per-connection fence derivation and enrolment binding | `crates/effigy-kernel/src/workspace_session.rs`, `crates/effigy-kernel/src/run/attachments.rs`, `src/runner/workspace_client/context.rs`, `context_tests.rs`, `src/runner/workspace_command/provisioning.rs`, `crates/effigy-containers/src/environment/reconcile.rs` |
+| D1 glue integration | delete `UnobservedContainer` and `UnqualifiedTransport`, wire the observation and opener, reconnect | `src/runner/workspace_client.rs` — the only file that may join lanes |
+| E1 qualification | the identity-qualification probe, the three backend selectors, the loopback transport proof, the attach-order, reactivation, admission-sequence, interrupted-admission and recovery proofs and the recorded native runs | `config/tasks.toml`, `tests/` fixture harness |
+
+D1 is last and rebases on #452's glue; A2 and B2 both touch the workspace
+manifest, and A2, B1 and C1 all touch `provisioning.rs`, so those are one writer
+at a time. C1 alone writes `workspace_session.rs` and the pointer effects in
+`attachments.rs`, because `decide`, the staging it reads and the switch that
+follows the commit are one seam; the container engine's `reconcile.rs` calls
+them through the typed handoff and does not re-implement them. No task adds a
+second channel, a guest store, a guest gate, a Docker-socket read, a second
+network creator or an identity the guest cannot observe.

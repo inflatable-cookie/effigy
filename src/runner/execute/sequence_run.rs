@@ -1,4 +1,5 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
+use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
@@ -13,6 +14,8 @@ use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use effigy_ui::steps::{live_step, ProgressSource};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) fn maybe_run_in_process_sequence(
@@ -359,6 +362,11 @@ fn run_steps(
         selection.task.env_file.as_ref(),
         preflight.runtime_args_raw.env_schema_override.as_deref(),
     )?;
+    // A host sequence in a runtime-scoped checkout resolves the canonical
+    // declared backing-service alias in every environment it delivers,
+    // including the values a step inherits from the task and chains from its
+    // predecessors (contract 005).
+    let mut host_aliases = host_alias_resolver(preflight, selection)?;
     let mut planned = Vec::with_capacity(steps.len());
     for (index, step) in steps.iter().enumerate() {
         env.apply_from_step(
@@ -378,6 +386,31 @@ fn run_steps(
                 *value = value.replace("{skill}", &source.source_root.display().to_string());
             }
         }
+        if let Some(resolver) = host_aliases.as_mut() {
+            resolver.resolve_plain_env(&mut step_env)?;
+        }
+        // A step whose own environment delivers a key wins over a secret of
+        // the same name, so that secret is neither delivered again nor proved
+        // (effigy#431 review).
+        let mut step_secrets: Option<Vec<(String, SecretString)>> = None;
+        let mut delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
+        if let (Some(resolver), Some(pairs)) = (host_aliases.as_mut(), secrets) {
+            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered, true)?);
+        }
+        delivered.extend(
+            secrets
+                .unwrap_or_default()
+                .iter()
+                .map(|(key, _)| (*key).to_owned()),
+        );
+        // A value this step would inherit unchanged is resolved and proved too.
+        let inherited = match host_aliases.as_mut() {
+            Some(resolver) => resolver.resolved_inherited_env(&delivered, true)?,
+            None => Vec::new(),
+        };
+        for (key, value) in inherited {
+            step_env.entry(key).or_insert(value);
+        }
         let (label, timeout) = match step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
             ManifestManagedRunStep::Step(table) => (
@@ -392,6 +425,7 @@ fn run_steps(
             label,
             timeout,
             subject,
+            step_secrets,
         ));
     }
     let mut report = SequenceReport {
@@ -403,7 +437,9 @@ fn run_steps(
         outcome: WorkloadOutcome::Succeeded,
     };
     let total = planned.len();
-    for (index, (action, env, label, timeout, subject)) in planned.into_iter().enumerate() {
+    for (index, (action, env, label, timeout, subject, step_secrets)) in
+        planned.into_iter().enumerate()
+    {
         if report.code != 0 {
             report
                 .steps
@@ -420,7 +456,9 @@ fn run_steps(
             continue;
         }
         // A step can run for minutes, so each one is a live step that names
-        // which step of how many is running.
+        // which step of how many is running, what it waits on and how long it
+        // has waited, instead of redrawing one fixed ordinal (effigy#454,
+        // Q-017).
         let position = index + 1;
         let description = selection
             .task
@@ -433,12 +471,24 @@ fn run_steps(
             subject.as_deref()
         };
         let progress = sequence_step_label(task_name, position, total, subject);
-        let step = effigy_ui::steps::step(&progress);
+        let source = sequence_step_progress(&progress, &label);
+        let step = live_step(source.clone());
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
             let _parent = child.enter();
-            let _env = SpawnScope::enter(&env, secrets, preflight.output_json, timeout);
+            // A step that overrides a key does not deliver the secret of that
+            // name, so only the secrets this step delivers reach it.
+            let step_secret_refs = step_secrets
+                .as_deref()
+                .map(secret_env_slice)
+                .unwrap_or_default();
+            let step_secret_slice = if step_secrets.is_some() {
+                Some(step_secret_refs.as_slice())
+            } else {
+                secrets
+            };
+            let _env = SpawnScope::enter(&env, step_secret_slice, preflight.output_json, timeout);
             execute_step(
                 &action,
                 preflight,
@@ -549,6 +599,16 @@ pub(in crate::runner::execute) fn sequence_step_label(
         label.push_str(&format!(": {subject}"));
     }
     label
+}
+
+/// The live state of one running sequence step: the step's own label and
+/// ordinal, then the exact child it waits on and the elapsed wait. Nothing
+/// observes the child's inside, so the frame names that wait rather than
+/// animating a fixed label (effigy#467, Q-017).
+fn sequence_step_progress(label: &str, step_id: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("step `{step_id}` to exit"));
+    progress.update(label, None, None);
+    progress
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
@@ -946,6 +1006,25 @@ mod tests {
         assert_eq!(
             sequence_step_label("dev", 1, 1, Some("starting services")),
             "running dev: starting services"
+        );
+    }
+
+    #[test]
+    fn a_sequence_step_frame_moves_with_elapsed_and_names_the_child_it_waits_for() {
+        let progress = super::sequence_step_progress(
+            &sequence_step_label("dev", 2, 4, Some("build")),
+            "db:migrate",
+        );
+        let first = progress.frame_at(std::time::Duration::from_secs(0));
+        assert_eq!(
+            first,
+            "running dev step 2/4: build; waiting for step `db:migrate` to exit; 0s elapsed"
+        );
+        let later = progress.frame_at(std::time::Duration::from_secs(45));
+        assert_ne!(first, later, "a frame that never changes is not progress");
+        assert_eq!(
+            later,
+            "running dev step 2/4: build; waiting for step `db:migrate` to exit; 45s elapsed"
         );
     }
 

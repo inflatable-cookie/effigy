@@ -674,6 +674,109 @@ fn cli_contracts_check_json_rejects_malformed_payload_schema_with_stable_identit
 }
 
 #[test]
+fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
+    // `human.what_failed` is `HumanError`'s 512-byte bound of `error.message`, so
+    // where that bound cuts moves with the repo root's length. Give the fixture
+    // root a fixed absolute length: the cut then lands on the same bytes on every
+    // machine, so the complete output stays pinned and only the path itself is
+    // normalized.
+    const CONTROLLED_ROOT_LEN: usize = 160;
+    let fixture = temp_workspace("contracts-body-refusal-bytes");
+    let fixture_len = fixture.display().to_string().len();
+    assert!(
+        fixture_len + 2 <= CONTROLLED_ROOT_LEN,
+        "fixture root {fixture_len} bytes leaves no room for a {CONTROLLED_ROOT_LEN}-byte repo root"
+    );
+    let root = fixture.join("r".repeat(CONTROLLED_ROOT_LEN - fixture_len - 1));
+    assert_eq!(root.display().to_string().len(), CONTROLLED_ROOT_LEN);
+    fs::create_dir_all(&root).expect("create repo root");
+    fs::write(
+        root.join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("index.json"),
+        "{\n  \"version\": 1,\n  \"payload_schemas\": { \"effigy.command.v1\": \"missing.json\" },\n  \"schemas\": []\n}\n",
+    )
+    .expect("write index");
+
+    // The refusal is presented identically in both modes: the human line is the
+    // check-json refusal reason, and the JSON envelope carries the check-json
+    // identity as its `error.message` string. Both complete streams are pinned,
+    // including the bounded `human.what_failed` view of that message.
+    let text = run_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!text.status.success());
+    let json = run_json_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!json.status.success());
+
+    // Only values that move with the environment are normalized: the fixture
+    // root (it appears in the refusal) and the release version (it moves on
+    // every version bump), plus the header's border run, whose width follows the
+    // root path.
+    let repo_root = root.display().to_string();
+    let version = env!("CARGO_PKG_VERSION");
+    let normalize = |bytes: &[u8]| -> String {
+        let text = String::from_utf8_lossy(bytes).replace(&repo_root, "<repo>");
+        let text = text.replace(&format!("v{version}"), "<version>");
+        let text = text.replace(version, "<version>");
+        let mut collapsed = String::with_capacity(text.len());
+        let mut previous_border = false;
+        for character in text.chars() {
+            let border = character == '─';
+            if !(border && previous_border) {
+                collapsed.push(character);
+            }
+            previous_border = border;
+        }
+        collapsed
+    };
+
+    assert_eq!(
+        normalize(&text.stdout),
+        "\n╭─╮\n│ EFFIGY  <repo> │\n╰─ <version> ╯\n\n"
+    );
+    assert_eq!(
+        normalize(&text.stderr),
+        "[error] failed to read <repo>/missing.json: No such file or directory (os error 2)\n"
+    );
+
+    assert_eq!(normalize(&json.stderr), "");
+    assert_eq!(
+        normalize(&json.stdout),
+        r#"{
+  "binary": {
+    "active_version": "<version>",
+    "display_version": "<version>",
+    "name": "effigy",
+    "version": "<version>"
+  },
+  "command": {
+    "kind": "contracts",
+    "name": "contracts"
+  },
+  "error": {
+    "details": null,
+    "human": {
+      "evidence": [],
+      "next_action": null,
+      "what_failed": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.… (truncated)"
+    },
+    "kind": "refused",
+    "message": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.v1\"}],\"index\":\"<repo>/index.json\",\"ok\":false,\"schema\":\"effigy.contracts.check-json.v1\",\"schema_version\":1,\"selection\":{\"changed_only_base\":null,\"count\":0,\"selected\":[]},\"selection_artifact\":null,\"selection_contract\":null}",
+    "type": "RunnerError"
+  },
+  "ok": false,
+  "result": null,
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "warnings": []
+}
+"#
+    );
+}
+
+#[test]
 fn cli_contracts_validate_selection_names_its_replacement() {
     let root = temp_workspace("contracts-retired-selection");
     let output = run_cli_command(&root, &["contracts", "validate-selection"]);
@@ -1928,6 +2031,20 @@ fn private_home(root: &std::path::Path) -> std::path::PathBuf {
     home
 }
 
+fn assert_container_status_matches_schema(payload: &Value) {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../docs/knowledge/contracts/payload-schemas/effigy.container.status.v1.json"
+    ))
+    .expect("parse container status schema");
+    let schema = effigy_json_schema::CompiledSchema::compile(&schema)
+        .expect("compile container status schema");
+    let errors = schema.validate(payload);
+    assert!(
+        errors.is_empty(),
+        "container status schema errors: {errors:?}"
+    );
+}
+
 fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
     write_container_fixture_with_task(root, health_check, mount, false);
 }
@@ -2697,6 +2814,7 @@ fn cli_container_status_json_reports_default_container_contract() {
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    fs::write(&colima_state, "running\n").expect("mark fake Colima running");
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
@@ -2707,6 +2825,7 @@ fn cli_container_status_json_reports_default_container_contract() {
     );
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("container")
+        .arg("web")
         .arg("status")
         .arg("--repo")
         .arg(&root)
@@ -2728,10 +2847,12 @@ fn cli_container_status_json_reports_default_container_contract() {
     assert!(output.status.success(), "status failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_container_status_matches_schema(&parsed["result"]);
+    assert_eq!(parsed["result"]["warnings"], serde_json::json!([]));
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["primary_service"], "app");
     assert_eq!(parsed["result"]["backend"], "containerd");
-    assert_eq!(parsed["result"]["runtime_running"], false);
+    assert_eq!(parsed["result"]["runtime_running"], true);
     assert_eq!(parsed["result"]["ports"][0], "8080:80");
     // Host mounts are canonicalised under the repo root at policy
     // resolve time, so the JSON contract surfaces the absolute path
@@ -2744,6 +2865,67 @@ fn cli_container_status_json_reports_default_container_contract() {
             .display()
     );
     assert_eq!(parsed["result"]["mounts"][0], expected_mount);
+}
+
+#[test]
+fn cli_container_status_json_reports_warnings_matching_its_schema() {
+    let private = effigy_test_support::Fixture::workspace("effigy-status-warning-private-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let manifest_path = root.join("effigy.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("read container manifest");
+    fs::write(
+        manifest_path,
+        manifest.replace("profile = \"dev\"", "profile = \"default\""),
+    )
+    .expect("set default profile for warning");
+
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    fs::write(&colima_state, "running\n").expect("mark fake Colima running");
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("container")
+        .arg("web")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("HOME", private_home(&root))
+        .env(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            private_home(&root).join(".effigy"),
+        )
+        .env("EFFIGY_COMPOSE_BACKEND", "colima")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "status failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_container_status_matches_schema(&parsed["result"]);
+    let warnings = parsed["result"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0]
+        .as_str()
+        .expect("warning string")
+        .contains("shared with unrelated Colima workloads"));
 }
 
 #[test]
@@ -3373,16 +3555,13 @@ fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::pro
         "seeded"
     );
 
-    // No lease file: the seed held the stack it started, and holder-based
-    // idle stop brought it down (volumes kept) once the seed ended.
-    assert!(!root
-        .join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json")
-        .exists());
+    // This app-defined seed runs on the host and does not start or hold the
+    // environment, so there is no runtime activity to idle-stop afterward.
     let colima = fs::read_to_string(root.join("colima-args.log")).unwrap_or_default();
     let docker = fs::read_to_string(root.join("docker-args.log")).unwrap_or_default();
     assert!(
-        colima.contains("down --remove-orphans") || docker.contains("down --remove-orphans"),
-        "expected the idle stop after the seed:\ncolima: {colima}\ndocker: {docker}"
+        colima.is_empty() && docker.is_empty(),
+        "unexpected runtime activity:\ncolima: {colima}\ndocker: {docker}"
     );
 }
 
@@ -3567,13 +3746,17 @@ fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack()
     }
 
     // The policy is the runtime's, applied once per `up` after the stack started.
+    // It names the container's verified full ID, never the listed name.
     let updates = fs::read_to_string(&restart_updates).expect("read restart updates");
     let updates = updates.lines().collect::<Vec<_>>();
     assert_eq!(updates.len(), 2, "one update per up: {updates:?}");
+    // The colima backend prefixes its nerdctl wrapper, so match the subcommand
+    // tail: the update names the verified full ID and never the listed name.
+    let verified_update = format!("update --restart unless-stopped {}", "a".repeat(64));
     for update in updates {
         assert!(
-            update.contains("update --restart unless-stopped fixture-web-dev-app-1"),
-            "the runtime keeps the started container up: {update}"
+            update.ends_with(&verified_update),
+            "the runtime keeps the verified container up by its full ID: {update}"
         );
     }
 }
@@ -4440,7 +4623,16 @@ detach_timeout_secs = 1
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
-    let base_env: Vec<(String, String)> = vec![
+    // A fixture-owned gateway: both environments below claim one route domain,
+    // and a fixture process never starts, stops or replaces the operator's
+    // machine gateway (effigy#382). Its state root, CA and loopback ports are
+    // disposable and it stops through its own control path when this test ends.
+    let gateway = FixturePrivateGateway::start(&root, home.path(), &path);
+    // Route registration probes the published host ports for a foreign
+    // listener; this fixture owns none, and the operator's machine is never
+    // consulted for one.
+    write_quiet_listener_probe(&bin_dir.join("lsof"));
+    let mut base_env: Vec<(String, String)> = vec![
         ("NO_COLOR".to_owned(), "1".to_owned()),
         (
             "EFFIGY_EXECUTABLE".to_owned(),
@@ -4478,6 +4670,7 @@ detach_timeout_secs = 1
             log_follow.display().to_string(),
         ),
     ];
+    base_env.extend(gateway.env());
     let spawn_headless = |task: &str, extra_env: &[(&str, &str)]| {
         Command::new(binary)
             .arg("--repo")
@@ -4506,9 +4699,12 @@ detach_timeout_secs = 1
             ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
         ],
     );
-    // The managed status projection: the run journal plus its environment.
+    let owner_client = owner.id();
+    // The managed status projection: the run journal plus its environment. Each
+    // read is a fixture child of its own, reported with its pid and exit.
     let status = |task: &str| -> Value {
-        let output = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .arg("--repo")
             .arg(&root)
             .args([task, "status", "--json"])
@@ -4517,8 +4713,16 @@ detach_timeout_secs = 1
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
-            .output()
-            .expect("managed status");
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn_owned().expect("spawn managed status");
+        let pid = child.id();
+        let output = child.wait_with_output().expect("managed status");
+        println!(
+            "[fixture] managed status `{task}`: pid {pid} exited ({})",
+            output.status
+        );
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .rev()
@@ -4542,8 +4746,15 @@ detach_timeout_secs = 1
                 })
     };
     let start_deadline = Instant::now() + Duration::from_secs(120);
+    // The supervisor's own pid, recorded while the run is live: the status
+    // projection publishes it only then, and it is the exact process the
+    // settle must reap (effigy#493).
+    let mut owner_supervisor: Option<u32> = None;
     loop {
         let owner_status = status("devc");
+        if owner_supervisor.is_none() {
+            owner_supervisor = owner_status["run"]["pid"].as_u64().map(|pid| pid as u32);
+        }
         if owner_ready(&owner_status) {
             break;
         }
@@ -4556,6 +4767,7 @@ detach_timeout_secs = 1
             // The run journal supplies the phase, cleanup and closed reason that
             // ended the owner, so an early exit is reported with its cause
             // rather than as a bare assertion.
+            println!("[fixture] owner `devc` session client: pid {owner_client} exited ({exit})");
             panic!(
                 "the stack owner exited before the handover: {exit:?}; run journal={}",
                 status("devc")
@@ -4573,6 +4785,7 @@ detach_timeout_secs = 1
             ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
         ],
     );
+    let incoming_client = incoming.id();
     let incoming_deadline = Instant::now() + Duration::from_secs(240);
     let incoming_exit = loop {
         if incoming.try_wait().expect("poll incoming run").is_some() {
@@ -4584,6 +4797,10 @@ detach_timeout_secs = 1
         );
         std::thread::sleep(Duration::from_millis(200));
     };
+    println!(
+        "[fixture] incoming `devh` session client: pid {incoming_client} exited ({})",
+        incoming_exit.status
+    );
     assert!(
         incoming_exit.status.success(),
         "the forward handover refused: stdout={} stderr={} colima={}",
@@ -4598,7 +4815,6 @@ detach_timeout_secs = 1
     );
 
     let owner_state = status("devc");
-    let owner_pid = owner_state["run"]["pid"].as_u64().unwrap_or_default() as u32;
     assert_eq!(owner_state["run"]["phase"], "closed", "{owner_state}");
     assert_eq!(owner_state["state"], "stopped", "{owner_state}");
     assert_eq!(owner_state["run"]["cleanup"], "complete", "{owner_state}");
@@ -4606,7 +4822,8 @@ detach_timeout_secs = 1
     // observation, and an unreaped zombie must not read as running.
     let exit_deadline = Instant::now() + Duration::from_secs(60);
     let owner_exit_epoch = loop {
-        if owner.try_wait().expect("poll ended owner").is_some() {
+        if let Some(exit) = owner.try_wait().expect("poll ended owner") {
+            println!("[fixture] owner `devc` session client: pid {owner_client} exited ({exit})");
             break std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
@@ -4614,11 +4831,13 @@ detach_timeout_secs = 1
         }
         assert!(
             Instant::now() < exit_deadline,
-            "the ended owner's supervisor ({owner_pid}) is still running"
+            "the ended owner's supervisor ({}) is still running",
+            owner_supervisor
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "not recorded".to_owned())
         );
         std::thread::sleep(Duration::from_millis(100));
     };
-    let _ = owner_pid;
 
     // Behaviour proof: the losing environment is downed by the owner's own
     // cascade and the handover races no second conflicting down. Every
@@ -4662,6 +4881,33 @@ detach_timeout_secs = 1
         process["exit"], 0,
         "child `api` did not run on the handed-over environment: {incoming_state}"
     );
+
+    // Every fixture process this run started is proved gone, with the exact PID
+    // each session recorded (effigy#493): the owner's supervisor and its host
+    // child, and the incoming session's supervisor and fake-container child.
+    let owner_output = owner.wait_with_output().expect("owner output");
+    let owner_reported = supervised_pid(&owner_output.stdout);
+    if let (Some(recorded), Some(reported)) = (owner_supervisor, owner_reported) {
+        assert_eq!(
+            recorded, reported,
+            "the owner's live supervisor is the one its own output names"
+        );
+    }
+    let mut owner_pids: Vec<u32> = owner_supervisor.into_iter().chain(owner_reported).collect();
+    owner_pids.dedup();
+    assert!(
+        !owner_pids.is_empty(),
+        "the owner's supervisor pid was not recorded, so its cleanup cannot be proved"
+    );
+    assert_fixture_processes_absent("owner `devc` supervisor", &owner_pids);
+    assert_fixture_processes_absent("owner `devc`", &started_pids(&owner_output.stdout));
+    let incoming_pids: Vec<u32> = supervised_pid(&incoming_exit.stdout).into_iter().collect();
+    assert!(
+        !incoming_pids.is_empty(),
+        "the incoming session's supervisor pid was not recorded, so its cleanup cannot be proved"
+    );
+    assert_fixture_processes_absent("incoming `devh` supervisor", &incoming_pids);
+    assert_fixture_processes_absent("incoming `devh`", &started_pids(&incoming_exit.stdout));
 }
 
 #[test]
@@ -5276,4 +5522,302 @@ fn cli_docs_check_without_paths_keeps_the_repository_root_default_scope() {
         stderr.contains("README.md") && stderr.contains("./gone.md"),
         "the default scan should read the repository-root README: {stderr}"
     );
+}
+
+/// A disposable private gateway for one fixture, with a fixture-owned state
+/// root, a fixture CA and ephemeral loopback ports. A fixture process never
+/// starts, stops or replaces the operator's machine gateway (effigy#382); it
+/// owns a private one and stops it through the same control path.
+struct FixturePrivateGateway {
+    root: PathBuf,
+    home: PathBuf,
+    mkcert: PathBuf,
+    ca: PathBuf,
+    path: String,
+    /// The daemon's own recorded pid: the exact identity teardown proves gone.
+    pid: Option<u32>,
+}
+
+impl FixturePrivateGateway {
+    fn start(root: &std::path::Path, home: &std::path::Path, path: &str) -> Self {
+        let gateway_root = root.join("private-gateway");
+        private_fixture_directory(&gateway_root);
+        // The fixture CA stands in for the operator's `CAROOT`: the gateway's
+        // private TLS setup creates its own CA under its private state root and
+        // must never read or write the host's trust material.
+        let ca = root.join("private-ca");
+        private_fixture_directory(&ca);
+        let mkcert = root.join("fixture-mkcert");
+        write_fixture_mkcert(&mkcert);
+        let mut gateway = Self {
+            root: gateway_root,
+            home: home.to_path_buf(),
+            mkcert,
+            ca,
+            path: path.to_owned(),
+            pid: None,
+        };
+        let tls = gateway.run("setup-tls", &[]);
+        assert!(tls.status.success(), "private gateway setup-tls: {tls:?}");
+        let up = gateway.run(
+            "up",
+            &[
+                "--dns-addr",
+                "127.0.0.1:0",
+                "--proxy-addr",
+                "127.0.0.1:0",
+                "--https-addr",
+                "127.0.0.1:0",
+            ],
+        );
+        assert!(up.status.success(), "private gateway up: {up:?}");
+        gateway.pid = Some(private_gateway_recorded_pid(&gateway.root));
+        println!(
+            "[fixture] private gateway daemon pid {}",
+            gateway.pid.expect("recorded gateway pid")
+        );
+        gateway
+    }
+
+    /// Stop the owned daemon through its own control path and prove the exact
+    /// process it recorded has exited. A discarded `down` result would let a
+    /// detached daemon outlive the fixture (effigy#493).
+    fn stop(&self) -> Result<(), String> {
+        let down = self.run("down", &[]);
+        let mut problems = Vec::new();
+        if !down.status.success() {
+            problems.push(format!(
+                "`gateway down` exited {}: {}",
+                down.status,
+                String::from_utf8_lossy(&down.stderr).trim()
+            ));
+        }
+        let Some(pid) = self.pid else {
+            return if problems.is_empty() {
+                Ok(())
+            } else {
+                Err(problems.join("; "))
+            };
+        };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        if effigy_process::process_is_running(pid) {
+            problems.push(format!(
+                "private gateway daemon {pid} outlived `gateway down`; stop that exact pid"
+            ));
+        }
+        if problems.is_empty() {
+            println!("[fixture] private gateway daemon {pid} exited");
+            Ok(())
+        } else {
+            Err(problems.join("; "))
+        }
+    }
+
+    fn run(&self, subcommand: &str, extra: &[&str]) -> std::process::Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .args(["gateway", subcommand, "--private-state-root"])
+            .arg(&self.root)
+            .args(extra)
+            .arg("--json")
+            .env("HOME", &self.home)
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &self.mkcert)
+            .env("CAROOT", &self.ca)
+            .env("FOREIGN_CAROOT", &self.ca)
+            .env("PATH", &self.path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn_owned().expect("fixture private gateway CLI");
+        let pid = child.id();
+        let output = child
+            .wait_with_output()
+            .expect("wait for fixture private gateway CLI");
+        println!(
+            "[fixture] private gateway {subcommand}: pid {pid} exited ({})",
+            output.status
+        );
+        output
+    }
+
+    /// The facts every fixture child needs to select and trust this gateway.
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "EFFIGY_GATEWAY_PRIVATE_STATE_ROOT".to_owned(),
+                self.root.display().to_string(),
+            ),
+            (
+                "EFFIGY_GATEWAY_MKCERT_BIN".to_owned(),
+                self.mkcert.display().to_string(),
+            ),
+            ("CAROOT".to_owned(), self.ca.display().to_string()),
+            ("FOREIGN_CAROOT".to_owned(), self.ca.display().to_string()),
+        ]
+    }
+}
+
+impl Drop for FixturePrivateGateway {
+    fn drop(&mut self) {
+        // Stop the daemon while its private root and pid record still exist, and
+        // fail the test if the owned process did not exit: a leak is not a
+        // passing cleanup.
+        if let Err(problem) = self.stop() {
+            if std::thread::panicking() {
+                eprintln!("[fixture] private gateway cleanup: {problem}");
+            } else {
+                panic!("private gateway cleanup: {problem}");
+            }
+        }
+    }
+}
+
+/// The pid the private gateway recorded for its own daemon, which is the exact
+/// identity teardown proves gone.
+fn private_gateway_recorded_pid(root: &std::path::Path) -> u32 {
+    let path = root.join("gateway.pid");
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()));
+    raw.trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()))
+}
+
+/// A fixture directory with a stated mode rather than one inherited from the
+/// ambient umask: a Linux caller with umask `0002` would otherwise get a
+/// group-writable root, which private-root rules refuse.
+fn private_fixture_directory(path: &std::path::Path) {
+    fs::create_dir_all(path).expect("fixture private directory");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("fixture private directory mode");
+}
+
+/// The fixture `mkcert`: it creates a disposable CA and a server certificate
+/// with the host's `openssl`, and never touches the operator's trust store.
+fn write_fixture_mkcert(path: &std::path::Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    # A fixture mkcert never installs a CA into this user's trust store.
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+if [ -z "$cert" ] || [ -z "$key" ] || [ -z "$domain" ]; then
+    exit 97
+fi
+if [ -z "${CAROOT-}" ] || [ "$CAROOT" = "${FOREIGN_CAROOT-}" ]; then
+    exit 97
+fi
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    ca_config="$CAROOT/rootCA.cnf"
+    {
+        printf '%s\n' '[req]'
+        printf '%s\n' 'distinguished_name=dn'
+        printf '%s\n' 'x509_extensions=v3_ca'
+        printf '%s\n' 'prompt=no'
+        printf '%s\n' '[dn]'
+        printf '%s\n' 'CN=Effigy disposable fixture CA'
+        printf '%s\n' '[v3_ca]'
+        printf '%s\n' 'basicConstraints=critical,CA:TRUE'
+        printf '%s\n' 'keyUsage=critical,keyCertSign,cRLSign'
+    } > "$ca_config"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" \
+        -config "$ca_config"
+    rm -f "$ca_config"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+{
+    printf '%s\n' '[req]'
+    printf '%s\n' 'distinguished_name=dn'
+    printf '%s\n' 'req_extensions=v3_req'
+    printf '%s\n' 'prompt=no'
+    printf '%s\n' '[dn]'
+    printf 'CN=%s\n' "$domain"
+    printf '%s\n' '[v3_req]'
+    printf 'subjectAltName=DNS:%s\n' "$domain"
+    printf '%s\n' 'basicConstraints=critical,CA:FALSE'
+    printf '%s\n' 'keyUsage=critical,digitalSignature,keyEncipherment'
+    printf '%s\n' 'extendedKeyUsage=serverAuth'
+} > "$ext"
+openssl req -newkey rsa:2048 -nodes -sha256 -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" \
+    -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial -sha256 -days 365 \
+    -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+"#,
+    )
+    .expect("write fixture mkcert executable");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("make fixture mkcert executable");
+}
+
+/// A quiet host-listener probe: this fixture owns no listeners, and route
+/// registration must not borrow the operator's machine state to decide it.
+fn write_quiet_listener_probe(path: &std::path::Path) {
+    fs::write(path, "#!/bin/sh\nexit 1\n").expect("write quiet listener probe");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("make quiet listener probe executable");
+}
+
+/// The PIDs a managed session's own output recorded when it started a workload
+/// or a host child: the exact fixture processes its settle must stop.
+fn started_pids(output: &[u8]) -> Vec<u32> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter(|line| {
+            line.contains("[managed] started `") || line.contains("[effigy host-process] started `")
+        })
+        .filter_map(|line| {
+            let rest = line.split("(pid ").nth(1)?;
+            rest.split(')').next()?.trim().parse().ok()
+        })
+        .collect()
+}
+
+/// Prove and report that each recorded fixture process has exited, by its exact
+/// PID (effigy#493's no-leak invariant).
+fn assert_fixture_processes_absent(scope: &str, pids: &[u32]) {
+    for pid in pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(*pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(*pid),
+            "{scope}: fixture pid {pid} outlived its session"
+        );
+        println!("[fixture] {scope}: pid {pid} exited");
+    }
+}
+
+/// The supervisor pid a managed session's own output reported for its run.
+fn supervised_pid(output: &[u8]) -> Option<u32> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .find_map(|line| line.split_once("supervised by pid ").map(|(_, rest)| rest))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|raw| raw.parse().ok())
 }

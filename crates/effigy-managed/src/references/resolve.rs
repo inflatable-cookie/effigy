@@ -191,6 +191,7 @@ fn render_selected_task_run<'request, 'a>(
         resolver,
         execution_root,
         invocation_cwd,
+        host_env_aliases,
         ..
     } = resolution;
     let split_source_target = execution_root != task_scope_cwd;
@@ -232,6 +233,7 @@ fn render_selected_task_run<'request, 'a>(
             task_scope_cwd: &selection.catalog.catalog_root,
             invocation_cwd: nested_invocation_cwd,
             runtime_env_schema_override,
+            host_env_aliases,
             depth,
             resolver,
         },

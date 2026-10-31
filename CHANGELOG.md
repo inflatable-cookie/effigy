@@ -8,10 +8,96 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Host-process children use custody-owned output pipes instead of inheriting
+  raw log descriptors. Their merged output is sanitized and redacted before
+  append to the existing plain follower path; failed appends stop capture
+  fanout rather than acknowledge unwritten output. Schema-sensitive and
+  unclassified application-specific inherited environment values are passed
+  to custody as secrets. At the first proven stopped boundary, an untrusted
+  legacy host log is retained in private quarantine and replaced at the same
+  path with a fresh canonical inode and durable provenance. Stop and reopen
+  pre-upgrade followers after upgrading; already-open descriptors cannot be
+  revoked. The bundled Underlay follower resets on inode change even when the
+  replacement is larger than its previous byte offset.
+  Effigy readers honor a durable committed extent and hide failed or torn
+  appends; a poisoned log refuses restart for explicit operator recovery.
+  Direct file/Underlay presentation reads may show a safe line before sync
+  that is later lost on crash; they do not acknowledge durability.
+- Managed panes consume redacted typed style spans from a bounded tap after
+  successful plain append. Managed Standard output remains merged plain text
+  in its canonical stdout log; plain and JSON readers use those bytes directly.
+  Text followers bound partial lines and report expired-byte gaps without
+  joining text across them.
+  Host status uses owner/generation records rather than child log markers,
+  and clears readiness when a listener becomes unavailable.
+  A bounded generation drain gap resets terminal framing and reports truncation
+  while preserving the declared restart policy and merged secret lookahead.
+  Approved launcher boolean switches no longer cause spurious secret-in-argv
+  refusals; schema-sensitive values, secret-bearing keys and unclassified
+  environment values remain protected.
+  Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
+  explicit colour preferences, NO_COLOR and CI.
+- Workspace publication now freezes one typed serving value (host negotiation, session
+  fence, TLS pin, host checkout and the narrow enrolment secret) from the strict v2
+  document, the committed selection receipt and the session-owned qualified channel,
+  and cross-checks every one of those equalities before the environment commit and the
+  selector switch. A document, receipt, selection or locator that disagree refuse
+  publication instead of serving a connection under mismatched facts; a serving owner
+  retains the value for the session's life and its debug output redacts the secret.
+
+- A workspace channel reservation now reaches exactly the run it reserved: the
+  dispatcher's `AdmissionTicket` travels unchanged through the engine supervisor into
+  the task run, which admits it with `Run::begin_admitted` under the ticket's own id and
+  never mints, swaps or re-begins one. Engine-internal, standalone, nested, caller-keyed
+  and shared-lock run shapes refuse a ticket before any effect instead of admitting a
+  second run; ordinary runs keep their existing admission path.
+
+- A container-mode guest reads host authority credentials only after the pinned
+  peer verified: the client checks the context's server pin and negotiates the
+  protocol first, then presents a capability or the enrolment credential whose
+  bytes must match the digest the strict context pins. A mispinned peer receives
+  no handshake and causes no credential read.
+- Container-mode guest-local reads are served from the one strict v2 workspace
+  context the host publishes: task lists, source pins, version and checkout
+  reads come from that document and its pinned checkouts, and a guest selects it
+  only after independently observing its own container identity. v1 context
+  bytes refuse instead of being reinterpreted, and a local read admits nothing
+  and enrols nothing.
+
+- Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
+
+- Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
+
+- Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
+  PM, APC and the other non-printing bytes) *before* redaction, over merged
+  stdout/stderr arrival order, so a value a child split with a control
+  sequence can no longer reappear unredacted in a log, tail, JSON envelope or
+  TUI transcript; a sideways carriage return inside a value is dropped, so it
+  cannot erase or join what a display shows after redaction, while a `CR LF`
+  line ending keeps its CR. Secret-bearing output is well-formed text: a C1
+  control (a UTF-8 `U+009B` CSI, for example) and an invalid byte are dropped,
+  because a renderer drops them and joins what is either side; a TAB is dropped
+  too, because a renderer moves the bytes after it to the next tab stop and the
+  pane drops the escape that moves them. Ordinary processes keep their layout. Each stream's log and queue is redacted again over
+  its own bytes, because keeping the streams apart can join halves that arrival
+  order separated. A redaction replacement is a byte readers keep and no secret
+  contains, so no reader can join across it; if no such byte exists for a
+  secret set, captured output stops rather than write a joinable marker. Output for those processes is plain; ordinary processes keep
+  their colour. The merged redacted arrival-order tail is the canonical
+  captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
 
 ### Breaking
+
+- Workspace guest mount targets must be absolute and contain no `..` components.
+  Equivalent spellings using repeated separators or `.` share the same private
+  store, state-mask and duplicate-target checks.
+
+- Workspace declarations sharing one container must have identical effective
+  configuration; give workspaces with different paths, mounts or identities
+  distinct container names. Declared workspaces without a usable `user` and
+  absolute `home` now refuse preparation and entry with configuration guidance.
 
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before
   upgrading.** These entries change what a consumer sees or relies on.
@@ -141,6 +227,147 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **A workspace session's custody can live in a detached process.** A serving
+  host supervisor starts before the session run is adopted or the listener
+  exists, performs the activation in its own process, announces the committed
+  session over the kernel's bounded engine-event channel, and then keeps that
+  same run, listener, key, grant book and admitted clients while it serves and
+  settles exactly once. The initiating command only launches it and reads the
+  result: an absent acknowledgement is an error, an unacknowledged detach is the
+  kernel's owner-loss path, and no dropped local owner is reported as success.
+  The container-up producer stays #452's (`ContainerUp` refuses by name in this
+  head); the process-lifetime proof runs the same launcher with the disposable
+  activation the `workspace-serving-fixture` feature compiles in, so it proves
+  process custody and not container-mode preparation. One session serves through
+  one owner: a second launch for a session whose listener is already live refuses
+  at the kernel boundary, and the claim is released only when that launch stops
+  or settles. An unacknowledged detach is the kernel's owner-loss path, which
+  stops serving and settles instead of claiming the session.
+
+- **A workspace terminal keeps its own capability, and a session's service has
+  recovery, down and retirement seams.** A guest capability is now stored per
+  client (`/run/effigy/client/capabilities/<client>`, 0600 in a 0700 directory,
+  named by `EFFIGY_WORKSPACE_CLIENT_ID` or the process's own id) instead of one
+  shared file, so no terminal can present or overwrite another's authority; the
+  capability an enrolment mints is kept once the host accepts it, and a record
+  from another session generation is never presented, and the entry that opens
+  the first terminal can stage that terminal's own 0600 record in guest-private
+  storage so it never re-enrols. A session's custody may only hand off when its
+  durable selection is *switched* (every selector and object read back at its
+  committed value): a pending or abandoned commit refuses before anything is
+  adopted. `recover_before_service`
+  completes a Pending selection through the kernel's own `recover_selection`
+  before custody serves (completed, still unproven or disproven, with only
+  positive evidence completing it), `ServiceOwner::down` answers a down with the
+  kernel's own coordination (naming only this session's children, refusing a
+  foreign holder), and `ServiceOwner::retire_for` names why a session ended
+  while taking the same single release and settle.
+
+- **A committed workspace session's service outlives the call that selected it.**
+  `workspace_client::supervisor` binds the container-up handoff to a durable
+  owner: `ServingHandoff` accepts only the committed selected session (the
+  launch must have published exactly the lease its `SelectionReceipt` froze,
+  for that session, with its key still in custody) and moves the adopted
+  supervisor, prepared listener, validated facts and admitted clients into
+  `ServiceOwner`, which keeps them across the selecting call's return and
+  serves until the session stops, its owner is lost or its custody refuses.
+  `ServiceOwner::retire` stops the listener, wipes the key and settles the
+  session through its own close transaction exactly once; an interrupted
+  handoff closes its prepared candidate and reports it instead of claiming
+  custody, and `discover` names the environment's session, its durable phase
+  and any unfinished commit's lease from the checkout journal alone, so a
+  recovery or down driver in another command finds the same session with no
+  process-local registry.
+
+- Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
+
+- **A workspace activation is decided, selected and served by one owner.**
+  `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
+  `Attach` or reserves exactly the next environment generation from the frozen
+  publish inputs, so two callers cannot revoke a matching live session or create
+  two activations; a changed policy, profile, backend or artifact supersedes with
+  a fenced successor, while a target that disagrees with the published container
+  or boot, or a generation whose selection is unfinished, refuses by name. The
+  workspace commit now records the guest selection it published — binary,
+  context and credential objects, the three expected→next selector values and
+  the serving lease — in the same transaction as `active(E)`, the session
+  mapping and the session's `Borrow` attachment. That is the only commit: the
+  generic one refuses rather than publishing a generation with no durable
+  selection, a generation never *decided* refuses as unfrozen, the artifact,
+  target and context selection must be the ones the decision froze (a fresh
+  project's unselected artifact is frozen by its first publication), the
+  context document is parsed and checked field by field, and the commit requires
+  the session's own live launch — bound, qualified and rooted in the run that
+  owns it. `unfinished_selection`,
+  `Attachments::selection_switched`, `selection_recovered` (three proven
+  liveness facts *and* every selector and object read back through a
+  `SelectorReader` under `Gate(Env)` at its committed value) and
+  `selection_abandoned` (only once the exact successor is settled) complete,
+  complete-from-recovery or revoke it without ever publishing an unserved
+  generation or restoring the predecessor. Concurrent decision callers are
+  proven to reserve one generation or attach one session. One
+  session owns its listener and memory-only serving key
+  (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
+  lifetime, and refuses to publish an unbound, unqualified or stopped listener.
+  Cached locators are revalidated, and a selection stays Pending if its
+  successor loses owner or listener custody before live or recovery completion.
+  Selector reads are bound to the committed container/boot, prior values are
+  observed before receipt construction, and deserialized receipts cannot publish.
+  Transport, TLS qualification and the runner/container adapters remain with
+  #482/#483/#452.
+- **A container-mode workspace is prepared for the workspace client.** Host
+  Prepare publishes an immutable guest context and a version-locked Linux
+  Effigy into the container, outside the bind-mounted checkout. Activation
+  publishes it — `effigy container up`, a task's environment apply and the
+  workspace handoff all go through the same Prepare — so the recovery command
+  the entry refusals name really does repair the state. The context carries:
+  `/run/effigy/context/<generation>/context.json` with the exact host and guest
+  versions, the executable digest, the protocol, and the checkout,
+  environment, container and VM-boot generations it belongs to;
+  `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
+  invocations reach through `/usr/local/bin/effigy`; and, when the session
+  supplies one, a 0600 enrolment credential. The artifact family is the image's
+  platform **and** C library — a glibc image takes the `*-gnu` artifact and a
+  musl image the `*-musl` one — and an image whose libc the host cannot prove,
+  or that has no artifact for its family, refuses Prepare instead of running
+  bytes built against another C library. The digest is verified, not
+  declared: the artifact must carry a producer receipt naming its target and
+  SHA-256, a release download must match the checksum the release publishes
+  beside it, and the executable the guest will run is re-hashed in the
+  container. A guest authenticates it with one digest probe, so a
+  multi-megabyte executable never lands in a bounded command's stdout budget. A published generation and an
+  installed executable are never rewritten, so a run that started on one keeps
+  its exact bytes. Hybrid mode publishes none of this. The context document is
+  `effigy.workspace-context.v1` (contract 052 §8.2, §8.9, §8.11).
+- **Local Static and Observe reads run against the pinned snapshot.** Version,
+  the pinned task list and the pinned source identities are read from the
+  context, an immutable rendered snapshot and the mounted checkout alone: no
+  refresh, no enrolment, no host state write. The context pins the root
+  manifest, the source lock, every bundle and catalog source with its digest
+  and each composition fragment. The composed manifest is published once at
+  `/run/effigy/snapshots/<digest>/manifest.toml`, so bundle- and
+  catalog-provided tasks are readable without the guest reading a cache the
+  host did not approve. The pins whose bytes are checkout-visible are
+  digest-checked first, so a checkout that changed since Prepare refuses
+  instead of reading a snapshot the host never approved, and an
+  authority-bearing command refuses as `HostAuthorityRequired` rather than
+  enrolling.
+
+- Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
+
+- **Environment and Colima profile progress shows live state.** A container
+  environment transition is one step whose label moves with the work: while it
+  waits it names `Gate(Env)` and the holder the gate's own body records (run,
+  pid, task and process state), then each reconcile phase and what it observed
+  (the published render, the record it wrote, the live runs attached, the
+  backend effect). A refused transition shows the live holder that refused it,
+  and every frame carries the elapsed wait. `effigy container profile
+  repair|reset-runtime|resize|recreate|purge|prune-health-pid-files` run under
+  the same live step: the profile operation now running, how many Colima calls
+  it has left, and the state `colima list --json` last reported for the profile.
+  Timeouts, gate authority and repair behavior are unchanged; the lint
+  baseline for these sites is reduced to zero.
+
 - **Linux runs the operator gateway from a launch-only systemd user unit.**
   `effigy gateway setup` installs and enables
   `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
@@ -226,6 +453,47 @@ During v0.x, MINOR bumps may include breaking changes.
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No transport, guest client or command surface is wired to it yet.
+- The workspace channel binds one attachment's streams to its terminal
+  (contract 052 §8.11). Output sequence numbers are one series per stream id
+  shared by every kind on it, so a stream's stdout and stderr no longer restart
+  each other, and a retained chunk is published with its absolute log position
+  so a client's resume cursor, the frame sequence and the retained log are one
+  coordinate system across reconnects and chunk boundaries. `RetainedStreams`
+  is the kernel's own endpoint over `run::read_log`: retained streams have
+  independent logs and lengths, so an attach reports the position it consumed on
+  each stream id (`cursors`), with `cursor` as the primary default, and one
+  position for the whole connection is refused rather than skipping bytes on a
+  shorter stream or replaying them on a longer one. Negotiation covers every
+  stream and is pure, so a reconnect resumes each retained stream at its own
+  position and a replacement the host refuses leaves the working attachment's
+  reader where it was; a future cursor, a cursor for a stream the endpoint does
+  not carry, a position on a stream with no retained log, or an unreadable log
+  refuses the attach, and a position the log rotated past becomes one `gap`
+  frame naming the first missing offset, ahead of the data that resumes there —
+  even when the surviving segment is empty — so every frame on a stream keeps a
+  strictly increasing sequence. A connection that ends on a refused or malformed
+  frame releases its own secondary row, so a rejected frame cannot exhaust the
+  run's secondary slots or orphan one; an owning client is released only by its
+  own end of stream. The endpoint
+  re-checks the connection's attachment on every read. `Terminal::input`
+  receives one validated terminal input frame exactly once and
+  `Terminal::resize` the newest size with no queue behind it, fenced on the
+  attachment's own lifetime twice: the channel re-reads the row before the call
+  and the owner receives the live attachment so its last check can be
+  `Attachment::attached_observed`; a host with no terminal owner refuses both
+  instead of reporting a delivery it did not make. An inbound frame is accepted
+  only for the connection's own attach request, its own terminal stream and the
+  stream's next sequence, and an acknowledgement must be shape-only and name a
+  data frame this connection published and has not freed, so an unknown stream,
+  a foreign request, a repeated or out-of-order frame, a duplicate or stale
+  acknowledgement or a malformed payload refuses and closes with no host
+  effect. A replacement attachment drops the previous window, held chunk,
+  numbering and inbound sequence before its own cursor positions the stream,
+  so it resumes at its own cursor and cannot free the previous attachment's
+  frames; an acknowledgement releases its own stream's frames between other
+  streams' frames. The retained reader, the terminal owner and its host front
+  end, and the transport remain separate tasks.
+
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated
   environment→session record so a borrowing child or host hold is never mistaken
@@ -241,6 +509,11 @@ During v0.x, MINOR bumps may include breaking changes.
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
   spinner timing still needs an exact-candidate proof.
+- `effigy bundle sync`, `bootstrap`, and deploy provider resolution show what
+  they are waiting on as time passes: each bundle or catalog source names its
+  exact revision, a `setup` or `start` phase names its selector, and a git
+  provider fetch names its source and pin, with elapsed time on every frame.
+  Immediate outcomes stay one line.
 - Run control for every run: `effigy --run-id <key> <task>` names a run,
   `effigy runs` lists them, and `effigy run status|logs|stop <run>` inspects and
   stops one. A managed task's `--detach` returns once every workload has
@@ -298,9 +571,226 @@ During v0.x, MINOR bumps may include breaking changes.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
+- **A container render can be sealed and verified before it is applied, then
+  published by the one fenced publisher.** `effigy_kernel::objects::
+  Objects::seal_for_preflight` hands the frozen closure to one helper that mints
+  a random token, locks an owner lease (`preflight-<token>.lock`) *before*
+  creating `state/staging/preflight-<token>/` (`O_EXCL`/0600, synced content and
+  directories), verifies the tree with the kernel's closure verifier inside the
+  caller's deadline, and returns a typed `SealedPreflight` receipt (digest, token,
+  verified-at, byte/mode inventory). The calling thread performs no filesystem
+  work, takes no gate and publishes nothing: a helper that outlives its caller
+  can only write its own leased private tree, and a later call cannot race or
+  remove a live lease. `Objects::publish_sealed_desired` is the existing fenced
+  publisher consuming that receipt — same intent, objects gate and reference
+  transaction — re-verifying the tree under the gate, moving it with one
+  exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
+  than replacing), verifying any concurrent winner in full against the
+  receipt's bytes, digest and per-entry private modes (including existing
+  canonical objects and consumed-receipt replay), refusing any altered seal
+  still present even when canonical bytes already exist, and reclaiming one
+  provably dead seal artifact per publication after its own fenced commit. The
+  staging token records the minting process's pid and incarnation before any
+  file exists, so a live helper is never raced even between creating its lease
+  and locking it, and a crash in that instant leaves a lease a later publication
+  provably reclaims instead of accumulating. Otherwise removal needs positive
+  proof — an absent lease, or one that can be acquired; a lease that cannot be
+  opened or inspected leaves the tree untouched.
+  Receipt consumption is refused unless the run is owned by an environment and
+  its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  that authority. Recovery is infallible and post-commit, so residue can never
+  turn a committed publication into a failure. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical.
+  The kernel's object verifier also refuses an entry the closure digest cannot
+  name, such as an extra empty directory.
 
 ### Changed
 
+- **A container-mode guest runs Effigy through its published context and the one
+  host channel.** Static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) are answered locally from the immutable context generation and
+  never open a connection or write anything. Every command with host authority
+  is classified and sent as one typed channel request that the host re-resolves,
+  gates and journals; a host refusal is returned as an error and never falls
+  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
+  is refused in a guest because it would run a task without host authority.
+  Until a guest transport, a guest-local container observation and a published
+  session generation land, host authority reports itself unavailable with the
+  specific missing fact named, and local reads keep working.
+
+- **The workspace channel checks its pinned host identity before it speaks.**
+  A guest client compares the server identity the context pinned against the
+  identity its transport verified before writing a single byte, so a mispinned
+  peer receives no hello, version, digest or capability. A connection that dies
+  before answering is replayed under the same request id, an attach is resumed
+  by that id at the cursor the client actually consumed, and a gap never
+  advances it.
+
+- **The frozen workspace activation hands its channel to a serving owner.** The
+  environment's committed session run, listener, key and advertised locator
+  move into one owner that adopts the run durably, serves accepted connections
+  through the kernel dispatcher, and stops the listener and wipes the key on
+  stop, drop or settlement. A prepared channel published for another session is
+  refused, not served.
+
+- **A workspace session's serving custody ends when its run closes.** The
+  custody row recorded when the session run is adopted is deleted in the same
+  journal transaction that closes the run, so a settled session is no longer an
+  owner and no stale custody survives it. A crash before the close keeps the
+  row, so a successor still finds the recorded owner.
+- **No command plane shows a canned progress label.** The Q-017 live-state
+  rule is now a required lint gate rather than a migration list. A task-run
+  step names its ordinal, the exact child step it waits on and the elapsed
+  wait; every frame keeps the awaited object next to the last event, so
+  publishing a Compose progress line no longer hides the `docker compose up`
+  still running (a state capture's push frame likewise keeps its destination
+  while the finished capture task stays as its last event), and a Colima
+  profile command waits on the command now in flight — the list probe, then
+  `colima stop`, the pidfile termination, `colima status`, the managed
+  configuration or `colima start` as the recovery reports each phase,
+  with configuration preparation its own phase before the start — rather than a
+  generic recovery or a probe that already answered; a heavy admission wait names
+  the hook's decision probe and the hook's own progress line, and its immediate
+  refusals are one plain line; a teardown
+  the runtime never narrates names its phase, the runtime report it awaits and
+  the elapsed wait; and a managed TUI pane's generic start state shows its
+  elapsed wait, with the shutdown footer naming the completion's real counts.
+  `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
+  on every compiler-resolved use of a fixed-label constructor in any workspace
+  crate, including through an alias or wrapper, naming the file, the line and
+  the migration. The gate also owns the spinner crate: `indicatif` may be
+  named in one production file (the reviewed sink) and that file may build one
+  bar, so a fixed-label spinner built through `ProgressBar::no_length`,
+  `ProgressStyle::default_spinner` and `enable_steady_tick` fails at its own
+  file and line, and `clippy::disallowed_methods` rejects every bar
+  constructor as a second gate. The gate is part of `effigy validate`,
+  `effigy qa` and `effigy qa:gates`, so the normal validation path and the
+  milestone QA path both refuse a bare spinner instead of depending on someone
+  running the selector. A managed pane's start
+  clock now belongs to the process's current attempt, so an entry that queued
+  behind its prerequisite starts its own count at zero rather than showing the
+  time it spent waiting, and a silent teardown names the command's exit as the
+  thing it awaits instead of a runtime report that never comes. Each site's
+  disposition is recorded in
+  [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed session names what each entry waits for.** Every tab, the
+  `--headless` text and `status` show the entry's own dependency-derived state
+  instead of a generic waiting spinner: `front [waiting: api starting]` while
+  the resolved start order or a host process's `depends_on` blocks it,
+  `waiting for environment (containers 3/4 healthy)` during the environment
+  phase, `waiting for GET / -> 200 (12s)` for a listener's declared readiness
+  request, and `scheduled delay: 1.2s remaining` for the accepted legacy
+  `start_after_ms` — which names no dependency. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts. `effigy <task> status --json` keeps every existing field
+  and adds `waiting_on` to a waiting process plus a `waits` list of entries that
+  have not started, each with the `scope` that published it (`workload`, `host`
+  or `environment`) so the run's own phase, its workloads and its environment's
+  host processes appear in one projection. The run publishes its host graph and
+  environment identity before its phase can block, so a host tab says it waits
+  for the environment (and its healthy container count) during bring-up and is
+  announced as started only once it actually is. Each publisher of the
+  environment's entries — the run before readiness, the host planner after —
+  stages a complete snapshot and commits it with one atomic record, so readers
+  always resolve a whole snapshot: a write that races the handoff never
+  replaces the other's state, and the window before the commit still shows the
+  run's environment waits instead of announcing a host as started. The
+  environment phase keeps its own reserved record, so a host an operator names
+  `environment` keeps its own wait, and the run's owner reads its container
+  counts from that record — the one the container readiness publisher writes. A
+  read accepts a snapshot only while it is still the visible one, re-resolving
+  one a commit retires mid-read, so an in-flight tab or status never observes a
+  missing or partial snapshot across the handoff. A host process that declares
+  no dependency of its own still names its real wait while the plan launches
+  entries one at a time in its resolved order — the launch being performed now
+  and that entry's actual phase, `jobs [waiting: api starting]` — reported as
+  its own `launch` identity in JSON and never attributed as a dependency. A
+  launch that aborts the plan marks every entry it never started terminal
+  (`not started — plan stopped after api failed: …500…`), so no wait outlives
+  the plan, a restart names the reader readiness it re-confirms
+  (`waiting for api (running)`) while publishing only the entries it replaces,
+  and a host nothing has observed yet reports no status at all, so neither the
+  headless text nor a tab claims it is starting before the bring-up launched
+  it. A non-listener's launch stops holding the scheduler as soon as it
+  returns, so a queued entry never names an entry that already finished.
+  Only a dependent that needs a failed entry's readiness loses it: a workload
+  that only needed its predecessor to start keeps going after that predecessor
+  exits non-zero, even inside its own scheduled delay. The environment phase's
+  record is terminal on every exit (settled on success, stop or
+  nothing-to-await, attributed on failure or timeout), and a new session resets
+  it at its own boundary — for every named environment, with or without host
+  processes, before the run starts polling it, and before a bring-up composes —
+  so an interrupted prior run's counts are never projected into the new run; the
+  reset never touches the staged host snapshot. A host
+  failure the planner published
+  survives the run's generic `up` exit: the run's error names the failing entry
+  and its observed status. A wait is recorded as
+  settled when it ends, and only a changed meaning or a live wait's refresh
+  writes a record, so a settled entry is never rewritten on an owner-loop tick
+  and a tab or a status never keeps a wait the entry has left behind. Record
+  paths encode an accepted entry or scope name injectively, so two distinct
+  names (`api-v1` and `api v1`, or the task/profile pairs `a-b`/`c` and
+  `a`/`b-c`) never share a record and `status` reports each one.
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Unlock and lock name the machine vault write gate until that
+  acquire returns (up to 60s), then the decrypt or lock sub-step. Secret
+  values and credential paths stay out of those labels. JSON, piped and quiet
+  output stay silent. The feedback-spinner inventory dropped the four owned
+  call sites.
+- Cache and volume list/prune and workspace context, permission and shutdown
+  waits now draw through the same live progress source: the current volume,
+  guest sub-step or system, known count, elapsed wait and last event or the
+  exact inspect, remove, identity, path or `container down` probe. Existing
+  piped workspace waiting lines remain unchanged. Nested invocations still
+  hide the CLI header;
+  a nested cache or volume command on a terminal now draws the same live step
+  as a direct one. The feedback-spinner inventory dropped the two owned call
+  sites.
+
+- Workspace guest publication now completes as a journalled obligation under
+  the environment activation gate before publishing active or attaching task
+  holders. Concurrent prepares and stops serialize; interrupted publication
+  keeps immutable generations and cannot report a successful activation.
+
+- Explicitly selected non-default workspace containers receive the same pinned
+  guest preparation and entry identity verification as the default workspace.
+
+- Workspace guest reads and publication target the host-verified full container
+  id; configured hostnames and id prefixes cannot reuse another container's
+  context. Compose mount isolation resolves interpolated long-form named-volume
+  sources before checking their host bind paths, refuses external or unprovable
+  volume sources, and handles `.env` literal comments and quotes without guessing
+  at unsupported dotenv expansion or escape syntax.
+
+- **Workspace entry verifies the prepared guest instead of installing one.**
+  `effigy exec`, `effigy container shell` and a workspace task no longer
+  download, build or copy Effigy into the workspace container. They read the
+  published context and refuse before the command runs when it is missing,
+  pins another version, names an executable that is not installed, or belongs
+  to another container, VM boot or environment generation, naming
+  `effigy container up` to re-prepare. Hybrid mode, which declares no operator
+  workspace, needs none of it. Container-mode Prepare owns acquisition and
+  consumes a produced artifact only: it never builds from a checkout at
+  consumer runtime (contract 052 §8.2, §8.9).
+- **A workspace container no longer sees the checkout's host-only state.** The
+  checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
+  previous generation and key wraps) are masked with empty read-only volumes
+  applied last, so an entry the source Compose file already declared cannot be
+  mounted over them. Every Compose input file is rewritten and validated, not
+  only the first, because an overlay — later or intermediate — replaces an entry
+  at the same guest target: a state root bound at another target in any overlay
+  is refused, and an overlay entry at a masked target is stripped while the
+  masks are appended to the last file that defines the service. The complete effective mount set —
+  short and long form, injected and retained — is validated with Compose
+  interpolation expanded and bind-backed named volumes resolved through their
+  driver options: a host state root, an ancestor of one (such as
+  `<checkout>/.effigy`) mounted anywhere but the masked checkout mount, a second
+  source for one guest path, an entry whose source cannot be proven, or anything
+  overlapping the guest's own `/run/effigy` store is refused by name (contract
+  052 §7.3 families 1 and 10-11, §8.10 R1).
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as
@@ -360,6 +850,26 @@ During v0.x, MINOR bumps may include breaking changes.
   with ✓ or ✗ naming the failure. On a terminal, a warning or note from source
   acquisition prints above the spinner, and `--json` writes nothing to stderr
   for it.
+- **Gateway setup and operator steps show the phase they are in.** `gateway up`
+  and `gateway down` show the supervisor admitting the run, then the daemon's
+  own reported status and the blocker that status carries while it self-tests
+  or winds down. `gateway up` and `gateway setup` name each route already in the
+  route table as they read it, with its position and certificate state; they
+  read the published table and never publish a route, and a table that cannot
+  be read ends that step with the read error while the command itself still
+  succeeds. That step performs only the reads it names — the table snapshot and
+  each certificate file — so mkcert and trust-store state stay in `gateway
+  status` instead of blocking an already-started gateway. `gateway setup` probes
+  each low-port address in turn and names it as
+  its outcome lands (bound, already in use, denied); a refusal stops at that
+  address with the probe's own sentence. The platform setup action names each
+  operation as it runs too — the resolver files, the loopback launch job, the
+  privileged bind broker, the loopback addresses, or the DNS unit and low-port
+  capability on Linux — including after the administrator prompt, when the
+  elevated child reports each phase back through its own captured stdout. Each
+  step names the exact port, record, route or suffix list it awaits, with
+  elapsed time, and still ends with one line. `--json` and piped output are
+  unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations
@@ -393,6 +903,47 @@ During v0.x, MINOR bumps may include breaking changes.
   the child is alive the wait has no deadline and reports progress; once the
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
+- **A host run in a linked worktree reaches that worktree's database.** A
+  scoped checkout answers its backing services on its own apex, and everything
+  Effigy delivers to a host run receives the scoped alias where the
+  declaration carries the canonical one - `[tasks.<name>].env`, an env-schema
+  or `.env` value, a declared secret, a sequence step's environment, a managed
+  session's (`mode = "tui"`) process plan and setup steps, and a configured
+  test suite's own environment, command and `setup`/`teardown` steps - so
+  application configuration keeps `postgres.<apex>` and the run still reaches
+  this checkout's own database. Value precedence is unchanged, a primary
+  checkout keeps its declared name, and a `--plan` render refuses nothing (a
+  task plan shows the aliases it would deliver). Only an endpoint is rewritten
+  - the whole value, a URL authority host, or `host:port` - so text that merely
+  names the alias keeps its bytes, and Effigy never rewrites a command body. URL
+  credentials are never the host: a name that appears in `user:password@`, or a
+  URL naming another server, keeps its bytes and proves nothing.
+  Before the run starts - including every alias a selected test suite would
+  use, before any suite runs - Effigy proves the scope's route belongs to this
+  checkout and publishes an upstream port; otherwise it refuses with the
+  alias, the service and `effigy container up <NAME>`, and the command never
+  runs. The proof reads the endpoints Effigy delivered, so text that merely
+  mentions the alias proves nothing, and a suite this run does not select is
+  never proved. It also asks the recorded upstream to accept a connection, so a
+  route a stopped stack left behind refuses instead of authorizing a run that
+  cannot connect, and a managed session proves only the processes it places on
+  the host. A value the child would otherwise inherit unchanged - an exported
+  `DATABASE_URL`, say - is resolved and proved the same way for a host task, a
+  sequence step, a managed host workload and a selected host suite with its
+  lifecycle, so the caller's own environment cannot reach another checkout's
+  service; each child boundary decides its own precedence, so a `setup` step's
+  assignment — and a key that only appears in a command's text — hides nothing
+  from the workload or suite command that inherits the value, and a managed
+  session decides inherited values per host workload. A worktree's first host run records the
+  checkout's scope token before resolving, so a fresh worktree is scoped rather
+  than canonical; a container registry this scoped checkout declares but Effigy
+  cannot read is refused instead of falling back to the canonical names; and a
+  sensitive value the task's or a sequence step's own environment overrides is
+  dropped rather than delivered, so it is neither resolved nor proved. A
+  container-bound run is untouched: its target's own network already answers
+  both names. A checkout that names no default container environment still
+  resolves. See
+  [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
   `${host_process.<name>.internal_url}`, `${apex}`, `${domains}` and
@@ -454,9 +1005,84 @@ During v0.x, MINOR bumps may include breaking changes.
   and `mc ready local` health check, so moving a service is a catalog-name
   change. Existing volumes and data are untouched; there is no migration. See
   [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#service-catalog-packs-retired-sources-added).
+- Release gates and stages, and state apply and capture, show live progress
+  that names the current gate, layer or capture, its known count, and the exact
+  command or source they wait on, in place of one fixed label. JSON, piped and
+  quiet output are unchanged.
+
+- `container up` progress now follows the bring-up's actual state. Readiness
+  counts the healthy services (`2/3`) and names the first one still failing
+  with its own problem; each waiting service shows its attempt and last check
+  output. A runtime that does not answer the health read names that exact read
+  with its error. Activation shows the Compose call it waits on and the last
+  runtime line it read, and each Compose child step moves with the runtime's
+  reports instead of holding one fixed label. Integration stages count the
+  stages finished (`3/8`) and name the one now running; the gateway-route stage
+  names the runtime read polling the declared service ports and the blocker it
+  last reported, with the service and domain that blocker knows; the work after
+  that poll — confirming the primary container's binding, resolving the declared
+  routes, writing the route table, and the timeout diagnostic's read of exited
+  containers — is reported as its own stages, and entering a new stage clears
+  the previous stage's blocker; shared services name the service they are
+  awaiting, and entering the next service replaces the previous one's subject
+  and event. Every frame carries elapsed time. JSON, piped and
+  quiet output stay silent. Rendering is a single finished line, not a spinner.
+  A readiness refusal carries its machine-readable `waiting_on` list in
+  `--json`: one entry per service still unready, with its problem, and one for
+  a health read the runtime did not answer, naming that read (`container_list`
+  or `containers_inspect`), its probe number and, for an inspect, the container
+  names it covered. A failed read keeps that identity in the retry frame and in
+  the timeout diagnostic too. Shared-service waits name the
+  machine gate, the runtime container read, the render publication, or the
+  `docker compose up` they are in. A readiness frame names which of the probe's
+  two runtime reads is in flight — the project's container list, then the
+  inspect of the names that list returned, with those names shown — alongside
+  its probe number, budget and the last known counts and event. A service whose
+  health regresses after reporting healthy opens a fresh step with its own
+  attempt and last check output. When an exited service's own last log line is
+  read for the timeout diagnostic, each read runs under a live step naming the
+  runtime container it is issued against (which can differ from the service
+  name when Compose declares `container_name`), and a read the runtime does not
+  answer is reported rather than shown as the finished probe. A declared health check names its probe and
+  attempt. A
+  failed shared-service step, and a declared health check that times out, carry
+  the same `waiting_on` list in `--json` and keep their text unchanged.
+- `container up` activation and preparation report their own state instead of a
+  fixed label. Compose's whole-stack step moves to the restart-policy read once
+  Compose returns, and a shared service's step does the same, so a stalled
+  `restart: unless-stopped` read never shows a finished Compose call. The
+  creation-time policy load names the preparation stage now running (checkout
+  identity, declaration with ports and loopback, render inputs, the second
+  declaration resolution that follows them, render, mount sources), and
+  environment activation draws only the transition's own live step instead of a
+  second fixed one. A declared
+  `[containers.<NAME>.health]` check that answers a definite status outside
+  `2xx`/`3xx` is refused at once with the status it observed and the primary
+  container's last output, instead of spending the whole health budget on an
+  answer waiting cannot change (effigy#455). Only a complete status line counts
+  as that answer: the probe reads one bounded line across partial reads, so a
+  split response or a peer that closes after a prefix keeps the budgeted wait
+  instead of reporting readiness or a mismatch it never observed. That
+  container is the identity the
+  runtime's own row reports for the service, so an explicit Compose
+  `container_name` reads its own logs and is the one the diagnostic and
+  `waiting_on` name. That identity is carried from the readiness probe's own
+  observation, so naming it costs no extra runtime read; a wait that observed
+  no services reads it once, under a live step naming the runtime row it waits
+  on; the failed container's log tail is read under its own named step too, and
+  a log read the runtime does not answer is reported as unavailable. When the runtime cannot name a container, the diagnostic describes the
+  environment and its primary service instead of calling the environment a
+  container. The restart-policy apply that follows Compose names
+  its own stages — the Compose declaration read, the runtime inventory read,
+  then the update — for the whole stack and for each shared service, so a
+  stalled read never claims an update was sent.
 
 ### Removed
 
+- The fixed-label spinner API: `Renderer::spinner` and `SpinnerHandle`. A step
+  is driven by a `ProgressSource` (`steps::live_step`) or is one
+  `steps::finish_line`, so a bare spinner with a canned label cannot be
+  constructed.
 - The gateway's dead-route sweep, certificate deletion on `down`, the
   route-table lock and the route's scope token.
 - The exec-ready probe and its recovery restart, restart recovery of exited
@@ -488,6 +1114,83 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
+
+- A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
+
+- Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
+
+- The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
+
+- A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
+
+- A direct foreground task stays in memory custody and records no `latest` or
+  `history` entry, even when the user config declares a `[programs]` block.
+  Only a block that puts a shim on the run's `PATH` (program absent, or
+  `force = true`) moves the run to durable custody, since foreground runs
+  carry no shims. `effigy tasks status` for such a task now reports
+  `not-recorded` again.
+- `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
+- A floating Git bundle source updates on `dev` again. The remote check read
+  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
+  so every check kept the old pin without a warning. The check now reads the
+  object id and ref name with or without that TAB.
+
+- Database seed and dump keep the database password out of every spawned
+  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
+  variable name and never the value, and each exec sources it from a private
+  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
+  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
+  receipt or a diagnostic on either the checkout-local or the shared Compose
+  route. Target resolution, the selected Compose project, seed/dump results,
+  reports and cleanup are unchanged.
+
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
+
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
+- Linux workspace artifact builds select the requested Rust architecture/libc
+  target and retain a separate receipt beside each target binary. Missing target
+  libraries or linkers refuse the build before it can attest an artifact.
+
+- Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
+  before handoff and authenticates the bytes launched through that entry.
 
 - `effigy gateway setup` settles on Linux after it installs the low-port
   capability. The installed `effigy` then carries
@@ -530,6 +1233,36 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route; a generation that fails that check is
+  settled and its route withdrawn, and a withheld listener's `depends_on`
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
+  (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already
@@ -738,6 +1471,15 @@ During v0.x, MINOR bumps may include breaking changes.
   unmounted volume or a permission refusal never prunes routes.
 - A repository task named `fmt` runs again for `effigy fmt`, and `effigy
   changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
+- Shared-service and alias refusals suggest the environment's up command in the
+  order the grammar accepts (`effigy container <NAME> up`); the previous
+  `effigy container up <NAME>` form never parsed.
 
 ## [0.14.1] - 2026-10-08
 

@@ -128,6 +128,8 @@ pub enum ProcessEventKind {
     Stderr,
     StdoutChunk,
     StderrChunk,
+    /// JSON-encoded writer-parsed StyledChunk; never raw terminal controls.
+    Styled,
     Exit,
 }
 

@@ -5,6 +5,9 @@
 //! and a command that uses an environment holds it through a session run
 //! (or, for a managed run, through its own task run).
 
+#[path = "environment_workspace.rs"]
+pub(in crate::runner) mod workspace;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -262,6 +265,7 @@ pub(in crate::runner) fn reconcile(
 /// The activation run: publishes the generation and attaches `holders`.
 pub(in crate::runner) fn activate(
     bring_up: &BringUp,
+    policy: &EffectiveContainerPolicy,
     holders: &[RunId],
 ) -> Result<(), RunnerError> {
     let ctx = context(&bring_up.repo_root)?;
@@ -271,7 +275,11 @@ pub(in crate::runner) fn activate(
         .chain(requested_holder().iter())
         .map(|run| (*run, mode))
         .collect::<Vec<_>>();
-    engine::activate(&ctx, &bring_up.env, &holders).map_err(error)
+    engine::activate_with(&ctx, &bring_up.env, &holders, |run| {
+        super::workspace_command::publish_workspace_guest_in(&bring_up.repo_root, policy, run)
+            .map_err(|error| EnvError::Invalid(error.to_string()))
+    })
+    .map_err(error)
 }
 
 /// A command that changes part of a running environment in place - a

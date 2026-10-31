@@ -6,5 +6,6 @@ mod init_migrate_tests;
 mod parsing_resolution_tests;
 mod proof_matrix_tests;
 mod rhai_surface_tests;
+mod scoped_host_database_alias_tests;
 mod secrets_tests;
 mod task_env_tests;

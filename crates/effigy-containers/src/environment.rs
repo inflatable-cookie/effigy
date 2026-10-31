@@ -15,6 +15,8 @@ mod remote;
 #[cfg(test)]
 mod tests;
 mod view;
+mod workspace_activation;
+pub use workspace_activation::{WorkspaceActivation, WorkspaceBegin};
 
 pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,
@@ -22,7 +24,7 @@ pub use backend::{
     EnvironmentBackend, ProjectResources, Workload,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
-pub use ops::{activate, down, reconcile, reset, Applied, Up};
+pub use ops::{activate, activate_with, down, reconcile, reset, Applied, Up};
 pub use reconcile::{
     EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, CLEANUP_BUDGET,
     GATE_WAIT, RUN_BUDGET, STOP_EFFECT,

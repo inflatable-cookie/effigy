@@ -217,13 +217,26 @@ pub enum DataTargetSelectionError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DatabaseService {
     pub name: String,
     pub kind: DatabaseServiceKind,
     pub password: String,
     pub declared_databases: Vec<String>,
     pub primary_database: Option<String>,
+}
+
+impl fmt::Debug for DatabaseService {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DatabaseService")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("password", &"<redacted>")
+            .field("declared_databases", &self.declared_databases)
+            .field("primary_database", &self.primary_database)
+            .finish()
+    }
 }
 
 impl DatabaseService {
@@ -452,6 +465,15 @@ impl DatabaseServiceKind {
             Self::MariaDb => "mysqldump",
         }
     }
+
+    /// The variable the database client reads its password from. Effigy passes
+    /// the name through and keeps the value out of every spawned argv.
+    pub fn password_env_name(self) -> &'static str {
+        match self {
+            Self::Postgres => "PGPASSWORD",
+            Self::MariaDb => "MYSQL_PWD",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -616,14 +638,32 @@ pub struct DataDumpPlan {
     pub artifact_handoff: Option<ArtifactDataHandoff>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DatabaseCommandPlan {
     pub service: String,
     pub kind: DatabaseServiceKind,
     pub database: String,
     pub argv: Vec<String>,
+    /// Names whose values accompany the command in the spawned environment,
+    /// never in its argv. A name-only passthrough (`-e NAME`) delivers them.
+    pub credential_env: BTreeMap<String, String>,
     pub stdin: Option<PathBuf>,
     pub stdout: Option<PathBuf>,
+}
+
+impl fmt::Debug for DatabaseCommandPlan {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DatabaseCommandPlan")
+            .field("service", &self.service)
+            .field("kind", &self.kind)
+            .field("database", &self.database)
+            .field("argv", &self.argv)
+            .field("credential_env_names", &self.credential_env_names())
+            .field("stdin", &self.stdin)
+            .field("stdout", &self.stdout)
+            .finish()
+    }
 }
 
 impl DatabaseCommandPlan {
@@ -638,9 +678,20 @@ impl DatabaseCommandPlan {
             kind,
             database: database.into(),
             argv,
+            credential_env: BTreeMap::new(),
             stdin: None,
             stdout: None,
         }
+    }
+
+    /// Carry the database client's password by variable name instead of argv.
+    pub fn credential(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.credential_env.insert(name.into(), value.into());
+        self
+    }
+
+    pub fn credential_env_names(&self) -> Vec<&str> {
+        self.credential_env.keys().map(String::as_str).collect()
     }
 
     pub fn stdin(mut self, path: PathBuf) -> Self {
@@ -660,12 +711,9 @@ pub fn database_dump_command(
     password: impl AsRef<str>,
     database: impl AsRef<str>,
 ) -> DatabaseCommandPlan {
-    let password = password.as_ref();
     let database = database.as_ref();
     let argv = match kind {
         DatabaseServiceKind::Postgres => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={password}"),
             "pg_dump".to_owned(),
             "-U".to_owned(),
             "postgres".to_owned(),
@@ -675,8 +723,6 @@ pub fn database_dump_command(
             "--no-privileges".to_owned(),
         ],
         DatabaseServiceKind::MariaDb => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={password}"),
             "mysqldump".to_owned(),
             "-uroot".to_owned(),
             "--single-transaction".to_owned(),
@@ -687,6 +733,7 @@ pub fn database_dump_command(
         ],
     };
     DatabaseCommandPlan::new(service, kind, database, argv)
+        .credential(kind.password_env_name(), password.as_ref())
 }
 
 pub fn database_seed_reset_command(
@@ -695,12 +742,9 @@ pub fn database_seed_reset_command(
     password: impl AsRef<str>,
     database: impl AsRef<str>,
 ) -> DatabaseCommandPlan {
-    let password = password.as_ref();
     let database = database.as_ref();
     let argv = match kind {
         DatabaseServiceKind::Postgres => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={password}"),
             "psql".to_owned(),
             "-v".to_owned(),
             "ON_ERROR_STOP=1".to_owned(),
@@ -712,8 +756,6 @@ pub fn database_seed_reset_command(
             "DROP SCHEMA public CASCADE; CREATE SCHEMA public;".to_owned(),
         ],
         DatabaseServiceKind::MariaDb => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={password}"),
             "mysql".to_owned(),
             "-uroot".to_owned(),
             "-e".to_owned(),
@@ -721,6 +763,7 @@ pub fn database_seed_reset_command(
         ],
     };
     DatabaseCommandPlan::new(service, kind, database, argv)
+        .credential(kind.password_env_name(), password.as_ref())
 }
 
 pub fn database_seed_import_command(
@@ -729,12 +772,9 @@ pub fn database_seed_import_command(
     password: impl AsRef<str>,
     database: impl AsRef<str>,
 ) -> DatabaseCommandPlan {
-    let password = password.as_ref();
     let database = database.as_ref();
     let argv = match kind {
         DatabaseServiceKind::Postgres => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={password}"),
             "psql".to_owned(),
             "-v".to_owned(),
             "ON_ERROR_STOP=1".to_owned(),
@@ -743,15 +783,12 @@ pub fn database_seed_import_command(
             "-d".to_owned(),
             database.to_owned(),
         ],
-        DatabaseServiceKind::MariaDb => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={password}"),
-            "mysql".to_owned(),
-            "-uroot".to_owned(),
-            database.to_owned(),
-        ],
+        DatabaseServiceKind::MariaDb => {
+            vec!["mysql".to_owned(), "-uroot".to_owned(), database.to_owned()]
+        }
     };
     DatabaseCommandPlan::new(service, kind, database, argv)
+        .credential(kind.password_env_name(), password.as_ref())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

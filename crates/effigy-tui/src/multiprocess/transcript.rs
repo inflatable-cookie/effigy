@@ -22,14 +22,27 @@ pub(super) fn export_active_process_transcript(state: &SessionState) -> io::Resu
 }
 
 pub(super) fn render_log_transcript(logs: &VecDeque<LogEntry>) -> String {
-    let mut rendered = Vec::new();
+    let mut rendered = String::new();
+    let mut previous_typed = false;
     for entry in logs {
-        rendered.extend(format_log_entry_lines(entry));
+        let typed = entry.styles.is_some();
+        if !rendered.is_empty() && !(previous_typed && typed) && !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        if typed {
+            rendered.push_str(&entry.line);
+        } else {
+            rendered.push_str(&format_log_entry_lines(entry).join("\n"));
+        }
+        previous_typed = typed;
     }
-    rendered.join("\n")
+    rendered
 }
 
 fn format_log_entry_lines(entry: &LogEntry) -> Vec<String> {
+    if entry.styles.is_some() {
+        return vec![entry.line.clone()];
+    }
     split_log_lines(&entry.line)
         .into_iter()
         .map(|line| match entry.kind {
@@ -58,14 +71,17 @@ mod tests {
     fn transcript_preserves_plain_stdout_and_stderr() {
         let logs = VecDeque::from([
             LogEntry {
+                styles: None,
                 kind: LogEntryKind::Stdout,
                 line: "ready".to_owned(),
             },
             LogEntry {
+                styles: None,
                 kind: LogEntryKind::Stderr,
                 line: "warning".to_owned(),
             },
             LogEntry {
+                styles: None,
                 kind: LogEntryKind::Exit,
                 line: "code=1".to_owned(),
             },

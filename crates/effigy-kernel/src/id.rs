@@ -500,11 +500,39 @@ impl fmt::Display for GateName {
         f.write_str(&self.0)
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Digest(pub [u8; 32]);
 impl Digest {
     pub fn of(bytes: &[u8]) -> Self {
         Self(Sha256::digest(bytes).into())
+    }
+    /// Lowercase hex, exactly as a stored digest, a guest object name or a pin
+    /// is written. Never a credential: a digest is public evidence.
+    pub fn hex(&self) -> String {
+        hex(&self.0)
+    }
+    /// Accept only the exact lowercase 64-hex form `hex` emits. Any other
+    /// spelling is refused rather than normalized, so one digest has one name.
+    pub fn parse_hex(text: &str) -> Option<Self> {
+        let text = text.strip_prefix("sha256:").unwrap_or(text);
+        if text.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for (index, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+            let digit = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                _ => None,
+            };
+            bytes[index] = (digit(pair[0])? << 4) | digit(pair[1])?;
+        }
+        Some(Self(bytes))
+    }
+}
+impl fmt::Display for Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.hex())
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

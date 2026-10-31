@@ -67,6 +67,7 @@ impl<'a> Run<'a> {
             Some(self.id),
             None,
             None,
+            None,
         )?;
         if !detached && !run.root.is_machine() && run.ancestor_closure.is_none() {
             run.ancestor_closure = self.checkout_closure_pin()?;

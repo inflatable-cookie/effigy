@@ -9,7 +9,7 @@
 //! state separated by container profile. Shutdown withdraws the route before
 //! stopping the recorded child process group.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -39,11 +39,19 @@ use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::EngineSession;
 
 mod kernel_run;
+// #458's per-entry waits: the run publishes the phase's boundary and the host
+// graph before it starts polling, and both its own boundary and the plan's
+// bring-up use this one model.
+mod waits;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
     start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
-    HostProcessStopReport,
+    HostPaneIdentity, HostPaneObservation, HostProcessStopReport,
+};
+pub(in crate::runner) use waits::{
+    attributed_environment_failure, begin_environment_phase, run_host_activation, HostActivation,
+    HostWaitGraph, ReadinessOutcome,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -74,8 +82,13 @@ const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(30);
 pub(super) const SUPERVISOR_ACTIVATION_PUBLICATION_BOUND: Duration = Duration::from_secs(10);
 #[cfg(debug_assertions)]
 const START_PUBLICATION_DELAY_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS";
+/// Fixture override for the closed-port progress interval. Debug builds only,
+/// and inert unless the suite asks for it: a proof about the progress evidence
+/// cannot wait thirty seconds for the first line.
+#[cfg(debug_assertions)]
+const START_PROGRESS_INTERVAL_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_PROGRESS_INTERVAL_MS";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostProcessRuntimeSpec {
     schema: String,
@@ -83,6 +96,8 @@ struct HostProcessRuntimeSpec {
     runtime_generation: String,
     cwd: PathBuf,
     env: BTreeMap<String, String>,
+    #[serde(default)]
+    ansi_front: bool,
     listener: Option<EffectiveManagedHostListener>,
     owner: String,
     dependencies: Vec<HostProcessDependency>,
@@ -114,6 +129,10 @@ struct HostProcessRuntimeSpec {
     /// The state home this run's checkout journal was opened under.
     #[serde(default)]
     state_home: PathBuf,
+    #[serde(skip)]
+    output: Option<effigy_kernel::custody::CanonicalOutput>,
+    #[serde(skip)]
+    run_id: Option<effigy_kernel::id::RunId>,
 }
 
 /// The stop report a supervisor writes after it settles its own run: the
@@ -141,6 +160,10 @@ struct HostProcessDependency {
 struct HostListenerState {
     schema: String,
     owner: String,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    custody_nonce: Option<String>,
     runtime_generation: String,
     generation: String,
     status: String,
@@ -158,6 +181,13 @@ struct HostListenerState {
     /// Why the last generation failed, in one line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     diagnostic: Option<String>,
+    /// The status the listener answered when its readiness declared another
+    /// one: a definite refusal, not a transient one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observed_status: Option<u16>,
+    /// Latest supervisor probe, independent of whether a route was published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    probe: Option<ListenerProbeState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +203,87 @@ pub(in crate::runner) struct ManagedHostListenerResult {
     pub(in crate::runner) route_domain: String,
     pub(in crate::runner) route_tls: bool,
     pub(in crate::runner) state_file: String,
+}
+
+/// One managed listener whose own route was withheld: the process, the route
+/// it would have served, and the bounded evidence its child left behind.
+///
+/// A listener failure is decided per declared route target, so it never speaks
+/// for the container's routes or for another listener's (effigy#455).
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedHostListenerFailure {
+    pub name: String,
+    pub status: String,
+    pub declared_route_domain: String,
+    /// `None` when the listener never published its route domain.
+    pub route_domain: Option<String>,
+    /// The HTTP status the listener answered when its readiness declared
+    /// another one; `None` when the failure was not a status mismatch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_status: Option<u16>,
+    /// The bounded, redacted reason the listener failed readiness.
+    pub detail: String,
+    /// The bounded, redacted tail of the child's own output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tail: Option<String>,
+    pub log: String,
+}
+
+impl ManagedHostListenerFailure {
+    /// One line a person reads: the listener, its route, why it failed, and
+    /// the status it was observed answering when there was one.
+    pub fn summary(&self) -> String {
+        let route = self
+            .route_domain
+            .as_deref()
+            .unwrap_or(self.declared_route_domain.as_str());
+        let mut line = format!(
+            "host listener `{}` kept route {route} withheld: {}",
+            self.name, self.detail
+        );
+        if let Some(status) = self.observed_status {
+            line.push_str(&format!(" (observed HTTP {status})"));
+        }
+        line
+    }
+}
+
+/// What starting an environment's managed host listeners produced: the
+/// listeners that published their own verified route, and the ones that did
+/// not. Exposure is decided per entry, so one failure never withdraws another
+/// verified route.
+#[derive(Debug, Clone, Default, Serialize)]
+pub(in crate::runner) struct HostProcessListenerReport {
+    pub(in crate::runner) ready: Vec<ManagedHostListenerResult>,
+    pub(in crate::runner) failures: Vec<ManagedHostListenerFailure>,
+}
+
+impl HostProcessListenerReport {
+    /// The refusal a caller that must not continue with a withheld route
+    /// reports. One withheld listener is the typed readiness refusal, which
+    /// keeps the observed status and the child's own output; several are one
+    /// message naming each route.
+    pub(in crate::runner) fn refusal(&self) -> Option<RunnerError> {
+        match self.failures.as_slice() {
+            [] => None,
+            [failure] => Some(RunnerError::ManagedHostReadiness {
+                process: failure.name.clone(),
+                diagnostic: match failure.output_tail.as_deref() {
+                    Some(tail) => format!("{}; last child output: {tail}", failure.detail),
+                    None => failure.detail.clone(),
+                },
+                observed_status: failure.observed_status,
+            }),
+            failures => {
+                let mut message = failures[0].summary();
+                for failure in failures.iter().skip(1) {
+                    message.push('\n');
+                    message.push_str(&failure.summary());
+                }
+                Some(RunnerError::task_invocation(message))
+            }
+        }
+    }
 }
 
 /// One restarted host process: its new run, whether it was restarted because
@@ -433,7 +544,10 @@ fn dependency_env_prefix(name: &str) -> String {
     format!("EFFIGY_MANAGED_HOST_{normalized}")
 }
 
-fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), RunnerError> {
+pub(in crate::runner) fn write_private_json(
+    path: &Path,
+    value: &impl Serialize,
+) -> Result<(), RunnerError> {
     let rendered = serde_json::to_vec_pretty(value)
         .map_err(|error| RunnerError::task_invocation_failed_render(path, error))?;
     let temp = path.with_extension(format!(
@@ -484,31 +598,228 @@ fn wait_for_listener_activation(
     }
 }
 
-/// The console progress line for a listener that is alive and has not opened
-/// its port yet: the phase has no deadline, and the line says what ends it.
-fn listener_start_progress(process_name: &str, elapsed: Duration) -> String {
-    format!(
-        "[host process] listener `{process_name}` is still starting after {}s: the port is closed and the child is running, so its readiness timeout has not started; `effigy container <env> down` stops it",
-        elapsed.as_secs()
-    )
+/// Bytes of a child's log this wait reads before bounding the tail it names.
+const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
+/// Maximum UTF-8 bytes retained from already-redacted child output. Readers
+/// select a contiguous suffix and never apply another redactor.
+const LISTENER_OUTPUT_TAIL_BYTES: usize = 320;
+/// Characters of a listener's failure detail a report keeps.
+pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
+
+/// The last of a listener child's own output, redacted and bounded, for a
+/// progress line or a refusal.
+///
+/// The supervisor appends its own `[effigy host-process]` lines to the same
+/// log, so those are dropped here: an operator reading a failure wants the
+/// child's words. A log that is missing, a symlink, or empty contributes
+/// nothing.
+///
+/// Read only an identity-proven canonical file. Excerpts are a contiguous
+/// bounded suffix of one child block; no ANSI interpreter or second redactor
+/// transforms persisted bytes or joins text across supervisor messages.
+fn listener_output_tail(log_path: &Path) -> Option<String> {
+    use std::io::{Read as _, Seek, SeekFrom};
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+    let proof = effigy_kernel::custody::MergedLog::identity(log_path).ok()?;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(log_path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file()
+        || metadata.dev() != proof.identity.device
+        || metadata.ino() != proof.identity.inode
+    {
+        return None;
+    }
+    let len = proof.length;
+    if metadata.len() < len {
+        return None;
+    }
+    let start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
+    let read_from = start.saturating_sub(1);
+    file.seek(SeekFrom::Start(read_from)).ok()?;
+    let mut raw = vec![0; (len - read_from) as usize];
+    file.read_exact(&mut raw).ok()?;
+    if !effigy_kernel::custody::MergedLog::identity(log_path)
+        .is_ok_and(|after| after.identity == proof.identity)
+    {
+        return None;
+    }
+    if start > 0 {
+        let begins_line = raw.first() == Some(&b'\n');
+        raw.remove(0);
+        if !begins_line {
+            let newline = raw.iter().position(|byte| *byte == b'\n')?;
+            raw.drain(..=newline);
+        }
+    }
+    let text = std::str::from_utf8(&raw).ok()?;
+    if text.chars().any(|ch| ch.is_control() && ch != '\n') {
+        return None;
+    }
+    listener_child_block(text)
+}
+
+fn listener_child_block(text: &str) -> Option<String> {
+    let mut block_start = 0;
+    let mut last_child_block = None;
+    let mut position = 0;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("[effigy host-process]") {
+            if position > block_start {
+                let block = &text[block_start..position];
+                if !block.trim().is_empty() {
+                    last_child_block = Some(block);
+                }
+            }
+            block_start = position + line.len();
+        }
+        position += line.len();
+    }
+    let block = if !text[block_start..position].trim().is_empty() {
+        &text[block_start..position]
+    } else {
+        last_child_block?
+    };
+    if block.trim().is_empty() {
+        return None;
+    }
+    let mut begin = block.len().saturating_sub(LISTENER_OUTPUT_TAIL_BYTES);
+    while !block.is_char_boundary(begin) {
+        begin += 1;
+    }
+    Some(block[begin..].to_owned())
+}
+
+/// How often a listener whose port is still closed reports progress. The
+/// production interval is thirty seconds; a fixture may shorten it so a proof
+/// can observe the emitted line without waiting one out.
+fn listener_progress_interval() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(millis) = std::env::var(START_PROGRESS_INTERVAL_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return Duration::from_millis(millis.clamp(50, 30_000));
+    }
+    LISTENER_START_PROGRESS_INTERVAL
+}
+
+/// The one place a listener wait publishes a progress line: the console keeps
+/// it, and a test in this process can assert the line the actual wait emitted.
+fn emit_listener_progress(line: &str) {
+    #[cfg(test)]
+    LISTENER_PROGRESS.with(|lines| lines.borrow_mut().push(line.to_owned()));
+    eprintln!("{line}");
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Progress lines emitted in this process. The listener wait runs on the
+    /// caller's thread, so a fixture asserts exactly what it printed.
+    static LISTENER_PROGRESS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The progress lines this process emitted, drained for one assertion.
+#[cfg(test)]
+pub(in crate::runner) fn take_listener_progress() -> Vec<String> {
+    LISTENER_PROGRESS.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
+}
+
+/// A supervisor's last probe and whether this generation has ever connected.
+/// A later connection failure must not reset the readiness clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct ListenerProbeState {
+    outcome: HttpReadinessOutcome,
+    readiness_started: bool,
+}
+
+fn listener_probe_detail(probe: Option<ListenerProbeState>) -> String {
+    match probe {
+        None => "no readiness probe observation is available".to_owned(),
+        Some(ListenerProbeState { outcome: HttpReadinessOutcome::Ready, .. }) =>
+            "the declared HTTP status was verified; waiting for route publication".to_owned(),
+        Some(probe) if !probe.readiness_started => format!(
+            "the last probe could not connect ({}); its readiness timeout has not started",
+            probe.outcome.as_str()
+        ),
+        Some(probe) => format!(
+            "the port has accepted a connection; waiting for the declared HTTP status (last probe: {}); its readiness timeout is running",
+            probe.outcome.as_str()
+        ),
+    }
+}
+
+/// The caller uses the supervisor's observed probe phase, never inferring a
+/// closed port from an unpublished route. Unknown observations stay unknown.
+fn listener_start_progress(
+    process_name: &str,
+    elapsed: Duration,
+    log_path: &Path,
+    probe: Option<ListenerProbeState>,
+) -> String {
+    let mut line = format!(
+        "[host process] listener `{process_name}` is still starting after {}s: {}; `effigy container <env> down` stops it",
+        elapsed.as_secs(),
+        listener_probe_detail(probe)
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        line.push_str(&format!("; last child output: {tail}"));
+    }
+    line
+}
+
+/// What a caller's wait for one listener's published state concluded.
+enum ListenerWait {
+    /// The listener published this generation's verified state.
+    Ready(Box<HostListenerState>),
+    /// Nothing verified was published, so only this listener's own route is
+    /// withheld. `budget_expired` says the enclosing activation's observation
+    /// budget ended the wait rather than the listener's own readiness.
+    Withheld {
+        diagnostic: String,
+        observed_status: Option<u16>,
+        budget_expired: bool,
+    },
 }
 
 /// Wait until the listener's supervisor publishes this generation's declared
-/// state: `ready`, or the failure it observed. There is no deadline of the
-/// caller's: a child that is still building has not opened its port, and the
-/// supervisor's own readiness budget starts when it does. The supervisor is
-/// what ends the wait, so a supervisor that exited without publishing is the
-/// failure this wait names.
+/// state: `ready`, or the failure it observed.
+///
+/// The listener's own readiness is never the caller's deadline: a child that is
+/// still building has not opened its port, and the supervisor's readiness
+/// budget starts when it does. The caller's `deadline` is the enclosing
+/// activation's observation budget, the same one the bring-up's other runtime
+/// observations share (effigy#411). A listener still starting when that budget
+/// is spent withholds only its own route: the caller gets `Withheld` instead of
+/// waiting for a build that outlasts the activation (effigy#455). A supervisor
+/// that exited without publishing is still the failure this wait names.
+///
+/// `on_wait` runs about once a second while the wait continues, so the caller
+/// can publish what it waits for: the entry's own tab names the probe and its
+/// elapsed time instead of a generic spinner (effigy#458).
 fn wait_for_listener_state(
     path: &Path,
     process_name: &str,
     owner: &str,
     route_table_path: &Path,
-) -> Result<HostListenerState, RunnerError> {
+    deadline: Option<Instant>,
+    mut on_wait: impl FnMut(Instant),
+) -> Result<ListenerWait, RunnerError> {
+    let mut last_probe = None;
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
-    let mut next_progress = started;
+    let mut next_progress = started + listener_progress_interval();
+    let mut next_wait_report = started;
     loop {
+        let now = Instant::now();
+        if now >= next_wait_report {
+            next_wait_report = now + Duration::from_secs(1);
+            on_wait(now);
+        }
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
                 return Err(RunnerError::task_invocation(format!(
@@ -530,6 +841,7 @@ fn wait_for_listener_state(
                     "managed host listener state for `{process_name}` belongs to a different checkout/profile owner"
                 )));
             }
+            last_probe = state.probe;
             match state.status.as_str() {
                 "ready" => {
                     let route_owner = state.route_owner.as_ref().ok_or_else(|| {
@@ -558,13 +870,14 @@ fn wait_for_listener_state(
                         )));
                     }
                     if managed_route_matches(route_table_path, &state, owner)? {
-                        return Ok(state);
+                        return Ok(ListenerWait::Ready(Box::new(state)));
                     }
                 }
                 "failed" => {
-                    return Err(RunnerError::ManagedHostReadiness {
-                        process: process_name.to_owned(),
+                    return Ok(ListenerWait::Withheld {
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
+                        observed_status: state.observed_status,
+                        budget_expired: false,
                     });
                 }
                 _ => {
@@ -572,11 +885,13 @@ fn wait_for_listener_state(
                     // log; this one goes to the console of whoever is waiting,
                     // so a slow start is never a silent prompt (effigy#370).
                     if Instant::now() >= next_progress {
-                        next_progress = Instant::now() + LISTENER_START_PROGRESS_INTERVAL;
-                        eprintln!(
-                            "{}",
-                            listener_start_progress(process_name, started.elapsed())
-                        );
+                        next_progress = Instant::now() + listener_progress_interval();
+                        emit_listener_progress(&listener_start_progress(
+                            process_name,
+                            started.elapsed(),
+                            &path.with_file_name(format!("{}.log", sanitize(process_name))),
+                            last_probe,
+                        ));
                     }
                     if Instant::now() >= next_liveness_check {
                         next_liveness_check = Instant::now() + Duration::from_secs(1);
@@ -596,6 +911,17 @@ fn wait_for_listener_state(
                     }
                 }
             }
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Ok(ListenerWait::Withheld {
+                diagnostic: format!(
+                    "managed host listener `{process_name}` had not published verified readiness after {}s, when the activation's observation budget expired; {}",
+                    started.elapsed().as_secs(),
+                    listener_probe_detail(last_probe)
+                ),
+                observed_status: None,
+                budget_expired: true,
+            });
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -827,7 +1153,7 @@ fn refuse(session: &EngineSession, category: Category, detail: impl std::fmt::Di
 /// through `Custody` (so the kernel receipt is the group's identity), waits for
 /// declared readiness, honours the restart policy and settles once.
 pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
-    let spec: HostProcessRuntimeSpec = match serde_json::from_slice(session.payload()) {
+    let mut spec: HostProcessRuntimeSpec = match serde_json::from_slice(session.payload()) {
         Ok(spec) => spec,
         Err(_) => {
             return Err(refuse(
@@ -924,11 +1250,34 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
             return Err(error);
         }
     };
+    // Admission retains Gate(HostProcess) after every predecessor settled.
+    spec.run_id = Some(run.id());
+    // Publish a fresh canonical inode before the client can follow this run.
+    let log =
+        effigy_kernel::custody::MergedLog::prepare(&mut run, &spec.log_file).map_err(|error| {
+            effigy_kernel::run::RunError::step_failed("host log legacy cutover", error)
+        })?;
+    let environment = classify_child_environment(
+        &spec,
+        child_environment(
+            crate::runner::secret_session::workload_ambient_environment(),
+            &spec,
+            &[],
+            None,
+        ),
+        &[],
+    )
+    .map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host output environment provenance", error)
+    })?;
+    let output =
+        effigy_kernel::custody::CanonicalOutput::new(log, &environment, cx.operation().limits())
+            .map_err(|error| {
+                effigy_kernel::run::RunError::step_failed("host canonical output", error)
+            })?;
+    spec.output = Some(output.clone());
     session.admitted(&mut run)?;
     let supervisor_pid = std::process::id();
-    redirect_supervisor_output(&spec.log_file).map_err(|error| {
-        effigy_kernel::run::RunError::step_failed("supervisor output redirection", error)
-    })?;
     let watch = session.owner_watch().ok();
     let started = supervise_generations(
         &mut run,
@@ -938,13 +1287,14 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         supervisor_pid,
         watch.as_ref(),
     );
-    let (workload, custody) = match started {
+    let (workload, mut custody) = match started {
         Ok(result) => result,
         Err(error) => {
             let _ = run.interrupt(
                 &cleanup_budget(),
                 effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
             );
+            let _ = output.finish();
             let _ = write_stop_report(&spec, &run, None);
             // A store or capability failure inside the supervisor names the
             // step and its cause. It is never reported as an invalid request
@@ -957,10 +1307,24 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     };
     if write_stop_report(&spec, &run, custody.clone()).is_err() {
         append_log_line(
-            &spec.log_file,
+            spec.output.as_ref(),
             "[effigy host-process] the stop report could not be recorded",
         );
     }
+    let capture_result = output.finish();
+    if capture_result.is_err() {
+        if let Some(custody) = &mut custody {
+            custody.capture_truncated = true;
+        }
+        // A failed final flush must also reach the durable stop projection.
+        // The writer is closed: never try to append another message to it.
+        let _ = write_stop_report(&spec, &run, custody.clone());
+    }
+    let workload = if capture_result.is_err() {
+        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 })
+    } else {
+        workload
+    };
     let outcome = match workload {
         Some(outcome) => {
             run.finish(outcome)?;
@@ -972,6 +1336,9 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     session.closed(&outcome);
+    capture_result.map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host canonical append", error)
+    })?;
     Ok(())
 }
 
@@ -1000,29 +1367,6 @@ fn stop_report_path_for(spec: &HostProcessRuntimeSpec) -> PathBuf {
         .parent()
         .map(|dir| dir.join(format!("{}.stop.json", sanitize(&spec.process_name))))
         .unwrap_or_else(|| spec.log_file.with_extension("stop.json"))
-}
-
-/// The supervisor's own stdout and stderr become the process log, so every
-/// child spawned with `Terminal::Inherit` writes where log following expects.
-fn redirect_supervisor_output(log_path: &Path) -> Result<(), RunnerError> {
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| RunnerError::task_invocation_failed_write(parent, error))?;
-    }
-    use std::os::unix::io::AsRawFd as _;
-    let log = open_log(log_path)?;
-    let fd = log.as_raw_fd();
-    for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-        // SAFETY: dup2 of a live open log descriptor onto a standard
-        // descriptor; the log stays owned by `log` until both are copied.
-        if unsafe { libc::dup2(fd, target) } < 0 {
-            return Err(RunnerError::task_invocation_failed_write(
-                log_path,
-                std::io::Error::last_os_error(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// What one supervisor generation ended with.
@@ -1062,7 +1406,7 @@ fn supervise_generations(
     // no restart limit is needed to keep it from spinning (effigy#341).
     let mut backoff = Duration::ZERO;
     loop {
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             shutdown.store(true, Ordering::SeqCst);
             break;
         }
@@ -1105,7 +1449,7 @@ fn supervise_generations(
                 wait_or_break(
                     &shutdown,
                     Duration::from_millis(spec.restart_delay_ms),
-                    || stop_requested(run, watch),
+                    || stop_requested(run, watch, spec),
                 );
             }
             GenerationEnd::Exited(code) => {
@@ -1123,7 +1467,7 @@ fn supervise_generations(
                 wait_or_break(
                     &shutdown,
                     restart_backoff(&mut backoff, spec.restart_delay_ms),
-                    || stop_requested(run, watch),
+                    || stop_requested(run, watch, spec),
                 );
             }
         }
@@ -1166,7 +1510,15 @@ fn activate_once(
 fn stop_requested(
     run: &effigy_kernel::run::Run<'_>,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
+    spec: &HostProcessRuntimeSpec,
 ) -> bool {
+    if spec
+        .output
+        .as_ref()
+        .is_some_and(|output| output.is_failed())
+    {
+        return true;
+    }
     if !crate::runner::task_engine::routed_signals().is_empty() {
         return true;
     }
@@ -1200,7 +1552,7 @@ fn supervise_plain_host_process(
     last: &mut Option<CustodyStop>,
 ) -> Result<GenerationEnd, RunnerError> {
     let dependencies = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
@@ -1214,7 +1566,7 @@ fn supervise_plain_host_process(
         Ok(child) => child,
         Err(error) => {
             append_log_line(
-                &spec.log_file,
+                spec.output.as_ref(),
                 &format!(
                     "[effigy host-process] failed to spawn `{}`: {error}",
                     spec.run
@@ -1225,7 +1577,7 @@ fn supervise_plain_host_process(
     };
     activate_once(active, run, session)?;
     append_log_line(
-        &spec.log_file,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] started `{}` (pid {})",
             spec.process_name,
@@ -1233,11 +1585,11 @@ fn supervise_plain_host_process(
         ),
     );
     let wait = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_host_child(&mut child, spec, &dependency_generations, &mut stop)?
     };
     let stopping = matches!(wait, HostChildWait::Shutdown)
-        || stop_requested(run, watch)
+        || stop_requested(run, watch, spec)
         || shutdown.load(Ordering::SeqCst);
     if stopping {
         shutdown.store(true, Ordering::SeqCst);
@@ -1245,7 +1597,7 @@ fn supervise_plain_host_process(
     if let Some(report) = stop_generation(run, spec, &mut child, stopping) {
         *last = Some(report.clone());
         append_log_line(
-            &spec.log_file,
+            spec.output.as_ref(),
             &format!(
                 "[effigy host-process] `{}` exited (code {})",
                 spec.process_name,
@@ -1307,8 +1659,19 @@ fn stop_generation(
         capture_truncated: matches!(
             report.capture,
             effigy_kernel::custody::CaptureState::Truncated(_)
-        ),
+        ) || spec.output.as_ref().is_some_and(|output| {
+            matches!(
+                output.capture_state(),
+                effigy_kernel::custody::CaptureState::Truncated(_)
+            )
+        }),
     };
+    if matches!(
+        report.capture,
+        effigy_kernel::custody::CaptureState::Truncated(_)
+    ) {
+        append_log_line(spec.output.as_ref(), "[effigy host-process] capture truncated while draining this generation; terminal framing reset, declared restart policy still applies");
+    }
     if let Some(exit) = exit {
         let _ = child.complete(run, effigy_kernel::custody::Exit { code: exit });
     }
@@ -1316,7 +1679,7 @@ fn stop_generation(
 }
 
 /// One kernel generation: argv, cwd, complete environment, grace and
-/// terminal. Output joins the process log through the supervisor's own fds.
+/// terminal. Custody appends parsed, redacted output to the follower path.
 fn spawn_generation(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
@@ -1334,6 +1697,7 @@ fn spawn_generation(
         dependency_env,
         listener,
     );
+    let environment = classify_child_environment(spec, environment, dependency_env)?;
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1344,10 +1708,221 @@ fn spawn_generation(
         env: environment,
         grace: Duration::from_secs(spec.shutdown_grace_secs.max(1)),
         lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::DevServer),
-        terminal: Terminal::Inherit { capture: false },
+        terminal: Terminal::None,
         label: spec.process_name.clone(),
     };
-    Custody::spawn_auxiliary(run, process, cx)
+    let output = spec.output.clone().ok_or_else(|| {
+        effigy_kernel::custody::SpawnError::Refused("host canonical writer is not installed".into())
+    })?;
+    Custody::spawn_logged_auxiliary(run, process, cx, output)
+}
+
+/// Preserve schema provenance across the detached boundary by loading the
+/// producer's schema before spawn. A malformed schema refuses the producer.
+/// Ambient values without provenance are conservatively secret: a name that
+/// merely looks harmless cannot declassify a credential.
+fn classify_child_environment(
+    spec: &HostProcessRuntimeSpec,
+    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+    generated: &[(String, String)],
+) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
+{
+    let mut declared = BTreeMap::new();
+    for root in [Path::new(&spec.project_path), spec.cwd.as_path()] {
+        let schema = effigy_env::load_env_schema_if_present(root).map_err(|_| {
+            effigy_kernel::custody::SpawnError::Refused(
+                "host-process environment provenance schema could not be read".into(),
+            )
+        })?;
+        if let Some(schema) = schema {
+            for entry in schema.entries {
+                // Sensitivity cannot be undone by a second schema.
+                let sensitive = declared.entry(entry.key).or_insert(false);
+                *sensitive |= entry.annotations.sensitive;
+            }
+        }
+    }
+    let mut literals = spec.env.clone();
+    literals.extend(generated.iter().cloned());
+    let mut classified = classify_environment(environment, &literals, &declared)?;
+    crate::runner::managed_color::apply(&mut classified, spec.ansi_front);
+    Ok(classified)
+}
+
+fn classify_environment(
+    environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+    literals: &BTreeMap<String, String>,
+    schema: &BTreeMap<String, bool>,
+) -> Result<BTreeMap<OsString, effigy_kernel::custody::EnvValue>, effigy_kernel::custody::SpawnError>
+{
+    use effigy_kernel::custody::{EnvValue, SecretValue};
+    use std::os::unix::ffi::OsStrExt as _;
+    let secret_names = schema
+        .iter()
+        .filter(|(_, secret)| **secret)
+        .map(|(key, _)| key.as_str())
+        .collect::<BTreeSet<_>>();
+    let known: Vec<Vec<u8>> = environment
+        .iter()
+        .filter_map(|(key, value)| {
+            if !secret_names.contains(key.to_str()?) {
+                return None;
+            }
+            match value {
+                EnvValue::Plain(value) if !value.is_empty() => Some(value.as_bytes().to_vec()),
+                EnvValue::Secret(_) | EnvValue::Plain(_) => None,
+            }
+        })
+        .collect();
+    environment
+        .into_iter()
+        .map(|(key, value)| {
+            let EnvValue::Plain(value) = value else {
+                return Ok((key, value));
+            };
+            let name = key.to_str().unwrap_or("");
+            let contains_secret = known.iter().any(|secret| {
+                value
+                    .as_bytes()
+                    .windows(secret.len())
+                    .any(|bytes| bytes == secret)
+            });
+            let plain = schema.get(name).map(|secret| !secret).unwrap_or_else(|| {
+                literals.contains_key(name)
+                    || nonsecret_host_environment(name)
+                    || nonsecret_launcher_flag(name, &value)
+            });
+            let value = if value.is_empty() || (plain && !contains_secret) {
+                EnvValue::Plain(value)
+            } else {
+                EnvValue::Secret(SecretValue::new(value.as_bytes().to_vec())?)
+            };
+            Ok((key, value))
+        })
+        .collect()
+}
+
+/// Owner-approved launcher switch provenance: a closed boolean domain and
+/// namespace, never arbitrary Claude environment values. Secret-bearing name
+/// segments, schema sensitivity and known-secret aliases take precedence.
+fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
+    if !matches!(value.to_str(), Some("0" | "1" | "true" | "false")) {
+        return false;
+    }
+    let known = matches!(
+        name,
+        "CLAUDECODE" | "AI_AGENT" | "COREPACK_ENABLE_AUTO_PIN" | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
+    );
+    let switch = name.strip_prefix("CLAUDE_CODE_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && name.len() <= 128
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    });
+    (known || switch)
+        && !name.split('_').any(|segment| {
+            ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
+                .iter()
+                .any(|secret| segment.eq_ignore_ascii_case(secret))
+        })
+}
+
+/// Only transport/session facts with established non-secret meaning. All
+/// application-specific inherited names require schema provenance or stay secret.
+fn nonsecret_host_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "EFFIGY_MANAGED_HOST_LISTENER_BIND"
+            | "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE"
+            | "EFFIGY_MANAGED_HOST_LISTENER_GENERATION"
+            | "EFFIGY_ADMITTED"
+            | "EFFIGY_DEFER_DEPTH"
+            | "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE"
+            | "NEXTEST"
+            | "NEXTEST_RUN_ID"
+            | "NEXTEST_TEST_GROUP"
+            | "NEXTEST_TEST_GROUP_SLOT"
+            | "NEXTEST_TEST_GLOBAL_SLOT"
+            | "NEXTEST_PROFILE"
+            | "NEXTEST_TEST_NAME"
+            | "NEXTEST_BINARY_ID"
+            | "NEXTEST_TOTAL_ATTEMPTS"
+            | "RUST_RECURSION_COUNT"
+            | "NEXTEST_ATTEMPT"
+            | "NEXTEST_EXECUTION_MODE"
+            | "CARGO_INCREMENTAL"
+            | "CARGO_MANIFEST_DIR"
+            | "CARGO_MANIFEST_PATH"
+            | "CARGO_PKG_NAME"
+            | "CARGO_PKG_VERSION"
+            | "CARGO_PKG_VERSION_MAJOR"
+            | "CARGO_PKG_VERSION_MINOR"
+            | "CARGO_PKG_VERSION_PATCH"
+            | "CARGO_PKG_VERSION_PRE"
+            | "CARGO_PKG_AUTHORS"
+            | "CARGO_PKG_DESCRIPTION"
+            | "CARGO_PKG_HOMEPAGE"
+            | "CARGO_PKG_REPOSITORY"
+            | "CARGO_PKG_LICENSE"
+            | "CARGO_PKG_LICENSE_FILE"
+            | "CARGO_PKG_RUST_VERSION"
+            | "MallocNanoZone"
+            | "XPC_SERVICE_NAME"
+            | "XPC_FLAGS"
+            | "OSLogRateLimit"
+            | "NoDefaultCurrentDirectoryInExePath"
+            | "LESS"
+            | "PASEO_AGENT_CWD"
+            | "PASEO_AGENT_ID"
+            | "PASEO_CLI"
+            | "PASEO_HOME"
+            | "CODEX_CI"
+            | "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS"
+            | "LC_ALL"
+            | "LC_CTYPE"
+            | "LC_MESSAGES"
+            | "LC_COLLATE"
+            | "LC_NUMERIC"
+            | "LC_TIME"
+            | "LC_MONETARY"
+            | "PATH"
+            | "HOME"
+            | "USER"
+            | "LOGNAME"
+            | "SHELL"
+            | "PWD"
+            | "OLDPWD"
+            | "SHLVL"
+            | "_"
+            | "LANG"
+            | "TMPDIR"
+            | "TMP"
+            | "TEMP"
+            | "TERM"
+            | "COLORTERM"
+            | "TERM_PROGRAM"
+            | "TERM_PROGRAM_VERSION"
+            | "CI"
+            | "NO_COLOR"
+            | "CARGO_TERM_COLOR"
+            | "CLICOLOR"
+            | "CLICOLOR_FORCE"
+            | "FORCE_COLOR"
+            | "EFFIGY_MANAGED_TUI"
+            | "EFFIGY_MANAGED_HEADLESS"
+            | "EFFIGY_MANAGED_PANE_ANSI"
+            | "EFFIGY_COLOR"
+            | "ANSI_COLORS_DISABLED"
+            | "NODE_DISABLE_COLORS"
+            | "HOST"
+            | "PORT"
+            | "EFFIGY_HOST_PROCESS_CONTAINER"
+            | "EFFIGY_HOST_PROCESS_NAME"
+            | "EFFIGY_HOST_PROCESS_LISTENER_BIND"
+            | "EFFIGY_HOST_PROCESS_LISTENER_REPORT"
+            | "EFFIGY_HOST_PROCESS_LISTENER_GENERATION"
+    )
 }
 
 /// The complete environment one generation receives, with its two inputs
@@ -1446,10 +2021,15 @@ struct ListenerGeneration<'a> {
     spec: &'a HostProcessRuntimeSpec,
     supervisor_pid: u32,
     generation: String,
+    custody_nonce: Option<String>,
     child: Option<ChildProcessIdentity>,
     address: Option<SocketAddr>,
     route_owner: Option<ManagedListenerRouteOwner>,
     diagnostic: Option<String>,
+    /// The status a listener answered when its readiness declared another
+    /// one: the observation that made the refusal terminal.
+    observed_status: Option<u16>,
+    probe: Option<ListenerProbeState>,
 }
 
 impl<'a> ListenerGeneration<'a> {
@@ -1458,10 +2038,13 @@ impl<'a> ListenerGeneration<'a> {
             spec,
             supervisor_pid,
             generation: generation.to_owned(),
+            custody_nonce: None,
             child: None,
             address: None,
             route_owner: None,
             diagnostic: None,
+            observed_status: None,
+            probe: None,
         }
     }
 
@@ -1485,6 +2068,8 @@ impl<'a> ListenerGeneration<'a> {
         HostListenerState {
             schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
             owner: self.spec.owner.clone(),
+            run: self.spec.run_id.map(|run| run.to_string()),
+            custody_nonce: self.custody_nonce.clone(),
             runtime_generation: self.spec.runtime_generation.clone(),
             generation: self.generation.clone(),
             status: status.to_owned(),
@@ -1501,6 +2086,8 @@ impl<'a> ListenerGeneration<'a> {
                 .map(|child| child.start_identity.clone()),
             route_owner: self.route_owner.clone(),
             diagnostic: self.diagnostic.clone(),
+            observed_status: self.observed_status,
+            probe: self.probe,
         }
     }
 
@@ -1584,7 +2171,7 @@ fn supervise_managed_host_listener(
     #[cfg(debug_assertions)]
     hold_start_publication();
 
-    if stop_requested(run, watch) || shutdown.load(Ordering::SeqCst) {
+    if stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
         ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")?;
         return Ok(GenerationEnd::Stopped);
@@ -1597,7 +2184,7 @@ fn supervise_managed_host_listener(
     let mut state = ListenerGeneration::new(spec, supervisor_pid, &generation);
     state.write("starting")?;
     let dependencies = {
-        let mut stop = || stop_requested(run, watch);
+        let mut stop = || stop_requested(run, watch, spec);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
@@ -1609,12 +2196,7 @@ fn supervise_managed_host_listener(
         .into_iter()
         .collect::<Vec<(String, String)>>();
     if let Err(error) = reserved_port_is_free(&listener.bind) {
-        return finish_failed_generation(
-            &mut state,
-            &log_path,
-            spec.process_name.as_str(),
-            error.to_string(),
-        );
+        return finish_failed_generation(&mut state, spec.process_name.as_str(), error.to_string());
     }
     let mut child = match spawn_generation(
         run,
@@ -1627,7 +2209,6 @@ fn supervise_managed_host_listener(
         Err(error) => {
             return finish_failed_generation(
                 &mut state,
-                &log_path,
                 spec.process_name.as_str(),
                 format!("managed listener could not start: {error}"),
             )
@@ -1635,6 +2216,7 @@ fn supervise_managed_host_listener(
     };
     activate_once(active, run, session)?;
     let pid = child.identity().identity.pid;
+    state.custody_nonce = Some(child.identity().nonce);
     // The leader's exact identity lets a stop that outlives this supervisor
     // settle the group it started. An identity that cannot be read here only
     // costs that guard; the generation still serves.
@@ -1647,7 +2229,7 @@ fn supervise_managed_host_listener(
             });
         }
         Err(error) => append_log_line(
-            &log_path,
+            spec.output.as_ref(),
             &format!(
                 "[effigy host-process] managed listener child identity is unavailable: {error}"
             ),
@@ -1655,7 +2237,7 @@ fn supervise_managed_host_listener(
     }
     state.write("starting")?;
     append_log_line(
-        &log_path,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
             spec.process_name
@@ -1663,17 +2245,20 @@ fn supervise_managed_host_listener(
     );
 
     let ready = {
-        let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
-        wait_for_ready_listener(address, listener, &log_path, &mut stop, &mut child)
+        let mut stop = || stop_requested(run, watch, spec) || shutdown.load(Ordering::SeqCst);
+        wait_for_ready_listener(
+            address, listener, &log_path, &mut stop, &mut child, &mut state,
+        )
     };
     if let Err(error) = ready {
         let stopped = matches!(error, ListenerStartupFailure::Stopped);
+        let observed_status = error.observed_status();
         if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
         state.child = None;
         append_log_line(
-            &log_path,
+            spec.output.as_ref(),
             &format!("[effigy host-process] listener failed: {error}"),
         );
         if stopped {
@@ -1682,6 +2267,7 @@ fn supervise_managed_host_listener(
             return Ok(GenerationEnd::Stopped);
         }
         state.diagnostic = Some(error.to_string());
+        state.observed_status = observed_status;
         state.write("failed")?;
         return Ok(GenerationEnd::Exited(1));
     }
@@ -1694,7 +2280,7 @@ fn supervise_managed_host_listener(
             *last = Some(report);
         }
         state.child = None;
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             write_terminal_listener_state(spec, supervisor_pid)?;
             shutdown.store(true, Ordering::SeqCst);
             return Ok(GenerationEnd::Stopped);
@@ -1706,7 +2292,6 @@ fn supervise_managed_host_listener(
         state.child = None;
         return finish_failed_generation(
             &mut state,
-            &log_path,
             spec.process_name.as_str(),
             format!("listener route preparation failed: {error}"),
         );
@@ -1726,14 +2311,13 @@ fn supervise_managed_host_listener(
         state.route_owner = None;
         return finish_failed_generation(
             &mut state,
-            &log_path,
             spec.process_name.as_str(),
             format!("route publication failed: {error}"),
         );
     }
     state.write("ready")?;
     append_log_line(
-        &log_path,
+        spec.output.as_ref(),
         &format!(
             "[effigy host-process] listener `{}` is ready at {address}",
             spec.process_name
@@ -1748,7 +2332,7 @@ fn supervise_managed_host_listener(
         if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
             break Some(exit.code);
         }
-        if stop_requested(run, watch) {
+        if stop_requested(run, watch, spec) {
             shutdown.store(true, Ordering::SeqCst);
             stopping = true;
             break None;
@@ -1768,7 +2352,7 @@ fn supervise_managed_host_listener(
                         state.route_owner = Some(owner.clone());
                         state.write("ready")?;
                         append_log_line(
-                            &log_path,
+                            spec.output.as_ref(),
                             &format!(
                                 "[effigy host-process] listener `{}` answers again at {address}; route republished",
                                 spec.process_name
@@ -1782,7 +2366,7 @@ fn supervise_managed_host_listener(
                         state.route_owner = None;
                         state.write("unavailable")?;
                         append_log_line(
-                            &log_path,
+                            spec.output.as_ref(),
                             &format!(
                                 "[effigy host-process] listener `{}` answers at {address} but its route could not be republished: {error}",
                                 spec.process_name
@@ -1798,7 +2382,7 @@ fn supervise_managed_host_listener(
                 state.route_owner = None;
                 state.write("unavailable")?;
                 append_log_line(
-                    &log_path,
+                    spec.output.as_ref(),
                     &format!(
                         "[effigy host-process] listener `{}` is not answering at {address}; route withdrawn",
                         spec.process_name
@@ -1855,12 +2439,11 @@ fn supervise_managed_host_listener(
 /// generation as a failed exit so the declared restart policy applies.
 fn finish_failed_generation(
     state: &mut ListenerGeneration<'_>,
-    log_path: &Path,
     process_name: &str,
     message: String,
 ) -> Result<GenerationEnd, RunnerError> {
     append_log_line(
-        log_path,
+        state.spec.output.as_ref(),
         &format!("[effigy host-process] listener `{process_name}` failed: {message}"),
     );
     state.diagnostic = Some(message);
@@ -1899,11 +2482,12 @@ fn wait_for_ready_listener(
     log_path: &Path,
     stop: &mut dyn FnMut() -> bool,
     child: &mut effigy_kernel::custody::OwnedProcess,
+    state: &mut ListenerGeneration<'_>,
 ) -> Result<(), ListenerStartupFailure> {
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
     let started = Instant::now();
     let mut answered_at = None;
-    let mut next_progress = started + LISTENER_START_PROGRESS_INTERVAL;
+    let mut next_progress = started + listener_progress_interval();
     loop {
         if stop() {
             return Err(ListenerStartupFailure::Stopped);
@@ -1925,27 +2509,78 @@ fn wait_for_ready_listener(
             .into());
         }
         let probe = probe_http_readiness(address, &config.route_domain, config);
+        let now = Instant::now();
+        if probe.outcome != HttpReadinessOutcome::ConnectFailed {
+            answered_at.get_or_insert(now);
+        }
+        let observed = Some(ListenerProbeState {
+            outcome: probe.outcome,
+            readiness_started: answered_at.is_some(),
+        });
+        if state.probe != observed {
+            state.probe = observed;
+            state.write("starting")?;
+        }
         if probe.outcome == HttpReadinessOutcome::Ready {
             return Ok(());
         }
-        let now = Instant::now();
-        if probe.outcome == HttpReadinessOutcome::ConnectFailed {
-            if now >= next_progress {
-                next_progress = now + LISTENER_START_PROGRESS_INTERVAL;
-                append_log_line(
-                    log_path,
-                    &format!(
-                        "[effigy host-process] listener at {address} is still starting after {}s: the port is closed and the child is running, so the {}s readiness timeout has not started",
-                        started.elapsed().as_secs(),
-                        timeout.as_secs()
-                    ),
-                );
-            }
-        } else if now.duration_since(*answered_at.get_or_insert(now)) >= timeout {
-            return Err(listener_readiness_timeout(address, config, timeout, probe.outcome).into());
+        // A definite answer with another status is a terminal refusal, not a
+        // transient one: the child has bound its port and told this readiness
+        // request what it serves, so spending the declared budget cannot
+        // change the answer (effigy#455). Only a closed port or an incomplete
+        // response stays in the budgeted wait.
+        if probe.outcome == HttpReadinessOutcome::StatusMismatch {
+            return Err(ListenerStartupFailure::StatusMismatch {
+                error: listener_status_refusal(address, config, probe.status, log_path),
+                status: probe.status,
+            });
+        }
+        if now >= next_progress {
+            next_progress = now + listener_progress_interval();
+            append_log_line(
+                state.spec.output.as_ref(),
+                &format!(
+                    "[effigy host-process] listener at {address} is still starting after {}s: {}",
+                    started.elapsed().as_secs(),
+                    listener_probe_detail(state.probe)
+                ),
+            );
+        }
+        if answered_at.is_some_and(|opened| now.duration_since(opened) >= timeout) {
+            return Err(listener_readiness_timeout(
+                address,
+                config,
+                timeout,
+                probe.outcome,
+                log_path,
+            )
+            .into());
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A listener that answers the declared readiness request with another status
+/// fails at once, naming the status it answered and the child's own output.
+fn listener_status_refusal(
+    address: SocketAddr,
+    config: &EffectiveManagedHostListener,
+    observed: Option<u16>,
+    log_path: &Path,
+) -> RunnerError {
+    let observed = observed
+        .map(|status| format!("HTTP {status}"))
+        .unwrap_or_else(|| "a status line that is not the declared one".to_owned());
+    let mut message = format!(
+        "managed listener at {address} answered {} with {observed} where {} is required (status_mismatch); a definite refusal is terminal, so the declared {}s readiness budget is not spent",
+        config.readiness_path,
+        config.readiness_status,
+        config.readiness_timeout_secs
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        message.push_str(&format!("; last child output: {tail}"));
+    }
+    RunnerError::task_invocation(message)
 }
 
 fn listener_readiness_timeout(
@@ -1953,14 +2588,19 @@ fn listener_readiness_timeout(
     config: &EffectiveManagedHostListener,
     timeout: Duration,
     last: HttpReadinessOutcome,
+    log_path: &Path,
 ) -> RunnerError {
-    RunnerError::task_invocation(format!(
+    let mut message = format!(
         "timed out after {}s waiting for the managed listener at {address} to answer {} with {} once its port opened ({})",
         timeout.as_secs(),
         config.readiness_path,
         config.readiness_status,
         last.as_str()
-    ))
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        message.push_str(&format!("; last child output: {tail}"));
+    }
+    RunnerError::task_invocation(message)
 }
 
 /// Polls the reserved port while one generation serves. Three consecutive
@@ -2017,11 +2657,27 @@ impl ListenerLiveness {
 enum ListenerStartupFailure {
     Stopped,
     Failed(RunnerError),
+    /// The listener answered the readiness request with a definite, different
+    /// status. That observation, not the budget, ends the wait.
+    StatusMismatch {
+        error: RunnerError,
+        status: Option<u16>,
+    },
 }
 
 impl From<RunnerError> for ListenerStartupFailure {
     fn from(error: RunnerError) -> Self {
         Self::Failed(error)
+    }
+}
+
+impl ListenerStartupFailure {
+    /// The HTTP status this failure observed, when it observed one.
+    fn observed_status(&self) -> Option<u16> {
+        match self {
+            Self::StatusMismatch { status, .. } => *status,
+            Self::Stopped | Self::Failed(_) => None,
+        }
     }
 }
 
@@ -2031,7 +2687,7 @@ impl std::fmt::Display for ListenerStartupFailure {
             Self::Stopped => {
                 formatter.write_str("managed listener startup was stopped before readiness")
             }
-            Self::Failed(error) => error.fmt(formatter),
+            Self::Failed(error) | Self::StatusMismatch { error, .. } => error.fmt(formatter),
         }
     }
 }
@@ -2121,26 +2777,14 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Run
         .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
-fn open_log(path: &Path) -> Result<std::fs::File, RunnerError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|error| RunnerError::task_invocation_failed_write(path, error))
-}
-
-pub(in crate::runner) fn append_log_line(path: &Path, line: &str) {
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-    {
-        use std::io::Write as _;
-        let _ = writeln!(f, "{line}");
+fn append_log_line(output: Option<&effigy_kernel::custody::CanonicalOutput>, line: &str) {
+    let result = output
+        .ok_or_else(|| std::io::Error::other("host output not installed"))
+        .and_then(|output| output.message(line));
+    if result.is_err() {
+        // No raw message fallback. The shared writer's sticky failure reaches
+        // custody/stop receipts and the supervisor's final failed outcome.
+        eprintln!("host canonical output failed; no message was acknowledged");
     }
 }
 
@@ -2163,6 +2807,164 @@ fn wait_or_break(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_environment_provenance_preserves_secrets_and_plain_values() {
+        use effigy_kernel::custody::EnvValue;
+        let values = [
+            ("PATH", "/bin"),
+            ("NEXTEST_ATTEMPT", "1"),
+            ("NEXTEST_TOTAL_ATTEMPTS", "1"),
+            ("RUST_RECURSION_COUNT", "1"),
+            ("XPC_SERVICE_NAME", "0"),
+            ("XPC_FLAGS", "0x0"),
+            ("EFFIGY_ADMITTED", "1"),
+            ("CARGO_INCREMENTAL", "1"),
+            ("CARGO_PKG_VERSION_PATCH", "1"),
+            ("TOKEN", "hidden-value"),
+            ("ALIAS", "prefix-hidden-value-suffix"),
+            ("UNKNOWN", "opaque"),
+            ("MODE", "dev"),
+            ("PUBLIC", "hello"),
+            ("LC_TOKEN", "opaque-too"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
+        .collect();
+        let literals = [
+            ("ALIAS".into(), "prefix-hidden-value-suffix".into()),
+            ("MODE".into(), "dev".into()),
+        ]
+        .into_iter()
+        .collect();
+        let schema = [("TOKEN".into(), true), ("PUBLIC".into(), false)]
+            .into_iter()
+            .collect();
+        let classified = super::classify_environment(values, &literals, &schema).unwrap();
+        for key in ["TOKEN", "ALIAS", "UNKNOWN", "LC_TOKEN"] {
+            assert!(
+                matches!(
+                    classified.get(std::ffi::OsStr::new(key)),
+                    Some(EnvValue::Secret(_))
+                ),
+                "{key}"
+            );
+        }
+        for key in [
+            "PATH",
+            "MODE",
+            "PUBLIC",
+            "NEXTEST_ATTEMPT",
+            "NEXTEST_TOTAL_ATTEMPTS",
+            "RUST_RECURSION_COUNT",
+            "XPC_SERVICE_NAME",
+            "XPC_FLAGS",
+            "EFFIGY_ADMITTED",
+            "CARGO_INCREMENTAL",
+            "CARGO_PKG_VERSION_PATCH",
+        ] {
+            assert!(
+                matches!(
+                    classified.get(std::ffi::OsStr::new(key)),
+                    Some(EnvValue::Plain(_))
+                ),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_flags_preserve_provenance_without_refusing_ordinary_argv() {
+        use effigy_kernel::custody::EnvValue;
+        let flags = [
+            ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_CHILD_SESSION", "1"),
+            ("CLAUDE_CODE_SESSION_ATTENDED", "1"),
+            ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1"),
+            ("CLAUDE_CODE_UNRECOGNIZED_SWITCH", "1"),
+            ("AI_AGENT", "1"),
+            ("COREPACK_ENABLE_AUTO_PIN", "0"),
+            ("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"),
+            ("PASEO_AGENT_ID", "agent-id"),
+        ];
+        let environment = || {
+            flags
+                .into_iter()
+                .map(|(key, value)| (key.into(), EnvValue::Plain(value.into())))
+                .collect()
+        };
+        let classified =
+            super::classify_environment(environment(), &Default::default(), &Default::default())
+                .unwrap();
+        assert!(classified
+            .values()
+            .all(|value| matches!(value, EnvValue::Plain(_))));
+        let sensitive = super::classify_environment(
+            environment(),
+            &Default::default(),
+            &[("CLAUDECODE".into(), true)].into_iter().collect(),
+        )
+        .unwrap();
+        assert!(matches!(
+            sensitive.get(std::ffi::OsStr::new("CLAUDECODE")),
+            Some(EnvValue::Secret(_))
+        ));
+        // The same known secret value cannot be declassified through an alias.
+        assert!(matches!(
+            sensitive.get(std::ffi::OsStr::new("AI_AGENT")),
+            Some(EnvValue::Secret(_))
+        ));
+        let namespace_sensitive = super::classify_environment(
+            environment(),
+            &Default::default(),
+            &[("CLAUDE_CODE_UNRECOGNIZED_SWITCH".into(), true)]
+                .into_iter()
+                .collect(),
+        )
+        .unwrap();
+        for name in [
+            "CLAUDE_CODE_UNRECOGNIZED_SWITCH",
+            "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS",
+        ] {
+            assert!(matches!(
+                namespace_sensitive.get(std::ffi::OsStr::new(name)),
+                Some(EnvValue::Secret(_))
+            ));
+        }
+        let suspicious = super::classify_environment(
+            [
+                (
+                    "CLAUDECODE".into(),
+                    EnvValue::Plain("credential-value".into()),
+                ),
+                ("CLAUDE_TOKEN".into(), EnvValue::Plain("1".into())),
+                ("PASEO_TOKEN".into(), EnvValue::Plain("0".into())),
+                ("CLAUDE_CODE_API_KEY".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_api_kEy".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_TOKEN".into(), EnvValue::Plain("0".into())),
+                ("CLAUDE_CODE_SECRET".into(), EnvValue::Plain("true".into())),
+                (
+                    "CLAUDE_CODE_PASSWORD".into(),
+                    EnvValue::Plain("false".into()),
+                ),
+                ("CLAUDE_CODE_CREDENTIAL".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_AUTH".into(), EnvValue::Plain("1".into())),
+                (
+                    "CLAUDE_CODE_UNKNOWN".into(),
+                    EnvValue::Plain("opaque".into()),
+                ),
+                ("OTHER_BOOLEAN_SWITCH".into(), EnvValue::Plain("1".into())),
+            ]
+            .into_iter()
+            .collect(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(suspicious
+            .values()
+            .all(|value| matches!(value, EnvValue::Secret(_))));
+    }
+
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
     use nix::sys::signal::kill;
@@ -2185,6 +2987,36 @@ mod tests {
             "child_start_identity": null,
             "route_owner": null,
         })
+    }
+
+    #[test]
+    fn pane_listener_observation_binds_the_owner_run_and_custody_generation() {
+        let run = effigy_kernel::id::RunId::new(1, [8; 10]).unwrap();
+        let nonce = format!("{run}:4");
+        let make = |status: &str| {
+            let mut value = published_listener_state("activation", status);
+            value["run"] = serde_json::json!(run.to_string());
+            value["custody_nonce"] = serde_json::json!(nonce);
+            value["public_url"] = serde_json::json!("https://api.test");
+            serde_json::from_value::<HostListenerState>(value).unwrap()
+        };
+        assert_eq!(
+            kernel_run::pane_listener(make("ready"), run, Some(&nonce)),
+            Some(("ready".into(), Some("https://api.test".into())))
+        );
+        assert!(kernel_run::pane_listener(make("ready"), run, Some("stale-child:3")).is_none());
+        assert!(kernel_run::pane_listener(
+            make("ready"),
+            effigy_kernel::id::RunId::new(1, [9; 10]).unwrap(),
+            Some(&nonce)
+        )
+        .is_none());
+        for status in ["unavailable", "failed", "stopped"] {
+            assert_eq!(
+                kernel_run::pane_listener(make(status), run, Some(&nonce)),
+                Some((status.into(), None))
+            );
+        }
     }
 
     /// The activation record is the readiness barrier: a previous activation's
@@ -2348,13 +3180,18 @@ mod tests {
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         let dir = host_process_dir_for_policy(&fixture.checkout, &policy);
         let log = dir.join("app.log");
         let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         assert_eq!(status.len(), 1);
-        assert_eq!(status[0].state, "running", "{status:?}");
+        assert_eq!(
+            status[0].state,
+            "running",
+            "{status:?}; canonical={:?}",
+            fs::read_to_string(&log)
+        );
         let pid = status[0].pid.expect("recorded leader pid");
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
@@ -2404,7 +3241,7 @@ mod tests {
         nested.shutdown_grace_secs = 1;
         let grace = Duration::from_secs(nested.shutdown_grace_secs);
         let policy = policy(&fixture.checkout, vec![nested]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("api.log");
         wait_until("the nested task's server to start", || {
@@ -2454,7 +3291,7 @@ mod tests {
         let mut crashing = host_process("crash", "exit 3", HostProcessRestart::Always);
         crashing.restart_delay_ms = 60_000;
         let policy = policy(&fixture.checkout, vec![crashing]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the crash-looping host process starts");
         let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("crash.log");
         wait_until("the first generation to exit into its backoff", || {
@@ -2495,7 +3332,7 @@ mod tests {
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         wait_until("the host process run to close", || {
             super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -2510,6 +3347,400 @@ mod tests {
             text.contains("boom from the child"),
             "the process log keeps the child's last lines: {text:?}"
         );
+    }
+
+    /// Keep a duplicate of generation one's stdout outside its owned group.
+    /// This reaches the real drain deadline, rather than directly invoking a
+    /// custody reset: the supervisor itself must choose and start generation 2.
+    #[test]
+    fn host_supervisor_restarts_after_a_drain_gap_with_inherited_session_flags() {
+        use std::process::{Command, Stdio};
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join("holder.py"),
+            r#"
+import array, os, socket, sys
+from pathlib import Path
+server = socket.socket(socket.AF_UNIX)
+server.bind('pipe.sock')
+server.listen(1)
+Path('holder.ready').touch()
+connection, _ = server.accept()
+_, ancillary, _, _ = connection.recvmsg(1, socket.CMSG_SPACE(array.array('i').itemsize))
+fds = array.array('i')
+for level, kind, data in ancillary:
+    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+        fds.frombytes(data[:len(data) - len(data) % fds.itemsize])
+assert len(fds) == 1
+Path('holder.held').touch()
+sys.stdin.buffer.read(1)
+for fd in fds:
+    os.close(fd)
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.checkout.join("generation.py"),
+            r#"
+import array, json, os, socket, sys
+from pathlib import Path
+if not Path('first.pid').exists():
+    Path('first.pid').write_text(str(os.getpid()))
+    sys.stdout.write('safe\nsuper\x1b]unfinished')
+    sys.stdout.flush()
+    connection = socket.socket(socket.AF_UNIX)
+    connection.connect('pipe.sock')
+    connection.sendmsg([b'x'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [1]))])
+    sys.exit(3)
+Path('second.pid').write_text(str(os.getpid()))
+Path('session-flags.json').write_text(json.dumps({name: os.environ.get(name) for name in ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS', 'CLAUDE_CODE_UNRECOGNIZED_SWITCH']}))
+sys.stdout.write('secret\nrestarted\n')
+sys.stdout.flush()
+os.execv('/bin/sleep', ['sleep', '60'])
+"#,
+        )
+        .unwrap();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "/usr/bin/python3 generation.py",
+                HostProcessRestart::OnFailure,
+            )],
+        );
+        struct Stop<'a> {
+            holder: std::process::Child,
+            checkout: &'a Path,
+            policy: &'a EffectiveContainerPolicy,
+        }
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                // Close the recorded external fd holder first, including when
+                // an assertion unwinds; cleanup need not wait another deadline.
+                let _ = self.holder.kill();
+                let _ = self.holder.wait();
+                let _ = super::kernel_run::stop_host_processes_for_container(
+                    self.checkout,
+                    self.policy,
+                );
+            }
+        }
+        let guard = Stop {
+            holder: Command::new("/usr/bin/python3")
+                .arg("holder.py")
+                .current_dir(&fixture.checkout)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+            checkout: &fixture.checkout,
+            policy: &policy,
+        };
+        wait_until("the recorded pipe holder to listen", || {
+            fixture.checkout.join("holder.ready").exists()
+        });
+        let started = Instant::now();
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        let deadline =
+            Instant::now() + effigy_kernel::custody::STOP_MARGIN + Duration::from_secs(15);
+        let read = loop {
+            match effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024) {
+                Ok(read)
+                    if read
+                        .bytes
+                        .windows(b"restarted\n".len())
+                        .any(|part| part == b"restarted\n") =>
+                {
+                    break read
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("canonical restart read failed: {error}"),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "host did not commit its restart output within the bounded drain/retry window"
+            );
+            thread::sleep(Duration::from_millis(25));
+        };
+        let restart_elapsed = started.elapsed();
+        let first: u32 = fs::read_to_string(fixture.checkout.join("first.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let second: u32 = fs::read_to_string(fixture.checkout.join("second.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let inherited: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.checkout.join("session-flags.json")).unwrap())
+                .unwrap();
+        let held = fixture.checkout.join("holder.held").exists();
+        let view = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        drop(guard);
+        let record: HostProcessStopRecord =
+            read_private_json(&log.with_extension("stop.json")).unwrap();
+        for name in [
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS",
+            "CLAUDE_CODE_UNRECOGNIZED_SWITCH",
+        ] {
+            assert_eq!(inherited[name], serde_json::json!(std::env::var(name).ok()));
+        }
+        assert!(held && first != second);
+        assert_eq!(view[0].state, "running", "{view:?}");
+        assert_eq!(view[0].pid, Some(second));
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        // Owner diagnostics pass through the redactor too, so their exact
+        // spelling is not an authority. Prove the real deadline and durable
+        // capture state instead of requiring unmasked diagnostic text.
+        assert!(restart_elapsed >= effigy_kernel::custody::STOP_MARGIN);
+        assert!(!read.bytes.contains(&0x1b) && !text.contains("supersecret"));
+        assert!(record.custody.unwrap().capture_truncated);
+        assert!(group_members(first).is_empty() && group_members(second).is_empty());
+    }
+
+    #[test]
+    fn host_pane_status_uses_the_kernel_owner_not_child_lines() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "printf '[effigy host-process] `app` exited (code 99)\\n'; exec /bin/sleep 60",
+                HostProcessRestart::Never,
+            )],
+        );
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let guard = Stop(&fixture.checkout, &policy);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let identity = HostPaneIdentity::new(&fixture.checkout, &policy, "app").unwrap();
+        wait_until("typed owner observation", || {
+            identity
+                .read(None)
+                .is_some_and(|view| view.live && view.phase == effigy_kernel::run::Phase::Active)
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        wait_until("forged child line was captured", || {
+            listener_output_tail(&log).is_some()
+                || fs::read(&log).is_ok_and(|bytes| {
+                    bytes
+                        .windows(b"exited (code 99)".len())
+                        .any(|part| part == b"exited (code 99)")
+                })
+        });
+        let running = identity.read(None).unwrap();
+        drop(guard);
+        let stopped = identity.read(None).unwrap();
+        assert!(running.live && running.exit.is_none(), "{running:?}");
+        assert_eq!(stopped.phase, effigy_kernel::run::Phase::Closed);
+        assert!(
+            stopped.exit.is_none(),
+            "an owner stop is not the child's forged exit: {stopped:?}"
+        );
+    }
+
+    #[test]
+    fn status_does_not_advertise_an_unbound_legacy_listener_as_ready() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process("app", "exit 0", HostProcessRestart::Never)],
+        );
+        let state = host_process_listener_state_path(&fixture.checkout, &policy, "app");
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        write_private_json(&state, &published_listener_state("old activation", "ready")).unwrap();
+        let rows = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(rows[0].state, "absent");
+        assert!(rows[0].listener.is_none(), "{rows:?}");
+    }
+
+    /// Real custody cutover, then the bundled direct inode/offset follower.
+    /// Only the follower's pre-cutover stat snapshot is mocked: its new file
+    /// open, fstat, decoder, gap and payload handling run against the real log.
+    #[test]
+    fn canonical_cutover_and_bundled_underlay_follower_use_the_same_new_inode() {
+        use std::os::unix::fs::MetadataExt as _;
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nTOKEN=\n",
+        )
+        .unwrap();
+        let mut producer = host_process(
+            "app",
+            r#"i=0; while [ $i -lt 200 ]; do printf 'safe '; i=$((i+1)); done; printf '\033[32mready\033[0m super\033[31msecret\033[0m\n'"#,
+            HostProcessRestart::Never,
+        );
+        producer.env = vec![("TOKEN".into(), "supersecret".into())];
+        let policy = policy(&fixture.checkout, vec![producer]);
+        let directory = host_process_dir_for_policy(&fixture.checkout, &policy);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("app.log");
+        let legacy = b"\x1b[31mlegacy-457-secret\n";
+        fs::write(&path, legacy).unwrap();
+        let old = fs::metadata(&path).unwrap();
+        assert!(effigy_kernel::custody::MergedLog::read_plain(&path, None, 0, 4096).is_err());
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("custody producer starts");
+        wait_until("new producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let read = effigy_kernel::custody::MergedLog::read_plain(
+            &path,
+            Some(effigy_kernel::custody::FileIdentity {
+                device: old.dev(),
+                inode: old.ino(),
+            }),
+            old.len(),
+            64 * 1024,
+        )
+        .unwrap();
+        assert!(read.cutover);
+        assert_eq!(read.from, 0);
+        assert_ne!(read.log.identity.inode, old.ino());
+        assert!(read.bytes.len() as u64 > old.len());
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        assert!(text.contains("ready [REDACTED]"), "{text}");
+        assert!(
+            !text.contains("supersecret")
+                && !text.contains("legacy-457-secret")
+                && !text.contains('\x1b')
+        );
+        let styles = effigy_kernel::custody::MergedLog::styles(&path, &read);
+        assert_eq!(
+            styles
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            text
+        );
+        assert!(styles
+            .iter()
+            .any(|span| span.text.contains("ready") && span.style != Default::default()));
+        let quarantined = fs::read_dir(directory.join(".legacy-host-logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].metadata().unwrap().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(quarantined[0].path()).unwrap(), legacy);
+        let script = r#"
+import io,json,sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import profile_env
+log=Path(sys.argv[2]); old=json.loads(sys.argv[3]); original=Path.stat; count=0
+assert profile_env.host_process_log(Path(sys.argv[4]),'web','app') == log
+def stat(path,*args,**kwargs):
+    global count
+    if path==log and count<2:
+        count+=1
+        return SimpleNamespace(st_dev=old['device'],st_ino=old['inode'],st_size=old['length'])
+    return original(path,*args,**kwargs)
+out=io.StringIO()
+with patch.object(profile_env,'host_process_log',return_value=log), patch.object(Path,'stat',stat):
+    profile_env.follow_log(log.parent,'web','app',out=out,forever=False)
+print(json.dumps(out.getvalue()))
+"#;
+        let output = std::process::Command::new("python3")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .arg("-c")
+            .arg(script)
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("external/bundles/underlay/scripts/dev"),
+            )
+            .arg(&path)
+            .arg(
+                serde_json::json!({"device":old.dev(),"inode":old.ino(),"length":old.len()})
+                    .to_string(),
+            )
+            .arg(&fixture.checkout)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let followed: String = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(followed, format!("… log restarted …\n{text}"));
+        assert_eq!(followed.matches("… log restarted …").count(), 1);
+    }
+
+    #[test]
+    fn canonical_capture_stops_a_full_pipe_with_an_unconsumed_styled_reader() {
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nTOKEN=\n",
+        )
+        .unwrap();
+        let mut producer = host_process(
+            "app",
+            r#"trap '' TERM; while :; do printf '\033[32msafe\033[0m token=%s\n' "$TOKEN"; printf 'stderr safe\n' >&2; done"#,
+            HostProcessRestart::Never,
+        );
+        producer.env = vec![("TOKEN".into(), "opaque-457-full-pipe-key".into())];
+        let policy = policy(&fixture.checkout, vec![producer]);
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        let _cleanup = Stop(&fixture.checkout, &policy);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let directory = host_process_dir_for_policy(&fixture.checkout, &policy);
+        let log = directory.join("app.log");
+        wait_until("capture passes a pipe-sized output burst", || {
+            effigy_kernel::custody::MergedLog::identity(&log)
+                .is_ok_and(|log| log.length > 256 * 1024)
+        });
+        let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let pid = status[0].pid.expect("chatty child stays in custody");
+        // This reader holds an old style snapshot open without consuming it.
+        // It cannot hold the writer's queue, lock or a child pipe.
+        let tap = fs::File::open(directory.join("app.log.styled-tap")).unwrap();
+        assert!(tap.metadata().unwrap().len() <= 1024 * 1024);
+        let started = Instant::now();
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        // This proof must stop before custody's drain-deadline margin, even
+        // under shared I/O load; a complete report at the deadline is too late.
+        let bound = effigy_kernel::custody::STOP_MARGIN / 2;
+        assert!(
+            started.elapsed() < bound,
+            "elapsed={:?}, prompt bound={bound:?}: {report:?}",
+            started.elapsed()
+        );
+        assert!(report.complete(), "{report:?}");
+        assert!(group_members(pid).is_empty());
+        let stop: HostProcessStopRecord =
+            read_private_json(&log.with_extension("stop.json")).unwrap();
+        assert!(
+            !stop.custody.unwrap().capture_truncated,
+            "an unconsumed style reader must not force a capture drain deadline"
+        );
+        let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        assert!(!text.contains("opaque-457-full-pipe-key") && !text.contains('\x1b'));
+        assert!(text.contains("[REDACTED]"));
     }
 
     /// Client death mid-`up` (the owning pipe closes before any detach) still
@@ -2627,6 +3858,28 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         listener_policy_running(checkout, domain, name, LISTENER_CHILD, 30)
     }
 
+    /// A private test gateway home for one fixture name, with the 0700 mode a
+    /// private root requires. The supervisor is a separate process, so it
+    /// cannot see this thread's test gateway home and re-checks the recorded
+    /// root as a private root.
+    fn listener_gateway_home(
+        checkout: &Path,
+        name: &str,
+    ) -> super::super::gateway_command::TestGatewayHomeGuard {
+        let gateway_home = checkout
+            .parent()
+            .expect("fixture root")
+            .join(format!("gateway-{name}"));
+        let gateway_dir = gateway_home.join(".effigy/gateway");
+        fs::create_dir_all(&gateway_dir).expect("gateway state directory");
+        use std::os::unix::fs::PermissionsExt;
+        for directory in [gateway_home.join(".effigy"), gateway_dir] {
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("private gateway permissions");
+        }
+        super::super::gateway_command::set_test_gateway_home(&gateway_home)
+    }
+
     /// [`listener_policy`] with the listener's own child and declared readiness
     /// budget, for the proofs about a child that has not opened its port yet.
     fn listener_policy_running(
@@ -2639,22 +3892,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         super::super::gateway_command::TestGatewayHomeGuard,
         EffectiveContainerPolicy,
     ) {
-        let gateway_home = checkout
-            .parent()
-            .expect("fixture root")
-            .join(format!("gateway-{name}"));
-        // The supervisor is a separate process, so it cannot see this thread's
-        // test gateway home and re-checks the recorded root as a private root.
-        // Private roots require mode 0700, exactly as a real private gateway
-        // would.
-        let gateway_dir = gateway_home.join(".effigy/gateway");
-        fs::create_dir_all(&gateway_dir).expect("gateway state directory");
-        use std::os::unix::fs::PermissionsExt;
-        for directory in [gateway_home.join(".effigy"), gateway_dir] {
-            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-                .expect("private gateway permissions");
-        }
-        let guard = super::super::gateway_command::set_test_gateway_home(&gateway_home);
+        let guard = listener_gateway_home(checkout, name);
         let bind = fixture_listener_bind(&format!("{}|{domain}|{name}", checkout.display()));
         let mut policy = policy(
             checkout,
@@ -2732,6 +3970,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
+    /// A child that answers every request with 500 opens its port and tells
+    /// the readiness probe what it serves: a definite refusal, not a slow
+    /// start.
+    const STATUS_500_LISTENER_CHILD: &str = r#"
+import http.server, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
+    /// A child that binds its port and closes every request without a status
+    /// line: the port is open, so the declared readiness budget applies, and
+    /// no definite status has been observed.
+    const CLOSING_LISTENER_CHILD: &str = r#"
+import socket, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((host, int(port)))
+server.listen(8)
+while True:
+    connection, _ = server.accept()
+    connection.close()
+"#;
+
     /// A cold build is phase (a): the port is closed and the child is alive.
     /// That phase has no deadline, so an app that opens its port long after its
     /// declared readiness budget still becomes ready, and the `up` that waits
@@ -2744,7 +4015,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let (_gateway_home, policy) =
             listener_policy_running(&fixture.checkout, domain, "slow-build", &slow_build, 1);
         let started = Instant::now();
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("a child that opens its port after its readiness budget still becomes ready");
         assert!(
             started.elapsed() >= Duration::from_secs(8),
@@ -2765,23 +4036,22 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     #[test]
     fn host_process_listener_readiness_budget_starts_when_the_port_opens() {
         let fixture = fixture();
-        let domain = "refusing.host.test";
+        let domain = "incomplete.host.test";
         let (_gateway_home, policy) = listener_policy_running(
             &fixture.checkout,
             domain,
-            "refusing",
-            REFUSING_LISTENER_CHILD,
+            "incomplete",
+            CLOSING_LISTENER_CHILD,
             1,
         );
         let started = Instant::now();
-        let error =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err(
-                    "a listener that never answers the declared status fails before readiness",
-                )
-                .to_string();
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a listener that never answers leaves one withheld route");
         let elapsed = started.elapsed();
-        assert!(error.contains("timed out after 1s"), "{error}");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let detail = &report.failures[0].detail;
+        assert!(detail.contains("timed out after 1s"), "{detail}");
         assert!(
             elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(20),
             "the budget starts when the port opens, so the start fails just after it: {elapsed:?}"
@@ -2792,9 +4062,353 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             state["diagnostic"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("status_mismatch"),
+                .contains("no_status_line"),
             "{state}"
         );
+    }
+
+    /// A listener that answers with a definite, different status is refused as
+    /// soon as that answer is observed: the declared budget is not spent on a
+    /// question the child has already answered (effigy#455). The refusal names
+    /// the status and the child's own output.
+    #[test]
+    fn host_process_listener_status_mismatch_is_a_terminal_refusal() {
+        let fixture = fixture();
+        let domain = "status-mismatch.host.test";
+        let child = format!(
+            "print(\"vite: internal server error\", flush=True)\n{}",
+            STATUS_500_LISTENER_CHILD.trim()
+        );
+        let (_gateway_home, policy) =
+            listener_policy_running(&fixture.checkout, domain, "status-mismatch", &child, 300);
+        let started = Instant::now();
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("one failing listener still reports a start");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "a definite status is terminal, not a 300s wait: {elapsed:?}"
+        );
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let failure = &report.failures[0];
+        assert_eq!(failure.name, "app");
+        assert_eq!(failure.observed_status, Some(500), "{failure:?}");
+        assert_eq!(failure.route_domain.as_deref(), Some(domain));
+        assert!(
+            failure.detail.contains("status_mismatch") && failure.detail.contains("HTTP 500"),
+            "{failure:?}"
+        );
+        assert!(
+            failure
+                .output_tail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("vite: internal server error"),
+            "the refusal carries the child's own output: {failure:?}"
+        );
+        assert!(
+            !failure.detail.contains("timed out"),
+            "a status mismatch is not a timeout: {}",
+            failure.detail
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "failed", "{state}");
+        assert_eq!(state["observed_status"], 500, "{state}");
+    }
+
+    /// A route the container's own verified registration published earlier in
+    /// the same activation: the store entry a failing host listener must
+    /// leave alone.
+    fn container_route(domain: &str, target: &str) -> effigy_gateway::routes::Route {
+        effigy_gateway::routes::Route {
+            domain: domain.to_owned(),
+            target: Some(target.to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: effigy_gateway::routes::RouteSource::Container,
+            project: "fixture".to_owned(),
+            managed_listener: None,
+            tls: false,
+            registered: chrono::Utc::now(),
+        }
+    }
+
+    fn publish_container_route(domain: &str, target: &str) {
+        effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_table_path())
+            .routes(|table| {
+                table.upsert(container_route(domain, target));
+                Ok::<_, effigy_gateway::GatewayError>(())
+            })
+            .expect("the container's verified route is published");
+    }
+
+    /// Exposure is decided per declared route target: a listener that answers
+    /// 500 keeps only its own route withheld, while the container's verified
+    /// route and a ready listener's route stay published (effigy#455).
+    #[test]
+    fn host_process_listener_failure_keeps_every_other_verified_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "partial-exposure");
+        let front_bind =
+            fixture_listener_bind(&format!("{}|front.test|front", fixture.checkout.display()));
+        let api_bind =
+            fixture_listener_bind(&format!("{}|api.test|api", fixture.checkout.display()));
+        let front = listener_host_process_running(
+            "front",
+            "front.test",
+            &front_bind,
+            &format!(
+                "print(\"vite: internal server error\", flush=True)\n{}",
+                STATUS_500_LISTENER_CHILD.trim()
+            ),
+            300,
+        );
+        let api = listener_host_process_running("api", "api.test", &api_bind, LISTENER_CHILD, 30);
+        let mut policy = policy(&fixture.checkout, vec![front, api]);
+        policy.project_name = "partial-exposure".to_owned();
+
+        // The container's own route was registered by the activation before it
+        // started the host listeners.
+        publish_container_route("web.test", "127.0.0.1:18080");
+
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a failed listener is reported, not raised as the whole start");
+        assert_eq!(report.ready.len(), 1, "{report:?}");
+        assert_eq!(report.ready[0].name, "api");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let failure = &report.failures[0];
+        assert_eq!(failure.name, "front");
+        assert_eq!(failure.observed_status, Some(500));
+        let refusal = report
+            .refusal()
+            .expect("a withheld route is a refusal")
+            .to_string();
+        assert!(
+            refusal.contains("HTTP 500") || refusal.contains("500"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("vite: internal server error"),
+            "the refusal carries the child's output tail: {refusal}"
+        );
+
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        let container = table
+            .lookup("web.test")
+            .expect("the container's verified route stays published");
+        assert_eq!(container.target.as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(
+            container.source,
+            effigy_gateway::routes::RouteSource::Container
+        );
+        assert!(
+            table.lookup("api.test").is_some(),
+            "the ready listener keeps its route"
+        );
+        assert!(
+            table.lookup("front.test").is_none(),
+            "the failing listener's route is absent"
+        );
+
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+    }
+
+    /// A retry after the listener recovers publishes its own route and leaves
+    /// the container's verified route exactly as it was: a route is replaced by
+    /// its own owner, never duplicated (effigy#455).
+    #[test]
+    fn host_process_listener_retry_registers_its_route_without_touching_the_container_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "listener-retry");
+        let domain = "retry.host.test";
+        let bind = fixture_listener_bind(&format!("{}|{domain}", fixture.checkout.display()));
+        let failing =
+            listener_host_process_running("app", domain, &bind, STATUS_500_LISTENER_CHILD, 300);
+        let mut policy = policy(&fixture.checkout, vec![failing]);
+        policy.project_name = "listener-retry".to_owned();
+        publish_container_route("web.test", "127.0.0.1:18080");
+
+        let failed =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("the failing listener is reported");
+        assert_eq!(failed.failures.len(), 1, "{failed:?}");
+        assert!(RouteTable::load(&route_table_path())
+            .expect("route table")
+            .lookup(domain)
+            .is_none());
+
+        // The listener's own child now answers the declared status.
+        let healthy = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        policy.host_processes = vec![healthy];
+        let retried =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("the recovered listener publishes its own route");
+        assert_eq!(retried.failures.len(), 0, "{retried:?}");
+        assert_eq!(retried.ready.len(), 1);
+
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        assert!(
+            table.lookup(domain).is_some(),
+            "the recovered listener registers its own route"
+        );
+        let container = table
+            .lookup("web.test")
+            .expect("the container's verified route is still published");
+        assert_eq!(container.target.as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(
+            table
+                .routes
+                .values()
+                .filter(|route| route.source == effigy_gateway::routes::RouteSource::Container)
+                .count(),
+            1,
+            "one container route, not a duplicate: {table:?}"
+        );
+
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+    }
+
+    /// The enclosing activation's observation budget ends a wait on a port
+    /// that never opens: the listener keeps its own route withheld, the command
+    /// returns at the budget rather than at the build's end, and the supervisor
+    /// keeps its own readiness semantics so a slow child is not killed
+    /// (effigy#455).
+    #[test]
+    fn host_process_listener_activation_budget_bounds_a_closed_port_wait() {
+        let fixture = fixture();
+        let domain = "closed-port-budget.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "closed-port-budget",
+            "import time\ntime.sleep(120)",
+            60,
+        );
+        let started = Instant::now();
+        let report = super::kernel_run::start_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            Some(Instant::now() + Duration::from_secs(2)),
+        )
+        .expect("a listener still starting at the budget is reported, not hung on");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "the command's wait is the activation budget, not the child's build: {elapsed:?}"
+        );
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0]
+                .detail
+                .contains("observation budget expired"),
+            "{:?}",
+            report.failures[0]
+        );
+        assert!(
+            report.failures[0]
+                .detail
+                .contains("settled before this activation returned"),
+            "the failure says the timed-out generation was settled: {:?}",
+            report.failures[0]
+        );
+        assert!(
+            RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .is_none(),
+            "a listener that never opened its port has no route"
+        );
+        // The generation is settled, not merely abandoned: it cannot publish a
+        // route after the activation reported that route withheld.
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "stopped", "{state}");
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+    }
+
+    /// A withheld listener propagates through a multi-level chain: B depends on
+    /// A, C depends on B, and a non-listener worker depends on C. Every route is
+    /// withheld, nothing waits on a record a skipped process never wrote, and
+    /// the start settles (effigy#455).
+    #[test]
+    fn host_process_withheld_dependency_chain_settles_every_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "withheld-chain");
+        let mut processes = Vec::new();
+        for (name, domain, child) in [
+            ("a", "chain-a.host.test", STATUS_500_LISTENER_CHILD),
+            ("b", "chain-b.host.test", LISTENER_CHILD),
+            ("c", "chain-c.host.test", LISTENER_CHILD),
+        ] {
+            let bind =
+                fixture_listener_bind(&format!("{}|{domain}|{name}", fixture.checkout.display()));
+            let mut process = listener_host_process_running(name, domain, &bind, child, 30);
+            if name == "b" {
+                process.depends_on = vec!["a".to_owned()];
+            }
+            if name == "c" {
+                process.depends_on = vec!["b".to_owned()];
+            }
+            processes.push(process);
+        }
+        let mut worker = host_process(
+            "worker",
+            "printf started > worker-started.txt",
+            HostProcessRestart::Never,
+        );
+        worker.depends_on = vec!["c".to_owned()];
+        processes.push(worker);
+        let mut policy = policy(&fixture.checkout, processes);
+        policy.project_name = "withheld-chain".to_owned();
+
+        let started = Instant::now();
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a withheld chain settles instead of waiting on itself");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the chain settles rather than hanging on a missing state record: {:?}",
+            started.elapsed()
+        );
+        let withheld = report
+            .failures
+            .iter()
+            .map(|failure| failure.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(withheld, vec!["a", "b", "c"], "{report:?}");
+        assert!(
+            report.failures[1]
+                .detail
+                .contains("its dependency was withheld by this activation"),
+            "{:?}",
+            report.failures[1]
+        );
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        for domain in [
+            "chain-a.host.test",
+            "chain-b.host.test",
+            "chain-c.host.test",
+        ] {
+            assert!(
+                table.lookup(domain).is_none(),
+                "{domain} must stay withheld: {table:?}"
+            );
+        }
+        assert!(
+            !fixture.checkout.join("worker-started.txt").exists(),
+            "a non-listener whose dependency was withheld does not start"
+        );
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
     }
 
     /// The child exiting is the failure signal of phase (a): a child that dies
@@ -2812,11 +4426,15 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             60,
         );
         let started = Instant::now();
-        let error =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err("a listener child that exits before binding fails the start")
-                .to_string();
-        assert!(error.contains("exited with code 3"), "{error}");
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a listener child that exits still reports its own withheld route");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0].detail.contains("exited with code 3"),
+            "{:?}",
+            report.failures[0]
+        );
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the child's exit, not the readiness budget, ends the wait: {:?}",
@@ -2849,11 +4467,15 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             60,
         );
         let started = Instant::now();
-        let error =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err("a child that exits its leader before answering fails the start")
-                .to_string();
-        assert!(error.contains("daemonised"), "{error}");
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a child that exits its leader reports its own withheld route");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0].detail.contains("daemonised"),
+            "{:?}",
+            report.failures[0]
+        );
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the daemonising child is reported, not waited on: {:?}",
@@ -2870,13 +4492,100 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         );
     }
 
+    /// A value longer than the read window loses its `key=` marker to the
+    /// window edge, so the line it sits on is dropped whole rather than printed
+    /// with part of the secret (effigy#455).
+    #[test]
+    fn listener_output_tail_never_prints_a_value_whose_marker_was_cut() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        fs::write(
+            &log,
+            format!(
+                "vite: internal server error\nDB_PASSWORD={}\n",
+                "s3cr3tvalue".repeat(2_000)
+            ),
+        )
+        .expect("write the fixture log");
+        let tail = listener_output_tail(&log).unwrap_or_default();
+        assert!(
+            !tail.contains("s3cr3tvalue"),
+            "a value whose marker is outside the window is never printed: {tail}"
+        );
+    }
+
+    #[test]
+    fn listener_child_tail_skips_blank_frames_without_joining_child_blocks() {
+        let text = "old partial\n[effigy host-process] restarted\nvite: internal server error\n[effigy host-process] stopped\n\n";
+        assert_eq!(
+            listener_child_block(text).as_deref(),
+            Some("vite: internal server error\n")
+        );
+        assert_eq!(
+            listener_child_block("super\n[effigy host-process] message\nsecret\n").as_deref(),
+            Some("secret\n")
+        );
+    }
+
+    /// A wait on a closed port names the child's own output, bounded and
+    /// redacted, instead of repeating a silent count (effigy#455).
+    #[test]
+    fn listener_start_progress_names_the_children_bounded_output_tail() {
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join(".env.schema"),
+            "# @sensitive\nDB_PASSWORD=\n",
+        )
+        .unwrap();
+        let mut child = host_process("app",
+            "i=0; while [ $i -lt 400 ]; do printf 'compiling '; i=$((i+1)); done; printf '\nvite: internal server error\nDB_PASSWORD=%s\n' \"$DB_PASSWORD\"",
+            HostProcessRestart::Never);
+        child.env = vec![("DB_PASSWORD".into(), "hunter2".into())];
+        let policy = policy(&fixture.checkout, vec![child]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .expect("canonical producer starts");
+        wait_until("canonical producer closes", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|state| state.state == "closed")
+        });
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+
+        let progress = listener_start_progress("app", Duration::from_secs(90), &log, None);
+        assert!(progress.contains("still starting after 90s"), "{progress}");
+        let tail = progress
+            .split("last child output: ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("the progress line names the tail: {progress}"));
+        assert!(
+            tail.contains("vite: internal server error"),
+            "the tail is the child's own last output: {tail}"
+        );
+        assert!(
+            tail.contains("DB_PASSWORD=[REDACTED]")
+                && !tail.contains("hunter2")
+                && !tail.contains("supervisor-only line"),
+            "the tail is redacted and names only the child's output: {tail}"
+        );
+        assert!(
+            tail.len() <= 400,
+            "the tail stays bounded however much the child prints: {} bytes",
+            tail.len()
+        );
+    }
+
     /// A stop requested while a child is still in phase (a) ends the wait and
     /// settles the run: the phase has no deadline, the stop does. The `up`
     /// console carries a progress line for the wait, and the stop that ends it
     /// is the one `down` and `container restart` run (effigy#370).
     #[test]
     fn host_process_owned_stop_during_a_starting_child_settles() {
-        let progress = listener_start_progress("api", Duration::from_secs(30));
+        let progress = listener_start_progress(
+            "api",
+            Duration::from_secs(30),
+            Path::new("/nonexistent/api.log"),
+            None,
+        );
         assert!(
             progress.contains("still starting after 30s") && progress.contains("down` stops it"),
             "the waiting console names the wait and what ends it: {progress}"
@@ -2894,7 +4603,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let checkout = fixture.checkout.clone();
         let up_policy = policy.clone();
         let up = std::thread::spawn(move || {
-            super::kernel_run::start_host_processes_for_container(&checkout, &up_policy)
+            super::kernel_run::start_host_processes_for_container(&checkout, &up_policy, None)
         });
         wait_until("the listener to publish its starting generation", || {
             fs::read(&state_path)
@@ -2947,7 +4656,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let state_path = listener_state(&policy);
         let url_path = fixture.checkout.join("consumer-url.txt");
 
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and its dependent start");
         let address = read_json(&state_path)["address"]
             .as_str()
@@ -3009,7 +4718,11 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         );
         let started = Instant::now();
         let report = super::super::environment::holding_environment(&policy, Operation::Up, || {
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)?;
+            super::kernel_run::start_host_processes_for_container(
+                &fixture.checkout,
+                &policy,
+                None,
+            )?;
             super::kernel_run::restart_host_processes_for_container(
                 &fixture.checkout,
                 &policy,
@@ -3066,7 +4779,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let fixture = fixture();
         let domain = "reclaim-down.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "down");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         assert!(published_owner(domain).address.starts_with("127.0.0.1:"));
         let leader = super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -3111,7 +4824,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let fixture = fixture();
         let domain = "reclaim-live-down.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "live-down");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let owner = published_owner(domain);
         assert_eq!(
@@ -3139,7 +4852,16 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let fixture = fixture();
         let domain = "reclaim-successor.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "successor");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        // Resume guards inside the pause loop unwind before this owner guard,
+        // so a failed boundary observation cannot strand a paused/live fixture.
+        let _cleanup = Stop(&fixture.checkout, &policy);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let first = published_owner(domain);
         let first_generation = first.generation.clone();
@@ -3147,7 +4869,46 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             .first()
             .and_then(|status| status.pid)
             .expect("custody receipt names the child group");
-        kill_recorded_run(&listener_state(&policy), leader);
+        // This fixture isolates route succession. A kill inside durable append
+        // must instead refuse restart for operator recovery (covered by the
+        // kernel fault harness); never clear that pending barrier here.
+        let state_path = listener_state(&policy);
+        let supervisor = read_json(&state_path)["supervisor_pid"].as_u64().unwrap() as i32;
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        struct Resume(Option<Pid>);
+        impl Drop for Resume {
+            fn drop(&mut self) {
+                if let Some(pid) = self.0 {
+                    let _ = kill(pid, Signal::SIGCONT);
+                }
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let pid = Pid::from_raw(supervisor);
+            kill(pid, Signal::SIGSTOP).unwrap();
+            let mut resume = Resume(Some(pid));
+            wait_until("the recorded owner to pause", || {
+                std::process::Command::new("ps")
+                    .args(["-o", "state=", "-p", &supervisor.to_string()])
+                    .output()
+                    .is_ok_and(|out| out.status.success() && out.stdout.contains(&b'T'))
+            });
+            let committed = effigy_kernel::custody::MergedLog::identity(&log);
+            if committed
+                .is_ok_and(|proof| fs::metadata(&log).is_ok_and(|file| file.len() == proof.length))
+            {
+                kill_recorded_run(&state_path, leader);
+                resume.0 = None;
+                break;
+            }
+            drop(resume);
+            assert!(
+                Instant::now() < deadline,
+                "owner did not reach a committed append boundary"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
         assert!(
             RouteTable::load(&route_table_path())
                 .expect("route table")
@@ -3157,8 +4918,9 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         );
 
         // No `down`: the same checkout path replaces its own route on the next
-        // start, whatever the previous generation did.
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        // start after a committed-boundary crash. Interrupted appends remain
+        // an explicit operator-recovery refusal, not automatic route recovery.
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("a successor run replaces the route its predecessor left");
         let successor = published_owner(domain);
         assert_ne!(
@@ -3187,7 +4949,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let fixture = fixture();
         let domain = "reclaim-live.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "live");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let live = published_owner(domain);
         let route = RouteTable::load(&route_table_path())
@@ -3280,7 +5042,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             target_host: None,
         }];
         configured.dns_base_domain = Some("acme.test".to_owned());
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &configured)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &configured, None)
             .expect("the host process starts with its resolved environment");
         wait_until("the child to write its resolved environment", || {
             out.exists()
@@ -3297,9 +5059,12 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             "${service.postgres.prot}".to_owned(),
         )];
         let typo_policy = policy(&fixture.checkout, vec![typo]);
-        let error =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &typo_policy)
-                .expect_err("a typo'd reference refuses to start");
+        let error = super::kernel_run::start_host_processes_for_container(
+            &fixture.checkout,
+            &typo_policy,
+            None,
+        )
+        .expect_err("a typo'd reference refuses to start");
         let message = error.to_string();
         assert!(message.contains("DATABASE_URL"), "{message}");
         assert!(message.contains("service.postgres.prot"), "{message}");
@@ -3307,6 +5072,8 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 
     fn runtime_spec(env: &[(&str, &str)]) -> HostProcessRuntimeSpec {
         HostProcessRuntimeSpec {
+            run_id: None,
+            ansi_front: false,
             schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
             project_path: "/checkout".to_owned(),
             runtime_generation: "runtime".to_owned(),
@@ -3332,6 +5099,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             shutdown_grace_secs: 1,
             checkout: None,
             state_home: PathBuf::from("/home"),
+            output: None,
         }
     }
 
@@ -3367,6 +5135,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             &config,
             Duration::from_secs(1),
             HttpReadinessOutcome::ConnectFailed,
+            Path::new("/nonexistent/timeout.log"),
         )
         .to_string();
         assert!(message.contains("127.0.0.1:9400"), "{message}");
@@ -3744,7 +5513,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         wait_until("the host process leader to be recorded", || {
             super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -3853,7 +5622,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "named", vec![app, named_worker()]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -3920,7 +5689,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "stopped", vec![app, named_worker()]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -3968,7 +5737,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let bind = fixture_listener_bind("restart-listener|app");
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) = restart_policy(&fixture.checkout, "listener", vec![app]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let before = read_json(&listener_state(&policy));
         assert_eq!(before["status"], "ready", "{before}");
@@ -4043,7 +5812,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let worker = named_worker();
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "dependent", vec![app, consumer, worker]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener, its dependent and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (_app_run, app_pid) = running_process(&before, "app");
@@ -4104,7 +5873,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let api = host_process("api", "exec /bin/sleep 120", HostProcessRestart::Never);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "detach-failure", vec![front, api]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (front_run, front_pid) = running_process(&before, "front");
@@ -4170,7 +5939,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             "restart-failure",
             vec![app, named_worker()],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &up_policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &up_policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &up_policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -4231,7 +6000,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         let bind = fixture_listener_bind("restart-unknown|app");
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) = restart_policy(&fixture.checkout, "unknown", vec![app]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");

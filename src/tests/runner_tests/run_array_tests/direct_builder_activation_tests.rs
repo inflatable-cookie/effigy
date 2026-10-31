@@ -30,7 +30,7 @@ mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|inspect|info)
+    up|down|ps|logs|exec|kill|inspect|info|update)
       subcmd="$arg"
       break
       ;;
@@ -38,6 +38,11 @@ for arg in "$@"; do
 done
 case "$subcmd" in
   info) exit 0 ;;
+  update)
+    # The restart-policy update of `restart: unless-stopped`. It names the
+    # container's full ID; it changes no label, process or identity.
+    printf "updated\n"
+    ;;
   up)
     ovr=""
     for arg in "$@"; do
@@ -120,6 +125,10 @@ case "$subcmd" in
       extra="$extra,\"com.effigy.scope\":\"$scope\""
     fi
     printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False"%s}},"Mounts":[],"NetworkSettings":{"Ports":{}}}]\n' "$id" "$cname" "$proj" "$svc" "$extra"
+    # A replacement armed by the script takes effect after the inspection that
+    # reports the current full ID: a bind taken from it is stale by the next
+    # verification of the same operation.
+    if [ "$mode" = "replace_before_exec" ] && [ -f "$state/arm-replacement" ]; then : > "$state/replaced"; fi
     ;;
   exec)
     printf '%s\0' "$@" > "$state/native-argv"
@@ -142,12 +151,7 @@ case "$subcmd" in
       expected=$(printf "%064d" 0 | tr 0 b)
     fi
     if [ "$target" != "$expected" ]; then exit 1; fi
-    if [ "$1" = true ]; then
-      printf '%s\n' "$target" >> "$state/readiness"
-      if [ "$mode" = "replace_after_readiness" ] || [ -f "$state/arm-replacement" ]; then : > "$state/replaced"; fi
-    else
-      printf '%s\n' "$target" "$@" >> "$state/effects"
-    fi
+    printf '%s\n' "$target" "$@" >> "$state/effects"
     printf "exec-ok\n"
     ;;
   down)
@@ -202,6 +206,13 @@ if !result["success"] { throw("literal exec failed"); }
         BUILDER_SCRIPT.replace(
             "let shell =",
             "fs::write_file(\"state/arm-replacement\", \"armed\");\nlet shell =",
+        )
+    } else if mode == "replace_after_readiness" {
+        // The first operation's owned binding is already released when the
+        // successor appears, so only the second operation's fresh bind sees it.
+        BUILDER_SCRIPT.replace(
+            "let shell =",
+            "fs::write_file(\"state/replaced\", \"armed\");\nlet shell =",
         )
     } else {
         BUILDER_SCRIPT.to_owned()
@@ -309,8 +320,11 @@ shell = "/bin/sh"
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
+    fs::create_dir_all(routes_path.parent().unwrap()).unwrap();
     routes.save(&routes_path).unwrap();
-    let routes_before = fs::read(&routes_path).unwrap();
+    let routes_before = effigy_gateway::routes::RouteTable::load(&routes_path)
+        .unwrap()
+        .routes;
     let bin_dir = install_fake_container_runtime(&root);
     write_executable(
         &bin_dir.join("colima"),
@@ -426,7 +440,9 @@ esac
         sibling_lease_bytes
     );
     assert_eq!(
-        fs::read(&routes_path).unwrap(),
+        effigy_gateway::routes::RouteTable::load(&routes_path)
+            .unwrap()
+            .routes,
         routes_before,
         "sibling route changed"
     );
@@ -464,6 +480,12 @@ fn direct_builder_without_ports_activates_and_execs_with_current_checkout_labels
             .lines()
             .any(|line| line.starts_with("exec ")),
         "the owned builder must receive exec: {}",
+        outcome.docker_args
+    );
+    assert_eq!(
+        policy_updates(&outcome.docker_args),
+        vec![primary_policy_update()],
+        "the verified owned container gets exactly its policy update: {}",
         outcome.docker_args
     );
     let shell = fs::read_to_string(outcome.root.join("shell.txt")).expect("read shell output");
@@ -543,6 +565,20 @@ fn is_owned_binding_refusal(error: &str) -> bool {
         || error.contains("not verified as owned")
 }
 
+/// The restart-policy update `up` sends the verified original container.
+fn primary_policy_update() -> String {
+    format!("update --restart unless-stopped {}", "a".repeat(64))
+}
+
+/// Every restart-policy update the run sent, in order.
+fn policy_updates(docker_args: &str) -> Vec<String> {
+    docker_args
+        .lines()
+        .filter(|line| line.starts_with("update "))
+        .map(str::to_owned)
+        .collect()
+}
+
 #[test]
 fn direct_builder_full_id_replacement_refuses_before_probe_or_restart() {
     let _lock = lock_test();
@@ -562,33 +598,45 @@ fn direct_builder_full_id_replacement_refuses_before_probe_or_restart() {
     assert!(!outcome.docker_args.contains("restart"));
 }
 
+/// The original container is replaced after the first operation released its
+/// binding. The second operation verifies afresh: it passes every owner check
+/// on the successor, so it execs there, and nothing reaches the original ID.
 #[test]
-fn direct_builder_replacement_after_readiness_refuses_publication() {
+fn direct_builder_replacement_after_readiness_binds_only_a_fresh_successor() {
     let _lock = lock_test();
     let outcome = run_direct_builder_activation("after-readiness", "replace_after_readiness");
-    let error = outcome
+    outcome
         .result
-        .expect_err("readiness cannot authorize a successor");
-    assert!(is_owned_binding_refusal(&error), "{error}");
+        .expect("a fresh operation may bind a verified successor");
+    let effects = fs::read_to_string(outcome.root.join("state/effects")).unwrap();
     assert!(
-        outcome.root.join("state/readiness").is_file(),
-        "original ID was ready"
+        effects.contains(&"b".repeat(64)),
+        "exec must target the fresh successor: {effects}"
     );
-    assert!(!outcome.root.join("state/effects").exists());
-    assert!(!outcome.docker_args.contains("restart"));
+    assert!(
+        !effects.contains(&"a".repeat(64)),
+        "the released original ID must not be exec'd: {effects}"
+    );
 }
 
+/// The replacement lands inside one operation, after its owned binding was
+/// verified and before its exec. The reverification refuses before any effect.
 #[test]
 fn direct_builder_replacement_between_readiness_and_exec_has_no_successor_effect() {
     let _lock = lock_test();
     let outcome = run_direct_builder_activation("before-exec", "replace_before_exec");
     let error = outcome
         .result
-        .expect_err("final exec must retain its readiness ID");
+        .expect_err("final exec must retain its verified ID");
     assert!(is_owned_binding_refusal(&error), "{error}");
     assert!(outcome.root.join("state/replaced").is_file());
     assert!(!outcome.root.join("state/effects").exists());
-    assert!(!outcome.docker_args.contains("restart"));
+    assert_eq!(
+        policy_updates(&outcome.docker_args),
+        vec![primary_policy_update()],
+        "only the verified original may get its policy update: {}",
+        outcome.docker_args
+    );
 }
 
 #[test]
@@ -643,7 +691,12 @@ fn delayed_nerdctl_binding_preserves_verification_and_reaches_exact_id_exec() {
             "unselected sibling inspected: {inspects}"
         );
     }
-    assert!(!outcome.docker_args.contains("restart"));
+    assert_eq!(
+        policy_updates(&outcome.docker_args),
+        vec![primary_policy_update()],
+        "the verified original gets exactly its policy update: {}",
+        outcome.docker_args
+    );
 }
 
 #[test]
@@ -655,7 +708,14 @@ fn delayed_nerdctl_binding_still_refuses_foreign_checkout_without_restart() {
         .expect_err("slow foreign inspection must refuse");
     assert!(is_owned_binding_refusal(&error), "{error}");
     assert!(!outcome.root.join("state/effects").exists());
-    assert!(!outcome.docker_args.contains("restart"));
+    // The foreign checkout appears only after `up` verified the original, so
+    // `up`'s policy update is the verified original's and no other.
+    assert_eq!(
+        policy_updates(&outcome.docker_args),
+        vec![primary_policy_update()],
+        "the foreign inspection must not add a policy update: {}",
+        outcome.docker_args
+    );
 }
 
 #[test]
@@ -719,6 +779,12 @@ fn direct_builder_wrong_project_or_changing_owner_refuses_before_effects() {
             "{mode}: {}",
             outcome.docker_args
         );
-        assert!(!outcome.docker_args.contains("restart"));
+        // A foreign or replaced container, including a same-name impostor in
+        // the listed project, is never named by a policy update.
+        assert!(
+            policy_updates(&outcome.docker_args).is_empty(),
+            "{mode}: refused ownership must send no policy update: {}",
+            outcome.docker_args
+        );
     }
 }

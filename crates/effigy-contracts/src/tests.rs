@@ -1,7 +1,7 @@
 use super::{
     prepare_check_json, resolve_schema_payload, run_prepared_check_json, split_shell_like_args,
-    ContractsConfig, SelectionPayload, SelectionValidation, CONTRACT_BODY_SCHEMA,
-    SELECTION_PAYLOAD_SCHEMA,
+    CheckFailure, ContractBodyFailure, ContractsConfig, ContractsError, SelectionPayload,
+    SelectionValidation, CONTRACT_BODY_SCHEMA, SELECTION_PAYLOAD_SCHEMA,
 };
 use serde_json::{json, Value};
 use std::path::Path;
@@ -481,6 +481,38 @@ fn malformed_payload_schema_is_refused_before_fixture_effects() {
         payload["failures"][0]["reason"]
     );
     assert!(!repo.path().join(".effigy/tmp/contract-fixtures").exists());
+}
+
+#[test]
+fn contract_body_refusal_keeps_its_public_bytes() {
+    // A golden regression on the crate's own refusal surface: the human line is
+    // the failure reason, and the check-json identity is exactly these bytes.
+    // The CLI passes both through unchanged (see the cli_contracts_ golden).
+    let error = ContractsError::ContractBody(Box::new(ContractBodyFailure {
+        index: Path::new("/repo/docs/knowledge/contracts/json-schema-index.json").to_path_buf(),
+        failure: CheckFailure {
+            schema: CONTRACT_BODY_SCHEMA.to_owned(),
+            command: "/repo/docs/knowledge/contracts/broken.json".to_owned(),
+            reason: "payload schema /repo/docs/knowledge/contracts/broken.json is not valid Draft 2020-12 JSON Schema: invalid JSON Schema: required must be an array".to_owned(),
+        },
+        selection: SelectionPayload {
+            selected: vec!["effigy.command.v1".to_owned(), "effigy.task.v1".to_owned()],
+            changed_only_base: Some("origin/main".to_owned()),
+        },
+    }));
+
+    assert_eq!(
+        error.to_string(),
+        "payload schema /repo/docs/knowledge/contracts/broken.json is not valid Draft 2020-12 JSON Schema: invalid JSON Schema: required must be an array"
+    );
+
+    let payload = error
+        .check_json_payload()
+        .expect("contract-body refusal carries check-json identity");
+    assert_eq!(
+        serde_json::to_string(&payload).expect("serialize check-json identity"),
+        r#"{"changed_only_base":"origin/main","checks":1,"failures":[{"command":"/repo/docs/knowledge/contracts/broken.json","reason":"payload schema /repo/docs/knowledge/contracts/broken.json is not valid Draft 2020-12 JSON Schema: invalid JSON Schema: required must be an array","schema":"effigy.json-contract-body.v1"}],"index":"/repo/docs/knowledge/contracts/json-schema-index.json","ok":false,"schema":"effigy.contracts.check-json.v1","schema_version":1,"selection":{"changed_only_base":"origin/main","count":2,"selected":["effigy.command.v1","effigy.task.v1"]},"selection_artifact":null,"selection_contract":null}"#
+    );
 }
 
 #[test]

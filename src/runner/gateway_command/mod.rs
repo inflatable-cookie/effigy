@@ -24,12 +24,14 @@ use std::cell::Cell;
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
-use super::feedback::live;
+use super::feedback::live_progress;
 use daemon::normalize_gateway_daemon_output;
 use daemon::{
     spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
     stop_private_gateway_process, wait_for_private_gateway_ready,
 };
+use effigy_gateway::operator::{StartPhase, StopPhase};
+use effigy_ui::steps::{live_step, ProgressSource};
 use elevation::{gateway_invocation_is_escalated, prepare_gateway_state_for_elevated_run};
 
 mod daemon;
@@ -116,14 +118,104 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
-    if !config.is_private() && effigy_core::executable_override::current().is_none() {
-        // A task run, not an operator command: name it as what it is.
-        record_managed_gateway_start(&config);
-        effigy_gateway::operator::up(&config)
-            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-        return Ok(());
+    managed_gateway_up(
+        &config,
+        command,
+        operator_gateway_up,
+        verified_gateway_status_for_up,
+    )
+}
+
+/// The managed start `container up` runs. A private root or an
+/// installed-override build takes the preflight-and-command path. The machine
+/// gateway starts through the operator lifecycle, but under the same managed
+/// rule: only a positively stopped gateway is started, a running or unverifiable
+/// one is never started or replaced, and an unverifiable one is reported as
+/// such rather than claimed up (effigy#480). Both starts are injected so tests
+/// drive this branch without touching the machine gateway.
+pub(in crate::runner) fn managed_gateway_up(
+    config: &GatewayConfig,
+    command: &str,
+    operator_up: impl FnOnce(&GatewayConfig) -> Result<ManagedStartOutcome, RunnerError>,
+    preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
+) -> Result<(), RunnerError> {
+    if config.is_private() || effigy_core::executable_override::current().is_some() {
+        return gateway_up_for_managed_task_with(command, preflight);
     }
-    gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+    match preflight(config).status {
+        Ok(running) => {
+            if let Some(note) = running_gateway_build_note(&running.status) {
+                eprintln!("{note}");
+            }
+            Ok(())
+        }
+        Err(effigy_gateway::GatewayError::NotRunning) => {
+            // A task run, not an operator command: name it as what it is.
+            emit_gateway_startup_notice(ManagedStartState::Stopped);
+            record_managed_gateway_start(config);
+            // The operator reports what it observed. Only a verified ready
+            // gateway is a start this caller can rely on: `up` reuses whatever
+            // it finds, including a gateway it could not verify, so an
+            // unchecked status here would become a false running claim.
+            operator_up(config)?.require_verified()
+        }
+        // An ambiguous process state is reported, never claimed up, and no
+        // start or replacement is attempted.
+        Err(error @ effigy_gateway::GatewayError::ProcessStateUnknown { .. }) => {
+            eprintln!("[gateway] cannot verify the running gateway ({error}); proceeding without starting or replacing it");
+            Ok(())
+        }
+        // Every other refusal stays the operator lifecycle's own refusal, as it
+        // was before this branch preflighted: a legacy identity, or an
+        // unreadable or malformed record. Its observation is checked too, so a
+        // start that never verified a ready gateway is never claimed up.
+        Err(_) => operator_up(config)?.require_verified(),
+    }
+}
+
+/// What the operator lifecycle observed when a managed start ran. A start is
+/// `ready` only when the gateway's own identity and self-test verified it; an
+/// unverified observation keeps its own status so a caller can report it
+/// instead of naming the gateway running (effigy#480).
+pub(in crate::runner) struct ManagedStartOutcome {
+    pub(in crate::runner) status: &'static str,
+    pub(in crate::runner) ready: bool,
+    pub(in crate::runner) reason: Option<String>,
+}
+
+impl ManagedStartOutcome {
+    /// Continue only on a verified running gateway. Anything else — an
+    /// unverifiable identity, a gateway still starting, or a start that never
+    /// became ready — is a refusal naming what was observed.
+    fn require_verified(self) -> Result<(), RunnerError> {
+        if self.ready {
+            return Ok(());
+        }
+        let reason = self
+            .reason
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default();
+        Err(RunnerError::task_invocation(format!(
+            "the managed gateway start did not verify a running gateway (operator status `{}`{reason}); refusing to continue as if the gateway were up. `effigy gateway status` reports the observation; if it is unverifiable, ask the host administrator to confirm the daemon is stopped, then `effigy gateway down` and `effigy gateway up` replace it",
+            self.status,
+        )))
+    }
+}
+
+impl From<effigy_gateway::operator::Status> for ManagedStartOutcome {
+    fn from(status: effigy_gateway::operator::Status) -> Self {
+        Self {
+            status: status.status,
+            ready: status.ready,
+            reason: status.reason,
+        }
+    }
+}
+
+fn operator_gateway_up(config: &GatewayConfig) -> Result<ManagedStartOutcome, RunnerError> {
+    effigy_gateway::operator::up(config)
+        .map(ManagedStartOutcome::from)
+        .map_err(|e| RunnerError::task_invocation(e.to_string()))
 }
 
 /// One bounded event names an operator action at the command boundary, before
@@ -404,9 +496,9 @@ fn gateway_identity_probe_with(
     }
 }
 
-struct GatewayUpStatusProbe {
-    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    identity_permission_denied: bool,
+pub(in crate::runner) struct GatewayUpStatusProbe {
+    pub(in crate::runner) status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    pub(in crate::runner) identity_permission_denied: bool,
 }
 
 /// Keep replacement preflight read-only and local. If a live identity is
@@ -476,33 +568,26 @@ fn resolve_gateway_status_for_config(
 
 #[derive(Debug)]
 enum ExistingGateway {
-    Rendered(String),
+    /// This build is the one running: reuse it and report it as it is.
+    Reuse(Box<VerifiedGatewayStatus>),
+    /// A gateway this command must replace before it can start its own.
     Running(Box<VerifiedGatewayStatus>),
     Absent,
 }
 
 /// Classify an existing gateway without signalling, deleting records, or
-/// staging elevated state. Mutation happens only after the transition lock.
+/// staging elevated state. Mutation happens only after the transition lock, and
+/// the render for a reused gateway is the caller's own step so the route read it
+/// needs stays observable.
 fn inspect_existing_gateway(
     config: &GatewayConfig,
     status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    output_json: bool,
 ) -> Result<ExistingGateway, RunnerError> {
     let Some(status) = resolve_gateway_status_for_config(config, status)? else {
         return Ok(ExistingGateway::Absent);
     };
     if gateway_status_matches_current_binary(&status) {
-        let route_table = RouteTable::load(&config.route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let tls = gateway_tls_summary(config, &route_table);
-        return render_gateway_up_result(
-            config,
-            GatewayUpState::AlreadyRunning(status.status),
-            &tls,
-            &[],
-            output_json,
-        )
-        .map(ExistingGateway::Rendered);
+        return Ok(ExistingGateway::Reuse(Box::new(status)));
     }
     Ok(ExistingGateway::Running(Box::new(status)))
 }
@@ -545,11 +630,20 @@ fn run_gateway_up_with_config(
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_up_command(config);
     if !config.is_private() {
-        let result = live("starting the gateway", |step| {
-            step.set_label("starting the gateway process and waiting for it to answer");
-            effigy_gateway::operator::up(config)
+        let result = live_progress(
+            "starting the gateway process",
+            &format!("the gateway to answer on {}", config.proxy.bind_addr),
+            |progress| {
+                effigy_gateway::operator::up_observed(config, &|phase| {
+                    observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
+                })
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))
-        })?;
+            },
+        )?;
+        // The gateway answers; read what it will serve from the table already
+        // published. This is a read of existing state, never a publication,
+        // and its own step reports a read failure without failing the command.
+        read_existing_routes_step(config);
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -571,41 +665,56 @@ fn run_private_gateway_up(
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let existing = live("reading gateway state", |step| {
-        prepare_gateway_state_for_elevated_run(config)?;
-        let probe = verified_gateway_status_for_up(config);
-        if probe.identity_permission_denied {
-            return Err(RunnerError::task_invocation(format!(
-                "private gateway identity is unknown; current diagnosis: {}; refusing startup or replacement",
-                gateway_diagnosis_hint(config)
-            )));
-        }
-        step.set_label("checking whether a gateway is already running");
-        inspect_existing_gateway(config, probe.status, output_json)
-    })?;
+    let existing = live_progress(
+        "reading the gateway record and process",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |progress| {
+            prepare_gateway_state_for_elevated_run(config)?;
+            let probe = verified_gateway_status_for_up(config);
+            if probe.identity_permission_denied {
+                return Err(RunnerError::task_invocation(format!(
+                    "private gateway identity is unknown; current diagnosis: {}; refusing startup or replacement",
+                    gateway_diagnosis_hint(config)
+                )));
+            }
+            progress.update("checking whether a gateway is already running", None, None);
+            inspect_existing_gateway(config, probe.status)
+        },
+    )?;
     match existing {
-        ExistingGateway::Rendered(rendered) => return Ok(rendered),
+        ExistingGateway::Reuse(status) => {
+            return report_reused_private_gateway(config, status.status, output_json)
+        }
         ExistingGateway::Running(status) => {
-            live("replacing the running gateway", |step| {
-                step.set_label(&format!("stopping the gateway on pid {}", status.pid));
-                stop_existing_gateway(status.as_ref())?;
-                server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
-            })?;
+            live_progress(
+                &format!("stopping the gateway on pid {}", status.pid),
+                &format!("gateway process {} to exit", status.pid),
+                |progress| {
+                    stop_existing_gateway(status.as_ref())?;
+                    progress.now_waiting_for("the private gateway addresses to be released");
+                    progress.update("removing the private gateway addresses", None, None);
+                    server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
+                        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+                },
+            )?;
         }
         ExistingGateway::Absent => {}
     }
-    live("starting the gateway", |step| {
-        step.set_label("starting the gateway daemon");
-        spawn_gateway_daemon(config)?;
-        step.set_label("waiting for the gateway to answer");
-        wait_for_private_gateway_ready(config)
-    })?;
+    live_progress(
+        "starting the gateway daemon",
+        "the gateway daemon process to start",
+        |progress| {
+            spawn_gateway_daemon(config)?;
+            wait_for_private_gateway_ready(config, progress)
+        },
+    )?;
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let route_table = RouteTable::load(&config.route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = gateway_tls_summary(config, &route_table);
+    let routes = read_private_route_facts(config)?;
+    let tls = gateway_tls_summary(config, routes);
     render_gateway_up_result(
         config,
         GatewayUpState::Started(status.status),
@@ -615,6 +724,57 @@ fn run_private_gateway_up(
     )
 }
 
+/// Report a private gateway this command found already running as this build.
+/// The table it serves is read in its own live step first, the same step the
+/// started path uses, so reusing a gateway never skips the per-route progress.
+fn report_reused_private_gateway(
+    config: &GatewayConfig,
+    status: GatewayStatus,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let routes = read_private_route_facts(config)?;
+    let tls = gateway_tls_summary(config, routes);
+    render_gateway_up_result(
+        config,
+        GatewayUpState::AlreadyRunning(status),
+        &tls,
+        &[],
+        output_json,
+    )
+}
+
+/// Read the private gateway's route table as its own live step: every route
+/// becomes the current object with its position and certificate state, whether
+/// this command is reusing a running gateway or reporting the one it started.
+/// Only the table snapshot and certificate files are read — never a mkcert or
+/// trust-store probe — and an unreadable table fails this command, as it always
+/// has on this path. The table is read, never published.
+fn read_private_route_facts(
+    config: &GatewayConfig,
+) -> Result<RouteCertificateSummary, RunnerError> {
+    live_progress(
+        "reading the route table",
+        &format!("the route table at {}", config.route_table_path.display()),
+        |progress| {
+            let route_table = RouteTable::load(&config.route_table_path)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let count = route_table.len();
+            let routes = summarize_published_routes(config, &route_table, progress);
+            progress.update(route_read_summary(count), None, None);
+            Ok(routes)
+        },
+    )
+}
+
+/// What a route read ends with: how many routes the existing table held.
+fn route_read_summary(count: usize) -> String {
+    match count {
+        0 => "the route table has no routes registered yet".to_owned(),
+        1 => "read 1 existing route from the route table".to_owned(),
+        count => format!("read {count} existing routes from the route table"),
+    }
+}
+
 fn run_gateway_down_with_config(
     config: &GatewayConfig,
     output_json: bool,
@@ -622,11 +782,19 @@ fn run_gateway_down_with_config(
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_down_command(config);
     if !config.is_private() {
-        let result = live("stopping the gateway", |step| {
-            step.set_label("stopping the gateway process and removing its record");
-            effigy_gateway::operator::down(config)
+        let result = live_progress(
+            "stopping the gateway process",
+            &format!(
+                "the gateway process to exit and its record at {} to clear",
+                config.pid_file_path.display()
+            ),
+            |progress| {
+                effigy_gateway::operator::down_observed(config, &|phase| {
+                    observe_stop(progress, phase)
+                })
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))
-        })?;
+            },
+        )?;
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -641,35 +809,46 @@ fn run_gateway_down_with_config(
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let status = live("reading gateway state", |step| {
-        let probe = verified_gateway_status_for_up(config);
-        if probe.identity_permission_denied {
-            return Err(RunnerError::task_invocation(format!(
-                "gateway process identity became unreadable while the transition lock was held; current diagnosis: {}; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
-                gateway_diagnosis_hint(config)
-            )));
-        }
-        let status = resolve_gateway_status_for_config(config, probe.status)?;
-        step.set_label(&match &status {
-            Some(running) => format!("gateway is running on pid {}", running.pid),
-            None => "the gateway is already stopped".to_owned(),
-        });
-        Ok(status)
-    })?;
+    let status = live_progress(
+        "reading the gateway record and process",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |progress| {
+            let probe = verified_gateway_status_for_up(config);
+            if probe.identity_permission_denied {
+                return Err(RunnerError::task_invocation(format!(
+                    "gateway process identity became unreadable while the transition lock was held; current diagnosis: {}; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
+                    gateway_diagnosis_hint(config)
+                )));
+            }
+            let status = resolve_gateway_status_for_config(config, probe.status)?;
+            progress.update(
+                match &status {
+                    Some(running) => format!("gateway is running on pid {}", running.pid),
+                    None => "the gateway is already stopped".to_owned(),
+                },
+                None,
+                None,
+            );
+            Ok(status)
+        },
+    )?;
     let warnings: Vec<String> = Vec::new();
 
     if let Some(ref running) = status {
-        live("stopping the gateway", |step| {
-            step.set_label(&format!(
-                "stopping the gateway process on pid {}",
-                running.pid
-            ));
-            if config.is_private() {
-                stop_private_gateway_process(&running.snapshot)
-            } else {
-                stop_gateway_process(&running.snapshot)
-            }
-        })?;
+        live_progress(
+            &format!("stopping the gateway process on pid {}", running.pid),
+            &format!("gateway process {} to exit", running.pid),
+            |_| {
+                if config.is_private() {
+                    stop_private_gateway_process(&running.snapshot)
+                } else {
+                    stop_gateway_process(&running.snapshot)
+                }
+            },
+        )?;
     }
     if let Some(ref running) = status {
         match server::probe_gateway_process(running.pid) {
@@ -689,25 +868,38 @@ fn run_gateway_down_with_config(
         }
     }
     if let Some(running) = status.as_ref() {
-        live("removing the gateway record", |step| {
-            step.set_label("removing the gateway identity record");
-            if !identity::remove_if_unchanged(&running.snapshot)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            {
-                return Err(RunnerError::task_invocation(
-                    "gateway record changed during stop; refusing to report it stopped",
-                ));
-            }
-            if config.is_private()
-                && !server::remove_private_gateway_addresses_if_unchanged(config, &running.snapshot)
+        live_progress(
+            "removing the gateway identity record",
+            &format!(
+                "the gateway identity record at {} to be removed",
+                config.pid_file_path.display()
+            ),
+            |progress| {
+                if !identity::remove_if_unchanged(&running.snapshot)
                     .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            {
-                return Err(RunnerError::task_invocation(
-                    "private gateway endpoint receipt changed during shutdown; refusing to remove it",
-                ));
-            }
-            Ok(())
-        })?;
+                {
+                    return Err(RunnerError::task_invocation(
+                        "gateway record changed during stop; refusing to report it stopped",
+                    ));
+                }
+                if config.is_private() {
+                    progress.now_waiting_for("the private gateway endpoint receipt to be removed");
+                    progress.update("removing the private gateway endpoint receipt", None, None);
+                }
+                if config.is_private()
+                    && !server::remove_private_gateway_addresses_if_unchanged(
+                        config,
+                        &running.snapshot,
+                    )
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+                {
+                    return Err(RunnerError::task_invocation(
+                        "private gateway endpoint receipt changed during shutdown; refusing to remove it",
+                    ));
+                }
+                Ok(())
+            },
+        )?;
     }
 
     if output_json {
@@ -847,10 +1039,17 @@ fn run_gateway_status_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if !config.is_private() {
-        let result = live("reading gateway state", |_| {
-            effigy_gateway::operator::status(config)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))
-        });
+        let result = live_progress(
+            "reading the gateway state",
+            &format!(
+                "the gateway process and its record at {}",
+                config.pid_file_path.display()
+            ),
+            |_| {
+                effigy_gateway::operator::status(config)
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+            },
+        );
         let result = match result {
             Ok(result) => result,
             Err(error) if output_json => {
@@ -874,14 +1073,18 @@ fn run_gateway_status_with_config(
             )
         });
     }
-    let probed = live("reading gateway state", |step| {
-        step.set_label("checking the gateway process and its identity record");
-        Ok(verified_gateway_status(config))
-    })?;
+    let probed = live_progress(
+        "checking the gateway process and its identity record",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |_| Ok(verified_gateway_status(config)),
+    )?;
     let status = resolve_status_for_status_command(config, probed, output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut tls = gateway_tls_summary(config, &route_table);
+    let mut tls = gateway_tls_summary(config, route_certificate_summary(config, &route_table));
     if let Some(https_addr) = status.as_ref().and_then(|value| value.https_addr) {
         tls.https_addr = Some(https_addr);
     }
@@ -1284,7 +1487,7 @@ fn ensure_gateway_tls_ca_ready(
     Ok(already_installed)
 }
 
-fn gateway_config() -> Result<GatewayConfig, RunnerError> {
+pub(in crate::runner) fn gateway_config() -> Result<GatewayConfig, RunnerError> {
     gateway_config_with_private(None)
 }
 
@@ -1651,36 +1854,50 @@ struct GatewayTlsSummary {
     ca_installed: bool,
 }
 
-fn gateway_tls_summary(config: &GatewayConfig, route_table: &RouteTable) -> GatewayTlsSummary {
-    let mut summary = GatewayTlsSummary {
-        https_addr: config.proxy.tls_bind_addr,
-        route_count: 0,
-        cert_ready_count: 0,
-        missing_domains: Vec::new(),
+/// What reading the existing table found: the TLS listener and, per route, its
+/// certificate. These are the only facts the live route-read step gathers, so it
+/// never runs a status-only probe while its label says it is reading routes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RouteCertificateSummary {
+    https_addr: Option<SocketAddr>,
+    route_count: usize,
+    cert_ready_count: usize,
+    missing_domains: Vec<String>,
+}
+
+/// The status render's TLS summary: the route facts just read, plus the
+/// operator's mkcert and certificate-authority state. Those two are separate
+/// unbounded probes (mkcert is a subprocess, the trust store may prompt), so
+/// only a status render asks for them, never a route read.
+fn gateway_tls_summary(
+    config: &GatewayConfig,
+    routes: RouteCertificateSummary,
+) -> GatewayTlsSummary {
+    GatewayTlsSummary {
+        https_addr: routes.https_addr,
+        route_count: routes.route_count,
+        cert_ready_count: routes.cert_ready_count,
+        missing_domains: routes.missing_domains,
         mkcert_available: if config.is_private() {
             TlsConfig::private_mkcert_available()
         } else {
             TlsConfig::mkcert_available()
         },
         ca_installed: !config.is_private() && TlsConfig::ca_installed(),
-    };
-
-    let Some(tls_config) = config.tls.as_ref() else {
-        return summary;
-    };
-
-    for route in route_table.all_routes() {
-        if !route.tls {
-            continue;
-        }
-        summary.route_count += 1;
-        match tls_config.load_cert(&route.domain) {
-            Ok(_) => summary.cert_ready_count += 1,
-            Err(_) => summary.missing_domains.push(route.domain.clone()),
-        }
     }
+}
 
-    summary
+/// Route facts from an already-loaded table, for the status and already-running
+/// renders: nothing is shown live there, so no progress frames are produced.
+fn route_certificate_summary(
+    config: &GatewayConfig,
+    route_table: &RouteTable,
+) -> RouteCertificateSummary {
+    summarize_published_routes(
+        config,
+        route_table,
+        &ProgressSource::waiting_for("the route table"),
+    )
 }
 
 fn render_tls_status_line(tls: &GatewayTlsSummary) -> String {
@@ -1783,12 +2000,8 @@ fn mkcert_install_argv() -> std::io::Result<Vec<OsString>> {
 /// serves, from a fresh exec of the installed binary. The setup process began
 /// before the capability existed, so only a new exec can observe it.
 #[cfg(target_os = "linux")]
-fn probe_low_ports(
-    run: &mut effigy_kernel::run::Run<'_>,
-    cx: &effigy_kernel::ctx::EffectContext,
-    config: &GatewayConfig,
-) -> std::io::Result<()> {
-    let addresses: Vec<String> = [
+fn low_port_addresses(config: &GatewayConfig) -> Vec<String> {
+    [
         Some(config.dns.bind_addr),
         Some(config.proxy.bind_addr),
         config.proxy.tls_bind_addr,
@@ -1798,33 +2011,313 @@ fn probe_low_ports(
     // A port at or above 1024 is not what the capability is for.
     .filter(|address| address.port() < 1024)
     .map(|address| address.to_string())
-    .collect();
-    if addresses.is_empty() {
-        return Ok(());
-    }
-    let mut argv: Vec<OsString> = vec![
-        std::env::current_exe()?.into_os_string(),
-        effigy_gateway::linux_operator::BIND_PROBE_ENTRY.into(),
-    ];
-    argv.extend(addresses.into_iter().map(OsString::from));
-    let output = effigy_gateway::setup::command(run, cx, argv, false)?;
-    let report = effigy_gateway::linux_operator::BindProbeReport::parse(&output)?;
-    match report.refusal() {
-        Some(reason) => Err(std::io::Error::other(reason)),
-        None => Ok(()),
+    .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn probe_low_ports(
+    run: &mut effigy_kernel::run::Run<'_>,
+    cx: &effigy_kernel::ctx::EffectContext,
+    config: &GatewayConfig,
+    progress: &ProgressSource,
+) -> std::io::Result<()> {
+    let addresses = low_port_addresses(config);
+    probe_bind_addresses(&addresses, progress, |address| {
+        let argv: Vec<OsString> = vec![
+            std::env::current_exe()?.into_os_string(),
+            effigy_gateway::linux_operator::BIND_PROBE_ENTRY.into(),
+            OsString::from(address),
+        ];
+        // A refused bind exits non-zero; read the child's report rather than
+        // letting the adapter error stand in for it.
+        let (code, output) = effigy_gateway::setup::command_outcome(run, cx, argv, false)?;
+        Ok(BindProbeChildResult { code, output })
+    })
+}
+
+/// Show one operator start phase: the supervisor admitting the run, then the
+/// daemon's own self-test with the status and blocker it reports, or the
+/// reason its status could not be read on this pass.
+fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
+    match phase {
+        StartPhase::Admitting => {
+            progress.now_waiting_for("the supervisor to start the gateway daemon");
+            progress.update("admitting the gateway run", None, None);
+        }
+        StartPhase::SelfTest { status, reason } => {
+            progress.now_waiting_for(format!("the gateway to answer on {listener}"));
+            let event = match reason {
+                Some(reason) => format!("gateway status is {status}: {reason}"),
+                None => format!("gateway status is {status}"),
+            };
+            // The listener is in the sub-step as well as the awaited sentence:
+            // the event replaces that sentence in the frame, and the port must
+            // never leave the operator's view.
+            progress.update(
+                format!("checking the gateway self-test on {listener}"),
+                None,
+                Some(event),
+            );
+        }
+        StartPhase::Unobserved { reason } => {
+            progress.now_waiting_for(format!("the gateway to answer on {listener}"));
+            progress.update(
+                format!("checking the gateway self-test on {listener}"),
+                None,
+                Some(format!("cannot read the gateway status: {reason}")),
+            );
+        }
     }
 }
 
-/// Run one setup stage. The label names the step while it runs, and the stage
-/// ends with one line: what now holds, or the failure's own sentence.
+/// Show one operator stop phase: the stop request, then the daemon winding
+/// down with the status and blocker it reports.
+fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
+    match phase {
+        StopPhase::Requested => {
+            progress.now_waiting_for("the supervisor to record the stop");
+            progress.update("requesting the gateway stop", None, None);
+        }
+        StopPhase::Settling { status, reason } => {
+            progress.now_waiting_for("the gateway process to exit");
+            let event = match reason {
+                Some(reason) => format!("gateway status is {status}: {reason}"),
+                None => format!("gateway status is {status}"),
+            };
+            progress.update("waiting for the gateway to stop", None, Some(event));
+        }
+    }
+}
+
+/// Read the existing route table one route at a time. Each route becomes the
+/// current object with its position before its certificate is looked up, and
+/// what that lookup found is the event that follows. Returns the route and
+/// certificate facts the render summaries build on.
+fn summarize_published_routes(
+    config: &GatewayConfig,
+    route_table: &RouteTable,
+    progress: &ProgressSource,
+) -> RouteCertificateSummary {
+    summarize_routes(config, route_table, progress, |tls, domain| {
+        tls.load_cert(domain).is_ok()
+    })
+}
+
+/// Read each route in the existing table. `certificate` answers whether a TLS
+/// route's certificate is present; production passes `TlsConfig::load_cert`.
+/// Only file reads happen here: mkcert and the trust store are asked by
+/// [`gateway_tls_summary`], which no live route-read step calls.
+fn summarize_routes(
+    config: &GatewayConfig,
+    route_table: &RouteTable,
+    progress: &ProgressSource,
+    mut certificate: impl FnMut(&TlsConfig, &str) -> bool,
+) -> RouteCertificateSummary {
+    let mut summary = RouteCertificateSummary {
+        https_addr: config.proxy.tls_bind_addr,
+        ..RouteCertificateSummary::default()
+    };
+    let routes = route_table.all_routes();
+    let total = routes.len() as u64;
+    for (index, route) in routes.iter().enumerate() {
+        let action = format!("reading route {}", route.domain);
+        let position = ((index + 1) as u64, total);
+        // This route is the current object before its certificate lookup: a
+        // slow lookup must never leave the preceding route on screen. The
+        // previous route's outcome stays the last event until this one's
+        // arrives.
+        progress.update(action.as_str(), Some(position), None);
+        let outcome = match config.tls.as_ref() {
+            None => format!(
+                "{} is listed; no certificate store is configured",
+                route.domain
+            ),
+            Some(_) if !route.tls => {
+                format!("{} is an HTTP route; no certificate needed", route.domain)
+            }
+            Some(tls_config) => {
+                summary.route_count += 1;
+                if certificate(tls_config, &route.domain) {
+                    summary.cert_ready_count += 1;
+                    format!("{} has its certificate", route.domain)
+                } else {
+                    summary.missing_domains.push(route.domain.clone());
+                    format!("{} has no certificate yet", route.domain)
+                }
+            }
+        };
+        progress.update(action.as_str(), Some(position), Some(outcome));
+    }
+    summary
+}
+
+/// Show the platform phase the adapter is in: the resolver, trust or broker
+/// operation happening now, in place of the combined label the whole action
+/// started with. The child it waits on stays named as the awaited object.
+fn observe_platform_phase(progress: &ProgressSource, phase: &str) {
+    progress.update(phase, None, None);
+}
+
+/// Read the existing route table, one route at a time, naming each route with
+/// its position and certificate state as it is read. Returns how many routes
+/// the table held. This reads published state: an unreadable table returns the
+/// read error and has no other effect.
+fn read_existing_routes(
+    config: &GatewayConfig,
+    progress: &ProgressSource,
+) -> std::io::Result<usize> {
+    let path = config.route_table_path.display();
+    progress.now_waiting_for(format!("the route table at {path}"));
+    progress.update("reading the existing route table", None, None);
+    let route_table = RouteTable::load(&config.route_table_path)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let count = route_table.len();
+    summarize_published_routes(config, &route_table, progress);
+    progress.update(route_read_summary(count), None, None);
+    Ok(count)
+}
+
+/// Read the existing table as its own operator step. `gateway up` and `gateway
+/// setup` read the published table; they never publish a route, so an
+/// unreadable table ends this step with the exact read error and leaves the
+/// command's own outcome as it was.
+fn read_existing_routes_step(config: &GatewayConfig) {
+    let progress = ProgressSource::waiting_for(format!(
+        "the route table at {}",
+        config.route_table_path.display()
+    ));
+    progress.update("reading the existing route table", None, None);
+    let step = live_step(progress.clone());
+    match read_existing_routes(config, &progress) {
+        Ok(_) => step.succeed(&progress.summary()),
+        Err(error) => step.fail(&format!(
+            "cannot read the route table at {}: {error}",
+            config.route_table_path.display()
+        )),
+    }
+}
+
+/// The bind-probe child's own result: the code it settled with and the bytes it
+/// printed. `probe_entry` prints its report and then, on a refusal, writes its
+/// reason and exits non-zero, so the report is only readable from the child's
+/// output — an error built from that output would hide it.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone)]
+struct BindProbeChildResult {
+    code: i32,
+    output: Vec<u8>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl BindProbeChildResult {
+    /// The report the child printed. The custody tail keeps both streams in
+    /// arrival order, so the report is the line that parses as one.
+    fn report(&self) -> std::io::Result<effigy_gateway::linux_operator::BindProbeReport> {
+        let text = String::from_utf8_lossy(&self.output);
+        let mut unreadable = None;
+        for line in text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('{'))
+        {
+            match effigy_gateway::linux_operator::BindProbeReport::parse(line.as_bytes()) {
+                Ok(report) => return Ok(report),
+                Err(error) => unreadable = Some(error),
+            }
+        }
+        Err(unreadable.unwrap_or_else(|| {
+            std::io::Error::other(format!(
+                "the low-port probe printed no report: {}",
+                text.trim()
+            ))
+        }))
+    }
+
+    /// The refusal the setup adapter used to report, for a child that exited
+    /// non-zero without a readable report of its own.
+    fn adapter_failure(&self) -> std::io::Error {
+        std::io::Error::other(format!(
+            "gateway setup adapter failed (exit {}): {}",
+            self.code,
+            String::from_utf8_lossy(&self.output)
+        ))
+    }
+}
+
+/// Probe each low-port address with its own child, naming each outcome as its
+/// probe returns, so setup shows the address being probed and what it found.
+/// The first refusal stops the probe with the report's own reason, unchanged.
+#[cfg(any(target_os = "linux", test))]
+fn probe_bind_addresses(
+    addresses: &[String],
+    progress: &ProgressSource,
+    mut probe: impl FnMut(&str) -> std::io::Result<BindProbeChildResult>,
+) -> std::io::Result<()> {
+    let total = addresses.len() as u64;
+    for (index, address) in addresses.iter().enumerate() {
+        let position = ((index + 1) as u64, total);
+        progress.update(format!("probing {address}"), Some(position), None);
+        let child = probe(address)?;
+        // A refused bind exits non-zero after printing its report, so the
+        // report is read before the exit code decides the outcome: the exact
+        // address, its outcome and its count reach the operator either way.
+        let report = match child.report() {
+            Ok(report) => report,
+            Err(unreadable) => {
+                return Err(if child.code == 0 {
+                    unreadable
+                } else {
+                    child.adapter_failure()
+                });
+            }
+        };
+        if let Some(outcome) = report.addresses.first() {
+            progress.update(
+                format!("probing {address}"),
+                Some(position),
+                Some(format!(
+                    "{} {}",
+                    outcome.address,
+                    bind_outcome_label(&outcome.outcome)
+                )),
+            );
+        }
+        if let Some(reason) = report.refusal() {
+            return Err(std::io::Error::other(reason));
+        }
+        if child.code != 0 {
+            return Err(child.adapter_failure());
+        }
+    }
+    Ok(())
+}
+
+/// The words an operator reads for one bind outcome.
+#[cfg(any(target_os = "linux", test))]
+fn bind_outcome_label(outcome: &effigy_gateway::linux_operator::BindOutcome) -> String {
+    use effigy_gateway::linux_operator::BindOutcome;
+    match outcome {
+        BindOutcome::Bound => "bound".to_owned(),
+        BindOutcome::InUse => "already in use".to_owned(),
+        BindOutcome::Denied => "denied".to_owned(),
+        BindOutcome::Failed(reason) => format!("failed: {reason}"),
+    }
+}
+
+/// Run one setup stage. `action` names what the stage is doing and `awaiting`
+/// the exact object or probe it waits on. The stage ends with one line: what
+/// now holds, or the failure's own sentence.
 fn setup_step<T>(
-    label: &str,
-    work: impl FnOnce(&effigy_ui::Step) -> std::io::Result<T>,
+    action: &str,
+    awaiting: &str,
+    work: impl FnOnce(&ProgressSource) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
-    let step = effigy_ui::steps::step(label);
-    match work(&step) {
+    let progress = ProgressSource::waiting_for(awaiting);
+    progress.update(action, None, None);
+    let step = live_step(progress.clone());
+    match work(&progress) {
         Ok(value) => {
-            step.succeed("");
+            step.succeed(&progress.summary());
             Ok(value)
         }
         Err(error) => {
@@ -1850,9 +2343,11 @@ fn run_gateway_setup(
     }
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
-            let (uid, home) = setup_step("verifying the operator account", |_| {
-                setup::authenticated_operator()
-            })?;
+            let (uid, home) = setup_step(
+                "verifying the operator account",
+                "the operator account to authenticate",
+                |_| setup::authenticated_operator(),
+            )?;
             let config = GatewayConfig::standard(home.join(".effigy/gateway"));
             let root_home = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
                 .map_err(std::io::Error::other)?
@@ -1861,19 +2356,51 @@ fn run_gateway_setup(
             setup::session(&root_home, true, |run, cx| {
                 let suffixes = setup::platform_suffixes(cx, uid, &home, extra)?;
                 if remove {
-                    return setup_step("removing the platform setup (DNS, trust, broker)", |_| {
-                        setup::remove_platform(run, cx, uid, &suffixes)
-                    });
+                    return setup_step(
+                        "removing the platform setup",
+                        &format!(
+                            "the DNS, trust and broker setup for {}",
+                            suffixes.join(", ")
+                        ),
+                        |_| setup::remove_platform(run, cx, uid, &suffixes),
+                    );
                 }
-                setup_step("migrating root-owned gateway state", |_| {
-                    setup::migrate_root(&config, uid, |snapshot| {
-                        stop_gateway_process_for_replacement(snapshot)
-                            .map_err(|e| std::io::Error::other(e.to_string()))
-                    })
-                })?;
+                setup_step(
+                    "migrating root-owned gateway state",
+                    &format!(
+                        "root-owned gateway state at {}",
+                        config.pid_file_path.display()
+                    ),
+                    |_| {
+                        setup::migrate_root(&config, uid, |snapshot| {
+                            stop_gateway_process_for_replacement(snapshot)
+                                .map_err(|e| std::io::Error::other(e.to_string()))
+                        })
+                    },
+                )?;
                 setup_step(
                     "applying platform setup (DNS, certificate trust, broker)",
-                    |_| setup::apply_platform(run, cx, &config, &suffixes, uid),
+                    &format!(
+                        "the DNS, certificate trust and broker setup for {}",
+                        suffixes.join(", ")
+                    ),
+                    |progress| {
+                        setup::apply_platform(run, cx, &config, &suffixes, uid, &mut |phase| {
+                            // The same phase this process shows is the one the
+                            // command waiting on it reports: an elevated child
+                            // hands each phase back over its captured stdout.
+                            observe_platform_phase(progress, phase);
+                            if gateway_invocation_is_escalated() {
+                                setup::print_platform_phase(phase);
+                            }
+                        })?;
+                        progress.update(
+                            format!("applied the platform setup for {}", suffixes.join(", ")),
+                            None,
+                            None,
+                        );
+                        Ok(())
+                    },
                 )
             })?;
             return Ok("Gateway platform setup applied".into());
@@ -1904,15 +2431,28 @@ fn run_gateway_setup(
                 // The login launch unit goes first: nothing may start the
                 // gateway at the next login once its capability is gone.
                 #[cfg(target_os = "linux")]
-                setup_step("removing the systemd user launch unit", |_| {
-                    effigy_gateway::linux_operator::remove(
-                        cx,
-                        &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
-                        operator_uid.as_raw(),
-                        &mut effigy_gateway::linux_operator::Systemctl::default(),
-                    )
-                })?;
-                setup_step("stopping the gateway", |_| operator::down(&config))?;
+                setup_step(
+                    "removing the systemd user launch unit",
+                    &format!(
+                        "the systemd user launch unit for uid {}",
+                        operator_uid.as_raw()
+                    ),
+                    |_| {
+                        effigy_gateway::linux_operator::remove(
+                            cx,
+                            &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
+                            operator_uid.as_raw(),
+                            &mut effigy_gateway::linux_operator::Systemctl::default(),
+                        )
+                    },
+                )?;
+                setup_step(
+                    "stopping the gateway",
+                    "the gateway process to exit",
+                    |progress| {
+                        operator::down_observed(&config, &|phase| observe_stop(progress, phase))
+                    },
+                )?;
             }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
             if !remove && !TlsConfig::mkcert_available() {
@@ -1923,6 +2463,7 @@ fn run_gateway_setup(
             if !remove {
                 setup_step(
                     "trusting mkcert's local CA (approve any keychain prompt)",
+                    "mkcert's local CA in this user's trust store",
                     |_| setup::command(run, cx, mkcert_install_argv()?, true),
                 )?;
             }
@@ -1939,18 +2480,46 @@ fn run_gateway_setup(
                 } else {
                     "applying platform setup (approve the administrator prompt if it appears)"
                 },
-                |_| setup::command(run, cx, argv, true),
+                &format!(
+                    "the administrator-approved setup child to apply DNS, trust and broker for {}",
+                    suffixes.join(", ")
+                ),
+                |progress| {
+                    if remove {
+                        return setup::command(run, cx, argv, true);
+                    }
+                    // The child reports each platform phase on its captured
+                    // stdout while it runs, so the step names the resolver,
+                    // trust or broker operation that is happening now.
+                    let output = setup::command_reporting_platform_phases(
+                        run,
+                        cx,
+                        argv,
+                        true,
+                        &mut |phase| observe_platform_phase(progress, phase),
+                    )?;
+                    progress.update(
+                        format!("applied the platform setup for {}", suffixes.join(", ")),
+                        None,
+                        None,
+                    );
+                    Ok(output)
+                },
             )?;
             if remove {
-                return setup_step("removing the setup receipt", |_| {
-                    setup::remove_receipt(run, cx, &home)
-                });
+                return setup_step(
+                    "removing the setup receipt",
+                    &format!("the setup receipt in {}", home.display()),
+                    |_| setup::remove_receipt(run, cx, &home),
+                );
             }
             suffixes.sort();
             suffixes.dedup();
-            setup_step("recording the setup receipt", |_| {
-                setup::save_receipt(run, cx, &home, suffixes)
-            })?;
+            setup_step(
+                "recording the setup receipt",
+                &format!("the setup receipt in {}", home.display()),
+                |_| setup::save_receipt(run, cx, &home, suffixes),
+            )?;
             #[cfg(target_os = "linux")]
             {
                 // The unit is written by the operator so systemd owns it as
@@ -1958,6 +2527,10 @@ fn run_gateway_setup(
                 // administrator step above.
                 launcher = Some(setup_step(
                     "installing the systemd user launch unit",
+                    &format!(
+                        "the systemd user launch unit for uid {}",
+                        operator_uid.as_raw()
+                    ),
                     |_| {
                         effigy_gateway::linux_operator::install(
                             run,
@@ -1972,9 +2545,14 @@ fn run_gateway_setup(
                 // A fresh exec of the installed binary proves the capability
                 // on the exact endpoints the daemon serves. The setup process
                 // itself started before the capability existed.
-                setup_step("probing the low-port capability as the operator", |_| {
-                    probe_low_ports(run, cx, &config)
-                })?;
+                setup_step(
+                    "probing the low-port capability as the operator",
+                    &format!(
+                        "the bind probe for {}",
+                        low_port_addresses(&config).join(", ")
+                    ),
+                    |progress| probe_low_ports(run, cx, &config, progress),
+                )?;
             }
             Ok(())
         })?;
@@ -1995,10 +2573,19 @@ fn run_gateway_setup(
                 eprintln!("[gateway] {prefix}: run `{line}`");
             }
         }
-        let result = setup_step("starting the gateway", |step| {
-            step.set_label("starting the gateway as the operator");
-            operator::up(&config)
-        })?;
+        let result = setup_step(
+            "starting the gateway as the operator",
+            &format!("the gateway to answer on {}", config.proxy.bind_addr),
+            |progress| {
+                operator::up_observed(&config, &|phase| {
+                    observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
+                })
+            },
+        )?;
+        // Setting up leaves a gateway that serves the table already published;
+        // read it as its own step, which names a read failure without turning
+        // the completed setup into a failure.
+        read_existing_routes_step(&config);
         Ok(if output_json {
             serde_json::to_string(&result).map_err(std::io::Error::other)?
         } else {

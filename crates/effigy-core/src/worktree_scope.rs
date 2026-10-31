@@ -267,50 +267,90 @@ fn load_or_create_token(token_dir: &Path) -> io::Result<String> {
 }
 
 fn load_or_create_token_file(path: &Path) -> io::Result<String> {
-    let path = path.to_path_buf();
-    match fs::read_to_string(&path) {
-        Ok(value) => {
-            return valid_token(&value).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid worktree scope at {}", path.display()),
-                )
-            });
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    if let Some(token) = read_published_token(path)? {
+        return Ok(token);
     }
-
     let mut random = [0u8; 16];
     fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
     let token = random
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            file.write_all(token.as_bytes())?;
-            file.sync_all()?;
-            Ok(token)
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            // A concurrent activation won the create race. A short empty read
-            // means its writer has not finished yet.
-            for _ in 0..100 {
-                if let Ok(value) = fs::read_to_string(&path) {
-                    if let Some(value) = valid_token(&value) {
-                        return Ok(value);
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(io::Error::new(
+    publish_token(path, &token)
+}
+
+/// The token published at `path`, or `None` when no creator has published one.
+///
+/// A published file is always whole (see [`publish_token`]), so a malformed
+/// file here is a corrupt persisted scope, never an in-flight write.
+fn read_published_token(path: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(value) => valid_token(&value).map(Some).ok_or_else(|| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("worktree scope at {} was not completed", path.display()),
-            ))
-        }
+                format!("invalid worktree scope at {}", path.display()),
+            )
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+/// Publish `token` at `path` so that the path only ever names a complete,
+/// synced token.
+///
+/// The value is staged in a private sibling file and hard-linked into place.
+/// `link(2)` fails when `path` exists, so exactly one creator wins and every
+/// other caller adopts the winner's token. A crash before the link leaves only
+/// the staged sibling, which no reader consults.
+fn publish_token(path: &Path, token: &str) -> io::Result<String> {
+    let staged = staged_path(path, token);
+    let linked = stage_token(&staged, token).and_then(|()| fs::hard_link(&staged, path));
+    let _ = fs::remove_file(&staged);
+    match linked {
+        Ok(()) => {
+            if let Some(dir) = path.parent() {
+                sync_directory(dir)?;
+            }
+            Ok(token.to_owned())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => read_published_token(path)?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("worktree scope at {} vanished mid-publish", path.display()),
+                )
+            }),
+        Err(error) => Err(error),
+    }
+}
+
+fn staged_path(path: &Path, token: &str) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    path.with_file_name(format!(".{name}.{token}.tmp"))
+}
+
+fn stage_token(staged: &Path, token: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staged)?;
+    file.write_all(token.as_bytes())?;
+    file.sync_all()
+}
+
+#[cfg(unix)]
+fn sync_directory(dir: &Path) -> io::Result<()> {
+    fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_dir: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Whether the checkout's *local* Git config marks it
@@ -645,6 +685,77 @@ mod tests {
         fs::write(checkout.join(".git").join(SCOPE_FILE), "not-a-token").unwrap();
         let error = load_or_create(&checkout).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn an_empty_persisted_scope_is_refused_as_corrupt() {
+        // Publishing never leaves a partial file at the scope path, so an
+        // empty one is corruption: refuse it, do not wait for a writer.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SCOPE_FILE);
+        fs::write(&path, "").unwrap();
+        let error = load_or_create_token_file(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[test]
+    fn a_staged_but_unpublished_token_is_invisible_to_readers() {
+        // A creator died after writing part of its staged token, before the
+        // link. The scope path must read as absent and the next caller must
+        // publish a complete token of its own.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SCOPE_FILE);
+        let abandoned = "ab".repeat(16);
+        fs::write(staged_path(&path, &abandoned), &abandoned[..16]).unwrap();
+        assert_eq!(read_published_token(&path).unwrap(), None);
+        let token = load_or_create_token_file(&path).unwrap();
+        assert_ne!(token, abandoned);
+        assert_eq!(fs::read_to_string(&path).unwrap(), token);
+    }
+
+    #[test]
+    fn a_creator_that_loses_the_publish_race_adopts_the_winners_token() {
+        // Deterministic interleave: the winner publishes, then a second creator
+        // that already drew its own token publishes against the same path.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SCOPE_FILE);
+        let winner = load_or_create_token_file(&path).unwrap();
+        let loser = "01".repeat(16);
+        assert_eq!(publish_token(&path, &loser).unwrap(), winner);
+        assert_eq!(fs::read_to_string(&path).unwrap(), winner);
+    }
+
+    #[test]
+    fn racing_creators_all_read_one_whole_token() {
+        let fixture = tempfile::tempdir().unwrap();
+        let checkout = clone_checkout(fixture.path(), MARKED);
+        let barrier = std::sync::Barrier::new(8);
+        let results = std::thread::scope(|scope| {
+            let racers = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        load_or_create(&checkout)
+                    })
+                })
+                .collect::<Vec<_>>();
+            racers
+                .into_iter()
+                .map(|racer| racer.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let first = results[0].as_ref().unwrap().clone().unwrap();
+        for result in results {
+            assert_eq!(result.unwrap(), Some(first.clone()));
+        }
+        assert_eq!(recorded_checkout_token(&checkout), Some(first));
+        let leftovers = fs::read_dir(checkout.join(".git"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "every racer cleans up its staged token");
     }
 
     #[test]

@@ -81,9 +81,16 @@ all reach the same behaviour.
 
 ### Step progress
 
-Start a step with `effigy_ui::steps::step(label)`; the handle offers
-`set_label`, `succeed(summary)`, `fail(summary)`, `finish_clear` and nested
-sub-steps via `step(label)`.
+Start a live wait with `ProgressSource::waiting_for(probe)` and
+`effigy_ui::steps::live_step(source)`. The source supplies the current
+sub-step, known count, last event and elapsed wait; when no further event
+exists it names that exact probe. Finish with `succeed(summary)`,
+`fail(summary)` or `finish_clear`, and finish a short immediate operation with
+`effigy_ui::steps::finish_line(ok, summary)` instead of starting a step. The
+fixed-label `step(label)` constructor is a deprecated lint anchor: using it
+fails `effigy lint:feedback`, and so does any other bare
+`indicatif::ProgressBar::new_spinner`, so a canned label cannot reach a
+terminal.
 
 Labels are short, present tense and name their subject:
 
@@ -126,7 +133,10 @@ it acts on, with the count or mode in parentheses only when it adds something.
 | kernel and gateway | `waiting for the environment to settle`, `releasing the gateway route` | `✓ environment settled` |
 | bootstrap and setup | `pulling <url> into <path>`, `running setup <selector>`, `starting <selector>` | `✓ setup complete (<selector>)` |
 | bundle and catalog sources | `fetching bundle <name> <rev>`, `fetching catalog <name> <rev>` | `✓ fetched bundle <name>` / `✗ could not fetch bundle <name>: <why>` |
-| secrets | `unlocking vault`, `running the vault generate hook` | `✓ vault unlocked` |
+| doctor | `scanning for god files (1/2); last: shared scan inventory; 4s elapsed`, `running health task; waiting for health --json; 3s elapsed` | `✓ god files: no problems found` / `✗ health task: stopped at the time budget` |
+| secrets | `waiting for machine vault write gate; 12s elapsed`, `decrypting vault; waiting for vault decrypt; 2s elapsed`, `removing local unlock files (1/2); last: removed local-dev key; 1s elapsed`, `running generate hook; last: task \`secrets generate\`; 4s elapsed` | `✓ vault unlocked for commands and tasks` / `✓ vault locked; the next secret-backed task requires a passphrase` / `✓ generated the missing vault secrets` |
+| cache and volumes | `inspecting cache volumes; waiting for runtime volume inspect; 3s elapsed`, `removing cache volume \`web-target\` (1/3); last: listed 3 cache volumes; 5s elapsed`, `removing volume \`orphaned-data\` (2/3); last: removed \`web-target\`; 8s elapsed` | the command report; `✗ runtime volume inspect timed out` |
+| workspace | `verifying guest artifact; waiting for workspace guest publication; 2s elapsed`, `probing workspace container identity; waiting for container identity probe; 8s elapsed`, `preparing workspace permissions (0/3); waiting for workspace path inspect; 3s elapsed`, `stopping workspace system \`app\`; waiting for container down; 5s elapsed` | `✓ workspace system app stopped` / `✗ workspace identity changed during publication; run \`effigy container up\` on the host` |
 | release | `running gate <name> (2/5)`, `reusing hosted evidence for gate <name> (1/1)` | `✓ gate <name> passed after 12s (2/5)` |
 | deploy | `resolving deploy provider <name> (offline)` | `✓ resolved deploy provider <name> from cached checkout at commit <sha>` |
 | task runs | ``waiting for heavy admission (task `dev`, 2 ahead)``, `running dev`, `running dev step 2/4: build` | ``✓ admitted heavy task `dev` after 12s`` |

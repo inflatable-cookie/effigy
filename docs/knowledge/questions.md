@@ -601,6 +601,15 @@ Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
 orders this work after Q-011 simplification; it does not waive the release
 criterion.
 
+Tom's 2026-10-31 creator-attribution amendment keeps the workspace client in
+v0.15 with the narrow, gate-scoped ID-set rule in
+[contract 052](contracts/052-runtime-kernel-contract.md). It forbids adopting a
+container from another checkout, project or stale generation and requires a
+complete before/after exact-ID set under the exclusive environment gate. A
+same-user actor able to create an identically labelled container during that
+window is explicitly outside the v0.15 threat model. This does not qualify a
+backend or waive the native Colima, Docker Desktop and Linux Docker checks.
+
 The complete human-facing feedback ruling also blocks v0.15. Every command
 plane must show the live, subject-named terminal steps and actionable errors
 defined in the product guardrails. Existing feedback work (#312 and #315) is a
@@ -617,10 +626,53 @@ current sub-step or object, known counts, elapsed time, and the last meaningful
 event or exact dependency/probe being awaited. When no further event is
 observable, show elapsed time and the exact thing awaited rather than a generic
 "working" label. This applies across command planes, including managed TUI
-tabs and their text/JSON equivalents, and is a v0.15 gate. The source-wide
+tabs and their text/JSON equivalents, and is a v0.15 gate. Managed entries now
+derive each wait from the resolved ordering graph (`start` order, `after =
+["environment"]`, host `depends_on`, accepted legacy `start_after_ms`), publish
+it as `effigy.managed.entry-wait.v1` under `.effigy/runtime/waits/`, and project
+the same state to the tab, the headless text and `status --json` `waiting_on`
+(effigy#458; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)).
+The source-wide
 audit is recorded at
-`/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
-the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.
+`/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`.
+effigy#467 executed it: every flagged site is a live-state step or an
+immediate one-line event, `lint:feedback` has no allowlist and rejects any
+fixed-label spinner entry point in production, and each site's disposition is
+recorded in
+[live progress sites](architecture/036-live-progress-sites.md).
+
+On 2026-10-30 the Effigy Supervisor deferred the whole managed-pane ANSI
+colour and plain-log projection task (#457, PR #616) to v0.16. Its producer
+writes directly to the canonical host-process log and bypasses the new custody
+sanitizer; colour must remain disabled until that writer has a safe
+secret-handling boundary. PR #616 stays merge-held. This specific colour
+feature is outside the v0.15 pre-QA list and is not a prerequisite of the
+remaining Q-017 live-state progress gate (#467). Queue decision
+`084d2652-2ada-4e28-8bcd-743d7fa85cc3` records the ruling; security lead
+`a52a71e5-8f58-4c9a-a4c7-48c8166fe6aa` owns the later writer design.
+
+Tom confirmed on 2026-10-30 that managed Cargo/Oxide colour is required for
+v0.15, reversing its earlier deferral. Qualification requires a single
+writer-side custody boundary for plain sanitized/redacted host logs and a
+redacted styled live tap, while preserving direct path/offset followers. See
+[the colour boundary ruling](architecture/product-guardrails.md#human-facing-feedback). Tom's same-day cutover ruling permits one
+new-inode quarantine of an untrusted legacy prefix under the settled host
+owner gate, with durable ready provenance for subsequent Effigy reads. The
+Underlay follower remains a presentation reader with inode/offset gap handling;
+it does not enforce ready provenance. Stop/reopen older attached followers:
+POSIX cannot revoke their already-open descriptors.
+The owner clarified that Underlay/direct file reads are presentation, can show
+safe bytes awaiting sync and acknowledge no durability; Effigy-owned readers
+must honor the durable committed extent and hide failed/torn suffixes.
+The manual hold remains
+until combined writer, security, style and bundled follower proof and review.
+On 2026-10-31 the owner approved a bounded boolean `CLAUDE_CODE_*` launcher
+switch namespace instead of expanding exact flag lists. Secret-bearing name
+segments, schema-sensitive declarations and known-secret aliases override it;
+non-boolean and outside unknown values stay Secret. The custody argv guard
+remains unchanged; contract 052 records the complete value-domain boundary.
+
+
 
 ## Q-018: Primary Linux proof environment for v0.15
 
@@ -733,3 +785,82 @@ proof. Current-tree examples include the route-token tests in
 argument-redaction test. Apply the same source-context check to every
 historical revision; a production literal or a value of unclear origin
 remains a finding. A changed blob gets scanned again.
+
+## Q-021: Guest facts the workspace client channel still needs
+
+Status: open (kernel owner seam implemented by #488; guest identity, transport and glue implementation and qualification outstanding)
+Asked: 2026-10-29
+Owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
+Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
+
+Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
+tied to the merged #484 reservation/publication APIs. The detailed E-step,
+crash/fault/retry and ownership-transfer draft is explicitly
+[non-normative, unimplemented/post-v0.15 candidate material](contracts/052-runtime-kernel-contract.md#appendix-b-non-normative-post-v015-sequence-candidates),
+with no acceptance claims. It does not qualify any backend or waive Q-017.
+
+Three production facts remain to implement and prove:
+
+- **Guest-local identity.** Observe the full container id, boot, platform and
+  libc independently of the context, using qualified guest-local sources.
+  Cgroup is diagnostic only under §8.2: even a matching full cgroup id cannot
+  prove placement. Cgroup-only availability refuses; backend fixture/native
+  qualification must distinguish it from a qualified mountinfo observation.
+  The host selects the first artifact from the bound image; executing it verifies
+  that selection. Prepare compares the staged binary's own observation with the
+  host-bound target before publication. Unknown/conflicting facts refuse before
+  credential access; no Docker socket, fabricated identity or context-as-proof.
+- **Qualified TLS locator.** One session-owned key/listener; verify SPKI pin and
+  key possession before Hello or any credential frame. Colima, Docker Desktop
+  and Linux Docker each need bounded local and native qualification. §8.11 pins
+  the typed alias/bind → session key/listener → qualified locator handoff and
+  reconnect interface; only the verified locator reaches context publication.
+  A fresh Linux project renders its alias before creation, applies to create the network
+  and guest, then resolves/probes from that guest; it never needs the missing
+  network first or guesses its IPAM gateway as the daemon's host-gateway address.
+- **Actual session publication.** Use #484's reservation, frozen
+  `SessionBinding {owner, run, generation}`, `admit_reserved`, typed publication
+  receipt and atomic commit of active(E), mapping and Borrow. The immutable v2
+  context publishes the actual session run and S, separate from environment E.
+  Preserve canonical Task-before-Env order and the predecessor's live holders.
+  The kernel seam for all of this landed in effigy#488
+  (`WorkspaceActivationReservation::decide`, `commit_selection`,
+  `Attachments::selection_switched`, `unfinished_selection`,
+  `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
+  `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
+  the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
+  that publishes a generation: it needs the session's live launch, a parsed and
+  validated v2 context document, and inputs a decision froze — a fresh
+  project's unselected artifact is frozen by its first publication), the
+  per-selector readback switch/recovery order (the kernel reads selectors and
+  objects through a `SelectorReader` under `Gate(Env)` and records only what it
+  observed) and the settled-successor abandonment are implemented and
+  fault-proven against the real journal, including concurrent decision callers.
+  Listener/key custody is rooted in the detached session owner: a launch needs
+  a mutable admitted session `Run` and its exact `SessionRef`; `SessionOwner` is
+  identity evidence, not duplicate gate custody. Both `selection_switched` and
+  `selection_recovered` require the retained `SessionLaunch`; recovery also takes
+  target and serving probes. `SelectionReceipt::new` takes the session Run and
+  an exact-target prior-selector reader, while `SelectorReader::target` binds
+  readback to the committed backend/container/boot. Deserialized receipts carry
+  no constructor-validation authority. What remains for #482 is the container/runner typed wrapper and
+  guest selector switching, for #483 the transport, server-key generation and
+  TLS qualification, and for #452 the glue and supervisor ownership transfer. The
+  detailed appendix is still non-normative.
+
+Recovery judges listener liveness independently of session and target. A bounded
+pinned TLS-only probe must be available while selection is unfinished, including
+Holding; it opens no channel/admission and carries no application or credential
+frames. Complete only with all three facts verified. With an established dead
+listener or lost target, stop/settle the exact live successor on its own private
+slot before abandonment; a dead session needs no stop. Unknown liveness remains
+unresolved and grants no publication/admission. Abandonment cannot refuse solely
+because session and target remain live when the listener is established dead.
+Never stop a predecessor to clear its successor or rebind an old endpoint/pin.
+
+Code-first tasks own crash-family, concurrent-decision, fresh-network and
+mispinned-peer zero credential/Hello-byte proofs. Proposed test names and #452's
+239 fake tests supply no production evidence. Q-017's Colima, Docker Desktop and
+Linux Docker qualification gate remains; safe refusal is not qualification.
+Rootless Linux and Apple Containers have no qualification claim. No production
+code or stop condition changes in this design-only seam.

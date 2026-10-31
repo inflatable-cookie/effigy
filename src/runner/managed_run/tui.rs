@@ -25,6 +25,7 @@ use effigy_tui::multiprocess::{
     run_multiprocess_tui_with_source, MultiProcessTuiControl, MultiProcessTuiOptions,
     SessionProcesses, SessionTab,
 };
+use effigy_tui::waits::EntryState;
 
 use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
@@ -41,7 +42,7 @@ const READ_MAX: usize = 64 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) enum TabSource {
     Output,
-    HostProcess(HostProcessTab),
+    HostProcess(Box<HostProcessTab>),
     Workload,
     Shell,
 }
@@ -57,7 +58,8 @@ pub(in crate::runner) struct ManagedTab {
 struct Follower {
     sequence: i64,
     offsets: [u64; 2],
-    lines: [Vec<u8>; 2],
+    failed: bool,
+    capture_warned: bool,
 }
 
 struct Shared {
@@ -72,6 +74,8 @@ struct Shared {
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, String>,
+    /// Every entry's own wait, as the run publishes it (effigy#458).
+    entries: BTreeMap<String, EntryState>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -84,6 +88,10 @@ struct RunSource {
     shell_names: Vec<String>,
     /// Set once the TUI's quit path (the run's stop) has begun.
     ending: Arc<AtomicBool>,
+    /// Where the run's workloads publish their waits, and which tabs they
+    /// are, so a front end that attached late still names every wait.
+    wait_ledger: crate::runner::managed_wait::WaitLedger,
+    workload_tabs: Vec<String>,
 }
 
 impl RunSource {
@@ -95,6 +103,40 @@ impl RunSource {
 
     fn is_shell(&self, process: &str) -> bool {
         self.shell_names.iter().any(|name| name == process)
+    }
+
+    /// Every entry's own wait: the run's published state, the environment's
+    /// host-process records, and the run's own record for a tab that attached
+    /// after its event.
+    fn wait_states(&self) -> Vec<EntryState> {
+        let shared = self.shared();
+        let mut states = shared.entries.values().cloned().collect::<Vec<_>>();
+        let mut named = states
+            .iter()
+            .map(|state| state.entry.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for (tab_name, host) in &shared.hosts {
+            let Some(state) = host.wait_state() else {
+                continue;
+            };
+            let mut state = state.clone();
+            // The tab may be renamed beside a workload of the same name.
+            state.entry = tab_name.clone();
+            named.insert(tab_name.clone());
+            states.push(state);
+        }
+        for tab in &self.workload_tabs {
+            if named.contains(tab) {
+                continue;
+            }
+            let Some(mut state) = self.wait_ledger.read(tab).filter(EntryState::holds_a_wait)
+            else {
+                continue;
+            };
+            state.entry = tab.clone();
+            states.push(state);
+        }
+        states
     }
 
     fn frame(&self, frame: &ClientFrame) -> Result<(), ProcessManagerError> {
@@ -124,10 +166,13 @@ impl Shared {
                             Follower {
                                 sequence,
                                 offsets: [0, 0],
-                                lines: [Vec::new(), Vec::new()],
+                                failed: false,
+                                capture_warned: false,
                             },
                         );
                         self.exits.remove(&process);
+                        // The entry started: whatever it waited for is over.
+                        self.entries.remove(&process);
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Started, ""));
                     }
@@ -138,6 +183,16 @@ impl Shared {
                         self.exits.insert(process.clone(), payload.clone());
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
+                    }
+                    Some(EngineEvent::Entry { state }) => {
+                        // The map holds waits only: an entry that started is
+                        // rendered from its own process state, so a settled
+                        // wait never lingers on its tab (effigy#458).
+                        if state.holds_a_wait() {
+                            self.entries.insert(state.entry.clone(), state);
+                        } else {
+                            self.entries.remove(&state.entry);
+                        }
                     }
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
                     Some(EngineEvent::Outcome { error, code }) => {
@@ -185,11 +240,14 @@ impl Shared {
             let Some(host) = self.hosts.get_mut(&name) else {
                 continue;
             };
-            if !host.announce_started() {
+            // The status poll also reads the process's published wait, so a
+            // blocked host is announced as started only once that wait is
+            // over (effigy#458).
+            let poll = host.poll();
+            if host.may_announce_started() && !host.announce_started() {
                 self.queue
                     .push_back(event(&name, ProcessEventKind::Started, ""));
             }
-            let poll = host.poll();
             for status in poll.statuses {
                 self.queue.push_back(ProcessEvent {
                     process: name.clone(),
@@ -198,35 +256,23 @@ impl Shared {
                     chunk: None,
                 });
             }
-            for line in poll.lines {
-                self.queue.push_back(ProcessEvent {
-                    process: name.clone(),
-                    kind: ProcessEventKind::Stdout,
-                    payload: line,
-                    chunk: None,
-                });
+            for chunk in poll.styled {
+                self.queue.push_back(event(
+                    &name,
+                    ProcessEventKind::Styled,
+                    &serde_json::to_string(&chunk).expect("typed host style event"),
+                ));
             }
         }
     }
 
     fn read_logs(&mut self) {
         for (name, follower) in &mut self.followers {
-            for (slot, (stream, chunk_kind, line_kind)) in [
-                (
-                    Stream::Stdout,
-                    ProcessEventKind::StdoutChunk,
-                    ProcessEventKind::Stdout,
-                ),
-                (
-                    Stream::Stderr,
-                    ProcessEventKind::StderrChunk,
-                    ProcessEventKind::Stderr,
-                ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let Observed::Verified(read, _) = read_run_log(
+            if follower.failed {
+                continue;
+            }
+            for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
+                let Observed::Verified(mut read, _) = read_run_log(
                     &self.root,
                     self.run,
                     follower.sequence,
@@ -236,25 +282,51 @@ impl Shared {
                 ) else {
                     continue;
                 };
+                if read.truncated && !follower.capture_warned {
+                    follower.capture_warned = true;
+                    self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] capture truncated: log append failed; inspect this run before restarting"));
+                }
+                match std::str::from_utf8(&read.bytes) {
+                    Ok(text) if text.chars().any(|ch| ch.is_control() && ch != '\n') => {
+                        follower.failed = true;
+                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: control bytes in plain capture; restart the producer"));
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.error_len().is_none() => {
+                        read.bytes.truncate(error.valid_up_to())
+                    }
+                    Err(_) => {
+                        follower.failed = true;
+                        self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output follow stopped: invalid plain UTF-8; restart the producer"));
+                        break;
+                    }
+                }
+                if read.from > follower.offsets[slot] {
+                    self.queue.push_back(event(name, ProcessEventKind::Stdout, "[effigy] output gap: older canonical bytes expired; resuming the retained log"));
+                }
                 follower.offsets[slot] = read.from + read.bytes.len() as u64;
                 if read.bytes.is_empty() {
                     continue;
                 }
-                self.queue.push_back(ProcessEvent {
-                    process: name.clone(),
-                    kind: chunk_kind,
-                    payload: String::from_utf8_lossy(&read.bytes).into_owned(),
-                    chunk: Some(read.bytes.clone()),
-                });
-                let buffer = &mut follower.lines[slot];
-                buffer.extend_from_slice(&read.bytes);
-                while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let line = buffer.drain(..=end).collect::<Vec<u8>>();
-                    let text = String::from_utf8_lossy(&line)
-                        .trim_end_matches(['\n', '\r'])
-                        .to_owned();
-                    self.queue.push_back(event(name, line_kind, &text));
-                }
+                // Managed workloads persist merged plain bytes in stdout.
+                // Rendering receives typed spans; no reader interprets ANSI.
+                let spans = effigy_kernel::custody::read_styles(
+                    &self.root,
+                    self.run,
+                    follower.sequence,
+                    read.from,
+                    &read.bytes,
+                );
+                let chunk = effigy_core::terminal_text::StyledChunk {
+                    offset: read.from,
+                    spans,
+                };
+                self.queue.push_back(event(
+                    name,
+                    ProcessEventKind::Styled,
+                    &serde_json::to_string(&chunk).expect("typed style event"),
+                ));
             }
         }
     }
@@ -270,6 +342,10 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 }
 
 impl SessionProcesses for RunSource {
+    fn entry_waits(&self) -> Vec<EntryState> {
+        self.wait_states()
+    }
+
     fn next_event_timeout(&self, timeout: Duration) -> Option<ProcessEvent> {
         if let Some(shells) = &self.shells {
             if let Some(event) = shells.next_event_timeout(Duration::ZERO) {
@@ -449,6 +525,10 @@ fn stdin_hung_up() -> bool {
 }
 
 /// Runs the TUI over a started run until it closes.
+///
+/// `initial_waits` is the session's ordering graph projected before the
+/// supervisor's first event: the tabs name their own wait from the first frame
+/// instead of showing a generic one (effigy#458).
 pub(in crate::runner) fn attach_tui(
     started: Started,
     addressed: &Addressed<'_>,
@@ -456,6 +536,7 @@ pub(in crate::runner) fn attach_tui(
     tabs: Vec<ManagedTab>,
     tab_order: Vec<String>,
     shells: Vec<ProcessSpec>,
+    initial_waits: Vec<EntryState>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
     let Started { client, run, root } = started;
@@ -470,17 +551,22 @@ pub(in crate::runner) fn attach_tui(
                     Follower {
                         sequence: OUTPUT_SEQUENCE,
                         offsets: [0, 0],
-                        lines: [Vec::new(), Vec::new()],
+                        failed: false,
+                        capture_warned: false,
                     },
                 );
                 queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));
             }
             TabSource::HostProcess(host) => {
-                hosts.insert(tab.name.clone(), HostFollower::new(host.clone()));
+                hosts.insert(tab.name.clone(), HostFollower::new((**host).clone()));
             }
             TabSource::Workload | TabSource::Shell => {}
         }
     }
+    let entries = initial_waits
+        .into_iter()
+        .map(|state| (state.entry.clone(), state))
+        .collect();
     let shared = Arc::new(Mutex::new(Shared {
         client,
         root,
@@ -489,18 +575,32 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
+        entries,
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
     }));
     let shell_names = shells.iter().map(|shell| shell.name.clone()).collect();
     let ending = Arc::new(AtomicBool::new(false));
+    let workload_tabs = tabs
+        .iter()
+        .filter(|tab| matches!(tab.source, TabSource::Workload))
+        .map(|tab| tab.name.clone())
+        .collect();
     let source = RunSource {
         shared: shared.clone(),
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
         ending: ending.clone(),
+        // The supervisor publishes its workload waits under the task and
+        // profile it runs, in this checkout.
+        wait_ledger: crate::runner::managed_wait::WaitLedger::task(
+            &addressed.target.root,
+            addressed.task,
+            addressed.profile,
+        ),
+        workload_tabs,
     };
     hangup_watchdog(ending.clone());
     let session_tabs = tabs

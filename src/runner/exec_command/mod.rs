@@ -38,9 +38,9 @@ mod transport;
 pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, copy_file_into_service_bounded,
     probe_container_capabilities, run_command_capture_until, run_compose_exec,
-    run_compose_exec_plan_with_deadline, run_compose_exec_plan_with_options,
-    run_managed_compose_exec_plan, run_verified_compose_exec_plan,
-    runtime_backend_is_running_bounded, verified_target_exec_args,
+    run_compose_exec_plan_with_credentials, run_compose_exec_plan_with_deadline,
+    run_compose_exec_plan_with_options, run_managed_compose_exec_plan,
+    run_verified_compose_exec_plan, runtime_backend_is_running_bounded, verified_target_exec_args,
 };
 #[cfg(not(test))]
 pub(in crate::runner) use transport::{capture_command_until, CommandCaptureError};
@@ -266,6 +266,11 @@ fn activate_exec_surface(
                 repo_override: plan.request.repo_override.clone(),
                 route: plan.route,
                 session_context: current_runtime_session_context(),
+                reconcile_shared_services:
+                    crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                        &surface.policy,
+                        current_runtime_session_context(),
+                    ),
             },
         )
     })

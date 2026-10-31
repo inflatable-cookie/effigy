@@ -131,7 +131,12 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   processes) run between the runs, outside the gate. The activation run
   publishes `active`, attaching requesting holders in the same transaction. A
   crash before activation leaves nothing to repair: the next `up` reconciles
-  from what is running.
+  from what is running. Exposure is decided per declared route target: a host
+  listener that never reaches its own readiness withholds only its own route,
+  the container's published routes and the other listeners' routes stay
+  exposed, and the activation still publishes `active`. A detached command
+  reports that partial exposure per route rather than the whole activation's
+  readiness and exposure as unverified (effigy#455).
 - **One apply.** `compose up -d --build --remove-orphans`, with no recreate
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
@@ -251,7 +256,77 @@ Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
 is an environment-owned detached kernel run with custody of its process group,
 started after the environment's services report ready and in `depends_on`
 order, stopped by `down`, `reset` and session settle with a
-`HostProcessStopReport`.
+`HostProcessStopReport`. A sidecar listener's readiness is its own route claim:
+when it fails, its own route stays withheld while the environment's published
+routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
+withheld listener withholds its route too, through the whole chain (effigy#455).
+The current dependency decision precedes reconciliation of any previous
+generation. A withheld dependent's old run is settled before the report,
+including a process without a listener; an incomplete stop remains a refusal.
+Sidecar startup shares the bring-up's one runtime-observation budget: a listener
+still starting when it is spent withholds its route and ends the command's wait
+rather than holding the activation open, while the supervisor keeps its own
+readiness semantics.
+Every withheld listener start is settled before the command returns, including
+a retrying failure before its first child. Only successful starts are detached;
+the withheld supervisor cannot publish a late route.
+
+The run's own owner publishes the environment identity and the whole host graph
+before its environment phase can block; every host entry waits for that phase
+first, and the planner takes the same records over once readiness is observed.
+Within the planner the graph is published before the first process can block,
+so a dependent's tab names its reader while that reader is still becoming
+ready. It then publishes what each process waits
+for — its `depends_on` reader and that reader's phase, or its own declared
+readiness request with elapsed time — as an `effigy.managed.entry-wait.v1`
+record under the checkout's `.effigy/runtime/waits/<scope>/`, and records each
+wait as settled when it ends. A prerequisite failure is published as
+`not_started` with the failing entry and its report, no dependent starts, and
+the plan returns the failure. A record is written once when its meaning changes
+and refreshed only while it is a live wait, so a settled entry is never
+rewritten on an owner-loop tick. Exactly one publisher owns the scope: the run's
+owner publishes it before the phase can block, and the host planner takes it over
+before it starts any listener. Each publisher stages a complete snapshot in its
+own directory and commits it by replacing one record, so a reader always resolves
+a whole snapshot — the previous publisher's until the new one is complete — and a
+write that races the handoff cannot replace an authoritative entry or failure.
+The environment phase keeps its own reserved record, never an entry name, so a
+host process an operator names `environment` keeps its own wait; the run's owner
+reads that record for the container counts every phase-dependent entry names. A
+read accepts a snapshot only while it is still the visible one — a listing a
+commit retires mid-read is re-resolved — so an in-flight front end never observes
+a missing or partial snapshot across the handoff. The host plan launches entries
+one at a time in its resolved dependency order, so each queued entry names the
+launch the plan is performing now, with that entry's actual phase, as its own
+wait (`launch`) — distinct from a declared `depends_on` edge and never
+attributed as one. A launch's hold ends when that launch returns, so a
+non-listener that finished its launch is never the queued entry's hold. An entry
+nothing has observed yet — no published record, no settled launch, no log line
+and no ready URL — reports no status at all: neither the text nor a tab claims a
+host is starting before the plan launched it. A launch that aborts the plan marks every entry it never
+started `not started` with the plan's own attribution
+(`plan stopped after <entry> <report>`), so no wait outlives the plan. A restart
+publishes only the entries it replaces: a reader another call started stays
+running in the graph, and a selected dependent names the readiness it
+re-confirms (`waiting for api (running)`) while it blocks. A failure the planner
+published is terminal and is never replaced by the run's generic `up` exit; the
+run's own environment reason carries the planner's failing entry and its report.
+The environment phase's own record is terminal on every exit — a success, a stop
+or a nothing-to-await fallback settles it, and a failure or timeout publishes its
+headline and first piece of evidence. A new session resets that record at its own
+boundary, *before* the run starts polling it — for every named environment, with
+or without host processes, and a `container up` resets it before its compose
+step, held or not — so an interrupted prior run's container counts are never
+projected into the new run, and the staged host snapshot is a separate record
+that the reset never touches. Only a dependent
+that needs a failed entry's readiness loses its prerequisite; a dependent that
+only needed the entry's start keeps going, including its own scheduled delay. `status --json` reads both scopes — the run's
+scope names its environment before the phase blocks — and reports each waiting
+entry with the scope that published it. A record's path encodes its accepted
+entry name injectively (K1: every byte outside `[A-Za-z0-9_-]` as `%XX`), and a
+task scope keeps the task and profile as separate components, so two distinct
+entries or task/profile pairs never share a record. Front ends read those records; they are
+a projection, never authority (effigy#458).
 
 ## 9. Not yet
 

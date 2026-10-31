@@ -25,6 +25,7 @@ pub fn vt_logs(
         .screen()
         .rows_formatted(0, render_cols)
         .map(|row| LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: String::from_utf8_lossy(&row).into_owned(),
         })

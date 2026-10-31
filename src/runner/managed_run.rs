@@ -21,7 +21,11 @@ mod settlement;
 mod tui;
 mod wire;
 
-pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
+pub(in crate::runner) use client::{
+    attach_text, detach, start, start_reserved, ClientStart, Started,
+};
+#[cfg(test)]
+pub(in crate::runner) use control::wait_views;
 pub(in crate::runner) use control::OUTPUT_LOG;
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{
@@ -30,6 +34,8 @@ pub(in crate::runner) use engine::{
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
 pub(in crate::runner) use host_tabs::HostProcessTab;
+#[cfg(test)]
+pub(in crate::runner) use host_tabs::{HostFollower, HostStatus};
 pub(in crate::runner) use settlement::Binding;
 pub(in crate::runner) use tui::{attach_tui, ManagedTab, TabSource};
 pub(in crate::runner) use wire::Front;
@@ -41,6 +47,12 @@ use effigy_kernel::supervise::EngineSession;
 
 /// The managed engine's entry in its detached supervisor process.
 pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunError> {
+    // #507: a workspace serving host is its own detached engine, so a session's
+    // run, listener, key, grants and admitted clients are created in the process
+    // that keeps them.
+    if super::workspace_client::serving_host::owns_payload(session.payload()) {
+        return super::workspace_client::serving_host::supervise(session);
+    }
     // An environment-owned host process is another engine over the same
     // detached supervisor: its payload is one host-process spec.
     if super::host_process::owns_supervise_payload(session.payload()) {

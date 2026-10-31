@@ -3,12 +3,16 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{SecretsArgs, SecretsExportFormat, SecretsSubcommand};
-use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
+use effigy_manifest::{
+    ManifestInlineTaskDefinition, ManifestSecretTarget, ManifestSecretsBackend,
+    ManifestSecretsConfig,
+};
 use effigy_secrets::{
     inspect_vault_permissions, local_dev_unlock_key_path, local_unlock_credential_path,
     read_local_unlock_passphrase, seal_local_unlock_passphrase, LocalDevUnlockKey, SecretValue,
     VaultPermissionStatus, VaultPlaintextPayload, VaultSecretRecord,
 };
+use effigy_ui::steps::{self, ProgressSource, Step};
 use serde_json::{json, Value};
 
 use crate::runner::command_context::resolve_active_repo_root;
@@ -18,6 +22,63 @@ use crate::runner::render::render_command_result;
 use super::error::RunnerError;
 
 const TASK_SECRET_GENERATION_ACTIVE_ENV: &str = "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE";
+
+pub(in crate::runner) const PROBE_VAULT_DECRYPT: &str = "vault decrypt";
+const PROBE_VAULT_LOCK: &str = "vault lock";
+const PROBE_VAULT_GENERATE: &str = "vault generate hook";
+const PROBE_VAULT_WRITE_GATE: &str = "machine vault write gate";
+
+/// Live progress for a vault operation. Labels name the current sub-step,
+/// known count, elapsed wait and last event. They never include a secret
+/// value or a credential path.
+pub(in crate::runner) struct SecretOpProgress {
+    source: ProgressSource,
+    step: Step,
+}
+
+impl SecretOpProgress {
+    pub(in crate::runner) fn start(probe: impl Into<String>) -> Self {
+        let source = ProgressSource::waiting_for(probe);
+        let step = steps::live_step(source.clone());
+        Self { source, step }
+    }
+
+    pub(in crate::runner) fn update(
+        &self,
+        sub_step: impl Into<String>,
+        count: Option<(u64, u64)>,
+        event: Option<String>,
+    ) {
+        self.source.update(sub_step, count, event);
+    }
+
+    fn now_waiting_for(&self, probe: impl Into<String>) {
+        self.source.now_waiting_for(probe);
+    }
+
+    pub(in crate::runner) fn succeed(self, summary: &str) {
+        self.step.succeed(summary);
+    }
+
+    pub(in crate::runner) fn fail(self, summary: &str) {
+        self.step.fail(summary);
+    }
+
+    #[cfg(test)]
+    fn frame_at(&self, elapsed: std::time::Duration) -> String {
+        self.source.frame_at(elapsed)
+    }
+}
+
+fn generate_hook_event(generate: &ManifestInlineTaskDefinition) -> String {
+    if let Some(task) = generate.task.as_deref() {
+        format!("task `{task}`")
+    } else if generate.rhai.is_some() {
+        "rhai script".to_owned()
+    } else {
+        "inline command".to_owned()
+    }
+}
 
 pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
@@ -174,15 +235,13 @@ fn run_secrets_unlock(
     // Decrypting a large vault and sealing the local credential takes long
     // enough to be worth a live step, and it fails in ways a person needs
     // named (a wrong passphrase, an unreadable vault, a key it cannot seal).
-    let step = effigy_ui::steps::step("unlocking vault");
-    match unlock_local_vault(&vault_path, passphrase.expose()) {
-        Ok(()) => step.succeed("vault unlocked for commands and tasks"),
+    // The machine vault write gate can wait up to 60s, so the live source
+    // names that probe until acquire returns.
+    let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
+    match unlock_local_vault(&vault_path, passphrase.expose(), &progress) {
+        Ok(()) => progress.succeed("vault unlocked for commands and tasks"),
         Err(error) => {
-            step.fail(&format!(
-                "could not unlock the vault at {}: {}",
-                vault_path.display(),
-                error.human_error().what_failed()
-            ));
+            progress.fail("could not unlock the vault");
             return Err(error);
         }
     }
@@ -201,15 +260,41 @@ fn run_secrets_unlock(
 /// credential this machine's tasks unlock with. A vault whose local payload
 /// is missing, stale or written by an older format is rewritten, so the
 /// credential and the payload always match.
-fn unlock_local_vault(vault_path: &Path, passphrase: &str) -> Result<(), RunnerError> {
+fn unlock_local_vault(
+    vault_path: &Path,
+    passphrase: &str,
+    progress: &SecretOpProgress,
+) -> Result<(), RunnerError> {
     let write = crate::runner::secret_vault::begin_vault_write(vault_path)?;
+    progress.now_waiting_for(PROBE_VAULT_DECRYPT);
+    progress.update("decrypting vault", None, None);
     let payload = read_vault_payload(vault_path, passphrase)?;
+    progress.update(
+        "checking local payload",
+        None,
+        Some("vault decrypted".to_owned()),
+    );
     if !matches!(
         crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(vault_path),
         Ok(ref local_payload) if local_payload == &payload
     ) {
+        progress.update(
+            "rewriting local payload",
+            None,
+            Some("vault decrypted".to_owned()),
+        );
         crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase)?;
+        progress.update(
+            "rewriting local payload",
+            None,
+            Some("local payload rewritten".to_owned()),
+        );
     }
+    progress.update(
+        "sealing local credential",
+        None,
+        Some("vault decrypted".to_owned()),
+    );
     let key_path = local_dev_unlock_key_path(vault_path);
     let key = LocalDevUnlockKey::from_bytes(fs::read(&key_path).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -229,6 +314,11 @@ fn unlock_local_vault(vault_path: &Path, passphrase: &str) -> Result<(), RunnerE
             vault_path.display()
         ))
     })?;
+    progress.update(
+        "writing local credential",
+        None,
+        Some("credential sealed".to_owned()),
+    );
     crate::runner::secret_vault::write_private_file(
         &write,
         &local_unlock_credential_path(vault_path),
@@ -242,15 +332,40 @@ fn run_secrets_lock(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
-    let _write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
-    for path in [
-        local_dev_unlock_key_path(&vault_path),
-        local_unlock_credential_path(&vault_path),
-    ] {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
+    let _write = match crate::runner::secret_vault::begin_vault_write(&vault_path) {
+        Ok(write) => write,
+        Err(error) => {
+            progress.fail("could not lock the vault");
+            return Err(error);
+        }
+    };
+    progress.now_waiting_for(PROBE_VAULT_LOCK);
+    progress.update("removing local unlock files", Some((0, 2)), None);
+    let files = [
+        (local_dev_unlock_key_path(&vault_path), "local-dev key"),
+        (
+            local_unlock_credential_path(&vault_path),
+            "local unlock credential",
+        ),
+    ];
+    for (index, (path, name)) in files.iter().enumerate() {
+        let done = index as u64 + 1;
+        match fs::remove_file(path) {
+            Ok(()) => progress.update(
+                "removing local unlock files",
+                Some((done, 2)),
+                Some(format!("removed {name}")),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => progress.update(
+                "removing local unlock files",
+                Some((done, 2)),
+                Some(format!("{name} already absent")),
+            ),
             Err(error) => {
+                progress.fail(&format!(
+                    "could not lock the vault: failed to remove {name}"
+                ));
                 return Err(RunnerError::task_invocation(format!(
                     "failed to remove local unlock state {}: {error}",
                     path.display()
@@ -258,6 +373,7 @@ fn run_secrets_lock(
             }
         }
     }
+    progress.succeed("vault locked; the next secret-backed task requires a passphrase");
     render_mutation_result(
         repo_root,
         secrets,
@@ -293,7 +409,9 @@ pub(in crate::runner) fn run_configured_vault_generate_task(
         std::env::set_var(TASK_SECRET_GENERATION_ACTIVE_ENV, "1");
     }
     let _guard = ScopedVaultGenerateTask;
-    let step = effigy_ui::steps::step("running the vault generate hook");
+    let event = generate_hook_event(&generate);
+    let progress = SecretOpProgress::start(PROBE_VAULT_GENERATE);
+    progress.update("running generate hook", None, Some(event));
     match crate::runner::execute::api::run_inline_task_with_cwd_and_env(
         generate.into_manifest_task(),
         repo_root.to_path_buf(),
@@ -301,15 +419,12 @@ pub(in crate::runner) fn run_configured_vault_generate_task(
         &std::collections::BTreeMap::new(),
     ) {
         Ok(_) => {
-            step.succeed("generated the missing vault secrets");
+            progress.succeed("generated the missing vault secrets");
             Ok(true)
         }
         Err(error) => {
             let human = error.human_error();
-            step.fail(&format!(
-                "could not run the vault generate hook: {}",
-                human.what_failed()
-            ));
+            progress.fail("could not run the vault generate hook");
             Err(RunnerError::task_invocation(
                 crate::runner::error::child_failure_text(
                     "the `[secrets.vault].generate` hook failed",
@@ -1660,6 +1775,246 @@ mod vault_generate_hook_tests {
         assert!(
             std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_none(),
             "flag must be cleared after a failing hook"
+        );
+    }
+
+    #[test]
+    fn generate_hook_success_and_failure_end_with_one_named_line() {
+        let root = tempfile::tempdir().expect("repo root");
+        fs::write(root.path().join("effigy.toml"), "[tasks]\n").expect("project manifest");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            TASK_SECRET_GENERATION_ACTIVE_ENV,
+            None,
+        )]);
+
+        let ok = secrets_with_generate(r#"{ run = "true" }"#);
+        let (result, lines) =
+            steps::capture_lines(|| run_configured_vault_generate_task(root.path(), Some(&ok)));
+        assert!(result.expect("hook runs"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "✓ generated the missing vault secrets"),
+            "{lines:?}"
+        );
+
+        let failing = secrets_with_generate(r#"{ run = "false" }"#);
+        let (result, lines) = steps::capture_lines(|| {
+            run_configured_vault_generate_task(root.path(), Some(&failing))
+        });
+        assert!(result.is_err());
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "✗ could not run the vault generate hook"),
+            "{lines:?}"
+        );
+        let joined = lines.join("\n");
+        assert!(
+            !joined.contains("super-secret") && !joined.contains(".local-unlock"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn generate_hook_event_names_the_kind_not_a_path_or_command() {
+        let rhai = secrets_with_generate(r#"{ rhai = "/secret/generate-dev-secrets.rhai" }"#);
+        let generate = rhai
+            .vault
+            .as_ref()
+            .expect("vault")
+            .generate
+            .as_ref()
+            .expect("generate");
+        let event = generate_hook_event(generate);
+        assert_eq!(event, "rhai script");
+        assert!(!event.contains("/secret/"));
+        assert!(!event.contains("generate-dev-secrets"));
+
+        let run = secrets_with_generate(r#"{ run = "echo super-secret-passphrase" }"#);
+        let generate = run
+            .vault
+            .as_ref()
+            .expect("vault")
+            .generate
+            .as_ref()
+            .expect("generate");
+        assert_eq!(generate_hook_event(generate), "inline command");
+
+        let task = secrets_with_generate(r#"{ task = "secrets generate" }"#);
+        let generate = task
+            .vault
+            .as_ref()
+            .expect("vault")
+            .generate
+            .as_ref()
+            .expect("generate");
+        assert_eq!(generate_hook_event(generate), "task `secrets generate`");
+    }
+}
+
+#[cfg(test)]
+mod live_progress_tests {
+    use super::*;
+    use std::time::Duration;
+
+    const PLANTED_SECRET: &str = "super-secret-passphrase";
+    const CREDENTIAL_PATH: &str = "/tmp/vault/.local-unlock";
+
+    fn assert_redacted(frame: &str) {
+        assert!(
+            !frame.contains(PLANTED_SECRET) && !frame.contains(CREDENTIAL_PATH),
+            "secret or credential path leaked in {frame}"
+        );
+        assert!(
+            !frame.contains(".local-unlock") && !frame.contains("secrets.vault"),
+            "credential path leaked in {frame}"
+        );
+    }
+
+    #[test]
+    fn unlock_frames_name_sub_steps_elapsed_and_never_secrets() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(0)),
+                "waiting for machine vault write gate; 0s elapsed"
+            );
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(12)),
+                "waiting for machine vault write gate; 12s elapsed"
+            );
+            progress.now_waiting_for(PROBE_VAULT_DECRYPT);
+            progress.update("decrypting vault", None, None);
+            let frame = progress.frame_at(Duration::from_secs(14));
+            assert_eq!(
+                frame,
+                "decrypting vault; waiting for vault decrypt; 14s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.update(
+                "sealing local credential",
+                None,
+                Some("vault decrypted".to_owned()),
+            );
+            let frame = progress.frame_at(Duration::from_secs(17));
+            assert_eq!(
+                frame,
+                "sealing local credential; waiting for vault decrypt; last: vault decrypted; 17s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.update(
+                "writing local credential",
+                None,
+                Some("credential sealed".to_owned()),
+            );
+            let frame = progress.frame_at(Duration::from_secs(18));
+            assert_eq!(
+                frame,
+                "writing local credential; waiting for vault decrypt; last: credential sealed; 18s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.succeed("vault unlocked for commands and tasks");
+        });
+        assert_eq!(
+            lines,
+            vec!["✓ vault unlocked for commands and tasks".to_owned()]
+        );
+        for line in &lines {
+            assert_redacted(line);
+        }
+    }
+
+    #[test]
+    fn lock_frames_count_removed_files_and_never_paths() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = SecretOpProgress::start(PROBE_VAULT_WRITE_GATE);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(4)),
+                "waiting for machine vault write gate; 4s elapsed"
+            );
+            progress.now_waiting_for(PROBE_VAULT_LOCK);
+            progress.update("removing local unlock files", Some((0, 2)), None);
+            assert_eq!(
+                progress.frame_at(Duration::from_secs(5)),
+                "removing local unlock files (0/2); waiting for vault lock; 5s elapsed"
+            );
+            progress.update(
+                "removing local unlock files",
+                Some((1, 2)),
+                Some("removed local-dev key".to_owned()),
+            );
+            let frame = progress.frame_at(Duration::from_secs(2));
+            assert_eq!(
+                frame,
+                "removing local unlock files (1/2); waiting for vault lock; last: removed local-dev key; 2s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.update(
+                "removing local unlock files",
+                Some((2, 2)),
+                Some("removed local unlock credential".to_owned()),
+            );
+            let frame = progress.frame_at(Duration::from_secs(3));
+            assert_eq!(
+                frame,
+                "removing local unlock files (2/2); waiting for vault lock; last: removed local unlock credential; 3s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.fail("could not lock the vault: failed to remove local-dev key");
+        });
+        assert_eq!(
+            lines,
+            vec!["✗ could not lock the vault: failed to remove local-dev key".to_owned()]
+        );
+        for line in &lines {
+            assert_redacted(line);
+        }
+    }
+
+    #[test]
+    fn task_secret_decrypt_names_the_vault_decrypt_probe() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = SecretOpProgress::start(PROBE_VAULT_DECRYPT);
+            progress.update("decrypting vault", None, None);
+            let frame = progress.frame_at(Duration::from_secs(4));
+            assert_eq!(
+                frame,
+                "decrypting vault; waiting for vault decrypt; 4s elapsed"
+            );
+            assert_redacted(&frame);
+            progress.fail("could not unlock the vault: wrong passphrase");
+        });
+        assert_eq!(
+            lines,
+            vec!["✗ could not unlock the vault: wrong passphrase".to_owned()]
+        );
+        for line in &lines {
+            assert_redacted(line);
+        }
+    }
+
+    #[test]
+    fn hook_frames_name_the_wait_and_kind_without_command_text() {
+        let ((), lines) = steps::capture_lines(|| {
+            let progress = SecretOpProgress::start(PROBE_VAULT_GENERATE);
+            progress.update(
+                "running generate hook",
+                None,
+                Some("inline command".to_owned()),
+            );
+            let frame = progress.frame_at(Duration::from_secs(8));
+            assert_eq!(
+                frame,
+                "running generate hook; waiting for vault generate hook; last: inline command; 8s elapsed"
+            );
+            assert_redacted(&frame);
+            assert!(!frame.contains("echo"));
+            progress.fail("could not run the vault generate hook: command failed");
+        });
+        assert_eq!(
+            lines,
+            vec!["✗ could not run the vault generate hook: command failed".to_owned()]
         );
     }
 }
