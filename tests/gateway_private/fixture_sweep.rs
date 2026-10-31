@@ -14,9 +14,11 @@
 //! captured and only shares the old group id is left alone. A PID the kernel
 //! reused has a different start identity, so it is never signalled.
 //!
-//! A fixture's watchdog outlives the fixture if the fixture is killed, which is
-//! the only cleanup an interrupted owner gets: no `Drop` runs in a killed
-//! process.
+//! The watchdog keeps those captures in `sweep-ledger.json` under the fixture
+//! root. A fixture's normal cleanup reads the ledger too, because a settled
+//! `down` clears the leader's record before the cleanup runs. A fixture's
+//! watchdog outlives the fixture if the fixture is killed, which is the only
+//! cleanup an interrupted owner gets: no `Drop` runs in a killed process.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -30,7 +32,10 @@ use effigy_gateway::identity::{
 const WATCHDOG_ROOT_ENV: &str = "EFFIGY_FIXTURE_WATCHDOG_ROOT";
 const WATCHDOG_OWNER_ENV: &str = "EFFIGY_FIXTURE_WATCHDOG_OWNER";
 const WATCHDOG_TEST: &str = "fixture_sweep::fixture_watchdog_helper";
-const WATCHDOG_INTERVAL: Duration = Duration::from_millis(200);
+/// One process-table read per tick. A `ps` call costs tens of milliseconds, so
+/// a shorter tick would load a parallel run enough to slow the fixtures it guards.
+const WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
+const LEDGER_FILE: &str = "sweep-ledger.json";
 
 /// A process that was in a recorded leader's group, with its identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,8 +55,8 @@ pub(super) struct Record {
     pub(super) members: Vec<Member>,
 }
 
-/// Process IDs whose process group is `pgid`, from the process table.
-pub(super) fn process_group_members(pgid: u32) -> Vec<u32> {
+/// `(pid, pgid)` for every process, from one read of the process table.
+fn process_table() -> Vec<(u32, u32)> {
     let Ok(output) = Command::new("ps").args(["-axo", "pid=,pgid="]).output() else {
         return Vec::new();
     };
@@ -61,10 +66,21 @@ pub(super) fn process_group_members(pgid: u32) -> Vec<u32> {
             let mut fields = line
                 .split_whitespace()
                 .map(|field| field.parse::<u32>().ok());
-            let pid = fields.next()??;
-            let group = fields.next()??;
-            (group == pgid).then_some(pid)
+            Some((fields.next()??, fields.next()??))
         })
+        .collect()
+}
+
+/// Process IDs whose process group is `pgid`, from the process table.
+pub(super) fn process_group_members(pgid: u32) -> Vec<u32> {
+    group_members(&process_table(), pgid)
+}
+
+fn group_members(table: &[(u32, u32)], pgid: u32) -> Vec<u32> {
+    table
+        .iter()
+        .filter(|(_, group)| *group == pgid)
+        .map(|(pid, _)| *pid)
         .collect()
 }
 
@@ -74,6 +90,11 @@ fn live(pid: u32) -> Option<LiveProcessIdentity> {
 
 fn holds(live: &LiveProcessIdentity, boot: &str, start: &GatewayStartIdentity) -> bool {
     live.boot_identity == boot && live.start_identity == *start
+}
+
+/// Whether `record`'s leader still holds its recorded identity.
+fn leader_holds(record: &Record) -> bool {
+    live(record.pid).is_some_and(|leader| holds(&leader, &record.boot, &record.start))
 }
 
 /// Whether `pid` is a zombie: it has exited and only waits to be reaped.
@@ -216,17 +237,34 @@ fn checkouts_under(root: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// Adds `fresh` to `records`, or merges its members into the record with the
+/// same leader identity.
+fn merge(records: &mut Vec<Record>, fresh: Record) {
+    match records.iter().position(|record| {
+        record.pid == fresh.pid && record.boot == fresh.boot && record.start == fresh.start
+    }) {
+        Some(index) => {
+            for member in fresh.members {
+                if !records[index].members.contains(&member) {
+                    records[index].members.push(member);
+                }
+            }
+        }
+        None => records.push(fresh),
+    }
+}
+
 /// Captures the members of `record`'s group that began after the leader. Only
 /// a leader that still holds its identity opens that window; members captured
 /// earlier stay recorded with their own identities.
-fn capture_members(record: &mut Record) {
+fn capture_members(record: &mut Record, table: &[(u32, u32)]) {
     let Some(leader) = live(record.pid) else {
         return;
     };
     if !holds(&leader, &record.boot, &record.start) {
         return;
     }
-    for pid in process_group_members(record.pid) {
+    for pid in group_members(table, record.pid) {
         if pid == record.pid || record.members.iter().any(|member| member.pid == pid) {
             continue;
         }
@@ -243,20 +281,120 @@ fn capture_members(record: &mut Record) {
     }
 }
 
+/// Captures group members for every record whose leader still holds its
+/// identity. The process table is read at most once.
+fn capture_all(records: &mut [Record]) {
+    if !records.iter().any(leader_holds) {
+        return;
+    }
+    let table = process_table();
+    for record in records.iter_mut().filter(|record| leader_holds(record)) {
+        capture_members(record, &table);
+    }
+}
+
 /// The records under `checkouts` and `gateway_root`, with each group's members
 /// captured while its leader still holds its identity. Take this before a stop
 /// that may clear a listener's own record.
 pub(super) fn snapshot(checkouts: &[PathBuf], gateway_root: &Path) -> Vec<Record> {
-    let mut records = read_records(checkouts, gateway_root);
-    for record in records.iter_mut() {
-        capture_members(record);
+    let mut records = Vec::new();
+    for record in read_records(checkouts, gateway_root) {
+        merge(&mut records, record);
     }
+    capture_all(&mut records);
     records
 }
 
-/// `snapshot` for a fixture root: its checkouts and gateway state under it.
+/// `snapshot` for a fixture root: its checkouts and gateway state under it,
+/// plus every identity the watchdog captured and recorded in the ledger.
 pub(super) fn snapshot_root(root: &Path) -> Vec<Record> {
-    snapshot(&checkouts_under(root), root)
+    let mut records = Vec::new();
+    for record in read_records(&checkouts_under(root), root)
+        .into_iter()
+        .chain(read_ledger(root))
+    {
+        merge(&mut records, record);
+    }
+    capture_all(&mut records);
+    records
+}
+
+fn ledger_path(root: &Path) -> PathBuf {
+    root.join(LEDGER_FILE)
+}
+
+fn member_value(member: &Member) -> serde_json::Value {
+    serde_json::json!({
+        "pid": member.pid,
+        "boot": member.boot,
+        "start": serde_json::to_value(&member.start).expect("start identity"),
+    })
+}
+
+/// Writes `records` to the ledger in one rename, so a reader never sees a torn
+/// file.
+fn write_ledger(root: &Path, records: &[Record]) {
+    let value = serde_json::Value::Array(
+        records
+            .iter()
+            .map(|record| {
+                serde_json::json!({
+                    "pid": record.pid,
+                    "boot": record.boot,
+                    "start": serde_json::to_value(&record.start).expect("start identity"),
+                    "members": record.members.iter().map(member_value).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    );
+    let temporary = root.join(format!("{LEDGER_FILE}.tmp"));
+    fs::write(&temporary, value.to_string()).expect("write the sweep ledger");
+    fs::rename(&temporary, ledger_path(root)).expect("publish the sweep ledger");
+}
+
+/// Whether the watchdog's ledger under `root` holds `pid` as a captured member.
+pub(super) fn ledger_has_member(root: &Path, pid: u32) -> bool {
+    read_ledger(root)
+        .iter()
+        .any(|record| record.members.iter().any(|member| member.pid == pid))
+}
+
+/// The records the watchdog wrote. A missing or unreadable ledger is empty,
+/// so only identities actually written can be signalled from it.
+fn read_ledger(root: &Path) -> Vec<Record> {
+    let Some(value) = fs::read_to_string(ledger_path(root))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(entries) = value.as_array() else {
+        return Vec::new();
+    };
+    entries.iter().filter_map(ledger_record).collect()
+}
+
+fn ledger_record(entry: &serde_json::Value) -> Option<Record> {
+    let pid = entry["pid"].as_u64()? as u32;
+    let boot = entry["boot"].as_str()?.to_owned();
+    let start = serde_json::from_value(entry["start"].clone()).ok()?;
+    let members = entry["members"]
+        .as_array()?
+        .iter()
+        .filter_map(|member| {
+            Some(Member {
+                pid: member["pid"].as_u64()? as u32,
+                boot: member["boot"].as_str()?.to_owned(),
+                start: serde_json::from_value(member["start"].clone()).ok()?,
+            })
+        })
+        .collect();
+    Some(Record {
+        pid,
+        boot,
+        start,
+        members,
+    })
 }
 
 /// Signals one record's owned processes: the leader when it holds its identity
@@ -264,7 +402,7 @@ pub(super) fn snapshot_root(root: &Path) -> Vec<Record> {
 /// captured member whose identity still holds.
 fn terminate_record(record: &Record) {
     let mut owned = Vec::new();
-    if live(record.pid).is_some_and(|leader| holds(&leader, &record.boot, &record.start)) {
+    if leader_holds(record) {
         owned.push(record.pid);
         for pid in process_group_members(record.pid) {
             if pid != record.pid && live(pid).is_some_and(|p| began_at_or_after(&p, record)) {
@@ -296,7 +434,8 @@ pub(super) fn terminate_records(records: &[Record]) {
 }
 
 /// Stops every generation under a fixture root, capturing group members while
-/// their leaders still hold their identities.
+/// their leaders still hold their identities, and the identities the watchdog
+/// captured before its leader went.
 pub(super) fn terminate_root(root: &Path) {
     terminate_records(&snapshot_root(root));
 }
@@ -329,8 +468,8 @@ pub(super) fn spawn_watchdog(root: &Path) -> Child {
 }
 
 /// The fixture watchdog body. It keeps the owner's generations and their group
-/// members captured while the owner lives, then stops them once the owner is
-/// gone. It runs only as the child of a fixture.
+/// members captured in the ledger while the owner lives, then stops them once
+/// the owner is gone. It runs only as the child of a fixture.
 #[test]
 #[ignore = "started by a fixture as its watchdog"]
 fn fixture_watchdog_helper() {
@@ -341,24 +480,11 @@ fn fixture_watchdog_helper() {
         .expect("watchdog owner pid");
     let mut known: Vec<Record> = Vec::new();
     while nix::sys::signal::kill(nix::unistd::Pid::from_raw(owner as i32), None).is_ok() {
-        for fresh in snapshot_root(&root) {
-            let position = known.iter().position(|record| {
-                record.pid == fresh.pid && record.boot == fresh.boot && record.start == fresh.start
-            });
-            match position {
-                Some(index) => {
-                    for member in fresh.members {
-                        if !known[index].members.contains(&member) {
-                            known[index].members.push(member);
-                        }
-                    }
-                }
-                None => known.push(fresh),
-            }
+        for fresh in read_records(&checkouts_under(&root), &root) {
+            merge(&mut known, fresh);
         }
-        for record in known.iter_mut() {
-            capture_members(record);
-        }
+        capture_all(&mut known);
+        write_ledger(&root, &known);
         thread::sleep(WATCHDOG_INTERVAL);
     }
     terminate_records(&known);

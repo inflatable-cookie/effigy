@@ -620,7 +620,7 @@ fn managed_host_listener_double_forked_server_is_ready() {
     fs::write(
         checkout.join("server.py"),
         format!(
-            "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
+            "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        open('server.pid', 'w').write(str(os.getpid()))\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
             plain_server("double-forked")
         ),
     )
@@ -641,6 +641,16 @@ fn managed_host_listener_double_forked_server_is_ready() {
     assert_eq!(state["status"], "ready", "{state}");
     let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
     assert!(body.contains("double-forked"), "{body}");
+
+    // The server left the listener's process group on purpose, so `down` cannot
+    // settle while it still holds the reserved port (it waits out the shutdown
+    // grace, about 35s). The proof ends that server by the PID it recorded.
+    let server = wait_for_pid(&checkout.join("server.pid"));
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(server as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .expect("stop the double-forked server this proof started");
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
@@ -1226,6 +1236,18 @@ fn wait_for_pid(path: &Path) -> u32 {
     }
 }
 
+/// Waits until the watchdog's ledger under `root` captures `pid` as a member.
+fn wait_for_ledger_member(root: &Path, pid: u32) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !fixture_sweep::ledger_has_member(root, pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the watchdog never captured {pid} in its ledger"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Whether `pid` still names a process that the kernel has not reaped.
 fn pid_alive(pid: u32) -> bool {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
@@ -1414,9 +1436,10 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     };
     owner.root = Some(root.clone());
 
-    // Give the watchdog several snapshots while the owner lives, then take this
-    // proof's own view of what the owner recorded.
-    thread::sleep(Duration::from_secs(1));
+    // The background job must be in the watchdog's ledger before the owner dies,
+    // so the proof measures the watchdog and not a race with its first tick.
+    let descendant = wait_for_pid(&root.join("owner-descendant.pid"));
+    wait_for_ledger_member(&root, descendant);
     let recorded = fixture_sweep::snapshot_root(&root);
     assert!(
         recorded.len() >= 2 && recorded.iter().any(|record| !record.members.is_empty()),
@@ -1441,4 +1464,57 @@ fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent(
     // The owner's fixture never dropped, so its tree is removed here, after the
     // watchdog has stopped everything it recorded.
     fs::remove_dir_all(&root).expect("remove the interrupted owner's fixture root");
+}
+
+/// Normal cleanup after a settled `down`: the listener's record is gone and its
+/// leader is stopped, yet the background job the watchdog captured while the
+/// leader lived is still stopped, by its identity, from the ledger.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_descendant_captured_before_its_leader_stopped() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-ledger");
+    fs::create_dir(&checkout).expect("ledger checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let descendant = wait_for_pid(&pidfile);
+    let mut watchdog = fixture_sweep::spawn_watchdog(fixture.path());
+    wait_for_ledger_member(fixture.path(), descendant);
+
+    // A settled `down` stops the leader and clears its listener record.
+    leader.kill().expect("end the recorded leader");
+    leader.wait().expect("reap the recorded leader");
+    fs::remove_file(listener_record_path(&checkout)).expect("clear the settled record");
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives the stopped leader"
+    );
+
+    fixture_sweep::terminate_root(fixture.path());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stopped = !pid_alive(descendant);
+    if !stopped {
+        // Backstop for a failing proof: the test started this descendant.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(descendant as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    watchdog.kill().expect("stop the fixture watchdog");
+    watchdog.wait().expect("reap the fixture watchdog");
+    assert!(
+        stopped,
+        "normal cleanup must stop a descendant the watchdog captured before its leader stopped"
+    );
+}
+
+fn listener_record_path(checkout: &Path) -> PathBuf {
+    checkout.join(".effigy/runtime/host-processes/web/cleanup/web.listener.json")
 }

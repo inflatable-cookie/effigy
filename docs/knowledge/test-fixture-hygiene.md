@@ -92,8 +92,10 @@ the OS, or a changed boot, is never signalled.
 The fixture's `Drop` runs the sweep after the proof's own `container down`, so
 an unwinding or unsettled proof is covered. A killed process runs no `Drop`, so
 each `AdapterlessSetup` also starts a watchdog: it keeps capturing the fixture's
-generations while its owner lives and stops the captured ones by identity once
-the owner is gone. The interrupted-parent proof
+generations and their group members into `sweep-ledger.json` under the fixture
+root while its owner lives, and stops them by identity once the owner is gone.
+The normal cleanup reads that ledger too. A settled `down` clears the listener's
+record, so a member captured before the stop would otherwise be lost. The interrupted-parent proof
 (`managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`)
 runs that path through the real adapterless fixture.
 
