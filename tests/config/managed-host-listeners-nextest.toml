@@ -50,3 +50,9 @@ slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 [[profile.default.overrides]]
 filter = "test(managed_matrix_)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
+
+# Keep an external recorded pipe holder through the real custody drain bound,
+# then observe the host supervisor's own restart decision and settle both.
+[[profile.default.overrides]]
+filter = "test(host_supervisor_restarts_after_a_drain_gap_with_inherited_session_flags) | test(canonical_capture_stops_a_full_pipe_with_an_unconsumed_styled_reader)"
+slow-timeout = { period = "90s", terminate-after = 1, grace-period = "2s" }

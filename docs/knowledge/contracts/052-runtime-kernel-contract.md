@@ -1410,8 +1410,8 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
-Launcher boolean metadata (`CLAUDECODE`, `AI_AGENT` and the named Corepack
-switches) has a closed recognized value domain. Unexpected values and unknown
+Launcher boolean metadata (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`,
+`CLAUDE_CODE_SESSION_ATTENDED`, `AI_AGENT` and the named Corepack switches) has a closed recognized value domain. Unexpected values and unknown
 launcher-prefixed names remain secret; no prefix-wide exemption is used.
 Explicit schema sensitivity and aliases containing a known secret override all
 metadata exceptions. This avoids treating ordinary `0`/`1` flags as secret argv

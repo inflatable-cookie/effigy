@@ -1786,7 +1786,12 @@ fn classify_environment(
 fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
     matches!(
         name,
-        "CLAUDECODE" | "AI_AGENT" | "COREPACK_ENABLE_AUTO_PIN" | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
+        "CLAUDECODE"
+            | "CLAUDE_CODE_CHILD_SESSION"
+            | "CLAUDE_CODE_SESSION_ATTENDED"
+            | "AI_AGENT"
+            | "COREPACK_ENABLE_AUTO_PIN"
+            | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
     ) && matches!(value.to_str(), Some("0" | "1" | "true" | "false"))
 }
 
@@ -2839,6 +2844,8 @@ mod tests {
         use effigy_kernel::custody::EnvValue;
         let flags = [
             ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_CHILD_SESSION", "1"),
+            ("CLAUDE_CODE_SESSION_ATTENDED", "1"),
             ("AI_AGENT", "1"),
             ("COREPACK_ENABLE_AUTO_PIN", "0"),
             ("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"),
@@ -3275,6 +3282,145 @@ mod tests {
         );
     }
 
+    /// Keep a duplicate of generation one's stdout outside its owned group.
+    /// This reaches the real drain deadline, rather than directly invoking a
+    /// custody reset: the supervisor itself must choose and start generation 2.
+    #[test]
+    fn host_supervisor_restarts_after_a_drain_gap_with_inherited_session_flags() {
+        use std::process::{Command, Stdio};
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join("holder.py"),
+            r#"
+import array, os, socket, sys
+from pathlib import Path
+server = socket.socket(socket.AF_UNIX)
+server.bind('pipe.sock')
+server.listen(1)
+Path('holder.ready').touch()
+connection, _ = server.accept()
+_, ancillary, _, _ = connection.recvmsg(1, socket.CMSG_SPACE(array.array('i').itemsize))
+fds = array.array('i')
+for level, kind, data in ancillary:
+    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+        fds.frombytes(data[:len(data) - len(data) % fds.itemsize])
+assert len(fds) == 1
+Path('holder.held').touch()
+sys.stdin.buffer.read(1)
+for fd in fds:
+    os.close(fd)
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.checkout.join("generation.py"),
+            r#"
+import array, json, os, socket, sys
+from pathlib import Path
+if not Path('first.pid').exists():
+    Path('first.pid').write_text(str(os.getpid()))
+    sys.stdout.write('safe\nsuper\x1b]unfinished')
+    sys.stdout.flush()
+    connection = socket.socket(socket.AF_UNIX)
+    connection.connect('pipe.sock')
+    connection.sendmsg([b'x'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [1]))])
+    sys.exit(3)
+Path('second.pid').write_text(str(os.getpid()))
+Path('session-flags.json').write_text(json.dumps({name: os.environ.get(name) for name in ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED']}))
+sys.stdout.write('secret\nrestarted\n')
+sys.stdout.flush()
+os.execv('/bin/sleep', ['sleep', '60'])
+"#,
+        )
+        .unwrap();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "/usr/bin/python3 generation.py",
+                HostProcessRestart::OnFailure,
+            )],
+        );
+        struct Stop<'a> {
+            holder: std::process::Child,
+            checkout: &'a Path,
+            policy: &'a EffectiveContainerPolicy,
+        }
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                // Close the recorded external fd holder first, including when
+                // an assertion unwinds; cleanup need not wait another deadline.
+                let _ = self.holder.kill();
+                let _ = self.holder.wait();
+                let _ = super::kernel_run::stop_host_processes_for_container(
+                    self.checkout,
+                    self.policy,
+                );
+            }
+        }
+        let guard = Stop {
+            holder: Command::new("/usr/bin/python3")
+                .arg("holder.py")
+                .current_dir(&fixture.checkout)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+            checkout: &fixture.checkout,
+            policy: &policy,
+        };
+        wait_until("the recorded pipe holder to listen", || {
+            fixture.checkout.join("holder.ready").exists()
+        });
+        let started = Instant::now();
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+            .unwrap();
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        let deadline =
+            Instant::now() + effigy_kernel::custody::STOP_MARGIN + Duration::from_secs(15);
+        while !fs::read_to_string(&log).is_ok_and(|text| text.contains("restarted\n")) {
+            assert!(
+                Instant::now() < deadline,
+                "host did not restart after its bounded drain; canonical={:?}",
+                fs::read_to_string(&log)
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        let restart_elapsed = started.elapsed();
+        let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
+        let first: u32 = fs::read_to_string(fixture.checkout.join("first.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let second: u32 = fs::read_to_string(fixture.checkout.join("second.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let inherited: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.checkout.join("session-flags.json")).unwrap())
+                .unwrap();
+        let held = fixture.checkout.join("holder.held").exists();
+        let view = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        drop(guard);
+        let record: HostProcessStopRecord =
+            read_private_json(&log.with_extension("stop.json")).unwrap();
+        for name in ["CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED"] {
+            assert_eq!(inherited[name], serde_json::json!(std::env::var(name).ok()));
+        }
+        assert!(held && first != second);
+        assert_eq!(view[0].state, "running", "{view:?}");
+        assert_eq!(view[0].pid, Some(second));
+        let text = std::str::from_utf8(&read.bytes).unwrap();
+        // Owner diagnostics pass through the redactor too, so their exact
+        // spelling is not an authority. Prove the real deadline and durable
+        // capture state instead of requiring unmasked diagnostic text.
+        assert!(restart_elapsed >= effigy_kernel::custody::STOP_MARGIN);
+        assert!(!read.bytes.contains(&0x1b) && !text.contains("supersecret"));
+        assert!(record.custody.unwrap().capture_truncated);
+        assert!(group_members(first).is_empty() && group_members(second).is_empty());
+    }
+
     #[test]
     fn host_pane_status_uses_the_kernel_owner_not_child_lines() {
         let fixture = fixture();
@@ -3492,7 +3638,16 @@ print(json.dumps(out.getvalue()))
         let started = Instant::now();
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
-        assert!(started.elapsed() < Duration::from_secs(6), "{report:?}");
+        // The public stop budget includes the declared grace, custody's
+        // drain/reap margin and the requester's five-second pickup margin.
+        // Slow durable appends under shared I/O load are not a leaked reader.
+        let bound = Duration::from_secs(policy.host_processes[0].shutdown_grace_secs + 5)
+            + effigy_kernel::custody::STOP_MARGIN;
+        assert!(
+            started.elapsed() < bound,
+            "elapsed={:?}, bound={bound:?}: {report:?}",
+            started.elapsed()
+        );
         assert!(report.complete(), "{report:?}");
         assert!(group_members(pid).is_empty());
         let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();

@@ -1263,6 +1263,13 @@ fn custody_engine_failed_capture_is_durably_truncated_and_discards_setup_output(
         .unwrap();
         let run = client.run;
         while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        // Active proves the spawn barrier, not that the workload has executed
+        // its PID-file write. Observe that recorded PID before closing input,
+        // otherwise a fast stop can remove it before the cleanup proof exists.
+        eventually(|| {
+            std::fs::read_to_string(home.path().join("engine-workload.pid"))
+                .is_ok_and(|pid| pid.trim().parse::<u32>().is_ok())
+        });
         let read = effigy_kernel::run::read_log(
             &cx.operation().observe().unwrap(),
             &root,
