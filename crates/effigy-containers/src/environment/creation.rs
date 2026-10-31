@@ -25,7 +25,7 @@ const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
 
 pub const CREATION_LOOKBACK: usize = 64;
 
-pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v1";
+pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatedContainer {
@@ -69,6 +69,7 @@ pub struct CreationReceipt {
     generation: u64,
     observed: Vec<Workload>,
     workdir: std::path::PathBuf,
+    expected_created: std::collections::BTreeMap<String, Option<String>>,
     created: Vec<CreatedContainer>,
     attached: Vec<String>,
 }
@@ -157,6 +158,11 @@ impl CreationReceipt {
 
     pub fn context(&self) -> &str {
         &self.context
+    }
+
+    /// Expected new services fixed before apply; a value names the replaced ID.
+    pub fn expected_created(&self) -> &std::collections::BTreeMap<String, Option<String>> {
+        &self.expected_created
     }
 
     pub fn created(&self) -> &[CreatedContainer] {
@@ -266,6 +272,7 @@ pub enum RecordedCreation {
         generation: u64,
         observed: Vec<Workload>,
         workdir: std::path::PathBuf,
+        expected_created: std::collections::BTreeMap<String, Option<String>>,
         created: Vec<CreatedContainer>,
         attached: Vec<String>,
     },
@@ -357,6 +364,7 @@ pub(super) fn outcome(
             context,
             project,
             primary_service,
+            expected_created,
             created,
             attached,
             generation,
@@ -370,6 +378,7 @@ pub(super) fn outcome(
             primary_service,
             engine,
             context,
+            expected_created,
             created,
             attached,
             generation,

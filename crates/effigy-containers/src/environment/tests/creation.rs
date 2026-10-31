@@ -85,6 +85,7 @@ pub(in crate::environment) struct Fake {
     selection: BackendSelection,
     inventories: VecDeque<Observed<Vec<Workload>>>,
     images: VecDeque<Observed<String>>,
+    image_references: BTreeMap<String, String>,
     reads: usize,
     deadlines: Vec<Instant>,
     cancel_on_inventory: Option<CancelToken>,
@@ -96,6 +97,7 @@ impl Fake {
             selection: selection(),
             inventories: [verified(before), verified(after)].into(),
             images: VecDeque::new(),
+            image_references: BTreeMap::new(),
             reads: 0,
             deadlines: Vec::new(),
             cancel_on_inventory: None,
@@ -122,10 +124,17 @@ impl EnvironmentBackend for Fake {
             .pop_front()
             .expect("unexpected inventory read")
     }
-    fn image_id_until(&mut self, _: &Path, _: &str, deadline: Instant) -> Observed<String> {
+    fn image_id_until(&mut self, _: &Path, reference: &str, deadline: Instant) -> Observed<String> {
         self.deadlines.push(deadline);
         assert!(Instant::now() < deadline);
-        self.images.pop_front().unwrap_or_else(|| verified(image()))
+        self.images.pop_front().unwrap_or_else(|| {
+            verified(
+                self.image_references
+                    .get(reference)
+                    .cloned()
+                    .unwrap_or_else(image),
+            )
+        })
     }
 }
 fn infer(
@@ -164,13 +173,78 @@ fn fresh_reup_and_partial_recreation_partition_exact_ids() {
     assert!(created.is_empty());
     assert_eq!(attached.len(), 2);
     let replacement = row(PRIMARY, 'd');
-    let (created, attached) = infer(
-        &mut Fake::new(vec![workspace, db.clone()], vec![replacement.clone(), db]),
-        &render,
-    )
-    .unwrap();
+    let mut old_workspace = workspace.clone();
+    old_workspace.image_reference = "fixture:previous".into();
+    old_workspace.image = format!("sha256:{}", id('e'));
+    let mut fake = Fake::new(
+        vec![old_workspace.clone(), db.clone()],
+        vec![replacement.clone(), db],
+    );
+    fake.image_references.insert(
+        old_workspace.image_reference.clone(),
+        old_workspace.image.clone(),
+    );
+    let (created, attached) = infer(&mut fake, &render).unwrap();
     assert_eq!(created[0].container_id(), replacement.id);
     assert_eq!(attached, [id('b')]);
+}
+
+#[test]
+fn new_ids_must_equal_the_independently_expected_set_and_keep_attached_ids() {
+    let render = render(&[PRIMARY, "database"]);
+    let workspace = row(PRIMARY, 'a');
+    let database = row("database", 'b');
+    // Identical service/image/ownership values do not authorize replacing an
+    // unchanged attached ID, even when the resulting service set is complete.
+    assert!(infer(
+        &mut Fake::new(
+            vec![workspace.clone(), database.clone()],
+            vec![row(PRIMARY, 'd'), database.clone()]
+        ),
+        &render
+    )
+    .is_err());
+    // The workspace is expected to be fresh, but the attached dependency isn't.
+    assert!(infer(
+        &mut Fake::new(
+            vec![database.clone()],
+            vec![workspace.clone(), row("database", 'd')]
+        ),
+        &render
+    )
+    .is_err());
+    let mut old = workspace.clone();
+    old.image_reference = "fixture:previous".into();
+    old.image = format!("sha256:{}", id('e'));
+    let mut fake = Fake::new(
+        vec![old.clone(), database.clone()],
+        vec![row(PRIMARY, 'd'), database.clone()],
+    );
+    fake.image_references
+        .insert(old.image_reference.clone(), old.image.clone());
+    let window = CreationWindow::open(&mut fake, request(&render)).unwrap();
+    let difference = window.close(&mut fake, request(&render)).unwrap();
+    assert_eq!(
+        difference.expected_created,
+        BTreeMap::from([(PRIMARY.to_owned(), Some(old.id.clone()))])
+    );
+    // A requested reference change must result in a new full ID, not reuse.
+    let mut fake = Fake::new(
+        vec![old.clone(), database.clone()],
+        vec![workspace, database.clone()],
+    );
+    fake.image_references
+        .insert(old.image_reference.clone(), old.image.clone());
+    assert!(infer(&mut fake, &render).is_err());
+    // A moved old tag is not a verified recreation expectation.
+    assert!(infer(
+        &mut Fake::new(
+            vec![old, database.clone()],
+            vec![row(PRIMARY, 'd'), database]
+        ),
+        &render
+    )
+    .is_err());
 }
 
 #[test]
@@ -584,7 +658,9 @@ fn attributed_apply_crash_releases_gate_without_fabricating_a_successor_receipt(
                 Ok(())
             },
             || {
-                run.create_with(&mut fake, &selection(), request(&render), || {
+                let mut requested = request(&render);
+                requested.deadline = Instant::now() + Duration::from_secs(90);
+                run.create_with(&mut fake, &selection(), requested, || {
                     use std::io::Write;
                     std::fs::OpenOptions::new()
                         .create(true)
@@ -611,23 +687,34 @@ fn attributed_apply_crash_releases_gate_without_fabricating_a_successor_receipt(
         .unwrap();
         panic!("crash boundary was not reached");
     }
+    let proof_until = Instant::now() + Duration::from_secs(150);
     for boundary in ["during", "EnvBackendAfter", "AppliedBefore", "AppliedAfter"] {
         let fixture = home();
+        let stdout = std::fs::File::create(fixture.path().join("child.stdout")).unwrap();
+        let stderr = std::fs::File::create(fixture.path().join("child.stderr")).unwrap();
+        let diagnostic = || {
+            let bytes = std::fs::read(fixture.path().join("child.stderr")).unwrap();
+            String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(4096)..]).into_owned()
+        };
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "environment::tests::creation::attributed_apply_crash_releases_gate_without_fabricating_a_successor_receipt", "--nocapture"])
             .env(CHILD, boundary).env(DIRECTORY, fixture.path())
-            .current_dir(fixture.path()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .current_dir(fixture.path()).stdout(stdout).stderr(stderr)
             .spawn_owned().unwrap();
         std::fs::write(fixture.path().join("child.pid"), child.id().to_string()).unwrap();
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = (Instant::now() + Duration::from_secs(60)).min(proof_until);
         while !fixture.path().join("paused").exists() {
             assert!(
                 Instant::now() < until,
-                "owned crash child did not reach {boundary}"
+                "owned crash child {} did not reach {boundary}: {}",
+                child.id(),
+                diagnostic()
             );
             assert!(
                 child.try_wait().unwrap().is_none(),
-                "owned crash child exited before {boundary}"
+                "owned crash child {} exited before {boundary}: {}",
+                child.id(),
+                diagnostic()
             );
             std::thread::sleep(Duration::from_millis(5));
         }

@@ -3831,7 +3831,15 @@ under the gate. The gate-scoped observations verify every row's exact ID, projec
 service, managed, scope and checkout labels and exact image reference/immutable ID.
 The post-apply service set must equal the frozen declared set; missing, extra,
 duplicate or replaced inventory rows refuse. Attached containers retain their IDs;
-only IDs absent before and present after can enter the created set. Image tag
+only IDs absent before and present after can enter the created set. Before apply, an independent expectation records
+missing services as fresh, explicitly changed image references as replacements
+of their exact old IDs, and all other services as attached to their exact IDs.
+Old references must resolve to the old containers' immutable IDs before and after
+apply. The new-ID difference must equal the IDs for precisely those expected new
+services; an unchanged attached ID cannot be replaced. Configuration-only
+recreation has no verified expectation in this bounded path and therefore
+refuses attribution if Compose replaces it. Receipt schema v2 records the
+expected services and replaced IDs; v1 evidence is not upgraded. Image tag
 moves, reference-only container image identity, partial or failed apply, unknown
 journal state, expired deadlines, cancellation and gate loss grant no receipt.
 

@@ -6,6 +6,9 @@ use super::*;
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, SCOPE_LABEL};
 use effigy_kernel::objects::Closure;
 use std::collections::{BTreeMap, BTreeSet};
+mod expectation;
+use expectation::ExpectedInventory;
+
 const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, CHECKOUT_LABEL];
 
 /// Image expectations observed before taking the activation gate.
@@ -75,11 +78,13 @@ impl CreationPreflight {
 pub(crate) struct CreationWindow {
     declared: BTreeMap<String, DeclaredService>,
     before: Vec<Workload>,
+    expected: ExpectedInventory,
     images: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
 pub(crate) struct InventoryDifference {
+    pub expected_created: BTreeMap<String, Option<String>>,
     pub created: Vec<CreatedContainer>,
     pub attached: Vec<String>,
     pub observed: Vec<Workload>,
@@ -121,9 +126,11 @@ impl CreationWindow {
         let before =
             rows(backend.inventory_until(request.workdir, request.project, request.deadline))?;
         validate(request, &declared, &images, &before, false)?;
+        let expected = ExpectedInventory::observe(backend, request, &declared, &before)?;
         Ok(Self {
             declared,
             before,
+            expected,
             images,
         })
     }
@@ -147,6 +154,8 @@ impl CreationWindow {
                 "inventory deadline expired".into(),
             ));
         }
+        self.expected
+            .verify(backend, request, &self.before, &after)?;
         let before: BTreeMap<_, _> = self
             .before
             .iter()
@@ -178,6 +187,7 @@ impl CreationWindow {
             }
         }
         Ok(InventoryDifference {
+            expected_created: self.expected.created,
             created,
             attached,
             observed: after,
@@ -280,8 +290,10 @@ fn validate(
         {
             return Err(CreationRefusal::Service(row.name.clone()));
         }
-        if Some(&row.image_reference) != expected.image.as_ref()
-            || exact_image_id(&row.image).as_ref() != images.get(service)
+        let same_reference = Some(&row.image_reference) == expected.image.as_ref();
+        if exact_image_id(&row.image).is_none()
+            || (complete && !same_reference)
+            || (same_reference && exact_image_id(&row.image).as_ref() != images.get(service))
         {
             return Err(CreationRefusal::ImageMismatch(row.name.clone()));
         }

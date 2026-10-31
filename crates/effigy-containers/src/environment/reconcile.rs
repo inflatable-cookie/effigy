@@ -1095,6 +1095,7 @@ impl<'r> EnvRun<'r> {
         self.kernel(checked)?;
         let record = match window.and_then(|window| window.close(backend, request)) {
             Ok(creation::InventoryDifference {
+                expected_created,
                 created,
                 attached,
                 observed,
@@ -1106,6 +1107,7 @@ impl<'r> EnvRun<'r> {
                 generation: self.fence().generation.get(),
                 observed,
                 workdir: request.workdir.to_path_buf(),
+                expected_created,
                 created,
                 attached,
             },
