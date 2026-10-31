@@ -736,6 +736,16 @@ impl effigy_containers::environment::EnvironmentBackend for NoEngine {
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("unmodelled creator question for `{container_id}` in `{project}`")
     }
+    /// These proofs apply nothing, so no candidate container is ever read and
+    /// no image id is ever asked for.
+    fn image_id_until(
+        &mut self,
+        _: &std::path::Path,
+        reference: &str,
+        _: std::time::Instant,
+    ) -> Observed<String> {
+        panic!("unmodelled image table question for `{reference}`")
+    }
 }
 
 struct TlsProbe;
