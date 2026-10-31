@@ -415,3 +415,34 @@ impl EffectContext {
         }
     }
 }
+
+#[cfg(test)]
+mod stop_cause_tests {
+    use super::StopCause;
+
+    /// A listener failure is its own durable cause: it serializes, it is not a
+    /// stop request, and the human reading names it. Owner loss keeps its own
+    /// meaning, so a settled session can never confuse the two.
+    #[test]
+    fn a_listener_failure_is_a_distinct_serializable_cause() {
+        let listener = StopCause::ListenerFailed;
+        let encoded = serde_json::to_value(&listener).expect("a serializable cause");
+        assert_eq!(encoded, serde_json::json!("ListenerFailed"));
+        let decoded: StopCause = serde_json::from_value(encoded).expect("a readable cause");
+        assert_eq!(decoded, StopCause::ListenerFailed);
+        assert_ne!(decoded, StopCause::Requested);
+        assert_ne!(decoded, StopCause::OwnerLost);
+        assert_eq!(decoded.to_string(), "the session listener failing");
+
+        // The other causes keep their own words, so the new one changed nothing.
+        assert_eq!(StopCause::Requested.to_string(), "a stop request");
+        assert_eq!(
+            StopCause::OwnerLost.to_string(),
+            "the owning process exiting"
+        );
+        assert_eq!(
+            serde_json::to_value(StopCause::OwnerLost).expect("a serializable cause"),
+            serde_json::json!("OwnerLost")
+        );
+    }
+}

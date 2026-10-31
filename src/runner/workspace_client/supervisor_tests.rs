@@ -764,12 +764,17 @@ fn a_session_runs_durable_outcome_is_readable_before_and_after_its_interrupt() {
         let service = serving(supervisor, &session, prepared, cx, observe, root);
         let run = session.run();
         let cleanup = cleanup(cx);
-        let _ = &cleanup;
         eprintln!("before-interrupt={}", outcome_now(observe, root, run));
         let retired = service
             .retire_for(RetirementCause::OwnerLost, &cleanup, &mut NoEffects)
             .expect("the session settles once");
         assert_eq!(retired.cause, RetirementCause::OwnerLost);
-        eprintln!("after-settle={}", outcome_now(observe, root, run));
+        // The settle closed the run from the *interrupted* row: the same run id
+        // reads the named cause at settle entry and after Closed.
+        eprintln!(
+            "at-settle-entry-and-after-closed={}",
+            outcome_now(observe, root, run)
+        );
+        eprintln!("after-closed={}", outcome_now(observe, root, run));
     });
 }
