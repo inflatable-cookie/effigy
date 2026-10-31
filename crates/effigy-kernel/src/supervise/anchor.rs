@@ -1,6 +1,7 @@
 //! Same-image group anchor. It announces its ready PID before go, and exits on
-//! SIGTERM or when settlement retires it.
+//! SIGTERM, when settlement retires it, or once its group has no live member.
 use super::*;
+use crate::ident::ProcessState;
 use std::ffi::CString;
 use std::os::fd::OwnedFd;
 
@@ -214,11 +215,59 @@ pub(super) fn entry() -> Result<(), RunError> {
     if byte != [1] {
         return Err(RunError::broken("invalid anchor go"));
     }
+    // SAFETY: getpgrp only observes this process's own process group, which the
+    // blocked leader created before the anchor joined it.
+    let group = unsafe { libc::getpgrp() };
+    if group <= 0 {
+        return Err(RunError::broken("the anchor cannot read its own group"));
+    }
+    let group = group as u32;
+    let me = std::process::id();
+    let mut wait = POLL_MIN;
     loop {
-        // SAFETY: pause has no arguments. INT and HUP stay ignored, and TERM's
-        // default action ends the process; no fds remain either way.
-        unsafe {
-            libc::pause();
+        // A live leader pins the group, so no inventory is needed while it is
+        // there; only an emptied leader turns this into a closure question. A
+        // signal still ends the process: INT and HUP stay ignored, TERM keeps
+        // its default action, and settlement may still retire the anchor last.
+        if !leader_live(group) && group_emptied(group, me) {
+            // No live member remains, so the anchor is no longer anyone's
+            // evidence. It retires itself here instead of waiting to be killed:
+            // that is what keeps no anchor beyond its group, including after its
+            // owner, its checkout or its volume is gone.
+            return Ok(());
         }
+        std::thread::sleep(wait);
+        wait = wait.saturating_mul(2).min(POLL_MAX);
+    }
+}
+
+/// How long the anchor waits between group observations, and the ceiling that
+/// wait grows to. Both phases stay bounded, so an anchor whose group closes is
+/// gone within [`POLL_MAX`] of that closure whatever happened to its owner.
+const POLL_MIN: Duration = Duration::from_millis(20);
+const POLL_MAX: Duration = Duration::from_millis(250);
+
+/// Whether the group's leader, which the blocked leader became before the anchor
+/// joined it, is still a live process. One observation, never a signal.
+fn leader_live(group: u32) -> bool {
+    matches!(
+        ident::process_state(group),
+        Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+    )
+}
+
+/// Whether this anchor's group has no live member other than itself.
+///
+/// The anchor is a member of the group, so the kernel cannot reuse the number
+/// while it lives and its own `getpgrp` is live identity, never a stale recorded
+/// value. A process counts as a member only when the kernel's own table places it
+/// in that group and it is not a zombie. A member that leaves between the
+/// inventory and its evidence read is re-inventoried, exactly as owner stop does.
+/// An observation that fails proves nothing, and a failed observation never
+/// retires the evidence: the anchor stays and asks again.
+fn group_emptied(group: u32, me: u32) -> bool {
+    match crate::custody::platform::live_pids(group) {
+        Ok(pids) => pids.iter().all(|pid| *pid == me),
+        Err(_) => false,
     }
 }

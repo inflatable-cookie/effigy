@@ -161,6 +161,33 @@ impl Drop for TerminalLease {
         unsafe { libc::tcsetpgrp(self.fd, next) };
     }
 }
+/// Whether the blocked leader puts the whole eligible workload group in a
+/// session of its own, by calling `setsid` instead of `setpgid`.
+///
+/// The group moves together: the blocked leader creates both the process group
+/// and the session before the anchor joins either, so the anchor still shares
+/// the recorded PGID and no identity rule changes. Isolation is what keeps a
+/// run's custody helpers out of the caller's session, which is what a nested
+/// task session or a harness census of its own session would otherwise have to
+/// account for as unexplained rows.
+///
+/// A route keeps the caller's session when it owes the caller's terminal
+/// something. `Foreground` owes it the terminal itself: `tcsetpgrp` can hand a
+/// terminal only to a group in the terminal's own session. `Inherit` owes it an
+/// inherited terminal's foreground lease, and that lease is the same rule, so it
+/// keeps the caller's session while stdin is that terminal. With stdin off a
+/// terminal there is no lease to take, nothing to hand over and no reader that
+/// could stop on its own stdin, so the group is eligible. Every remaining route
+/// reads and writes only Effigy's own pipes, and a PTY already creates its own
+/// session.
+pub(crate) fn isolates_session(terminal: &Terminal, stdin_is_terminal: bool) -> bool {
+    match terminal {
+        Terminal::Foreground => false,
+        Terminal::Inherit { .. } => !stdin_is_terminal,
+        Terminal::None | Terminal::Pipe | Terminal::Styled { .. } | Terminal::Pty => true,
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Blocked {
     pub pid: u32,
@@ -334,6 +361,18 @@ impl Blocked {
             spec.terminal,
             Terminal::Pty | Terminal::Styled { pty: true }
         );
+        // A workload group that owns no terminal obligation gets a session of its
+        // own, so no custody helper of this run lives in the caller's session.
+        // A harness that censuses its own session (a nested task session, for
+        // instance) then sees the run's payload group and its anchor as another
+        // session rather than as members it cannot account for. The whole
+        // eligible group moves: the blocked leader calls `setsid` before the
+        // anchor joins it, so the anchor still shares the recorded group and
+        // every identity rule below is unchanged.
+        //
+        // SAFETY: isatty only observes this process's own stdin.
+        let stdin_is_terminal = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+        let isolate_session = isolates_session(&spec.terminal, stdin_is_terminal);
         let fd_limit = descriptor_limit()?;
         // SAFETY: no Rust code, allocation or locks run in the child. All
         // buffers and pointers are prepared above and remain initialized and
@@ -350,7 +389,7 @@ impl Blocked {
             // particular no sibling's barrier or sentinel writer is inherited.
             unsafe {
                 if libc::fchdir(cwd.raw()) != 0
-                    || (if pty {
+                    || (if isolate_session {
                         libc::setsid()
                     } else {
                         libc::setpgid(0, 0)
@@ -430,7 +469,9 @@ impl Blocked {
                 libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
                 // Fork inside the blocked leader's session, including PTY
                 // setsid. Its group already exists; neither parent setpgid nor
-                // a join across sessions can race workload execution.
+                // a join across sessions can race workload execution. An
+                // isolated group is its own session, and the anchor joins the
+                // group inside it the same way.
                 let mut anchor_pid = [0u8; 4];
                 let mut control = [-1; 2];
                 if anchored {

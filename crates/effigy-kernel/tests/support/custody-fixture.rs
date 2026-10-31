@@ -280,6 +280,71 @@ fn main() {
         run.settle(&cleanup, &mut Strict).unwrap();
         return;
     }
+    if entry == "anchor-owner-loss" {
+        // effigy#520: the owner spawns a genuine custody child itself, so it holds
+        // the receipt (identity, group, nonce) and the anchor identity, and the run
+        // also has its own registered sentinel. It then stays alive and settles
+        // nothing: the proof kills only this recorded owner, by pid.
+        let home = Path::new(args.get(1).expect("fixture home"));
+        let op = op(router.root_cancel());
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let id = RunId::new(1, [9; 10]).unwrap();
+        let inv = invocation();
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &inv,
+            BeginOpts {
+                id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+            &cleanup,
+            &mut Strict,
+        )
+        .unwrap();
+        let mut workload = spec(home);
+        workload.label = "owner loss".into();
+        let child = Custody::spawn(&mut run, workload, &cx).unwrap();
+        run.advance(Phase::Active).unwrap();
+        let observe = cx.operation().observe().unwrap();
+        let meta = metadata(&observe, &root, id)
+            .verified()
+            .cloned()
+            .expect("run metadata");
+        std::fs::write(
+            home.join("owner-loss.pending"),
+            serde_json::to_vec(&serde_json::json!({
+                "run": id,
+                "owner": std::process::id(),
+                "process": child.identity(),
+                "anchor": child.anchor(),
+                "sentinel": meta.sentinel,
+                "supervisor": meta.supervisor,
+                "sentinel_status": format!("{:?}", meta.sentinel_status),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            home.join("owner-loss.pending"),
+            home.join("owner-loss.json"),
+        )
+        .unwrap();
+        std::fs::write(home.join("ready"), b"ready").unwrap();
+        loop {
+            // The owner never settles. Its sentinel recovers the run once this
+            // process is killed by the recorded pid.
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     if entry == "nonce-workload" {
         std::thread::sleep(Duration::from_secs(40));
         return;

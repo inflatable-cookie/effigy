@@ -607,9 +607,176 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     );
 }
 
+/// effigy#520, parent-only proof (review finding 7dfec217). The fixture spawns a
+/// genuine custody child itself, so it records the custody receipt (identity,
+/// group and nonce), the anchor's identity and the run's own sentinel identity.
+/// This proof kills ONLY that recorded owner, by pid, and signals no sentinel,
+/// supervisor, anchor or workload: the run's own sentinel must recover and settle
+/// it, and the anchor and the sentinel must both be gone afterwards with a
+/// complete, residue-free close. Nothing here substitutes for the owner-
+/// coordinated source-immutable Oxide proof.
+#[test]
+fn owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("anchor-owner-loss")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("owner-loss.json").exists());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("owner-loss.json")).unwrap())
+            .unwrap();
+    eprintln!("owner-loss record: {record}");
+    let run: RunId = serde_json::from_value(record["run"].clone()).unwrap();
+    let receipt: ProcessReceipt = serde_json::from_value(record["process"].clone()).unwrap();
+    let anchor: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(record["anchor"].clone()).unwrap();
+    let sentinel: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(record["sentinel"].clone()).unwrap();
+    assert!(
+        record["supervisor"].is_null(),
+        "an inline run has no supervisor"
+    );
+    // Recorded evidence, before the owner dies: the receipt carries the run's
+    // custody nonce and the group the child leads; the anchor is a different,
+    // live generation inside exactly that group; and effigy#520 puts the whole
+    // group in a session of its own, so the anchor's session is that group too.
+    assert_eq!(
+        receipt.pgid, receipt.identity.pid,
+        "the leader leads its group"
+    );
+    assert!(
+        receipt.nonce.starts_with(&format!("{run}:")),
+        "the receipt carries the run's custody nonce: {}",
+        receipt.nonce
+    );
+    assert_eq!(
+        effigy_kernel::ident::process_identity(anchor.pid).verified(),
+        Some(&anchor),
+        "the recorded anchor generation is live"
+    );
+    assert_ne!(
+        anchor.pid, receipt.identity.pid,
+        "the anchor is not the leader"
+    );
+    // SAFETY: getpgid and getsid only observe this proof's recorded fixtures.
+    let (anchor_group, anchor_session) = unsafe {
+        (
+            libc::getpgid(anchor.pid as i32),
+            libc::getsid(anchor.pid as i32),
+        )
+    };
+    assert_eq!(
+        anchor_group, receipt.pgid as i32,
+        "the anchor joins the recorded group"
+    );
+    assert_eq!(
+        anchor_session, receipt.pgid as i32,
+        "the group and its anchor own their session"
+    );
+    let live = |identity: &effigy_kernel::ident::ProcessIdentity| {
+        matches!(
+            effigy_kernel::ident::process_state(identity.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
+    assert!(
+        live(&sentinel),
+        "the run's own sentinel is the recovery writer"
+    );
+    assert!(
+        live(&receipt.identity),
+        "the workload runs under the recorded group"
+    );
+    // Only the recorded owner goes, by pid. No sentinel, supervisor, anchor or
+    // workload pid is signalled anywhere in this proof.
+    assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
+    let owner_status = loop {
+        if let Some(status) = owner.0.try_wait().unwrap() {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&owner_status),
+        Some(libc::SIGKILL),
+        "only the owner died"
+    );
+    // The sentinel settles on its own: the close is complete (cleanup recorded,
+    // every effect terminal) and no effect is left as residue.
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observed = cx.operation().observe().unwrap();
+    eventually(|| match fresh_status(&observed, &root, run) {
+        Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
+        Observed::Verified(RunStatus::Closed { effects, .. }, _) => {
+            panic!("the sentinel did not settle cleanly: {effects:?}")
+        }
+        _ => false,
+    });
+    let closed = fresh_status(&observed, &root, run);
+    let (workload, effects) = match &closed {
+        Observed::Verified(
+            RunStatus::Closed {
+                workload, effects, ..
+            },
+            _,
+        ) => (workload.clone(), effects.clone()),
+        other => panic!("the run is not closed: {other:?}"),
+    };
+    eprintln!("owner-loss close: workload {workload:?} effects {effects:?}");
+    let residue: Vec<_> = effects
+        .iter()
+        .filter(|effect| effect.reason.is_some())
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "the settled run left residue: {residue:?}"
+    );
+    // Both the group's evidence and the sentinel are gone within a deadline:
+    // that is the cleanup this proof owes, with no helper left behind.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while live(&anchor) || live(&sentinel) || live(&receipt.identity) {
+        assert!(
+            Instant::now() < deadline,
+            "anchor {}, sentinel {} and workload {} must all be gone",
+            anchor.pid,
+            sentinel.pid,
+            receipt.identity.pid
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    for (name, identity) in [
+        ("anchor", &anchor),
+        ("sentinel", &sentinel),
+        ("workload", &receipt.identity),
+    ] {
+        assert!(
+            matches!(
+                effigy_kernel::ident::process_state(identity.pid),
+                Observed::Absent(_)
+                    | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+            ),
+            "{name} {} is neither absent nor a reaping zombie",
+            identity.pid
+        );
+    }
+}
+
 /// Q-014 (Tom 2026-10-27): a run that completes on its own leaves no anchor.
 /// This is a direct hand-run invocation outside any suite marker, so settlement
-/// alone retires the group evidence; nothing sweeps it afterwards.
+/// alone retires the group evidence; nothing sweeps it afterwards. effigy#520
+/// adds the other retirement: once the workload group has no live member an
+/// anchor is nobody's evidence, and it exits by itself.
 #[test]
 fn a_completed_invocation_leaves_no_custody_anchor() {
     let home = home();
@@ -618,17 +785,19 @@ fn a_completed_invocation_leaves_no_custody_anchor() {
     let mut run = begin(&cx, &root);
     let mut child = Custody::spawn(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
     let anchor = child.anchor().expect("the run is anchored");
-    assert!(
+    // The workload is finite and may already have exited, in which case the
+    // anchor retires itself. While a workload member is live it is the group's
+    // evidence and stays, which is the state this settles through either way.
+    let live = |identity: &effigy_kernel::ident::ProcessIdentity| {
         matches!(
-            effigy_kernel::ident::process_state(anchor.pid),
+            effigy_kernel::ident::process_state(identity.pid),
             Observed::Verified(
                 effigy_kernel::ident::ProcessState::Active
                     | effigy_kernel::ident::ProcessState::Stopped,
                 _
             )
-        ),
-        "the anchor pins the group while the run is live"
-    );
+        )
+    };
     let exit = *child.wait(cx.operation()).verified().unwrap();
     assert_eq!(exit.code, 0);
     child.complete(&mut run, exit).unwrap();
@@ -640,6 +809,7 @@ fn a_completed_invocation_leaves_no_custody_anchor() {
         )
         .unwrap();
     assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    eventually(|| !live(&anchor));
     assert!(
         matches!(
             effigy_kernel::ident::process_state(anchor.pid),
@@ -649,7 +819,9 @@ fn a_completed_invocation_leaves_no_custody_anchor() {
     );
 }
 
-/// A lost anchor is not a live group. Q-014 makes TERM retire an idle anchor,/// so a completed workload can be left with no anchor at settle; an empty
+/// A lost anchor is not a live group. An idle anchor retires itself once its
+/// group has no live member (effigy#520; Q-014 keeps TERM as the cooperative
+/// exit), so a completed workload can be left with no anchor at settle; an empty
 /// original group still proves closure and settlement must finish.
 #[test]
 fn custody_settles_an_empty_group_after_its_anchor_exits() {
@@ -662,12 +834,8 @@ fn custody_settles_an_empty_group_after_its_anchor_exits() {
     let exit = *child.wait(cx.operation()).verified().unwrap();
     assert_eq!(exit.code, 0);
     child.complete(&mut run, exit).unwrap();
-    // Q-014: TERM retires an idle anchor. Wait for the recorded generation to
-    // leave the live states, exactly as a cooperative exit does.
-    assert!(matches!(
-        effigy_kernel::custody::signal_verified_process(&anchor, libc::SIGTERM, || true),
-        Observed::Verified(..)
-    ));
+    // The workload group is empty now, so its evidence retires itself; nobody
+    // signals it and no owner action is needed.
     eventually(|| {
         !matches!(
             effigy_kernel::ident::process_state(anchor.pid),
@@ -848,9 +1016,11 @@ fn custody_retires_an_anchor_whose_image_cleared_its_evidence() {
     );
 }
 
-/// A sentinel settles a run whose owner died after its finite child exited and
-/// its anchor was retired. The owner's cores are gone, so recovery proves the
-/// original group from the kernel alone: an empty group is closure.
+/// A run whose finite child exited leaves a group with no live member, so no
+/// workload executes and its anchor is nobody's evidence. That anchor retires
+/// itself within a bounded deadline, whatever its owner does next: an owner that
+/// then disappears leaves nothing of the run behind. Recovery proves the original
+/// group from the kernel alone, because an empty group is closure (effigy#520).
 #[test]
 fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
     let home = home();
@@ -866,24 +1036,37 @@ fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
     eventually(|| home.path().join("ready").exists());
     let record: serde_json::Value =
         serde_json::from_slice(&std::fs::read(home.path().join("anchor.json")).unwrap()).unwrap();
+    let process: ProcessReceipt = serde_json::from_value(record["process"].clone()).unwrap();
     let anchor: effigy_kernel::ident::ProcessIdentity =
         serde_json::from_value(record["anchor"].clone()).unwrap();
-    assert!(matches!(
-        effigy_kernel::custody::signal_verified_process(&anchor, libc::SIGTERM, || true),
-        Observed::Verified(..)
-    ));
-    eventually(|| {
-        !matches!(
-            effigy_kernel::ident::process_state(anchor.pid),
+    let live = |identity: &effigy_kernel::ident::ProcessIdentity| {
+        matches!(
+            effigy_kernel::ident::process_state(identity.pid),
             Observed::Verified(
                 effigy_kernel::ident::ProcessState::Active
                     | effigy_kernel::ident::ProcessState::Stopped,
                 _
             )
         )
-    });
+    };
+    // The finite workload already exited; the anchor is the group's only member.
+    eventually(|| !live(&process.identity));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while live(&anchor) {
+        assert!(
+            Instant::now() < deadline,
+            "an anchor whose group has closed must retire itself within a bounded deadline"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Only the recorded owner goes now, by its own pid: the anchor is already
+    // gone without a signal from anybody, and no custody helper is left to leak.
     assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
     eventually(|| owner.0.try_wait().unwrap().is_some());
+    assert!(matches!(
+        effigy_kernel::ident::process_state(anchor.pid),
+        Observed::Absent(_) | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+    ));
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observed = cx.operation().observe().unwrap();
