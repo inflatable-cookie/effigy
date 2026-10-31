@@ -62,7 +62,7 @@ use effigy_kernel::workspace_session::{
 
 use crate::runner::container_runtime_prep::{
     observed_image_platform, observed_predecessor_compatibility, ObservedImagePlatform,
-    PredecessorCompatibility, PredecessorObservation,
+    PredecessorCompatibility,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::workspace_client::context::{
@@ -181,7 +181,7 @@ pub(in crate::runner) trait ReservedBackendObservation {
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorObservation>;
+    ) -> Observed<PredecessorCompatibility>;
     /// The host-verified full container id of the primary service.
     fn binding(
         &mut self,
@@ -339,7 +339,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorObservation> {
+    ) -> Observed<PredecessorCompatibility> {
         observed_predecessor_compatibility(policy.repo_root.as_path(), policy, deadline.at())
     }
 
@@ -769,7 +769,21 @@ pub(in crate::runner) fn plan(
     // Before anything applies: a container already running for this project is a
     // live predecessor, and this apply may recreate it. Only live Compose config
     // hashes prove the render cannot, so the guard asks the backend.
-    let predecessor = verify_live_predecessor(&local.policy, deadline, observation)?;
+    // Seal the frozen render once; the compatibility observation and the gated
+    // recheck both read that private tree and never stage a second one.
+    let seal = crate::runner::container_runtime_prep::seal_render_for_preflight(
+        &local.policy,
+        deadline.at(),
+    )
+    .map_err(|refusal| match refusal {
+        crate::runner::container_runtime_prep::BoundedReadRefusal::TimedOut => EnvError::Kernel(
+            RunError::unavailable("workspace render seal deadline expired"),
+        ),
+        crate::runner::container_runtime_prep::BoundedReadRefusal::Unavailable(reason) => {
+            unavailable(reason)
+        }
+    })?;
+    let predecessor = verify_live_predecessor(seal.policy(), deadline, observation)?;
     deadline.remaining()?;
     Ok(Some(ReservedPublicationPlan {
         selected,
@@ -782,7 +796,7 @@ pub(in crate::runner) fn plan(
         deadline,
         backend_label: local.backend_label,
         render_digest: local.render_digest,
-        predecessor_seal: predecessor.seal,
+        predecessor_seal: Some(seal),
         predecessor: predecessor.compatibility,
     }))
 }
@@ -826,7 +840,6 @@ impl PredecessorRecheck {
 /// The preflight result: the frozen compatibility facts and the verified seal.
 struct LivePredecessor {
     compatibility: PredecessorCompatibility,
-    seal: Option<crate::runner::container_runtime_prep::SealedRender>,
 }
 
 fn verify_live_predecessor(
@@ -835,15 +848,12 @@ fn verify_live_predecessor(
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<LivePredecessor, EnvError> {
     deadline.remaining()?;
-    let observed = verified(
+    let compatibility = verified(
         observation.predecessor(policy, deadline),
         "workspace live predecessor",
     )?;
     deadline.remaining()?;
-    Ok(LivePredecessor {
-        compatibility: observed.compatibility,
-        seal: observed.seal,
-    })
+    Ok(LivePredecessor { compatibility })
 }
 
 /// The budgeted recheck #452 invokes **under the activation gate, immediately
@@ -858,7 +868,11 @@ pub(in crate::runner) fn recheck_live_predecessor(
     plan: &ReservedPublicationPlan,
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<PredecessorRecheck, EnvError> {
-    let recheck = verify_live_predecessor(&plan.policy, plan.deadline, observation)?;
+    let sealed = plan
+        .predecessor_seal
+        .as_ref()
+        .ok_or_else(|| unavailable("the plan has no retained render seal to recheck against"))?;
+    let recheck = verify_live_predecessor(sealed.policy(), plan.deadline, observation)?;
     let recheck = PredecessorRecheck {
         compatibility: recheck.compatibility,
     };

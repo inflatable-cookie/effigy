@@ -1494,19 +1494,41 @@ fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher(
         let render = policy.render.as_ref().expect("render");
         assert!(!render.path.exists(), "the render is unpublished");
 
-        let observed = super::observed_predecessor_compatibility(
-            &checkout,
+        let sealed = super::seal_render_for_preflight(
             &policy,
             std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("the adapter seals the render");
+        let observed = super::observed_predecessor_compatibility(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         );
-        let effigy_kernel::observe::Observed::Verified(observation, _) = observed else {
+        let effigy_kernel::observe::Observed::Verified(compatibility, _) = observed else {
             panic!("a project with nothing running is observed as such");
         };
         assert_eq!(
-            observation.compatibility,
+            compatibility,
             super::PredecessorCompatibility::NoPredecessor
         );
-        let sealed = observation.seal.expect("the adapter sealed the render");
+        // One seal only: the observation read the retained private tree.
+        let staging = sealed
+            .root()
+            .parent()
+            .and_then(|tree| tree.parent())
+            .expect("staging");
+        assert_eq!(
+            fs::read_dir(staging)
+                .expect("staging")
+                .flatten()
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("preflight-"))
+                .count(),
+            2,
+            "one tree plus its lease; the observation staged nothing"
+        );
         assert!(sealed.receipt().matches(&render.closure));
         assert!(!render.path.exists(), "no canonical object yet");
 

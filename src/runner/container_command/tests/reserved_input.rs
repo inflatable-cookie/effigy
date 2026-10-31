@@ -283,14 +283,9 @@ impl ReservedBackendObservation for FakeBackend {
         &mut self,
         _: &EffectiveContainerPolicy,
         _: PublicationDeadline,
-    ) -> Observed<PredecessorObservation> {
+    ) -> Observed<PredecessorCompatibility> {
         self.call();
-        self.predecessor
-            .clone()
-            .map(|compatibility| PredecessorObservation {
-                compatibility,
-                seal: None,
-            })
+        self.predecessor.clone()
     }
     fn binding(
         &mut self,

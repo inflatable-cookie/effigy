@@ -803,7 +803,7 @@ fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, S
     })
 }
 
-use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
+pub(in crate::runner) use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
 
 /// What proves that applying one rendered policy cannot recreate a live
 /// predecessor of this environment.
@@ -834,6 +834,10 @@ impl PredecessorCompatibility {
 
 /// Observe the live recreate risk of one rendered policy, within one deadline.
 ///
+/// `policy` must be the one a prior [`seal_render_for_preflight`] produced: its
+/// Compose inputs name the retained private seal, so this observation only reads
+/// and never stages a second tree.
+///
 /// Unknown, a changed container id, a changed config hash and a backend that
 /// cannot report Compose config hashes all refuse; only a live stack whose every
 /// service config is byte-identical to what this render produces is compatible.
@@ -841,18 +845,11 @@ impl PredecessorCompatibility {
 /// Interpolation is not replayed: the hash is computed from the frozen rendered
 /// closure and the project, so a service config that depends on apply-time
 /// environment values can differ and refuses, which is the safe direction.
-pub(in crate::runner) struct PredecessorObservation {
-    pub(in crate::runner) compatibility: PredecessorCompatibility,
-    /// The verified receipt this observation sealed, retained for the one apply's
-    /// gated publication. The caller publishes it and nothing else.
-    pub(in crate::runner) seal: Option<SealedRender>,
-}
-
 pub(in crate::runner) fn observed_predecessor_compatibility(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
-) -> effigy_kernel::observe::Observed<PredecessorObservation> {
+) -> effigy_kernel::observe::Observed<PredecessorCompatibility> {
     use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
 
     let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
@@ -897,30 +894,13 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
                 && effigy_containers::exec::compose_status_is_running(&row.status)
         })
         .collect::<Vec<_>>();
-    // Seal the frozen render first: the receipt is the one ticket the apply may
-    // publish, and it is retained even when nothing is running.
-    let sealed = match seal_render_for_preflight(policy, deadline) {
-        Ok(sealed) => Some(sealed),
-        Err(BoundedReadRefusal::TimedOut) => {
-            return Observed::Unknown(UnknownReason::TimedOut {
-                phase: "workspace render preflight".into(),
-            })
-        }
-        Err(BoundedReadRefusal::Unavailable(reason)) => return unknown(reason),
-    };
     if running.is_empty() {
         return Observed::Verified(
-            PredecessorObservation {
-                compatibility: PredecessorCompatibility::NoPredecessor,
-                seal: sealed,
-            },
+            PredecessorCompatibility::NoPredecessor,
             Evidence::new("project inventory".into(), None).expect("fixed evidence"),
         );
     }
-    let Some(sealed) = sealed else {
-        return unknown("the frozen render was not sealed".into());
-    };
-    let intended = match compose_service_config_hashes(repo_root, &sealed.policy, deadline) {
+    let intended = match compose_service_config_hashes(repo_root, policy, deadline) {
         Ok(hashes) => hashes,
         Err(error) => {
             return unknown(format!(
@@ -979,10 +959,7 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     // equal, so the frozen facts are ordered by container id.
     compared.sort();
     Observed::Verified(
-        PredecessorObservation {
-            compatibility: PredecessorCompatibility::Matches(compared),
-            seal: Some(sealed),
-        },
+        PredecessorCompatibility::Matches(compared),
         Evidence::new("Compose config hash".into(), None).expect("fixed evidence"),
     )
 }
@@ -1023,6 +1000,12 @@ impl SealedRender {
         self.policy.render.as_ref().map(|render| &render.closure)
     }
 
+    /// The policy whose Compose inputs name the sealed tree. The compatibility
+    /// observation reads this, so it never stages a second seal.
+    pub(in crate::runner) fn policy(&self) -> &EffectiveContainerPolicy {
+        &self.policy
+    }
+
     /// The sealed tree the receipt names.
     pub(in crate::runner) fn root(&self) -> &Path {
         &self.root
@@ -1031,7 +1014,7 @@ impl SealedRender {
 
 /// Seal this policy's frozen render for the preflight, inside the publication's
 /// one deadline and without any authority a Prepare has.
-fn seal_render_for_preflight(
+pub(in crate::runner) fn seal_render_for_preflight(
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
 ) -> Result<SealedRender, BoundedReadRefusal> {
