@@ -3027,10 +3027,15 @@ re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
 that disappeared all refuse. The pre-decision read alone cannot see any of that.
 The intended hash is computed from the frozen closure even before reconcile
-publishes it, by materializing that closure's exact bytes at the exact paths the
-apply reads (content-addressed, so the apply finds them present, and a differing
-object is never replaced), on the same bounded worker; ownership resolution
-(canonicalization plus the scope-token read) is bounded the same way;
+publishes it: the preflight publishes that closure through the kernel owner's own
+publication contract (`effigy_containers::publish_render`), so the bytes are staged
+in the kernel's private staging directory and promoted atomically into the
+content-addressed object directory with the exact final path and digest and
+no-replace writes — never a hand-rolled object, never a read-then-rename
+replacement, and never an abandonable worker that could promote bytes after the
+caller stopped waiting (an expired budget publishes nothing, and the final
+publisher then accepts the same object unchanged); ownership resolution
+(canonicalization plus the scope-token read) is bounded by the deadline;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`
 materialisation the decision and the published context share.

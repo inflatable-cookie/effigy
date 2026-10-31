@@ -38,6 +38,16 @@ pub(crate) enum Request {
     },
 }
 
+/// Publish one policy's frozen render closure through the kernel owner.
+///
+/// This is the existing Prepare publication: the closure is staged under the
+/// kernel's private staging directory and promoted atomically into its
+/// content-addressed object directory (no-replace, exact digest). A caller that
+/// must read the render before the one apply has published it — a preflight that
+/// asks Compose for the render's own config hash — uses this instead of writing
+/// objects itself.
+pub use publication::prepare as publish_render;
+
 /// Prepare the same workspace binding that was observed during planning.
 /// Named and inline workspaces share publication but retain their own inputs.
 pub fn prepare_resolved(

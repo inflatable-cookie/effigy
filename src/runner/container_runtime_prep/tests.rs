@@ -1272,17 +1272,17 @@ fn the_inspected_config_hash_needs_a_service_and_a_hash() {
     assert!(super::inspected_config_hash(b"not json").is_err());
 }
 
-/// The preflight hash computation must describe the render the apply will run,
-/// even before reconcile publishes it: the frozen bytes are materialized at the
-/// exact paths the apply reads, and an object already holding other bytes is
-/// never replaced.
+/// The preflight must publish the frozen render through the kernel owner, not by
+/// writing objects itself: exact final path and digest, private modes, atomic and
+/// no-replace, and the kernel publisher then accepts the same object unchanged.
 #[test]
-fn an_unpublished_render_is_materialized_byte_and_path_identically_for_preflight() {
+fn the_preflight_publishes_the_frozen_render_through_the_kernel_owner() {
     let fixture = effigy_test_support::Fixture::new("effigy-preflight-render-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     fs::create_dir_all(&checkout).expect("checkout");
     fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
     fs::write(
         checkout.join("effigy.toml"),
         "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
@@ -1296,72 +1296,114 @@ fn an_unpublished_render_is_materialized_byte_and_path_identically_for_preflight
     effigy_containers::with_test_effigy_home(&home, || {
         let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
-        // Loading a policy resolves the closure in memory only.
         assert!(
             !render.path.exists(),
             "the render is unpublished before the preflight"
         );
 
-        super::materialize_render_for_preflight(
-            &checkout,
+        super::publish_render_for_preflight(
             &policy,
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
-        .expect("the frozen closure is materialized");
+        .expect("the kernel owner publishes the frozen closure");
 
+        // Exact final path, exact frozen bytes, private modes (the kernel's own
+        // staging/publication contract, not umask-derived).
+        use std::os::unix::fs::PermissionsExt;
         for (relative, bytes) in render.closure.files() {
             let path = render.path.join(relative);
             assert_eq!(
-                fs::read(&path).expect("materialized object"),
+                fs::read(&path).expect("published object"),
                 *bytes,
-                "the preflight writes the frozen bytes at {}",
+                "the published object holds the frozen bytes: {}",
+                path.display()
+            );
+            let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(
+                mode,
+                0o600,
+                "published objects are private: {}",
                 path.display()
             );
         }
-        // Every Compose input the apply will read exists with the frozen bytes at
-        // the exact path the apply uses.
-        for file in &policy.compose_files {
-            let relative = file
-                .strip_prefix(&render.path)
-                .expect("a compose input inside the render directory");
-            let expected = render
-                .closure
-                .files()
-                .get(&relative.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|| panic!("no frozen bytes for {}", file.display()));
-            assert_eq!(
-                fs::read(file).expect("materialized compose input"),
-                *expected,
-                "the apply's own compose path holds the frozen bytes: {}",
-                file.display()
-            );
+        let directory_mode = fs::metadata(&render.path)
+            .expect("render directory")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert!(
+            directory_mode & 0o077 == 0,
+            "the render directory is private, got {directory_mode:o}"
+        );
+        // No staging residue: the kernel's staging directory is not left behind
+        // under the object directory.
+        let mut leftovers = Vec::new();
+        for entry in fs::read_dir(&render.path).expect("render directory") {
+            let path = entry.expect("entry").path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("preflight") || name.contains("tmp"))
+            {
+                leftovers.push(path);
+            }
         }
+        assert!(leftovers.is_empty(), "no partial staging: {leftovers:?}");
 
-        // Idempotent: a second preflight leaves the same bytes.
-        super::materialize_render_for_preflight(
-            &checkout,
-            &policy,
-            std::time::Instant::now() + std::time::Duration::from_secs(30),
-        )
-        .expect("a repeated preflight is a no-op");
-
-        // A published object is never replaced with other bytes.
-        let first = render
+        // The final publisher (the reconcile/apply path) accepts the very same
+        // object: content-addressed, so nothing is rewritten or replaced.
+        let before: Vec<_> = render
             .closure
             .files()
-            .keys()
-            .next()
-            .expect("one render file");
-        let path = render.path.join(first);
-        fs::write(&path, b"other bytes").expect("tamper");
+            .iter()
+            .map(|(relative, _)| fs::read(render.path.join(relative)).expect("bytes"))
+            .collect();
+        effigy_containers::publish_render(&policy)
+            .expect("the kernel publisher accepts it unchanged");
+        let after: Vec<_> = render
+            .closure
+            .files()
+            .iter()
+            .map(|(relative, _)| fs::read(render.path.join(relative)).expect("bytes"))
+            .collect();
+        assert_eq!(before, after, "publication never replaces the object");
+    });
+}
+
+/// An expired budget publishes nothing at all: the preflight refuses before it
+/// reaches the kernel publisher.
+#[test]
+fn an_expired_preflight_budget_publishes_no_object() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-expired-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let render = policy.render.as_ref().expect("render");
         assert!(
-            super::materialize_render_for_preflight(
-                &checkout,
+            super::publish_render_for_preflight(
                 &policy,
-                std::time::Instant::now() + std::time::Duration::from_secs(30),
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
             )
             .is_err(),
-            "a differing published object refuses"
+            "an expired budget refuses"
+        );
+        assert!(
+            !render.path.exists(),
+            "an expired preflight publishes nothing"
         );
     });
 }

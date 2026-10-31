@@ -310,9 +310,7 @@
       "std.fs.OpenOptions.write": 2,
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
-      "std::fs::remove_file": 3,
-      "std::fs::rename": 1,
-      "std::fs::write": 1
+      "std::fs::remove_file": 2
     },
     "src/runner/db_seed.rs": {
       "std::fs::remove_file": 2,
@@ -819,7 +817,7 @@
     "src/runner/container_runtime_prep/tests.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
-      "std::fs::write": 17
+      "std::fs::write": 18
     },
     "src/runner/db_seed.rs": {
       "std::fs::write": 5

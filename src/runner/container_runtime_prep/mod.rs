@@ -900,7 +900,7 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     // published this closure, materialize the exact frozen bytes at the exact paths
     // the apply will use (content-addressed, so the apply finds them present), all
     // on the publication's bounded worker.
-    if let Err(refusal) = materialize_render_for_preflight(repo_root, policy, deadline) {
+    if let Err(refusal) = publish_render_for_preflight(policy, deadline) {
         return match refusal {
             BoundedReadRefusal::TimedOut => Observed::Unknown(UnknownReason::TimedOut {
                 phase: "workspace render preflight".into(),
@@ -972,81 +972,42 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     )
 }
 
-/// Where one render's frozen closure must exist before Compose can hash it.
+/// Publish one policy's frozen render through the kernel owner before Compose
+/// hashes it.
 ///
-/// `policy.compose_files` already point into the render's content-addressed
-/// publication directory, which the one apply publishes through reconcile. A
-/// pre-apply backend computation therefore materializes the exact frozen bytes
-/// there first: same bytes, same relative paths, same project directory, so the
-/// hash describes the render the apply will actually run.
-fn materialize_render_for_preflight(
-    repo_root: &Path,
+/// `compose config --hash` can only describe a render it can read, and the one
+/// apply publishes this closure through reconcile. Rather than writing objects
+/// itself, the preflight uses the kernel's own publication contract
+/// (`effigy_containers::publish_render`): the closure is staged in the kernel's
+/// private staging directory and promoted atomically into its content-addressed
+/// object directory, with the exact final path and digest and no-replace writes.
+/// Nothing runs on an abandonable worker: the publication is synchronous and
+/// either completes whole or not at all, so a publication that outlives the
+/// deadline cannot be promoted later by a worker the caller stopped waiting for.
+fn publish_render_for_preflight(
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
 ) -> Result<(), BoundedReadRefusal> {
-    let owned_root = repo_root.to_path_buf();
-    let owned_policy = policy.clone();
-    crate::runner::workspace_command::provisioning::bounded_publication_read(
-        "workspace-render-preflight",
-        deadline,
-        move || materialize_render(&owned_root, &owned_policy),
-    )
-}
-
-fn materialize_render(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    let Some(render) = policy.render.as_ref() else {
-        return Err(RunnerError::task_invocation(
-            "the workspace render has no frozen closure to exercise",
-        ));
+    let remaining = || {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
     };
-    let _ = repo_root;
-    for (relative, bytes) in render.closure.files() {
-        let path = render.path.join(relative);
-        match std::fs::read(&path) {
-            Ok(existing) if existing == *bytes => continue,
-            Ok(_) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "the render object `{}` already holds other bytes; the preflight never \
-                     replaces a published object",
-                    path.display()
-                )))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "cannot read the render object `{}`: {error}",
-                    path.display()
-                )))
-            }
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot create the render object directory `{}`: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
-        // Content-addressed and private: a temporary file in the same directory,
-        // renamed into place, so a concurrent reader sees one whole object.
-        let temporary = path.with_extension(format!("preflight-{}", std::process::id()));
-        std::fs::write(&temporary, bytes).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot stage the render object `{}`: {error}",
-                temporary.display()
-            ))
-        })?;
-        std::fs::rename(&temporary, &path).map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            RunnerError::task_invocation(format!(
-                "cannot publish the render object `{}`: {error}",
-                path.display()
-            ))
-        })?;
+    // An expired budget publishes nothing.
+    remaining().ok_or(BoundedReadRefusal::TimedOut)?;
+    if policy.render.is_none() {
+        return Err(BoundedReadRefusal::Unavailable(
+            "the workspace render has no frozen closure to publish for the preflight".into(),
+        ));
     }
+    effigy_containers::publish_render(policy).map_err(|error| {
+        BoundedReadRefusal::Unavailable(format!(
+            "the render could not be published for the preflight: {error}"
+        ))
+    })?;
+    // The publication is complete and correct, but a spent budget still refuses
+    // rather than reading the hash past the deadline.
+    remaining().ok_or(BoundedReadRefusal::TimedOut)?;
     Ok(())
 }
 
