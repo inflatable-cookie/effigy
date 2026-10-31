@@ -509,8 +509,12 @@ During v0.x, MINOR bumps may include breaking changes.
   exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
   than replacing), verifying any concurrent winner in full, and reclaiming one
-  provably dead seal tree per publication after its own fenced commit. Replay is
-  idempotent, and a private tree altered after sealing never becomes canonical.
+  provably dead seal tree per publication after its own fenced commit. Receipt
+  consumption is refused unless the run is owned by an environment and its
+  `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  that authority. Recovery is infallible and post-commit, so residue can never
+  turn a committed publication into a failure. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical.
   The kernel's object verifier also refuses an entry the closure digest cannot
   name, such as an extra empty directory.
 

@@ -31,6 +31,21 @@ impl Objects {
         sealed: &SealedPreflight,
         closure: &Closure,
     ) -> Result<String, RunError> {
+        // A receipt belongs to the environment activation that owns the render,
+        // and it is consumed only with that environment's gate held: a run's
+        // owner gate is acquired at begin and retained for the run's life, so a
+        // run owned by anything else (or one whose environment gate is no longer
+        // held) can never promote a preflight seal.
+        if run.owner.resource.kind() != crate::id::ResourceKind::Env {
+            return Err(RunError::refused(
+                "a preflight receipt is published only under Gate(Env)",
+            ));
+        }
+        if !run.guard.ids().any(|held| held == &run.owner.resource) {
+            return Err(RunError::refused(
+                "publishing a preflight receipt needs its environment gate",
+            ));
+        }
         if !sealed.matches(closure) {
             return Err(RunError::refused(
                 "the preflight seal does not describe this closure",
@@ -166,8 +181,10 @@ impl Objects {
             // Dead seal trees are reclaimed here, under this publication's
             // objects gate and after its fenced commit: one provably dead tree
             // per publication keeps the gate-held critical section bounded, and
-            // a stalled removal can never delay or alter the committed result.
-            crate::objects::preflight::recover(&staging)?;
+            // recovery is infallible and post-commit so no residue state — an
+            // over-full family, a trust refusal, an I/O error — can turn this
+            // committed publication into a failure.
+            crate::objects::preflight::recover(&staging);
             Ok(closure.digest().to_owned())
         })();
         if result.is_err() {

@@ -120,8 +120,30 @@ fn verifies(tree: &Path, closure: &Closure) -> Result<crate::objects::Object, St
     let dir = DirFd::open(tree).unwrap();
     crate::objects::open(&dir, closure.digest(), &observe())
 }
-/// A run that tolerates a poisoned settlement, for refusal proofs.
-fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
+fn environment(name: &str) -> ResourceId {
+    ResourceId::environment(CheckoutId::new(CheckoutKind::Primary, [4; 16]), name).unwrap()
+}
+/// A run owned by an environment: the only owner a preflight receipt may be
+/// published under, because a run's owner gate is acquired at begin and kept.
+fn with_env_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
+    begin_run(home, &environment(name), n, f, true)
+}
+/// The same, tolerating a poisoned settlement for refusal proofs.
+fn attempt_env_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
+    begin_run(home, &environment(name), n, f, false)
+}
+/// A store-owned run, which may never consume a preflight receipt.
+fn attempt_store_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
+    begin_run(home, &resource(name), n, f, false)
+}
+
+fn begin_run<T>(
+    home: &Path,
+    owner: &ResourceId,
+    n: u8,
+    f: impl FnOnce(&mut Run<'_>) -> T,
+    complete: bool,
+) -> T {
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home).unwrap();
     let inv = ResolvedInvocation::new(InvocationSpec {
@@ -129,7 +151,7 @@ fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -
             CheckoutId::new(CheckoutKind::Primary, [4; 16]),
             "",
             Surface::Published,
-            name,
+            &owner.name().to_string(),
             None,
         )
         .unwrap(),
@@ -138,7 +160,7 @@ fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -
         cwd: "".into(),
         target: ExecutionTarget::Host,
         env: BTreeMap::new(),
-        owner: resource(name),
+        owner: owner.clone(),
         gates: vec![],
         attachments: vec![],
         class: EffectClass::Mutate,
@@ -163,13 +185,27 @@ fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -
     )
     .unwrap();
     let value = f(&mut run);
-    let _ = run.settle(&cleanup, &mut NoEffects);
+    if complete {
+        run.settle(&cleanup, &mut NoEffects).unwrap();
+    } else {
+        let _ = run.settle(&cleanup, &mut NoEffects);
+    }
     value
 }
-/// Publishes one receipt through the fenced publisher, as #506's activation
-/// does under Gate(Env).
+
+/// Reads a referenced closure of an environment-owned resource.
+fn read_env(home: &Path, name: &str, role: Role) -> Observed<crate::objects::Object> {
+    let root = match StateRoot::observe(&observe(), home) {
+        Observed::Verified(root, _) => root,
+        other => panic!("root {other:?}"),
+    };
+    Objects::resolve(&observe(), &root, &environment(name), role)
+}
+
+/// Publishes one receipt through the fenced publisher, as #506's activation does
+/// under Gate(Env).
 fn publish(home: &Path, name: &str, n: u8, receipt: &SealedPreflight, value: &Closure) -> String {
-    with_run(home, name, n, |run| {
+    with_env_run(home, name, n, |run| {
         let digest = Objects::publish_sealed_desired(run, receipt, value).unwrap();
         Objects::promote(run, value.digest()).unwrap();
         digest
@@ -500,7 +536,7 @@ fn preflight_restart_verifies_a_crash_durable_tree_and_recovery_removes_it() {
     );
     assert!(seal_entries(home.path()).is_empty());
     assert_eq!(
-        read(home.path(), "dev", Role::Desired)
+        read_env(home.path(), "dev", Role::Desired)
             .verified()
             .unwrap()
             .closure,
@@ -528,7 +564,7 @@ fn preflight_replay_is_idempotent_and_the_publisher_consumes_one_receipt() {
         publish(home.path(), "dev", 1, &second, &value),
         value.digest()
     );
-    let observed = read(home.path(), "dev", Role::Desired);
+    let observed = read_env(home.path(), "dev", Role::Desired);
     let canonical = observed.verified().unwrap();
     assert_eq!(canonical.closure, value);
     assert_eq!(canonical.inventory, second.inventory());
@@ -592,7 +628,7 @@ fn preflight_seal_refuses_altered_bytes_modes_and_extra_entries() {
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(verifies(&tree, &value).is_err(), "altered bytes refuse");
     assert!(
-        attempt_run(home.path(), "dev", 1, |run| {
+        attempt_env_run(home.path(), "dev", 1, |run| {
             Objects::publish_sealed_desired(run, &receipt, &value).is_err()
         }),
         "the publisher refuses an altered tree"
@@ -627,7 +663,7 @@ fn preflight_seal_refuses_altered_bytes_modes_and_extra_entries() {
         value.digest()
     );
     assert_eq!(
-        read(home.path(), "dev", Role::Desired)
+        read_env(home.path(), "dev", Role::Desired)
             .verified()
             .unwrap()
             .closure,
@@ -643,7 +679,7 @@ fn preflight_seal_refuses_a_receipt_that_is_not_this_closure() {
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let receipt = seal(&cx, &root, &value).unwrap();
     let other = closure("other");
-    assert!(attempt_run(home.path(), "dev", 1, |run| {
+    assert!(attempt_env_run(home.path(), "dev", 1, |run| {
         matches!(
             Objects::publish_sealed_desired(run, &receipt, &other),
             Err(RunError::Refused(_))
@@ -681,7 +717,7 @@ fn preflight_publisher_consumes_the_receipt_inside_the_objects_gate() {
             Ordering::SeqCst,
         );
     });
-    with_run(home.path(), "dev", 1, |run| {
+    with_env_run(home.path(), "dev", 1, |run| {
         Objects::publish_sealed_desired(run, &receipt, &value).unwrap();
     });
     assert!(
@@ -689,7 +725,7 @@ fn preflight_publisher_consumes_the_receipt_inside_the_objects_gate() {
         "the receipt is consumed while the publication holds the objects gate"
     );
     assert_eq!(
-        read(home.path(), "dev", Role::Desired)
+        read_env(home.path(), "dev", Role::Desired)
             .verified()
             .unwrap()
             .closure,
@@ -722,7 +758,7 @@ fn preflight_publisher_waits_for_the_objects_gate() {
     let publish_home = home.path().to_path_buf();
     let publish_value = value.clone();
     let published = std::thread::spawn(move || {
-        let result = attempt_run(&publish_home, "dev", 1, |run| {
+        let result = attempt_env_run(&publish_home, "dev", 1, |run| {
             Objects::publish_sealed_desired(run, &receipt, &publish_value)
         });
         let _ = done_tx.send(());
@@ -739,7 +775,7 @@ fn preflight_publisher_waits_for_the_objects_gate() {
         .expect("publication finished once the gate was free");
     assert_eq!(published.join().unwrap().unwrap(), value.digest());
     assert_eq!(
-        read(home.path(), "dev", Role::Desired)
+        read_env(home.path(), "dev", Role::Desired)
             .verified()
             .unwrap()
             .closure,
@@ -812,6 +848,104 @@ fn preflight_seal_refuses_read_only_and_cancelled_operations() {
     assert!(!objects_dir(home.path()).exists());
 }
 
+/// A preflight receipt is promoted only by an environment-owned run while its
+/// Gate(Env) is held: a store-owned run refuses, an environment run consumes it
+/// and the environment gate is provably held at that moment.
+#[test]
+fn preflight_publisher_consumes_only_under_gate_env() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("env-gated");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    // A store-owned run may not consume a receipt at all.
+    let refused = attempt_store_run(home.path(), "dev", 1, |run| {
+        Objects::publish_sealed_desired(run, &receipt, &value)
+    });
+    assert!(
+        matches!(refused, Err(RunError::Refused(_))),
+        "a store-owned run cannot consume a receipt: {refused:?}"
+    );
+    assert!(!objects_dir(home.path()).join(value.digest()).exists());
+    assert!(
+        tree_dir(home.path(), &receipt).exists(),
+        "the receipt is intact"
+    );
+    // An environment-owned run consumes it with that environment's gate held.
+    let env = environment("dev");
+    let probe_cx = cx.clone();
+    let probe_root = root.clone();
+    let probe_env = env.clone();
+    let held = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&held);
+    test_hooks::consume(move || {
+        let observe = probe_cx.operation().observe().expect("finite observation");
+        observed.store(
+            matches!(
+                Gate::probe(&observe, &probe_root, &probe_env),
+                Observed::Verified(GateState::Held(_), _)
+            ),
+            Ordering::SeqCst,
+        );
+    });
+    assert_eq!(
+        publish(home.path(), "dev", 2, &receipt, &value),
+        value.digest()
+    );
+    assert!(
+        held.load(Ordering::SeqCst),
+        "the receipt is consumed while Gate(Env) is held"
+    );
+    assert_eq!(
+        read_env(home.path(), "dev", Role::Desired)
+            .verified()
+            .unwrap()
+            .closure,
+        value
+    );
+    // The environment gate is free again once the run is gone.
+    let observe = cx.operation().observe().unwrap();
+    assert!(matches!(
+        Gate::probe(&observe, &root, &env),
+        Observed::Verified(GateState::Free, _) | Observed::Absent(_)
+    ));
+}
+
+/// Recovery is post-commit and infallible: an over-full staging family (which
+/// makes recovery's listing refuse) can never turn a committed publication into
+/// a failure, and later publications keep making progress.
+#[test]
+fn preflight_recovery_failure_never_fails_a_committed_publication() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("busy-staging");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    let staging = staging_dir(home.path());
+    for index in 0..=MAX_FILES {
+        std::fs::create_dir(staging.join(format!("filler-{index}"))).unwrap();
+    }
+    assert!(staging.read_dir().unwrap().count() > MAX_FILES);
+    // The publication still commits and reconciles the exact closure.
+    assert_eq!(
+        publish(home.path(), "dev", 1, &receipt, &value),
+        value.digest()
+    );
+    assert_eq!(
+        read_env(home.path(), "dev", Role::Desired)
+            .verified()
+            .unwrap()
+            .closure,
+        value
+    );
+    // A further publication makes progress too, so residue can never wedge it.
+    let second = seal(&cx, &root, &value).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 2, &second, &value),
+        value.digest()
+    );
+}
+
 #[test]
 fn exclusive_move_never_replaces_an_existing_entry() {
     let fixture = tempfile::tempdir().unwrap();
@@ -868,7 +1002,7 @@ fn preflight_publisher_verifies_a_concurrent_winner() {
         "the receipt is consumed"
     );
     assert_eq!(
-        read(home.path(), "dev", Role::Desired)
+        read_env(home.path(), "dev", Role::Desired)
             .verified()
             .unwrap()
             .closure,
@@ -889,7 +1023,7 @@ fn preflight_publisher_refuses_an_unsafe_concurrent_winner() {
     test_hooks::promote(move || {
         plant_object_with_mode(&objects_dir(&path), &planted, 0o644);
     });
-    let result = attempt_run(home.path(), "dev", 1, |run| {
+    let result = attempt_env_run(home.path(), "dev", 1, |run| {
         Objects::publish_sealed_desired(run, &receipt, &value)
     });
     assert!(
@@ -932,7 +1066,7 @@ fn preflight_publisher_refuses_a_corrupt_concurrent_winner() {
         )
         .unwrap();
     });
-    let result = attempt_run(home.path(), "dev", 1, |run| {
+    let result = attempt_env_run(home.path(), "dev", 1, |run| {
         Objects::publish_sealed_desired(run, &receipt, &value)
     });
     assert!(result.is_err(), "a corrupt winner is refused: {result:?}");
@@ -958,7 +1092,7 @@ fn preflight_publication_race_makes_one_canonical_object() {
             let value = &value;
             publishes.push(scope.spawn(move || {
                 barrier.wait();
-                attempt_run(home, &format!("env{n}"), n, |run| {
+                attempt_env_run(home, &format!("env{n}"), n, |run| {
                     Objects::publish_sealed_desired(run, receipt, value)
                 })
             }));

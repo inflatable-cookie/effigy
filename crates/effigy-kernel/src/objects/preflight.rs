@@ -288,17 +288,24 @@ fn stage_object(
     })
 }
 
-/// Recovers dead seal trees. Only the fenced publisher calls this, while it holds
-/// the objects gate, so it is one bounded gate-held critical section (§5.5) that
-/// removes at most one provably dead tree per publication.
+/// Recovers at most one dead seal tree. Best effort by construction: the fenced
+/// publisher calls this *after* its desired-reference transaction has committed,
+/// so no recovery outcome — an over-full or unreadable staging family, a trust
+/// refusal, an I/O error, a stalled removal — can turn that committed
+/// publication into a failure. Residue simply waits for a later publication,
+/// which keeps making progress, and each call removes at most one provably dead
+/// tree so the gate-held critical section stays bounded.
 ///
 /// A tree is dead exactly when its lease is acquirable: the lease is created and
 /// locked before the tree exists, and only a publisher that already holds this
-/// gate ever unlinks a lease, so a live helper's tree always carries a held lease
-/// and is never touched. Recovery never inspects a lease that has no tree, so it
-/// cannot unlink one a helper is about to lock.
-pub(crate) fn recover(staging: &DirFd) -> Result<(), StoreError> {
-    let entries = staging.list(MAX_FILES).map_err(StoreError::from)?;
+/// gate ever unlinks a lease, so a live helper's tree always carries a held
+/// lease. Recovery never inspects a lease that has no tree, so it cannot unlink
+/// one a helper is about to lock.
+pub(crate) fn recover(staging: &DirFd) {
+    let Ok(entries) = staging.list(MAX_FILES) else {
+        // An over-full or unreadable family is not a publication failure.
+        return;
+    };
     for entry in entries {
         let Some(name) = entry
             .to_str()
@@ -315,27 +322,27 @@ pub(crate) fn recover(staging: &DirFd) -> Result<(), StoreError> {
         let Some(token) = token_of_tree(name.as_str()) else {
             continue;
         };
-        let Some((lease, free)) = lease_state(staging, token)? else {
+        let Ok(Some((lease, free))) = lease_state(staging, token) else {
             // No lease at all: nothing in this layout creates a tree without one
-            // first, so it is dead residue from an older build or a consumed
-            // tree whose lease was already removed. Removal is guarded by the
-            // objects gate this caller holds.
+            // first, so it is dead residue. A lease we cannot open is skipped,
+            // never assumed dead.
             let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
             let _ = staging.sync();
-            return Ok(());
+            return;
         };
         if !free {
             // A live helper or a live returned receipt owns this tree.
             continue;
         }
         let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
-        let _ = staging.remove(&lease_name(token)?, false);
+        if let Ok(lease_path) = lease_name(token) {
+            let _ = staging.remove(&lease_path, false);
+        }
         let _ = staging.sync();
         // The lease stays held until the tree is gone.
         drop(lease);
-        return Ok(());
+        return;
     }
-    Ok(())
 }
 
 /// Whether a seal tree's lease is free (dead) or held (live), with the lease

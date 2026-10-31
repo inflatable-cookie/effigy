@@ -2456,11 +2456,16 @@ objects gate, one reference transaction — consuming a receipt as its source: i
 re-verifies the private tree under the gate, moves it with one exclusive
 no-replace rename, verifies any concurrent winner in full, and records the object
 row and desired reference exactly as `publish_desired` does. There is no second
-publisher, no direct preflight promotion and no revocable-rename primitive. That
-publisher also reclaims **one** provably dead seal tree per publication, under
-the same gate and after its own fenced commit, so recovery is one bounded
-gate-held critical section (§5.5) that can never delay or alter a committed
-publication result. Seal trees never name a run and a run's own staging tree is
+publisher, no direct preflight promotion and no revocable-rename primitive. It
+refuses any run whose owner is not an environment or whose owner gate is not
+held, so a receipt is only ever consumed by its environment's activation under
+`Gate(Env)`; the objects gate and a run fence never substitute for that
+authority. That publisher also reclaims **one** provably dead seal tree per
+publication, under the same gate and after its own fenced commit. Recovery is
+infallible: an over-full or unreadable staging family, a trust refusal, an I/O
+error or a stalled removal leaves residue for a later publication and can never
+turn a committed publication into a failure. Both together keep recovery one
+bounded, post-commit gate-held critical section (§5.5). Seal trees never name a run and a run's own staging tree is
 still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
