@@ -2609,34 +2609,50 @@ fn two_real_pseudo_terminals_resolve_two_client_identities() {
 // Every connection below is the kernel's own `Server::serve` over a
 // `ScriptedTransport`, with the real journal behind it: the run is admitted by
 // the kernel's reservation path, its attachment rows are the kernel's, and the
-// terminal frames go through the kernel's validation first. The writers are
-// production-shaped fakes: bounded, non-blocking and externally observable. The
-// live child-PTY binding is effigy#519.
+// terminal frames go through the kernel's validation first. A terminal is
+// opened once its run is admitted (a run's terminal writer belongs to an
+// admitted run), and the connection that types into it attaches afterwards on
+// the same server. Each owner drives its writer from its own pump, so delivery
+// and retirement are observed by waiting rather than by assuming a connection
+// turn. The writers are production-shaped fakes: bounded, non-blocking and
+// externally observable. The live child-PTY binding is effigy#519.
 // ---------------------------------------------------------------------------
 
-use super::terminal::{TerminalCustody, TerminalWriter};
+use super::terminal::{TerminalCustody, TerminalRefusal, TerminalWriter};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::root::Family;
 use effigy_kernel::run::{self, AttachmentId, Client, Release, Session};
 use effigy_kernel::workspace_channel::{StreamStart, Streams, TerminalSize};
 
-#[derive(Debug, Default)]
+/// The fake writer's own record: what it took, what it applied, and whether it
+/// was retired. `capacity` is the test's knob for a child that stops reading and
+/// then starts again.
+#[derive(Debug)]
 struct PtyLog {
     written: Vec<u8>,
     sizes: Vec<TerminalSize>,
     retired: usize,
+    capacity: usize,
 }
 
-/// A production-shaped fake terminal writer: it accepts bounded batches, can be
-/// told to refuse resizes, and records its retirement exactly as a child PTY
-/// would report its close. It is not a real child.
+impl Default for PtyLog {
+    fn default() -> Self {
+        Self {
+            written: Vec::new(),
+            sizes: Vec::new(),
+            retired: 0,
+            capacity: usize::MAX,
+        }
+    }
+}
+
+/// A production-shaped fake terminal writer: bounded and non-blocking, and it
+/// records exactly what a child PTY master would report. It is not a real child.
 #[derive(Debug)]
 struct FakePty {
     log: Arc<Mutex<PtyLog>>,
     /// Bytes one write call accepts.
     batch: usize,
-    /// Total bytes it accepts before reporting a full buffer.
-    capacity: usize,
     /// Resizes it refuses with a full queue before accepting one.
     resize_blocks: usize,
 }
@@ -2646,15 +2662,15 @@ impl FakePty {
         Self {
             log,
             batch: usize::MAX,
-            capacity: usize::MAX,
             resize_blocks: 0,
         }
     }
 
-    fn bounded(mut self, batch: usize, capacity: usize) -> Self {
-        self.batch = batch;
-        self.capacity = capacity;
-        self
+    /// A writer that accepts `batch` bytes per call and holds `capacity` in
+    /// total, as a child whose terminal buffer fills does.
+    fn bounded(self, batch: usize, capacity: usize) -> Self {
+        self.log.lock().expect("pty log").capacity = capacity;
+        Self { batch, ..self }
     }
 
     fn refusing_resizes(mut self, blocks: usize) -> Self {
@@ -2666,7 +2682,7 @@ impl FakePty {
 impl TerminalWriter for FakePty {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let mut log = self.log.lock().expect("pty log");
-        let room = self
+        let room = log
             .capacity
             .saturating_sub(log.written.len())
             .min(self.batch)
@@ -2690,6 +2706,19 @@ impl TerminalWriter for FakePty {
     fn retire(&mut self) -> io::Result<()> {
         self.log.lock().expect("pty log").retired += 1;
         Ok(())
+    }
+}
+
+/// Wait for the writer's own pump to reach `done`, then give up loudly. Delivery
+/// and retirement happen on the pump's cadence, never on a connection's.
+fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !done() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -2911,6 +2940,28 @@ fn scripted(frames: &[host::Frame]) -> (ScriptedTransport, Arc<Mutex<Vec<u8>>>) 
     )
 }
 
+/// Admit the session's run over a connection of its own, so its terminal can be
+/// opened before the client that types into it attaches. The kernel's dispatcher
+/// remembers the runs its server admitted, so the next connection attaches as
+/// the owning client.
+fn admit_over_channel<'a>(
+    server: &mut host::Server<CountingAdmitter<'a>, CountingResolver, CountingObserver, RunIds>,
+    cx: &EffectContext,
+    observe: &ObserveContext,
+    root: &'a StateRoot,
+    capability: Secret,
+) -> host::Served {
+    let frames = {
+        let mut frames = terminal_hello(capability);
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
+        frames
+    };
+    let (mut transport, _written) = scripted(&frames);
+    server
+        .serve(&mut transport, cx, observe, root, &mut host::NoStreams)
+        .expect("the admitting connection is served")
+}
+
 fn pending_stops(root: &StateRoot, run: RunId) -> usize {
     let database = rusqlite::Connection::open_with_flags(
         root.path().join(effigy_kernel::store::DB_NAME),
@@ -2960,6 +3011,14 @@ fn stream_frames(frames: &[host::Frame], id: RequestId) -> Vec<host::StreamFrame
         .collect()
 }
 
+fn written(log: &Arc<Mutex<PtyLog>>) -> Vec<u8> {
+    log.lock().expect("pty log").written.clone()
+}
+
+fn sizes(log: &Arc<Mutex<PtyLog>>) -> Vec<TerminalSize> {
+    log.lock().expect("pty log").sizes.clone()
+}
+
 #[test]
 fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let cx = effects();
@@ -2970,10 +3029,12 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
         .open(
+            &cx,
             run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(log.clone())),
@@ -2983,7 +3044,6 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, b"typed input"));
         frames.push(sized(attach, 1, 24, 80));
@@ -2995,23 +3055,15 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
         .serve(&mut transport, &cx, &observe, &root, &mut custody)
         .expect("the owner's connection is served");
 
-    assert_eq!(
-        served.responses, 2,
-        "the invocation and the attach answered"
-    );
+    assert_eq!(served.responses, 1, "the attach was answered");
     assert_eq!(
         calls.lock().expect("calls").admitted,
         vec![run],
         "the run was admitted by the kernel's own reservation path"
     );
-    let log = log.lock().expect("pty log");
-    assert_eq!(log.written, b"typed input", "the owner's writer took input");
-    assert_eq!(
-        log.sizes,
-        vec![size(24, 80), size(50, 120)],
-        "each resize reached the writer in order"
-    );
-    assert_eq!(log.retired, 0, "the writer is live while its run is");
+    wait_until("the writer to take the frame and its sizes", || {
+        written(&log) == b"typed input" && sizes(&log) == vec![size(24, 80), size(50, 120)]
+    });
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     assert!(
         terminal.owner().is_some(),
@@ -3032,10 +3084,16 @@ fn retained_output_resumes_at_the_negotiated_cursor() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
-        .open(run, vec![(1, Stream::Stdout)], Box::new(FakePty::new(log)))
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log)),
+        )
         .expect("the run's terminal opens");
     captured_stdout(&root, run, 0, b"hello");
 
@@ -3043,7 +3101,6 @@ fn retained_output_resumes_at_the_negotiated_cursor() {
     let second = RequestId::new([3; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(first, run, None));
         // A reconnect on the same owner row, at the cursor the client consumed.
         frames.push(terminal_attach(second, run, Some(3)));
@@ -3086,9 +3143,11 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
         .open(
+            &cx,
             run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(Arc::new(Mutex::new(PtyLog::default())))),
@@ -3101,7 +3160,6 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, Some(40)));
         frames
     };
@@ -3136,12 +3194,14 @@ fn input_is_bounded_and_refuses_past_its_bound() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // A writer that takes four bytes and then reports a full buffer, as a child
     // that is not reading its terminal does.
     custody
         .open(
+            &cx,
             run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(log.clone()).bounded(4, 4)),
@@ -3152,7 +3212,6 @@ fn input_is_bounded_and_refuses_past_its_bound() {
     let burst = vec![7u8; host::MAX_STREAM_PAYLOAD];
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, &burst));
         frames.push(typed(attach, 1, &burst));
@@ -3160,8 +3219,11 @@ fn input_is_bounded_and_refuses_past_its_bound() {
         frames.push(typed(attach, 2, b"overflow"));
         frames
     };
-    let (mut transport, written) = scripted(&frames);
+    let (mut transport, wire) = scripted(&frames);
     let result = server.serve(&mut transport, &cx, &observe, &root, &mut custody);
+    wait_until("the writer to take the four bytes it accepts", || {
+        written(&log).len() == 4
+    });
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     let pending = terminal.pending();
     let refused = terminal.refused();
@@ -3176,29 +3238,94 @@ fn input_is_bounded_and_refuses_past_its_bound() {
         ),
         "input past the bound is a refusal, not an unbounded queue: {result:?}"
     );
-    let log = log.lock().expect("pty log");
-    assert_eq!(
-        log.written.len(),
-        4,
-        "the writer took only what it accepted"
-    );
     assert_eq!(
         pending,
         super::terminal::MAX_PENDING_INPUT - 4,
         "the owner holds exactly its bound, never more"
     );
     assert_eq!(refused, 1, "the overflow was refused once, with no effect");
-    let written = decoded(&written.lock().expect("written"));
+    let frames = decoded(&wire.lock().expect("written"));
     assert!(
-        written.iter().any(|frame| matches!(
+        frames.iter().any(|frame| matches!(
             frame,
             host::Frame::Refuse(host::Refusal {
                 code: host::RefusalCode::Unavailable,
                 ..
             })
         )),
-        "the client was told why its input did not arrive: {written:?}"
+        "the client was told why its input did not arrive: {frames:?}"
     );
+}
+
+#[test]
+fn backpressured_input_drains_while_the_connection_is_idle() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    // Four bytes in, then a full terminal buffer.
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
+        )
+        .expect("the run's terminal opens");
+
+    let attach = RequestId::new([2; 16]);
+    let frames = {
+        let mut frames = terminal_hello(capability());
+        frames.push(terminal_attach(attach, run, None));
+        frames.push(typed(attach, 0, b"typed input"));
+        frames
+    };
+    // A live connection whose frames are all already written: the host consumes
+    // them and then blocks on a quiet socket, which is what "the connection is
+    // idle" means. The client end stays open until the proof is done.
+    let (mut client, host_side) = connection_pair();
+    {
+        use std::io::Write as _;
+        client
+            .write_all(&framed(&frames))
+            .expect("the connection's frames");
+        client.flush().expect("the connection's frames");
+    }
+    std::thread::scope(|scope| {
+        let serving = scope.spawn(|| {
+            let mut transport = PeerTransport::new(host_side);
+            server.serve(&mut transport, &cx, &observe, &root, &mut custody)
+        });
+        // The writer takes what it can and then reports a full buffer.
+        wait_until("the writer to take what it accepts", || {
+            written(&log) == b"type"
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            written(&log),
+            b"type",
+            "the writer is full: no further byte can be written yet"
+        );
+        // The child starts reading again. No frame, pump call or connection
+        // traffic is needed: the writer's own pump drains what it queued.
+        log.lock().expect("pty log").capacity = usize::MAX;
+        wait_until("the queued input to drain while idle", || {
+            written(&log) == b"typed input"
+        });
+        // Only now does the client go away.
+        drop(client);
+        serving
+            .join()
+            .expect("the serving thread")
+            .expect("the idle connection is served");
+    });
 }
 
 #[test]
@@ -3211,16 +3338,16 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-    // The writer refuses the first resize: the owner keeps the newest size and
-    // never replays an older one behind it.
+    // The writer refuses its first resizes, as a terminal whose resize queue is
+    // momentarily full does. The owner keeps only the newest size.
     custody
         .open(
+            &cx,
             run,
             vec![(1, Stream::Stdout)],
-            // Both attempts in the first size's turn refuse: the resize itself
-            // and the pump's retry afterwards.
             Box::new(FakePty::new(log.clone()).refusing_resizes(2)),
         )
         .expect("the run's terminal opens");
@@ -3228,7 +3355,6 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(sized(attach, 0, 24, 80));
         frames.push(sized(attach, 1, 50, 120));
@@ -3240,11 +3366,19 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
         .serve(&mut transport, &cx, &observe, &root, &mut custody)
         .expect("the resize burst is served");
 
-    let log = log.lock().expect("pty log");
-    assert_eq!(
-        log.sizes,
-        vec![size(50, 120), size(60, 140)],
-        "the refused older size was superseded, never applied after a newer one"
+    wait_until("the newest geometry to be applied", || {
+        sizes(&log).last() == Some(&size(60, 140))
+    });
+    let applied = sizes(&log);
+    assert!(
+        !applied.contains(&size(24, 80)),
+        "a superseded size was applied after a newer one: {applied:?}"
+    );
+    assert!(
+        applied
+            .iter()
+            .all(|size| *size == self::size(50, 120) || *size == self::size(60, 140)),
+        "only the newest sizes reached the writer: {applied:?}"
     );
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     assert_eq!(terminal.applied(), Some(size(60, 140)));
@@ -3265,35 +3399,22 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
         .open(
+            &cx,
             run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(log.clone())),
         )
         .expect("the run's terminal opens");
 
-    // The owning connection admits the run; its owner row is the terminal's.
-    let frames = {
-        let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
-        frames
-    };
-    let (mut transport, _written) = scripted(&frames);
-    server
-        .serve(&mut transport, &cx, &observe, &root, &mut custody)
-        .expect("the run is admitted");
-
-    let mut owner =
-        run::resume_owner(&cx, &root, terminal_session(), run).expect("owner attachment");
+    let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owner attachment");
     custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
-    assert_eq!(
-        custody.terminal_mut(run).expect("terminal").owner(),
-        Some(owner.id())
-    );
     custody.input(&owner, b"first").expect("the owner types");
+    wait_until("the owner's first bytes", || written(&log) == b"first");
 
     let mut secondary = run::attach_secondary(
         &cx,
@@ -3306,8 +3427,8 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
     assert_eq!(secondary.client(), Client::Secondary);
 
     // Reversible failing safety assertion: the terminal refuses a frame from an
-    // attachment it does not own, with zero bytes, and accepts the very same
-    // frame from the owning attachment.
+    // attachment it does not own, with zero bytes and zero resize, and accepts
+    // the very same frame from the owning attachment.
     let refusal = custody
         .input(&secondary, b"forged")
         .expect_err("a second terminal never types into the owner's writer");
@@ -3315,14 +3436,14 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
     custody
         .resize(&secondary, size(10, 10))
         .expect_err("a second terminal never resizes the owner's writer");
-    assert_eq!(
-        log.lock().expect("pty log").written,
-        b"first",
-        "a refused frame wrote nothing"
-    );
+    assert_eq!(written(&log), b"first", "a refused frame wrote nothing");
+    assert!(sizes(&log).is_empty(), "a refused frame resized nothing");
     custody
         .input(&owner, b" second")
         .expect("the owning attachment still types");
+    wait_until("the owner's second frame", || {
+        written(&log) == b"first second"
+    });
 
     // A secondary detach ends that terminal only: the run is still live and the
     // owner's writer still takes input.
@@ -3337,34 +3458,85 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
     custody
         .input(&owner, b" third")
         .expect("the owner's terminal survives the secondary's detach");
+    wait_until("the owner's third frame", || {
+        written(&log) == b"first second third"
+    });
+}
 
-    // The owning client's end of stream is the run's: it retires the writer once
-    // and refuses everything after it.
-    owner
-        .release(&cx, &root, Release::Eof)
-        .expect("the owning client's end of stream");
-    assert_eq!(
-        pending_stops(&root, run),
-        1,
-        "the owner's end of stream is the run's stop"
-    );
-    let before = custody.terminal_mut(run).expect("terminal").delivered();
+#[test]
+fn a_stale_or_replaced_attachment_refuses_with_zero_effect() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
-        .input(&owner, b"late")
-        .expect_err("a retired terminal takes no input");
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone())),
+        )
+        .expect("the run's terminal opens");
+
+    let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owner attachment");
+    custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+    custody.input(&owner, b"live").expect("the owner types");
+    wait_until("the owner's first bytes", || written(&log) == b"live");
+
+    // A terminal that attached and detached: its row is stale.
+    let mut stale = run::attach_secondary(
+        &cx,
+        &root,
+        terminal_session(),
+        run,
+        AttachmentId::new([55; 16]),
+    )
+    .expect("a second terminal attaches");
+    stale
+        .release(&cx, &root, Release::Detach)
+        .expect("it detaches");
+    let refusal = custody
+        .input(&stale, b"stale")
+        .expect_err("a stale attachment never types");
+    assert_eq!(refusal.code, host::RefusalCode::Forbidden);
     custody
-        .resize(&owner, size(1, 1))
-        .expect_err("a retired terminal takes no resize");
-    let terminal = custody.terminal_mut(run).expect("terminal");
-    assert!(terminal.retired(), "owner EOF retires the writer");
-    assert_eq!(
-        terminal.delivered(),
-        before,
-        "a retired terminal writes nothing"
-    );
-    let log = log.lock().expect("pty log");
-    assert_eq!(log.retired, 1, "the writer was retired exactly once");
-    assert_eq!(log.written, b"first second third");
+        .resize(&stale, size(30, 30))
+        .expect_err("a stale attachment never resizes");
+
+    // A different live attachment of the same run: the terminal's owner was not
+    // replaced under it, so the replacement is refused too.
+    let replaced = run::attach_secondary(
+        &cx,
+        &root,
+        terminal_session(),
+        run,
+        AttachmentId::new([56; 16]),
+    )
+    .expect("a replacement attachment attaches");
+    let refusal = custody
+        .input(&replaced, b"replaced")
+        .expect_err("a replaced attachment never types");
+    assert_eq!(refusal.code, host::RefusalCode::Forbidden);
+    custody
+        .resize(&replaced, size(40, 40))
+        .expect_err("a replaced attachment never resizes");
+    assert_eq!(written(&log), b"live", "no refused frame wrote anything");
+    assert!(sizes(&log).is_empty(), "no refused frame resized anything");
+
+    // Reversible: the same bytes through the owning attachment are accepted.
+    custody
+        .input(&owner, b" and live")
+        .expect("the owning attachment types");
+    wait_until("the owner's next frame", || {
+        written(&log) == b"live and live"
+    });
 }
 
 #[test]
@@ -3407,8 +3579,31 @@ fn two_independent_terminals_and_capabilities_never_cross() {
     let mut first_custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     let mut second_custody =
         TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+
+    // One request id names one request for the whole session, so each client
+    // gets its own ids.
+    let frames = {
+        let mut frames = terminal_hello(first_capability.clone());
+        frames.push(terminal_invoke(RequestId::new([11; 16])));
+        frames
+    };
+    let (mut transport, _written) = scripted(&frames);
+    first_server
+        .serve(&mut transport, &cx, &observe, &root, &mut host::NoStreams)
+        .expect("the first client admits its run");
+    let frames = {
+        let mut frames = terminal_hello(second_capability.clone());
+        frames.push(terminal_invoke(RequestId::new([21; 16])));
+        frames
+    };
+    let (mut transport, _written) = scripted(&frames);
+    second_server
+        .serve(&mut transport, &cx, &observe, &root, &mut host::NoStreams)
+        .expect("the second client admits its run");
+
     first_custody
         .open(
+            &cx,
             first_run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(first_log.clone())),
@@ -3416,22 +3611,20 @@ fn two_independent_terminals_and_capabilities_never_cross() {
         .expect("the first terminal opens");
     second_custody
         .open(
+            &cx,
             second_run,
             vec![(1, Stream::Stdout)],
             Box::new(FakePty::new(second_log.clone())),
         )
         .expect("the second terminal opens");
 
-    // One request id names one request for the whole session, so each client
-    // gets its own ids.
-    for (server, custody, capability, run, marker, invoke_id, attach_id) in [
+    for (server, custody, capability, run, marker, attach_id) in [
         (
             &mut first_server,
             &mut first_custody,
             first_capability.clone(),
             first_run,
             1u8,
-            11u8,
             12u8,
         ),
         (
@@ -3440,14 +3633,12 @@ fn two_independent_terminals_and_capabilities_never_cross() {
             second_capability.clone(),
             second_run,
             2u8,
-            21u8,
             22u8,
         ),
     ] {
         let attach = RequestId::new([attach_id; 16]);
         let frames = {
             let mut frames = terminal_hello(capability);
-            frames.push(terminal_invoke(RequestId::new([invoke_id; 16])));
             frames.push(terminal_attach(attach, run, None));
             frames.push(typed(attach, 0, &[b'a' + marker]));
             frames
@@ -3457,8 +3648,9 @@ fn two_independent_terminals_and_capabilities_never_cross() {
             .serve(&mut transport, &cx, &observe, &root, custody)
             .expect("each terminal serves its own connection");
     }
-    assert_eq!(first_log.lock().expect("pty log").written, b"b");
-    assert_eq!(second_log.lock().expect("pty log").written, b"c");
+    wait_until("each terminal's own writer", || {
+        written(&first_log) == b"b" && written(&second_log) == b"c"
+    });
 
     let other_run = RunId::new(1, [11; 10]).expect("run id");
     let frames = {
@@ -3480,7 +3672,7 @@ fn two_independent_terminals_and_capabilities_never_cross() {
         .expect_err("one terminal custody owns one run's writer");
     assert_eq!(refusal.code, host::RefusalCode::Unavailable);
     assert_eq!(
-        second_log.lock().expect("pty log").written,
+        written(&second_log),
         b"c",
         "no terminal wrote into another run's writer"
     );
@@ -3570,6 +3762,118 @@ fn a_run_with_no_terminal_owner_refuses_input_and_attach() {
         .expect_err("no terminal owner holds this run's writer");
     assert_eq!(refusal.code, host::RefusalCode::Unavailable);
     assert_eq!(custody.runs(), 0);
+
+    // Opening a run this session does not own a writer for refuses, rather than
+    // opening a terminal nothing could type into.
+    let other = RunId::new(1, [42; 10]).expect("run id");
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    assert!(matches!(
+        custody.open(
+            &cx,
+            other,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone())),
+        ),
+        Err(TerminalRefusal::NoOwner)
+    ));
+    assert_eq!(custody.runs(), 0);
+    assert_eq!(log.lock().expect("pty log").retired, 0);
+}
+
+#[test]
+fn owner_eof_retires_the_writer_without_further_traffic() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let run = RunId::new(1, [9; 10]).expect("run id");
+        let attach = RequestId::new([2; 16]);
+        let admitting = {
+            let mut frames = terminal_hello(capability());
+            frames.push(terminal_invoke(RequestId::new([1; 16])));
+            frames
+        };
+        let typing = {
+            let mut frames = terminal_hello(capability());
+            frames.push(terminal_attach(attach, run, None));
+            frames.push(typed(attach, 0, b"before the owner leaves"));
+            frames
+        };
+        let (admitting, _written) = scripted(&admitting);
+        let (typing, _written) = scripted(&typing);
+        let acceptor = ScriptedAccept {
+            connections: VecDeque::from(vec![admitting, typing]),
+            accepted: 0,
+        };
+
+        let (listener, key, _acceptor) = SessionTlsListener::bind(
+            SocketAddr::from(([127u8, 0, 0, 1], 0)),
+            Duration::from_secs(1),
+        )
+        .expect("bound session listener");
+        let mut launch = SessionLaunch::launch(
+            &mut supervisor,
+            &session,
+            "485-supervisor",
+            key,
+            Box::new(listener),
+        )
+        .expect("session listener custody");
+        launch
+            .qualify(&mut VerifiedProbe, Duration::from_secs(1))
+            .expect("qualified");
+        launch.publish(&supervisor).expect("published");
+        let mut owner = ServingOwner::new(
+            supervisor,
+            session.clone(),
+            launch,
+            acceptor,
+            serving_server_admitting(calls.clone(), root, &[9]),
+            Arc::new(cx.clone()),
+            Arc::new(observe.clone()),
+            root,
+        );
+        let log = Arc::new(Mutex::new(PtyLog::default()));
+        let mut terminals = owner.terminal_custody(observe);
+        // The admitting turn runs first, so the run exists when its terminal opens.
+        owner
+            .serve_pending(&mut terminals)
+            .expect("the admitting connection is served")
+            .expect("a connection was waiting");
+        terminals
+            .open(
+                cx,
+                run,
+                vec![(1, Stream::Stdout)],
+                Box::new(FakePty::new(log.clone())),
+            )
+            .expect("the session's terminal opens");
+        owner
+            .serve_pending(&mut terminals)
+            .expect("the typing connection is served")
+            .expect("a connection was waiting");
+        wait_until("the typed frame to reach the writer", || {
+            written(&log) == b"before the owner leaves"
+        });
+
+        // The owning client's end of stream released its row. No frame, pump call
+        // or further connection traffic exists: the writer's own pump notices the
+        // released row and retires the writer exactly once.
+        wait_until("the writer to retire on the owner's EOF", || {
+            log.lock().expect("pty log").retired == 1
+        });
+        assert!(
+            terminals
+                .terminal_mut(run)
+                .expect("the run's terminal")
+                .retired(),
+            "the owner EOF retired the terminal"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            log.lock().expect("pty log").retired,
+            1,
+            "the writer is retired once, not on every idle tick"
+        );
+    });
 }
 
 #[test]
@@ -3578,16 +3882,21 @@ fn the_serving_owner_serves_the_terminal_custody_it_hands_over() {
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let run = RunId::new(1, [9; 10]).expect("run id");
         let attach = RequestId::new([2; 16]);
-        let frames = {
+        let admitting = {
             let mut frames = terminal_hello(capability());
             frames.push(terminal_invoke(RequestId::new([1; 16])));
+            frames
+        };
+        let typing = {
+            let mut frames = terminal_hello(capability());
             frames.push(terminal_attach(attach, run, None));
             frames.push(typed(attach, 0, b"held by the serving owner"));
             frames
         };
-        let (transport, _written) = scripted(&frames);
+        let (admitting, _written) = scripted(&admitting);
+        let (typing, _written) = scripted(&typing);
         let acceptor = ScriptedAccept {
-            connections: VecDeque::from(vec![transport]),
+            connections: VecDeque::from(vec![admitting, typing]),
             accepted: 0,
         };
 
@@ -3627,25 +3936,27 @@ fn the_serving_owner_serves_the_terminal_custody_it_hands_over() {
             "the custody is bound to the session it serves"
         );
         let log = Arc::new(Mutex::new(PtyLog::default()));
+        owner
+            .serve_pending(&mut terminals)
+            .expect("the admitting connection is served")
+            .expect("a connection was waiting");
         terminals
             .open(
+                cx,
                 run,
                 vec![(1, Stream::Stdout)],
                 Box::new(FakePty::new(log.clone())),
             )
             .expect("the session's terminal opens");
-
         let served = owner
             .serve_pending(&mut terminals)
-            .expect("the session's connection is served")
+            .expect("the typing connection is served")
             .expect("a connection was waiting");
-        assert_eq!(served.responses, 2);
-        assert_eq!(owner.served(), 1);
-        assert_eq!(
-            log.lock().expect("pty log").written,
-            b"held by the serving owner",
-            "the terminal custody is served through the merged #507 owner"
-        );
+        assert_eq!(served.responses, 1, "the attach was answered");
+        assert_eq!(owner.served(), 2);
+        wait_until("the served frame to reach the writer", || {
+            written(&log) == b"held by the serving owner"
+        });
         assert_eq!(
             runs_admitted(&calls),
             vec![run],
@@ -3690,26 +4001,20 @@ fn the_retained_service_hands_over_a_session_bound_terminal_custody() {
             .expect("the session's service");
         let mut terminals = service.terminal_custody(observe);
         assert_eq!(terminals.session(), session.session());
+        // A run this session never admitted has no owning attachment: the
+        // handoff refuses rather than opening a terminal nothing could type into.
         let run = RunId::new(1, [9; 10]).expect("run id");
-        terminals
-            .open(
+        let log = Arc::new(Mutex::new(PtyLog::default()));
+        assert!(matches!(
+            terminals.open(
+                cx,
                 run,
                 vec![(1, Stream::Stdout)],
-                Box::new(FakePty::new(Arc::new(Mutex::new(PtyLog::default())))),
-            )
-            .expect("the retained service opens one terminal per admitted run");
-        assert_eq!(terminals.runs(), 1);
-        assert!(
-            matches!(
-                terminals.open(
-                    run,
-                    vec![],
-                    Box::new(FakePty::new(Arc::new(Mutex::new(PtyLog::default())))),
-                ),
-                Err(super::terminal::TerminalRefusal::AlreadyOwned)
+                Box::new(FakePty::new(log.clone())),
             ),
-            "one run has one writer; it is never replaced"
-        );
+            Err(TerminalRefusal::NoOwner)
+        ));
+        assert_eq!(terminals.runs(), 0);
         assert!(
             !service
                 .serve_pending(&mut terminals)

@@ -5,7 +5,7 @@
 //!
 //! - [`effigy_kernel::workspace_channel::Terminal`] is handed the live
 //!   [`Attachment`] for every validated input and resize, so the owner's own
-//!   last check before it writes is `Attachment::attached_observed`.
+//!   last check before it accepts work is `Attachment::attached_observed`.
 //! - [`effigy_kernel::workspace_channel::RetainedStreams`] publishes a run's
 //!   captured logs by absolute retained position, so a client cursor, a frame
 //!   sequence and a rotation gap are one coordinate system and no second replay
@@ -13,13 +13,13 @@
 //!
 //! [`WorkspaceTerminal`] is the missing owner `RetainedStreams<T>` was written
 //! for: it holds one admitted run's terminal writer, its resize handle and its
-//! retirement, and it re-checks the owning attachment immediately before every
-//! effect. [`TerminalCustody`] is the session-bound `Streams` the merged #507
-//! serving owner ([`super::serving::ServingOwner::serve_pending`],
+//! retirement, and it re-checks the owning attachment before *every* effect.
+//! [`TerminalCustody`] is the session-bound `Streams` the merged #507 serving
+//! owner ([`super::serving::ServingOwner::serve_pending`],
 //! [`super::supervisor::ServiceOwner`]) serves its connections with: one
 //! retained reader and one terminal owner per admitted run.
 //!
-//! Two boundaries are deliberate:
+//! Three facts shape the design:
 //!
 //! - **The writer is injected, never fabricated.** [`TerminalWriter`] is the
 //!   child terminal's writer, resize handle and close. The live binding — the
@@ -27,25 +27,42 @@
 //!   process proof — is effigy#519 after #512. This slice proves the owner and
 //!   the adapter with production-shaped fakes through the real `Server::serve`
 //!   loop; it claims no process binding.
-//! - **Input is owned, output is shared.** A run's captured output is not
-//!   client-private, so any live attachment of the run may publish it. Its
-//!   input is the owning client's: the terminal binds to the run's owner
-//!   attachment, and a second terminal's frames refuse with no effect rather
-//!   than writing to a writer they do not own.
+//! - **The writer has its own pump.** The channel's loop blocks on its
+//!   transport, so a writer that was momentarily full when a frame arrived gets
+//!   no turn until more traffic arrives. Each terminal therefore owns a pump
+//!   thread that drains queued input and applies the newest geometry on its own
+//!   cadence, independent of the connection. The connection only fences the
+//!   frame and queues it (bounded), so a slow child never grows host memory and
+//!   never needs the client to type again.
+//! - **The owning attachment, not the connection, is the lifetime.** The owner
+//!   resumes the run's owning handle ([`effigy_kernel::run::resume_owner`]) when
+//!   it opens, and the pump re-reads that exact row immediately before every
+//!   write, resize and idle tick. Owner EOF — the owning client's end of stream
+//!   releasing its row, or the run closing — therefore retires the writer even
+//!   when the connection is idle and no further frame will ever arrive.
+//!
+//! Input is owned, output is shared: a run's captured output is not
+//! client-private, so any live attachment of the run may publish it, while its
+//! input is the owning client's. The terminal binds to the run's owner
+//! attachment and a second terminal's frames refuse with no effect rather than
+//! writing to a writer they do not own.
 
 use std::collections::VecDeque;
 use std::io;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
-use effigy_kernel::ctx::ObserveContext;
+use effigy_kernel::ctx::{EffectContext, ObserveContext};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{Attachment, AttachmentId, Client, Session};
+use effigy_kernel::run::{self, Attachment, AttachmentId, Client, Session};
 use effigy_kernel::workspace_channel::{
     Cursors, Refusal, RetainedStreams, StreamChunk, StreamStart, Streams, Terminal, TerminalSize,
 };
 
-/// The most input one owner holds for a writer that is not taking it.
+/// The most input one owner queues for a writer that is not taking it.
 ///
 /// A stream frame decodes at most 32 KiB, so this bounds a burst to two frames
 /// and refuses past it. The alternative — an unbounded queue between a fast
@@ -54,44 +71,87 @@ use effigy_kernel::workspace_channel::{
 /// frames.
 pub(crate) const MAX_PENDING_INPUT: usize = 64 * 1024;
 
+/// How often the writer's own pump re-reads the owning attachment and retries a
+/// writer that was full. Input and geometry never wait for more connection
+/// traffic, and retirement never waits for the connection to end.
+const DRAIN_INTERVAL: Duration = Duration::from_millis(10);
+
 /// One admitted run's terminal, as the host writes to it.
 ///
 /// The live binding (effigy#519) supplies the child's terminal writer, its
 /// resize handle and its close. Every method is bounded and never waits: a
 /// writer that cannot take the whole slice reports how much it did take, and
-/// `WouldBlock` says it is momentarily full, so the owner — not the writer —
-/// decides what to hold.
-pub(crate) trait TerminalWriter {
+/// `WouldBlock` says it is momentarily full, so the pump — not the connection's
+/// read loop — decides when to try again.
+pub(crate) trait TerminalWriter: Send {
     /// Write as many bytes as the writer accepts now and report how many it
     /// took. `Ok(0)` and `WouldBlock` both mean "not now"; the bytes stay with
-    /// the owner.
+    /// the pump.
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize>;
-    /// Apply one geometry. `WouldBlock` keeps the newest size with the owner to
-    /// apply on a later turn; an earlier size is never queued behind it.
+    /// Apply one geometry. `WouldBlock` keeps the newest size with the pump to
+    /// apply on a later tick; an older size is never queued behind it.
     fn resize(&mut self, size: TerminalSize) -> io::Result<()>;
     /// The owning client's lifetime ended, or the writer failed: retire the
     /// writer exactly once, closing the child's terminal.
     fn retire(&mut self) -> io::Result<()>;
 }
 
-/// Which attachment a run's terminal is typed into.
-///
-/// It is recorded from the attachment that attached as the run's owning client,
-/// so a released row, a replaced terminal, a second terminal or another run's
-/// attachment is refused by identity before anything is written.
+/// What the connection has accepted and the pump has not yet written.
+#[derive(Debug, Default)]
+struct Outbox {
+    /// Input accepted while the owning attachment was live, bounded by
+    /// [`MAX_PENDING_INPUT`].
+    pending: VecDeque<u8>,
+    /// The newest geometry the owner holds. There is no queue of earlier sizes:
+    /// a newer size overwrites this one, and one the writer refused is retried
+    /// only while it is still the newest.
+    latest: Option<TerminalSize>,
+    applied: Option<TerminalSize>,
+    delivered: usize,
+    /// The writer was retired: the owning client's lifetime ended, or the
+    /// writer itself failed.
+    retired: bool,
+    /// The owner is being dropped; the pump must stop.
+    stop: bool,
+}
+
+/// What one pump turn did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalBinding {
-    attachment: AttachmentId,
-    session: Session,
+enum Pumped {
+    /// Bytes or a size were handed to the writer; ask again immediately.
+    Progress,
+    /// The writer is momentarily full, or there is nothing to do.
+    Idle,
+    /// The writer failed; retire it and stop.
+    Closed,
+}
+
+/// The outbox and the pump's wake-up.
+#[derive(Debug, Default)]
+struct Shared {
+    outbox: Mutex<Outbox>,
+    wake: Condvar,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, Outbox> {
+        self.outbox.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Wake the pump because there is new work.
+    fn notify(&self) {
+        self.wake.notify_all();
+    }
 }
 
 /// One admitted run's terminal owner: the writer its client types into, the
 /// newest geometry, and the retained output the run publishes.
 ///
-/// The owner outlives any one connection. Every effect re-reads the owning
-/// attachment row first, so a reconnect that presents the same owner row resumes
-/// typing where it stopped, and a row released, replaced or ended by its run's
-/// closure is refused with zero bytes and zero resize.
+/// The owner outlives any one connection. The connection's fence and the pump's
+/// fence are the same question asked twice: the channel re-reads the row before
+/// it calls here, this owner re-reads the presented live handle before it
+/// accepts the frame, and the pump re-reads the run's owning handle immediately
+/// before every writer effect.
 pub(crate) struct WorkspaceTerminal {
     observe: ObserveContext,
     root: StateRoot,
@@ -99,17 +159,15 @@ pub(crate) struct WorkspaceTerminal {
     /// is never typed into by another (§8.11).
     session: Session,
     run: RunId,
-    binding: Option<TerminalBinding>,
-    writer: Box<dyn TerminalWriter>,
-    /// Input the writer has not taken yet, bounded by [`MAX_PENDING_INPUT`].
-    pending: VecDeque<u8>,
-    /// The newest geometry the owner holds. There is no queue of earlier sizes:
-    /// a newer size overwrites this one, and one the writer refused is retried
-    /// only if it is still the newest.
-    latest: Option<TerminalSize>,
-    applied: Option<TerminalSize>,
-    retired: bool,
-    delivered: usize,
+    /// The id of the run's owning attachment, from the kernel's own handle
+    /// resumed when the terminal opened. A frame is accepted only for this row,
+    /// and the pump re-checks the row itself before every effect.
+    owner_id: AttachmentId,
+    shared: Arc<Shared>,
+    pump: Option<JoinHandle<()>>,
+    /// The attachment the connection attached with, once it has. Only the
+    /// owning client types into the run's terminal.
+    binding: Option<AttachmentId>,
     refused: usize,
 }
 
@@ -119,38 +177,49 @@ impl std::fmt::Debug for WorkspaceTerminal {
             .debug_struct("WorkspaceTerminal")
             .field("run", &self.run)
             .field("session", &self.session)
-            .field("owner", &self.owner())
-            .field("pending", &self.pending.len())
-            .field("latest", &self.latest)
-            .field("retired", &self.retired)
+            .field("owner", &self.owner_id)
+            .field("binding", &self.binding)
+            .field("retired", &self.retired())
+            .field("pending", &self.pending())
             .finish_non_exhaustive()
     }
 }
 
 impl WorkspaceTerminal {
-    /// The terminal owner for `session`'s admitted run `run`, writing to the
-    /// child's `writer`.
-    pub(crate) fn new(
+    /// Open the terminal owner for `session`'s admitted run `run`, writing to
+    /// the child's `writer`.
+    ///
+    /// `effect` is the host's own effect context: the owner resumes the run's
+    /// owning attachment with it, so the pump's lifetime fence is the kernel's
+    /// real row rather than a remembered flag. A run this session does not own
+    /// refuses here instead of opening a terminal nothing can type into.
+    pub(crate) fn open(
+        effect: &EffectContext,
         observe: ObserveContext,
         root: StateRoot,
         session: Session,
         run: RunId,
         writer: Box<dyn TerminalWriter>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, TerminalRefusal> {
+        let owner =
+            run::resume_owner(effect, &root, session, run).map_err(|_| TerminalRefusal::NoOwner)?;
+        let owner_id = owner.id();
+        let shared = Arc::new(Shared::default());
+        // The pump keeps the resumed owning handle: it is the lifetime every
+        // effect is fenced on.
+        let pump = spawn_pump(shared.clone(), observe.clone(), root.clone(), owner, writer)
+            .map_err(|_| TerminalRefusal::Unavailable)?;
+        Ok(Self {
             observe,
             root,
             session,
             run,
+            owner_id,
+            shared,
+            pump: Some(pump),
             binding: None,
-            writer,
-            pending: VecDeque::new(),
-            latest: None,
-            applied: None,
-            retired: false,
-            delivered: 0,
             refused: 0,
-        }
+        })
     }
 
     /// The run this terminal belongs to.
@@ -160,18 +229,18 @@ impl WorkspaceTerminal {
 
     /// The attachment the run's owning client attached with, once it has.
     pub(crate) fn owner(&self) -> Option<AttachmentId> {
-        self.binding.map(|binding| binding.attachment)
+        self.binding
     }
 
     /// Whether the writer has been retired: its client's lifetime ended, or the
     /// writer itself refused for good.
     pub(crate) fn retired(&self) -> bool {
-        self.retired
+        self.shared.lock().retired
     }
 
     /// Bytes the writer has accepted.
     pub(crate) fn delivered(&self) -> usize {
-        self.delivered
+        self.shared.lock().delivered
     }
 
     /// Input this owner refused with no effect.
@@ -181,51 +250,49 @@ impl WorkspaceTerminal {
 
     /// Input the writer has not accepted yet.
     pub(crate) fn pending(&self) -> usize {
-        self.pending.len()
+        self.shared.lock().pending.len()
     }
 
     /// The newest geometry the writer applied.
     pub(crate) fn applied(&self) -> Option<TerminalSize> {
-        self.applied
+        self.shared.lock().applied
     }
 
     /// Bind the run's terminal to the attachment that attached as its owning
     /// client. The first owner binding wins, so a resumed owner row keeps the
     /// writer and a second terminal never takes it over.
     pub(crate) fn bind(&mut self, attachment: &Attachment) {
-        if self.retired || self.binding.is_some() {
+        if self.retired() || self.binding.is_some() {
             return;
         }
         if attachment.run() != self.run
             || attachment.session() != self.session
             || attachment.client() != Client::Owner
+            || attachment.id() != self.owner_id
         {
             return;
         }
-        self.binding = Some(TerminalBinding {
-            attachment: attachment.id(),
-            session: attachment.session(),
-        });
+        self.binding = Some(self.owner_id);
     }
 
-    /// Deliver the writer's pending input and its newest geometry under the live
-    /// attachment. The merged serving loop calls this once per pump turn, so a
-    /// reader that never types again still drains what the writer refused.
+    /// Re-check the owning attachment and wake the pump. The merged serving loop
+    /// calls this on every pump turn, so a released row is noticed even when the
+    /// connection has nothing left to publish.
     pub(crate) fn service(&mut self, attachment: &Attachment) -> Result<(), Refusal> {
         self.admit(attachment)?;
-        self.drain()?;
-        self.apply_latest()
+        self.shared.notify();
+        Ok(())
     }
 
-    /// The one gate every effect passes: is the presented attachment the live
-    /// owning attachment this terminal belongs to?
+    /// The one gate every accepted effect passes: is the presented attachment the
+    /// live owning attachment this terminal belongs to?
     ///
-    /// It reads the durable row immediately before the effect, so a release, a
-    /// replacement or a run closure between the channel's own check and this one
-    /// stops the write. A released owning row is the owning client's end of
-    /// stream, which retires the writer.
+    /// It reads the durable row immediately before the owner accepts the frame,
+    /// so a release, a replacement or a run closure between the channel's own
+    /// check and this one refuses with no effect. The pump makes the same check
+    /// against the run's owning handle immediately before it writes.
     fn admit(&mut self, attachment: &Attachment) -> Result<(), Refusal> {
-        if self.retired {
+        if self.retired() {
             return Err(self.note(Refusal::unavailable(
                 "this run's terminal was retired when its owning client's stream ended",
             )));
@@ -240,8 +307,8 @@ impl WorkspaceTerminal {
                 "no terminal owner holds this run's writer",
             )));
         };
-        if binding.attachment != attachment.id() || binding.session != attachment.session() {
-            // A second terminal, a resumed terminal that replaced this one, or an
+        if binding != attachment.id() {
+            // A second terminal, a resumed or replaced terminal, or an
             // attachment this owner never bound: none of them may type into the
             // owning client's writer.
             return Err(self.note(Refusal::forbidden(
@@ -250,15 +317,12 @@ impl WorkspaceTerminal {
         }
         match attachment.attached_observed(&self.observe, &self.root) {
             Ok(true) => Ok(()),
-            Ok(false) => {
-                // The owning row is gone: the owning client's end of stream (or
-                // its run's closure) ended this terminal, so the writer retires
-                // instead of holding a child nobody can type into.
-                self.retire();
-                Err(self.note(Refusal::invalid(
-                    "this terminal's owning attachment is no longer attached",
-                )))
-            }
+            // The owning row is gone: the owning client's end of stream (or its
+            // run's closure) ended this terminal. The pump retires the writer on
+            // its own tick; this refuses the frame now.
+            Ok(false) => Err(self.note(Refusal::invalid(
+                "this terminal's owning attachment is no longer attached",
+            ))),
             Err(error) => Err(self.note(Refusal::unavailable(format!(
                 "this terminal's attachment lifetime could not be read ({error})"
             )))),
@@ -269,68 +333,21 @@ impl WorkspaceTerminal {
         self.refused = self.refused.saturating_add(1);
         refusal
     }
+}
 
-    /// Retire the writer exactly once. A writer that cannot report its close has
-    /// nothing left to release: the process it referred to is gone.
-    fn retire(&mut self) {
-        if self.retired {
-            return;
+impl Drop for WorkspaceTerminal {
+    fn drop(&mut self) {
+        {
+            let mut outbox = self.shared.lock();
+            outbox.stop = true;
+            outbox.pending.clear();
+            outbox.latest = None;
         }
-        self.retired = true;
-        self.pending.clear();
-        self.latest = None;
-        let _ = self.writer.retire();
-    }
-
-    /// Write what the writer takes from the bounded pending input.
-    fn drain(&mut self) -> Result<(), Refusal> {
-        while !self.pending.is_empty() {
-            let taken = {
-                let bytes = self.pending.make_contiguous();
-                self.writer.write(bytes)
-            };
-            match taken {
-                // The writer is momentarily full: the rest stays with the owner,
-                // which is what bounds a burst.
-                Ok(0) => return Ok(()),
-                Ok(written) => {
-                    let written = written.min(self.pending.len());
-                    self.pending.drain(..written);
-                    self.delivered = self.delivered.saturating_add(written);
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(_) => {
-                    self.retire();
-                    return Err(
-                        self.note(Refusal::unavailable("this run's terminal writer closed"))
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Apply the newest geometry, if it is not already applied. A size the
-    /// writer refused stays the newest one; an older size never replaces it.
-    fn apply_latest(&mut self) -> Result<(), Refusal> {
-        let Some(size) = self.latest else {
-            return Ok(());
-        };
-        if self.applied == Some(size) {
-            return Ok(());
-        }
-        match self.writer.resize(size) {
-            Ok(()) => {
-                self.applied = Some(size);
-                Ok(())
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
-            Err(_) => {
-                self.retire();
-                Err(self.note(Refusal::unavailable(
-                    "this run's terminal resize handle closed",
-                )))
-            }
+        self.shared.notify();
+        // `TerminalWriter::write` never blocks, so the pump is never stuck in a
+        // call this join has to wait out.
+        if let Some(pump) = self.pump.take() {
+            let _ = pump.join();
         }
     }
 }
@@ -338,23 +355,160 @@ impl WorkspaceTerminal {
 impl Terminal for WorkspaceTerminal {
     fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
         self.admit(attachment)?;
-        // The bound is checked before a byte is accepted, so a refusal never
-        // leaves a partial frame behind.
-        if self.pending.len().saturating_add(bytes.len()) > MAX_PENDING_INPUT {
-            return Err(self.note(Refusal::unavailable(
-                "this run's terminal is not accepting input fast enough",
-            )));
+        let accepted = {
+            let mut outbox = self.shared.lock();
+            if outbox.retired {
+                Err("this run's terminal writer was retired")
+            } else if outbox.pending.len().saturating_add(bytes.len()) > MAX_PENDING_INPUT {
+                // The bound is checked before a byte is accepted, so a refusal
+                // never leaves a partial frame behind.
+                Err("this run's terminal is not accepting input fast enough")
+            } else {
+                outbox.pending.extend(bytes);
+                Ok(())
+            }
+        };
+        match accepted {
+            Ok(()) => {
+                // The pump writes it as the writer takes it, whether or not this
+                // connection ever sends another frame.
+                self.shared.notify();
+                Ok(())
+            }
+            Err(message) => Err(self.note(Refusal::unavailable(message))),
         }
-        self.pending.extend(bytes);
-        self.drain()
     }
 
     fn resize(&mut self, attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal> {
         self.admit(attachment)?;
-        // Latest wins: one size is held and no queue of earlier ones exists, so a
-        // burst cannot grow into a backlog.
-        self.latest = Some(size);
-        self.apply_latest()
+        let accepted = {
+            let mut outbox = self.shared.lock();
+            if outbox.retired {
+                Err("this run's terminal writer was retired")
+            } else {
+                // Latest wins: one size is held and no queue of earlier ones
+                // exists, so a burst cannot grow into a backlog.
+                outbox.latest = Some(size);
+                Ok(())
+            }
+        };
+        match accepted {
+            Ok(()) => {
+                self.shared.notify();
+                Ok(())
+            }
+            Err(message) => Err(self.note(Refusal::unavailable(message))),
+        }
+    }
+}
+
+/// Start the writer's own pump. The thread owns the writer and the run's owning
+/// handle; the connection only queues work.
+fn spawn_pump(
+    shared: Arc<Shared>,
+    observe: ObserveContext,
+    root: StateRoot,
+    owner: Attachment,
+    writer: Box<dyn TerminalWriter>,
+) -> io::Result<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("effigy-workspace-terminal".to_owned())
+        .spawn(move || pump(shared, observe, root, owner, writer))
+}
+
+/// The pump: re-read the owning attachment, then hand the writer what it takes.
+///
+/// The ownership check and the effect are one step, so no write or resize can
+/// happen against a row that was released between turns — and the check runs on
+/// every idle tick too, so owner EOF retires the writer without waiting for the
+/// connection to send anything.
+fn pump(
+    shared: Arc<Shared>,
+    observe: ObserveContext,
+    root: StateRoot,
+    owner: Attachment,
+    mut writer: Box<dyn TerminalWriter>,
+) {
+    loop {
+        // The owning attachment's lifetime, immediately before the effect.
+        let live = matches!(owner.attached_observed(&observe, &root), Ok(true));
+        let step = {
+            let mut outbox = shared.lock();
+            if outbox.stop {
+                return;
+            }
+            if !live {
+                outbox.pending.clear();
+                outbox.latest = None;
+                outbox.retired = true;
+                outbox.stop = true;
+                Pumped::Closed
+            } else {
+                pump_once(&mut outbox, writer.as_mut())
+            }
+        };
+        match step {
+            Pumped::Closed => {
+                let _ = writer.retire();
+                return;
+            }
+            // Ask again immediately: the next turn re-reads the row before the
+            // next effect.
+            Pumped::Progress => continue,
+            Pumped::Idle => {
+                let outbox = shared.lock();
+                if outbox.stop {
+                    return;
+                }
+                let _ = shared
+                    .wake
+                    .wait_timeout(outbox, DRAIN_INTERVAL)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
+}
+
+/// One pump turn: write what the writer takes, then apply the newest geometry.
+///
+/// A writer that is momentarily full keeps the remainder here, and the next tick
+/// retries it — or a notification from the connection does, whichever comes
+/// first.
+fn pump_once(outbox: &mut Outbox, writer: &mut dyn TerminalWriter) -> Pumped {
+    let mut progress = false;
+    while !outbox.pending.is_empty() {
+        let taken = {
+            let bytes = outbox.pending.make_contiguous();
+            writer.write(bytes)
+        };
+        match taken {
+            // The writer is momentarily full: the rest stays here, which is what
+            // bounds a burst.
+            Ok(0) => break,
+            Ok(written) => {
+                let written = written.min(outbox.pending.len());
+                outbox.pending.drain(..written);
+                outbox.delivered = outbox.delivered.saturating_add(written);
+                progress = true;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+            Err(_) => return Pumped::Closed,
+        }
+    }
+    if let Some(size) = outbox.latest.filter(|size| Some(*size) != outbox.applied) {
+        match writer.resize(size) {
+            Ok(()) => {
+                outbox.applied = Some(size);
+                progress = true;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(_) => return Pumped::Closed,
+        }
+    }
+    if progress {
+        Pumped::Progress
+    } else {
+        Pumped::Idle
     }
 }
 
@@ -364,6 +518,12 @@ pub(crate) enum TerminalRefusal {
     /// This custody already owns a terminal for that run. Opening another would
     /// give one run two writers, and only one of them can be the child's.
     AlreadyOwned,
+    /// This session has no owning attachment for that run — it did not admit
+    /// it, or the owning client's lifetime already ended. There is no writer to
+    /// hand input to.
+    NoOwner,
+    /// The writer's pump could not start, so nothing could ever be delivered.
+    Unavailable,
 }
 
 impl std::fmt::Display for TerminalRefusal {
@@ -371,6 +531,12 @@ impl std::fmt::Display for TerminalRefusal {
         match self {
             Self::AlreadyOwned => formatter
                 .write_str("this session already owns a terminal for that run; it is not replaced"),
+            Self::NoOwner => formatter.write_str(
+                "this session has no owning attachment for that run; it owns no terminal",
+            ),
+            Self::Unavailable => {
+                formatter.write_str("the run's terminal writer could not be started")
+            }
         }
     }
 }
@@ -425,11 +591,14 @@ impl TerminalCustody {
     /// Open one admitted run's terminal and its retained output.
     ///
     /// #452's container-up caller calls this once per run it admits, with the
-    /// plan of the run's captured streams and the writer the guest types into.
-    /// A run this session already owns is refused rather than replaced: two
-    /// writers for one child is not a state the host can serve.
+    /// host's own effect context, the plan of the run's captured streams and the
+    /// writer the guest types into. It refuses a run this session does not own a
+    /// writer for (`NoOwner`) and a run it already owns a terminal for
+    /// (`AlreadyOwned`): two writers for one child is not a state the host can
+    /// serve.
     pub(crate) fn open(
         &mut self,
+        effect: &EffectContext,
         run: RunId,
         plan: Vec<(i64, Stream)>,
         writer: Box<dyn TerminalWriter>,
@@ -437,13 +606,14 @@ impl TerminalCustody {
         if self.runs.iter().any(|streams| streams.run() == run) {
             return Err(TerminalRefusal::AlreadyOwned);
         }
-        let terminal = WorkspaceTerminal::new(
+        let terminal = WorkspaceTerminal::open(
+            effect,
             self.observe.clone(),
             self.root.clone(),
             self.session,
             run,
             writer,
-        );
+        )?;
         self.runs.push(retained_streams(
             self.observe.clone(),
             self.root.clone(),
@@ -478,10 +648,9 @@ impl Streams for TerminalCustody {
         // run may read it. Input and resize stay the owning attachment's.
         let attachment = attachment?;
         let entry = self.entry_mut(attachment.run())?;
-        // Drain what the writer refused on the previous turn, and apply the
-        // newest geometry, under this live attachment. A refused or retired
-        // terminal publishes nothing on its own account; the retained reader
-        // still re-checks the row.
+        // Re-check the owning row and give the pump its turn. A refused or
+        // retired terminal publishes nothing on its own account; the retained
+        // reader still re-checks the row.
         let _ = entry.terminal_mut().service(attachment);
         entry.next_chunk(Some(attachment))
     }

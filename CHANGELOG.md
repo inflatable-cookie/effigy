@@ -240,14 +240,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `TerminalWriter` (the child's writer, resize handle and close), and
   `TerminalCustody` serves one `RetainedStreams<WorkspaceTerminal>` per admitted
   run for a session. Input and resize re-read the run's owning attachment with
-  `Attachment::attached_observed` immediately before every effect, so a stale,
-  released, replaced or foreign attachment, a second terminal, or a run this
-  session owns no terminal for refuses with zero bytes and zero resize. Input is
-  bounded (two frames, then a refusal) instead of queued without limit; resize
-  keeps only the newest size, so a burst cannot become a backlog; a second
-  terminal's detach never stops the owning run; the owning client's end of
-  stream retires the writer exactly once; and a reconnect resumes the retained
-  log at its negotiated cursor or reports the rotated range as a `gap`. The
+  `Attachment::attached_observed` immediately before every effect, and each
+  owner drives its writer from its own pump, which re-reads the run's resumed
+  owning row immediately before every write and resize and on every idle tick.
+  A stale, released, replaced or foreign attachment, a second terminal, or a run
+  this session owns no terminal for therefore refuses with zero bytes and zero
+  resize, and no effect lands against a row released between turns. Input is
+  bounded (two frames, then a refusal) instead of queued without limit; the pump
+  drains what a slow child refused on its own cadence, so backpressured input
+  completes while the connection is live and idle; resize keeps only the newest
+  size, so a burst cannot become a backlog; a second terminal's detach never
+  stops the owning run; the owning client's end of stream retires the writer
+  exactly once, without waiting for further traffic; and a reconnect resumes the
+  retained log at its negotiated cursor or reports the rotated range as a `gap`. The
   writer is a production-shaped fake in this slice: #452's container-up caller
   opens one entry per admitted run and #519 binds the live child PTY with its
   two-real-PTY process proof. `workspace_client::serving_host` serves the

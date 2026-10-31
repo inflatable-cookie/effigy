@@ -4540,22 +4540,30 @@ non-blocking write, its resize handle and its one close — and `TerminalCustody
 is the session-bound `Streams` the merged #507 serving owner serves its
 connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
 `ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
-handoff its caller opens entries through. The owner binds the run's owning
-attachment, so input and resize re-read that exact row with
-`Attachment::attached_observed` immediately before every effect and refuse a
-stale, released, replaced or foreign attachment, a second terminal, and a run
-this session owns no terminal for, with zero bytes and zero resize. Input is
-bounded at two frames and then refuses rather than growing a queue; resize keeps
-one size and never replays an older one; a second terminal's detach releases only
-its own row and never stops the owning run; the owning client's end of stream
-retires the writer exactly once; and a reconnect resumes the retained log at the
-negotiated cursor or reports the rotated range as a `gap`, with no second replay
-store. `effigy#485` proves those behaviours with production-shaped fake writers
-through the real `Server::serve` loop and the merged serving loop, owned by
-`test:workspace:publication:c`. The container-up caller that opens one entry per
-admitted run is effigy#452, and the live child-PTY writer with its
-two-real-PTY process proof is effigy#519: nothing above claims a production
-terminal binding.
+handoff its caller opens entries through. Opening a terminal resumes the run's
+owning handle, so a run this session did not admit has no owner to write for and
+is refused. The connection fences the live attachment it was handed, and the
+owner's writer runs on its own pump: the pump re-reads the resumed owning row
+with `Attachment::attached_observed` immediately before *every* write, resize
+and idle tick, so a stale, released, replaced or foreign attachment, a second
+terminal, and a run this session owns no terminal for refuse with zero bytes and
+zero resize, and no effect can land against a row that was released between
+turns. Input is bounded at two frames and then refuses rather than growing a
+queue; the pump drains what a slow child refused on its own cadence, so
+backpressured input completes even when the connection is live and idle and never
+needs the client to type again; resize keeps one size and never replays an older
+one; a second terminal's detach releases only its own row and never stops the
+owning run; and the owning client's end of stream retires the writer exactly
+once, again without waiting for connection traffic or for the run's closure. A
+reconnect resumes the retained log at the negotiated cursor or reports the
+rotated range as a `gap`, with no second replay store. `effigy#485` proves those
+behaviours with production-shaped fake writers through the real `Server::serve`
+loop and the merged serving loop, owned by `test:workspace:publication:c`: the
+crossing terminal and its reversible refusal, the stale and replaced attachment,
+the owner-EOF retirement with no further traffic, the idle drain, and the
+rotated-prefix gap. The container-up caller that opens one entry per admitted run
+is effigy#452, and the live child-PTY writer with its two-real-PTY process proof
+is effigy#519: nothing above claims a production terminal binding.
 
 ## Appendix B: NON-NORMATIVE post-v0.15 sequence candidates
 
