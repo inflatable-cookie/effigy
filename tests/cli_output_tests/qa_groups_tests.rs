@@ -890,19 +890,19 @@ run = "exit 130"
     );
 }
 
-/// A cancelled builtin test run reaches the durable views with the outcome the
-/// builtin itself reported: the member ledger says `cancelled`, the group says
-/// `cancelled`, its kernel run closes as `cancelled`, and the member log keeps
-/// the builtin's own cancellation output.
+/// A builtin test whose suite reports an interrupted-looking status on its own
+/// is a failed member in every durable view: the member ledger, the group
+/// outcome, the member log and the kernel run closeout all say failed, never
+/// cancelled. Only a stop the run records makes a suite a cancellation.
 #[test]
-fn a_cancelled_builtin_test_reaches_every_durable_view_as_cancelled() {
-    let root = temp_execution_workspace("qa-groups-cancelled-builtin-test");
+fn a_builtin_test_suite_failure_stays_failed_in_every_durable_view() {
+    let root = temp_execution_workspace("qa-groups-builtin-test-own-status");
     write_manifest(
         &root,
         r#"
 [qa.groups.cancels]
 lifecycle = "maintained"
-purpose = "A cancelled builtin test run"
+purpose = "A builtin test run that is not cancelled"
 scope_policy = "advisory"
 proof_limits = ["none"]
 members = [
@@ -927,24 +927,28 @@ run = "kill -INT $$"
         &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
     );
     let record: Value = read_run_record(&run_dir);
-    assert_eq!(record["outcome"], "cancelled");
-    assert_eq!(record["members"][0]["state"], "cancelled");
-    assert_eq!(record["members"][0]["exit_code"], 130);
+    assert_eq!(record["outcome"], "failed");
+    assert_eq!(record["members"][0]["state"], "failed");
+    assert_eq!(record["members"][0]["exit_code"], 1);
     assert_eq!(record["members"][1]["state"], "not_started");
 
-    // The member's own log keeps the builtin's cancelled results, so the
-    // durable evidence names the same outcome the text and JSON do.
+    // The member log keeps the running suite's own status, never a
+    // cancellation the run never recorded.
     let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
     assert!(
-        log.contains("cancelled"),
-        "the member log keeps the builtin's cancellation: {log}"
+        log.contains("exit=130"),
+        "the member log keeps the suite's own status: {log}"
+    );
+    assert!(
+        !log.contains("cancelled"),
+        "an ordinary suite status is not a cancellation: {log}"
     );
 
     let run_id = record["run_id"].as_str().expect("group run id").to_owned();
     let view = read_kernel_run_view(root.as_path(), &run_id);
     assert_eq!(
-        view["state"], "cancelled",
-        "a cancelled builtin test run closes as cancelled: {view}"
+        view["state"], "failed",
+        "the run closeout agrees with the failed member: {view}"
     );
 }
 

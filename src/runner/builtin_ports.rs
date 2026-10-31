@@ -140,6 +140,10 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         self.suite_parent.is_some()
     }
 
+    fn run_stopped(&self) -> bool {
+        crate::runner::task_engine::stop_recorded()
+    }
+
     fn host_suite_env_aliases(
         &self,
         root: &Path,

@@ -129,19 +129,40 @@ pub(super) fn run_builtin_test_targets_tui(
     })
 }
 
-/// One suite's result from the terminal status of the process that ran it.
+/// One suite's terminal status before the run's stop record decides whether an
+/// interrupted-looking status is a cancellation. Workers record only what they
+/// observed; the caller's stop record is read once, on the thread that owns the
+/// ports.
+struct SuiteStatus {
+    name: String,
+    runner: String,
+    root: PathBuf,
+    command: String,
+    success: bool,
+    code: Option<i32>,
+    signal: Option<i32>,
+}
+
+/// One suite's result from the terminal status of the process that ran it and
+/// the run's own stop record.
 ///
-/// A suite a stop ended reports the interrupted convention (contract 052): a
-/// death from one of the stop's own signals, or the `128 + signal` status a
-/// shell substitutes for it. That is a cancellation; every other non-zero
-/// status is the suite's own failure, and a crash signal is a failure too.
-fn suite_outcome(success: bool, code: Option<i32>, signal: Option<i32>) -> BuiltinTestOutcome {
+/// A cancellation is the run's fact, never a suite's exit status: a suite that
+/// reports `130` or `143` on its own is a failure. Only a suite the run's stop
+/// ended — the interrupted convention of contract 052: a death from one of the
+/// stop's own signals, or the `128 + signal` status a shell substitutes for it
+/// — is cancelled, and only while the run records that stop.
+fn suite_outcome(
+    success: bool,
+    code: Option<i32>,
+    signal: Option<i32>,
+    run_stopped: bool,
+) -> BuiltinTestOutcome {
     if success {
         return BuiltinTestOutcome::Passed;
     }
-    let interrupted = signal.is_some_and(effigy_process::interrupted_signal)
+    let interrupted_status = signal.is_some_and(effigy_process::interrupted_signal)
         || code.is_some_and(effigy_process::interrupted_exit_code);
-    if interrupted {
+    if run_stopped && interrupted_status {
         BuiltinTestOutcome::Cancelled
     } else {
         BuiltinTestOutcome::Failed
@@ -264,216 +285,222 @@ pub(super) fn run_builtin_test_targets_parallel(
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
 
-    let results = std::thread::scope(
-        |scope| -> Result<Vec<BuiltinTestExecResult>, BuiltinError> {
-            let (child_evidence_sender, child_evidence_receiver) = if capture_child_evidence {
-                let (sender, receiver) = std::sync::mpsc::channel::<BuiltinTestChildEvidence>();
-                (Some(sender), Some(receiver))
-            } else {
-                (None, None)
-            };
-            let mut handles = Vec::with_capacity(worker_count);
-            for _ in 0..worker_count {
-                let queue_ref = Arc::clone(&queue);
-                let host_env = host_env.clone();
-                let child_evidence_sender = child_evidence_sender.clone();
-                handles.push(scope.spawn(move || {
-                    let mut local = Vec::<BuiltinTestExecResult>::new();
-                    loop {
-                        let job = {
-                            let mut queue = queue_ref.lock().expect("test queue lock poisoned");
-                            queue.pop_front()
-                        };
-                        let Some((name, root, runner, command, execution_command, host, custody)) =
-                            job
-                        else {
-                            break;
-                        };
-                        let child_generation = if capture_child_evidence {
-                            NEXT_TEST_CHILD_GENERATION.fetch_add(1, Ordering::Relaxed)
-                        } else {
-                            0
-                        };
-                        if let Some(mut custody) = custody {
-                            // The suite stays in this run's process group, so
-                            // custody still settles it.
-                            let outcome =
-                                custody.run(&execution_command, &root, &host_env, capture_output);
-                            let result = outcome.map(|outcome| {
-                                #[cfg(unix)]
-                                let status = {
-                                    use std::os::unix::process::ExitStatusExt;
-                                    std::process::ExitStatus::from_raw(
-                                        outcome.code.unwrap_or(1) << 8,
-                                    )
-                                };
-                                #[cfg(not(unix))]
-                                let status = {
-                                    let _ = outcome;
-                                    unreachable!("built-in test custody is a unix process group")
-                                };
-                                status
-                            });
-                            let succeeded = matches!(&result, Ok(status) if status.success());
-                            // The suite's outcome is recorded and its whole
-                            // process group stopped here, before the run that
-                            // owns the scratch directory concludes.
-                            custody.settle(succeeded);
-                            let status =
-                                result.map_err(|error| BuiltinError::TaskCommandLaunch {
-                                    command: execution_command.clone(),
-                                    error: std::io::Error::other(error.to_string()),
-                                })?;
-                            local.push(BuiltinTestExecResult {
-                                name,
-                                runner,
-                                root,
-                                command,
-                                outcome: suite_outcome(status.success(), status.code(), None),
-                                code: status.code(),
-                            });
-                            continue;
-                        }
-                        let mut process = ProcessCommand::new("sh");
-                        process.arg("-c").arg(&execution_command).current_dir(&root);
-                        with_local_node_bin_path(&mut process, &root);
-                        if host {
-                            for (key, value) in &host_env {
-                                process.env(key, value);
-                            }
-                        }
-                        let observer_active_at_spawn =
-                            effigy_process::process_group_observer_active();
-                        if observer_active_at_spawn {
+    let statuses = std::thread::scope(|scope| -> Result<Vec<SuiteStatus>, BuiltinError> {
+        let (child_evidence_sender, child_evidence_receiver) = if capture_child_evidence {
+            let (sender, receiver) = std::sync::mpsc::channel::<BuiltinTestChildEvidence>();
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
+        let mut handles = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let queue_ref = Arc::clone(&queue);
+            let host_env = host_env.clone();
+            let child_evidence_sender = child_evidence_sender.clone();
+            handles.push(scope.spawn(move || {
+                let mut local = Vec::<SuiteStatus>::new();
+                loop {
+                    let job = {
+                        let mut queue = queue_ref.lock().expect("test queue lock poisoned");
+                        queue.pop_front()
+                    };
+                    let Some((name, root, runner, command, execution_command, host, custody)) = job
+                    else {
+                        break;
+                    };
+                    let child_generation = if capture_child_evidence {
+                        NEXT_TEST_CHILD_GENERATION.fetch_add(1, Ordering::Relaxed)
+                    } else {
+                        0
+                    };
+                    if let Some(mut custody) = custody {
+                        // The suite stays in this run's process group, so
+                        // custody still settles it.
+                        let outcome =
+                            custody.run(&execution_command, &root, &host_env, capture_output);
+                        let result = outcome.map(|outcome| {
                             #[cfg(unix)]
-                            {
-                                use std::os::unix::process::CommandExt;
-                                process.process_group(0);
-                            }
-                        }
-                        if capture_output {
-                            process.stdout(Stdio::piped()).stderr(Stdio::piped());
-                        }
-                        let child =
-                            process
-                                .spawn()
-                                .map_err(|error| BuiltinError::TaskCommandLaunch {
-                                    command: execution_command.clone(),
-                                    error,
-                                })?;
-                        let child_pid = child.id();
-                        let process_group_result = if capture_child_evidence {
-                            Some(effigy_process::process_group_id(child_pid))
-                        } else {
-                            None
-                        };
-                        let start_observer_notified =
-                            effigy_process::notify_process_group_started(child_pid);
-                        let wait_result = if capture_output {
-                            child
-                                .wait_with_output()
-                                .map(|output| output.status)
-                                .map_err(|error| BuiltinError::TaskCommandLaunch {
-                                    command: execution_command.clone(),
-                                    error,
-                                })
-                        } else {
-                            let mut child = child;
-                            child
-                                .wait()
-                                .map_err(|error| BuiltinError::TaskCommandLaunch {
-                                    command: execution_command.clone(),
-                                    error,
-                                })
-                        };
-                        let stop_observer_notified =
-                            effigy_process::notify_process_group_stopped(child_pid);
-                        if capture_child_evidence {
-                            let (process_group, process_group_error) = match process_group_result {
-                                Some(Ok(process_group)) => (Some(process_group), None),
-                                Some(Err(error)) => (None, Some(error.to_string())),
-                                None => (None, None),
+                            let status = {
+                                use std::os::unix::process::ExitStatusExt;
+                                std::process::ExitStatus::from_raw(outcome.code.unwrap_or(1) << 8)
                             };
-                            let exit_code = wait_result
-                                .as_ref()
-                                .ok()
-                                .and_then(std::process::ExitStatus::code);
-                            let signal = wait_result.as_ref().ok().and_then(|status| {
-                                #[cfg(unix)]
-                                {
-                                    use std::os::unix::process::ExitStatusExt;
-                                    status.signal()
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    let _ = status;
-                                    None
-                                }
-                            });
-                            let wait_error = wait_result.as_ref().err().map(ToString::to_string);
-                            child_evidence_sender
-                                .as_ref()
-                                .expect("evidence capture creates its receiver")
-                                .send(BuiltinTestChildEvidence {
-                                    invocation_generation,
-                                    child_generation,
-                                    suite_name: name.clone(),
-                                    root: root.display().to_string(),
-                                    pid: child_pid,
-                                    parent_pid: std::process::id(),
-                                    process_group,
-                                    process_group_error,
-                                    observer_active_at_spawn,
-                                    start_observer_notified,
-                                    stop_observer_notified,
-                                    spawned: true,
-                                    exit_code,
-                                    signal,
-                                    wait_error,
-                                })
-                                .expect(
-                                    "child evidence receiver remains active until workers finish",
-                                );
-                        }
-                        let status = wait_result?;
-                        #[cfg(unix)]
-                        let signal = {
-                            use std::os::unix::process::ExitStatusExt;
-                            status.signal()
-                        };
-                        #[cfg(not(unix))]
-                        let signal = None;
-                        local.push(BuiltinTestExecResult {
+                            #[cfg(not(unix))]
+                            let status = {
+                                let _ = outcome;
+                                unreachable!("built-in test custody is a unix process group")
+                            };
+                            status
+                        });
+                        let succeeded = matches!(&result, Ok(status) if status.success());
+                        // The suite's outcome is recorded and its whole
+                        // process group stopped here, before the run that
+                        // owns the scratch directory concludes.
+                        custody.settle(succeeded);
+                        let status = result.map_err(|error| BuiltinError::TaskCommandLaunch {
+                            command: execution_command.clone(),
+                            error: std::io::Error::other(error.to_string()),
+                        })?;
+                        local.push(SuiteStatus {
                             name,
                             runner,
                             root,
                             command,
-                            outcome: suite_outcome(status.success(), status.code(), signal),
+                            success: status.success(),
                             code: status.code(),
+                            signal: None,
                         });
+                        continue;
                     }
-                    Ok::<Vec<BuiltinTestExecResult>, BuiltinError>(local)
-                }));
-            }
-            drop(child_evidence_sender);
-            if let Some(child_evidence_receiver) = child_evidence_receiver {
-                for evidence in child_evidence_receiver {
-                    ports.record_builtin_test_child_evidence(evidence);
+                    let mut process = ProcessCommand::new("sh");
+                    process.arg("-c").arg(&execution_command).current_dir(&root);
+                    with_local_node_bin_path(&mut process, &root);
+                    if host {
+                        for (key, value) in &host_env {
+                            process.env(key, value);
+                        }
+                    }
+                    let observer_active_at_spawn = effigy_process::process_group_observer_active();
+                    if observer_active_at_spawn {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            process.process_group(0);
+                        }
+                    }
+                    if capture_output {
+                        process.stdout(Stdio::piped()).stderr(Stdio::piped());
+                    }
+                    let child =
+                        process
+                            .spawn()
+                            .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                command: execution_command.clone(),
+                                error,
+                            })?;
+                    let child_pid = child.id();
+                    let process_group_result = if capture_child_evidence {
+                        Some(effigy_process::process_group_id(child_pid))
+                    } else {
+                        None
+                    };
+                    let start_observer_notified =
+                        effigy_process::notify_process_group_started(child_pid);
+                    let wait_result = if capture_output {
+                        child
+                            .wait_with_output()
+                            .map(|output| output.status)
+                            .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                command: execution_command.clone(),
+                                error,
+                            })
+                    } else {
+                        let mut child = child;
+                        child
+                            .wait()
+                            .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                command: execution_command.clone(),
+                                error,
+                            })
+                    };
+                    let stop_observer_notified =
+                        effigy_process::notify_process_group_stopped(child_pid);
+                    if capture_child_evidence {
+                        let (process_group, process_group_error) = match process_group_result {
+                            Some(Ok(process_group)) => (Some(process_group), None),
+                            Some(Err(error)) => (None, Some(error.to_string())),
+                            None => (None, None),
+                        };
+                        let exit_code = wait_result
+                            .as_ref()
+                            .ok()
+                            .and_then(std::process::ExitStatus::code);
+                        let signal = wait_result.as_ref().ok().and_then(|status| {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::ExitStatusExt;
+                                status.signal()
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ = status;
+                                None
+                            }
+                        });
+                        let wait_error = wait_result.as_ref().err().map(ToString::to_string);
+                        child_evidence_sender
+                            .as_ref()
+                            .expect("evidence capture creates its receiver")
+                            .send(BuiltinTestChildEvidence {
+                                invocation_generation,
+                                child_generation,
+                                suite_name: name.clone(),
+                                root: root.display().to_string(),
+                                pid: child_pid,
+                                parent_pid: std::process::id(),
+                                process_group,
+                                process_group_error,
+                                observer_active_at_spawn,
+                                start_observer_notified,
+                                stop_observer_notified,
+                                spawned: true,
+                                exit_code,
+                                signal,
+                                wait_error,
+                            })
+                            .expect("child evidence receiver remains active until workers finish");
+                    }
+                    let status = wait_result?;
+                    #[cfg(unix)]
+                    let signal = {
+                        use std::os::unix::process::ExitStatusExt;
+                        status.signal()
+                    };
+                    #[cfg(not(unix))]
+                    let signal = None;
+                    local.push(SuiteStatus {
+                        name,
+                        runner,
+                        root,
+                        command,
+                        success: status.success(),
+                        code: status.code(),
+                        signal,
+                    });
                 }
+                Ok::<Vec<SuiteStatus>, BuiltinError>(local)
+            }));
+        }
+        drop(child_evidence_sender);
+        if let Some(child_evidence_receiver) = child_evidence_receiver {
+            for evidence in child_evidence_receiver {
+                ports.record_builtin_test_child_evidence(evidence);
             }
+        }
 
-            let mut combined = Vec::<BuiltinTestExecResult>::new();
-            for handle in handles {
-                let mut part = handle
-                    .join()
-                    .expect("builtin test worker thread panicked unexpectedly")?;
-                combined.append(&mut part);
-            }
-            Ok(combined)
-        },
-    )?;
+        let mut combined = Vec::<SuiteStatus>::new();
+        for handle in handles {
+            let mut part = handle
+                .join()
+                .expect("builtin test worker thread panicked unexpectedly")?;
+            combined.append(&mut part);
+        }
+        Ok(combined)
+    })?;
     finish_sweep(sweep)?;
-    Ok(results)
+    // One read of the caller's stop record classifies every suite: a suite's
+    // own status is never evidence that the operator cancelled the run.
+    let run_stopped = ports.run_stopped();
+    Ok(statuses
+        .into_iter()
+        .map(|status| BuiltinTestExecResult {
+            outcome: suite_outcome(status.success, status.code, status.signal, run_stopped),
+            name: status.name,
+            runner: status.runner,
+            root: status.root,
+            command: status.command,
+            code: status.code,
+        })
+        .collect())
 }
 
 /// Route one rendered suite command to its owning catalog's declared
@@ -705,6 +732,9 @@ mod tests {
     struct ScratchPorts {
         env: Vec<(String, OsString)>,
         custody_marker: Option<PathBuf>,
+        /// Whether the caller's run records a stop, which is the only thing
+        /// that makes an interrupted-looking suite status a cancellation.
+        run_stopped: bool,
         /// `(container, lifecycle command)` pairs handed to container
         /// routing. Empty unless a non-nested container suite actually
         /// routed.
@@ -718,6 +748,10 @@ mod tests {
 
         fn custody_holds_host_suites(&self) -> bool {
             self.custody_marker.is_some()
+        }
+
+        fn run_stopped(&self) -> bool {
+            self.run_stopped
         }
 
         fn host_suite_custody(
@@ -878,6 +912,7 @@ mod tests {
                 .map(|key| ((*key).to_owned(), dir.as_os_str().to_owned()))
                 .collect(),
             custody_marker: None,
+            run_stopped: false,
             routed_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -1049,46 +1084,54 @@ mod tests {
         );
     }
 
-    /// The interrupted convention decides a noninteractive suite's outcome: a
-    /// stop's own signal (or its `128 + signal` status) is a cancellation,
-    /// while a crash signal and an ordinary non-zero exit are failures.
+    /// A cancellation needs both facts: the run records a stop, and the suite
+    /// reports the interrupted convention. A suite's own exit status — even
+    /// `130` or `143` — is never a cancellation by itself.
     #[test]
-    fn a_noninteractive_suite_outcome_follows_the_interrupted_convention() {
+    fn a_noninteractive_suite_outcome_needs_the_run_stop_and_an_interrupted_status() {
         let cases = [
-            (true, Some(0), None, BuiltinTestOutcome::Passed),
-            (false, Some(1), None, BuiltinTestOutcome::Failed),
-            (false, Some(7), None, BuiltinTestOutcome::Failed),
-            (false, Some(130), None, BuiltinTestOutcome::Cancelled),
-            (false, Some(143), None, BuiltinTestOutcome::Cancelled),
-            (false, Some(137), None, BuiltinTestOutcome::Cancelled),
-            (false, Some(129), None, BuiltinTestOutcome::Cancelled),
-            (false, Some(139), None, BuiltinTestOutcome::Failed),
-            (false, None, Some(2), BuiltinTestOutcome::Cancelled),
-            (false, None, Some(9), BuiltinTestOutcome::Cancelled),
-            (false, None, Some(15), BuiltinTestOutcome::Cancelled),
-            (false, None, Some(11), BuiltinTestOutcome::Failed),
-            (false, None, None, BuiltinTestOutcome::Failed),
+            (true, Some(0), None, false, BuiltinTestOutcome::Passed),
+            (true, Some(0), None, true, BuiltinTestOutcome::Passed),
+            (false, Some(1), None, false, BuiltinTestOutcome::Failed),
+            (false, Some(7), None, true, BuiltinTestOutcome::Failed),
+            // An ordinary exit status is the suite's own result unless the
+            // run's stop ended it.
+            (false, Some(130), None, false, BuiltinTestOutcome::Failed),
+            (false, Some(143), None, false, BuiltinTestOutcome::Failed),
+            (false, Some(137), None, false, BuiltinTestOutcome::Failed),
+            (false, Some(129), None, false, BuiltinTestOutcome::Failed),
+            (false, Some(130), None, true, BuiltinTestOutcome::Cancelled),
+            (false, Some(143), None, true, BuiltinTestOutcome::Cancelled),
+            (false, Some(137), None, true, BuiltinTestOutcome::Cancelled),
+            (false, Some(139), None, true, BuiltinTestOutcome::Failed),
+            (false, None, Some(2), false, BuiltinTestOutcome::Failed),
+            (false, None, Some(2), true, BuiltinTestOutcome::Cancelled),
+            (false, None, Some(9), true, BuiltinTestOutcome::Cancelled),
+            (false, None, Some(15), true, BuiltinTestOutcome::Cancelled),
+            (false, None, Some(11), true, BuiltinTestOutcome::Failed),
+            (false, None, None, true, BuiltinTestOutcome::Failed),
         ];
 
-        for (success, code, signal, expected) in cases {
+        for (success, code, signal, run_stopped, expected) in cases {
             assert_eq!(
-                suite_outcome(success, code, signal),
+                suite_outcome(success, code, signal, run_stopped),
                 expected,
-                "status {success:?}/{code:?}/{signal:?}"
+                "status {success:?}/{code:?}/{signal:?} with run_stopped={run_stopped}"
             );
         }
     }
 
     #[test]
-    fn a_noninteractive_suite_the_stop_ended_is_cancelled_not_failed() {
+    fn a_noninteractive_suite_the_run_stopped_is_cancelled() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
-        // The shell reports the interrupted convention for its own SIGINT.
+        // The shell reports the interrupted convention after the stop.
         let runnable = suite(fixture.path(), "kill -INT $$", BuiltinTargetRuntime::Host);
+        let mut ports = ports(scratch.path());
+        ports.run_stopped = true;
 
-        let results =
-            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
-                .expect("suite recorded");
+        let results = run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true)
+            .expect("suite recorded");
         assert_eq!(results[0].outcome, BuiltinTestOutcome::Cancelled);
         assert!(!results[0].success(), "a cancelled suite is not a pass");
 
@@ -1112,30 +1155,49 @@ mod tests {
     }
 
     #[test]
-    fn a_noninteractive_suite_killed_by_a_signal_is_cancelled() {
+    fn a_noninteractive_suite_killed_by_a_signal_is_cancelled_only_after_a_stop() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
         // SIGKILL cannot be caught: the suite dies from the signal itself.
         let runnable = suite(fixture.path(), "kill -KILL $$", BuiltinTargetRuntime::Host);
+        let mut stopped = ports(scratch.path());
+        stopped.run_stopped = true;
 
+        let stopped_results =
+            run_builtin_test_targets_parallel(&stopped, vec![runnable.clone()], 1, true)
+                .expect("suite recorded");
+        assert_eq!(stopped_results[0].outcome, BuiltinTestOutcome::Cancelled);
+        assert!(
+            !stopped_results[0].success(),
+            "a stopped suite is not a pass"
+        );
+
+        // The same status without a run stop is the suite's own failure.
         let results =
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite recorded");
-        assert_eq!(results[0].outcome, BuiltinTestOutcome::Cancelled);
-        assert!(!results[0].success(), "a stopped suite is not a pass");
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Failed);
     }
 
     #[test]
     fn an_ordinary_noninteractive_failure_stays_failed() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
-        let runnable = suite(fixture.path(), "exit 7", BuiltinTargetRuntime::Host);
-
-        let results =
-            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
-                .expect("suite recorded");
-        assert_eq!(results[0].outcome, BuiltinTestOutcome::Failed);
-        assert_eq!(results[0].code, Some(7));
+        for command in ["exit 7", "exit 130", "exit 143"] {
+            let runnable = suite(fixture.path(), command, BuiltinTargetRuntime::Host);
+            let results =
+                run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                    .expect("suite recorded");
+            let code = command
+                .strip_prefix("exit ")
+                .and_then(|value| value.parse::<i32>().ok());
+            assert_eq!(
+                results[0].outcome,
+                BuiltinTestOutcome::Failed,
+                "`{command}` is the suite's own failure, not a cancellation"
+            );
+            assert_eq!(results[0].code, code);
+        }
     }
 
     #[test]

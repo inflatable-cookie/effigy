@@ -87,6 +87,13 @@ pub(in crate::runner) fn root_task_state_for_tests(root: &std::path::Path, task:
     root_task_status_for_tests(root, task).state
 }
 
+/// Whether this process's run has been asked to stop: an interruption signal a
+/// custody wait consumed, or an owner stop request. It only reads records, so
+/// asking never consumes the signal the run's own stop path needs.
+pub(in crate::runner) fn stop_recorded() -> bool {
+    kernel::interrupted_by().is_some() || run::stop_requested()
+}
+
 /// Cancellation is checked before admission/spawn as well as while waiting.
 /// A request between two steps must not start the next workload.
 pub(in crate::runner) fn pending_stop(

@@ -170,6 +170,13 @@ pub trait BuiltinRuntimePorts {
         false
     }
 
+    /// Whether the caller's run has been asked to stop. Only a run that was
+    /// stopped can make a suite it ended a cancellation: a suite's own exit
+    /// status is never evidence of one. Reading it must not consume a signal.
+    fn run_stopped(&self) -> bool {
+        false
+    }
+
     fn has_test_tui_source(&self) -> bool {
         false
     }
