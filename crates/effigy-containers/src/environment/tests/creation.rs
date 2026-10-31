@@ -86,6 +86,7 @@ pub(in crate::environment) struct Fake {
     inventories: VecDeque<Observed<Vec<Workload>>>,
     images: VecDeque<Observed<String>>,
     image_references: BTreeMap<String, String>,
+    image_delays: VecDeque<Duration>,
     reads: usize,
     deadlines: Vec<Instant>,
     cancel_on_inventory: Option<CancelToken>,
@@ -98,6 +99,7 @@ impl Fake {
             inventories: [verified(before), verified(after)].into(),
             images: VecDeque::new(),
             image_references: BTreeMap::new(),
+            image_delays: VecDeque::new(),
             reads: 0,
             deadlines: Vec::new(),
             cancel_on_inventory: None,
@@ -127,6 +129,7 @@ impl EnvironmentBackend for Fake {
     fn image_id_until(&mut self, _: &Path, reference: &str, deadline: Instant) -> Observed<String> {
         self.deadlines.push(deadline);
         assert!(Instant::now() < deadline);
+        std::thread::sleep(self.image_delays.pop_front().unwrap_or(Duration::ZERO));
         self.images.pop_front().unwrap_or_else(|| {
             verified(
                 self.image_references
@@ -245,6 +248,45 @@ fn new_ids_must_equal_the_independently_expected_set_and_keep_attached_ids() {
         &render
     )
     .is_err());
+}
+
+#[test]
+fn recreation_expectation_refuses_old_reference_retag_expiry_and_empty_reference() {
+    let render = render(&[PRIMARY]);
+    let mut old = row(PRIMARY, 'a');
+    old.image_reference = "fixture:previous".into();
+    old.image = format!("sha256:{}", id('e'));
+    for expired in [false, true] {
+        let mut fake = Fake::new(vec![old.clone()], vec![row(PRIMARY, 'd')]);
+        fake.images = [
+            verified(image()),
+            verified(old.image.clone()),
+            verified(image()),
+            verified(if expired {
+                old.image.clone()
+            } else {
+                format!("sha256:{}", id('f'))
+            }),
+        ]
+        .into();
+        let mut request = request(&render);
+        if expired {
+            request.deadline = Instant::now() + Duration::from_millis(500);
+            fake.image_delays = [
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_millis(600),
+            ]
+            .into();
+        }
+        let window = CreationWindow::open(&mut fake, request).unwrap();
+        assert!(window.close(&mut fake, request).is_err());
+    }
+    old.image_reference.clear();
+    let mut fake = Fake::new(vec![old.clone()], vec![row(PRIMARY, 'd')]);
+    fake.image_references.insert(String::new(), old.image);
+    assert!(CreationWindow::open(&mut fake, request(&render)).is_err());
 }
 
 #[test]

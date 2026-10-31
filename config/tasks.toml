@@ -116,6 +116,8 @@
 # not rewrite a source-linked consumer lockfile. Pass the usual scope and
 # filter, for example `effigy test:focused -p effigy-deps --lib -E 'test(x)'`.
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
+# Focused repros retain the owning durable-journal budget (600s per test).
+"test:focused:journal-heavy" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/journal-heavy-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1900000 }] }
 "test:deps:lockfile-workflows" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-deps --lib --test cargo_link --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
 # Strict Clippy plus a compile for the whole `effigy-deps` crate (lib, tests and
 # integration targets). A full-workspace sweep also covers crates whose findings

@@ -3839,7 +3839,9 @@ apply. The new-ID difference must equal the IDs for precisely those expected new
 services; an unchanged attached ID cannot be replaced. Configuration-only
 recreation has no verified expectation in this bounded path and therefore
 refuses attribution if Compose replaces it. Receipt schema v2 records the
-expected services and replaced IDs; v1 evidence is not upgraded. Image tag
+expected services and replaced IDs; v1 evidence is not upgraded.
+Isolated journal-case reproduction uses `effigy test:focused:journal-heavy` with
+`-j 1`, retaining the covering selector's 600-second per-test budget. Image tag
 moves, reference-only container image identity, partial or failed apply, unknown
 journal state, expired deadlines, cancellation and gate loss grant no receipt.
 

@@ -149,13 +149,13 @@ impl CreationWindow {
             ));
         }
         validate(request, &self.declared, &images, &after, true)?;
+        self.expected
+            .verify(backend, request, &self.before, &after)?;
         if std::time::Instant::now() >= request.deadline {
             return Err(CreationRefusal::Unknown(
                 "inventory deadline expired".into(),
             ));
         }
-        self.expected
-            .verify(backend, request, &self.before, &after)?;
         let before: BTreeMap<_, _> = self
             .before
             .iter()
@@ -291,7 +291,8 @@ fn validate(
             return Err(CreationRefusal::Service(row.name.clone()));
         }
         let same_reference = Some(&row.image_reference) == expected.image.as_ref();
-        if exact_image_id(&row.image).is_none()
+        if row.image_reference.trim().is_empty()
+            || exact_image_id(&row.image).is_none()
             || (complete && !same_reference)
             || (same_reference && exact_image_id(&row.image).as_ref() != images.get(service))
         {
