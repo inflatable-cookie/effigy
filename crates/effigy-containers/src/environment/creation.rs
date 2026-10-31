@@ -25,16 +25,24 @@
 //!   the apply start. Anything else refuses, and the run publishes no receipt.
 //!
 //! **The image id.** The render declares a reference (`postgres:16`); the
-//! backend's image table is the only authority that turns it into an image id.
-//! The window resolves the render's reference inside its own deadline and
-//! requires the container's own image identity to be that exact id: reported as
-//! an id by the engine (Docker prints `sha256:…` in `Image`) it is compared
-//! directly, and reported as a reference (nerdctl prints the reference) the
-//! reference the container carries is resolved on the same backend and the ids
-//! must agree. `CreatedContainer::image_id_source` says which of the two the
-//! receipt stands on, so the weaker reading is visible rather than implied: on a
-//! backend whose inspect reports only a reference, the id follows from that
-//! reference and is not an independent engine fact about the container.
+//! backend's image table is the only authority that turns it into an image id,
+//! so the window resolves the render's reference inside its own deadline and
+//! requires the container's **own engine-reported image id** to be that exact
+//! id. Only an id the engine reports *for the container* will do: it is
+//! immutable and belongs to that container, so a tag moved after the container
+//! was created makes the two disagree and the window refuse.
+//!
+//! A reference the container reports is not that fact. A reference is mutable:
+//! resolving it after the apply says which image the tag points at *now*, not
+//! which image the container was created from, so a retag inside the window is
+//! invisible. Docker reports `Image` as an exact id and binds; nerdctl reports
+//! `Image`/`Config.Image` as the reference and exposes the image id nowhere in
+//! the container record (`inspect`, `inspect --mode=native` and `ps --format
+//! json` all carry only the reference), so this window **refuses** a container
+//! whose reported image identity is not an exact id and names the missing
+//! engine API instead of minting a receipt from a mutable reference. That leaves
+//! nerdctl fresh targets without a receipt: an honest absence, not a weaker
+//! claim.
 //!
 //! **Threat boundary** (contract 052 §8.12): this excludes a foreign process
 //! that deliberately creates a container carrying Effigy's own managed,
@@ -80,19 +88,6 @@ const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, 
 /// stays bounded by the run's own budget (K8).
 pub const CREATION_WINDOW: Duration = Duration::from_secs(30 * 60);
 
-/// How the window learned a container's exact image id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageIdSource {
-    /// The engine's own inspect reported the container's image as an exact
-    /// image id (Docker prints `sha256:…` in `Image`).
-    Reported,
-    /// The engine's inspect reported the container's image as a reference
-    /// (nerdctl), which the window resolved to an exact image id on the same
-    /// backend. The id then follows from that reference; it is not a separate
-    /// engine fact about the container.
-    ResolvedFromReference,
-}
-
 /// One container the window proved this run's apply created.
 ///
 /// It is read-only outside this module: only the gated window that took the
@@ -103,7 +98,6 @@ pub struct CreatedContainer {
     service: String,
     image: String,
     image_id: String,
-    image_id_source: ImageIdSource,
     image_reference: String,
     created: String,
 }
@@ -120,22 +114,16 @@ impl CreatedContainer {
     }
 
     /// The image field the engine reported for the container (`Image`): the
-    /// image id on Docker, the resolved reference on nerdctl. It is what the
-    /// window bound, never the expectation.
+    /// container's own image id on Docker, the reference on nerdctl. It is what
+    /// the window bound, never the expectation.
     pub fn image(&self) -> &str {
         &self.image
     }
 
-    /// The exact image id this window bound the container to: the id the
-    /// admitted render's declared reference resolves to on the applying
-    /// backend, which the container's own image identity must equal.
+    /// The exact image id the engine reported **for this container**, which the
+    /// admitted render's declared reference resolves to on the applying backend.
     pub fn image_id(&self) -> &str {
         &self.image_id
-    }
-
-    /// How the window learned the container's image id (see [`ImageIdSource`]).
-    pub fn image_id_source(&self) -> ImageIdSource {
-        self.image_id_source
     }
 
     /// The image reference Compose created the container from
@@ -629,9 +617,9 @@ fn receipt(
         .collect();
     let mut created: Vec<CreatedContainer> = Vec::with_capacity(candidates.len());
     let mut services: BTreeSet<String> = BTreeSet::new();
-    // One image-table read per distinct reference: the render's declared
-    // reference and, on a backend that reports a reference instead of an id,
-    // the reference the container itself carries.
+    // One image-table read per distinct declared reference: only the render's
+    // own references need resolving, because a container's identity must come
+    // from the engine, never from a reference it reports.
     let mut images: BTreeMap<String, String> = BTreeMap::new();
     for row in candidates {
         let service = row
@@ -692,9 +680,9 @@ fn receipt(
         }
         // The reference is not the image: the backend's own image table turns
         // the render's declared reference into the exact image id this
-        // container must carry, and the container's own image identity — the
-        // id the engine reports, or the reference it reports resolved on this
-        // same backend — must be that exact id.
+        // container must carry, and the id the engine reports *for the
+        // container* — an immutable fact about that container, never a
+        // reference it happens to carry — must be that exact id.
         let expected_image_id =
             resolved_image_id(backend, workdir, deadline, &mut images, expected_image)?;
         let reported_image = row.image.trim();
@@ -704,13 +692,21 @@ fn receipt(
                 row.id
             )));
         }
-        let (actual_image_id, image_id_source) = match exact_image_id(reported_image) {
-            Some(id) => (id, ImageIdSource::Reported),
-            None => (
-                resolved_image_id(backend, workdir, deadline, &mut images, reported_image)?,
-                ImageIdSource::ResolvedFromReference,
-            ),
-        };
+        // A reference the container reports is mutable: resolving it after the
+        // apply says where the tag points now, not which image this container
+        // was created from, so a retag inside the window would be invisible.
+        // Only an engine-reported id binds; otherwise the window refuses and
+        // names the missing engine API rather than mint a receipt from a
+        // mutable reference.
+        let actual_image_id = exact_image_id(reported_image).ok_or_else(|| {
+            inconsistent(format!(
+                "container `{}` reports image `{reported_image}` and {} exposes no immutable image id for it: \
+                 `inspect`, `inspect --mode=native` and `ps --format json` carry only the mutable reference, so a retag \
+                 inside this window would be invisible and the container cannot be bound to the render's image id `{expected_image_id}`",
+                row.id,
+                selection.kind.label()
+            ))
+        })?;
         if actual_image_id != expected_image_id {
             return Err(inconsistent(format!(
                 "container `{}` was created from image id `{actual_image_id}` while the admitted render declares `{expected_image}` for service `{service}`, which resolves to image id `{expected_image_id}` on this backend",
@@ -754,7 +750,6 @@ fn receipt(
             service: service.to_owned(),
             image: row.image.clone(),
             image_id: actual_image_id,
-            image_id_source,
             image_reference: row.image_reference.clone(),
             created: row.created.clone(),
         });
@@ -789,10 +784,12 @@ fn receipt(
 /// The exact image id `reference` resolves to on the applying backend, under
 /// the window's one deadline.
 ///
-/// Resolved once per reference per window, so the render's declaration and a
-/// container's reported reference cost one read each at most. An answer that is
-/// not an exact image id, or a backend that has no answer, refuses the whole
-/// window: a reference alone is not the image a container runs.
+/// Resolved once per declared reference per window. This is the *expectation*
+/// side of the image bind — what the render's reference names on this backend
+/// inside the window — and is never used to stand in for a container's own
+/// identity. An answer that is not an exact image id, or a backend that has no
+/// answer, refuses the whole window: a reference alone is not the image a
+/// container runs.
 fn resolved_image_id(
     backend: &mut dyn EnvironmentBackend,
     workdir: &Path,
@@ -966,16 +963,22 @@ mod tests {
     }
 
     /// A native trace, not a fake: the container below was created by
-    /// `colima nerdctl --profile effigy -- compose -p … up -d` on the machine
-    /// this task ran on (project `effigy-508-img-8004725814`, image
+    /// `colima nerdctl --profile effigy -- compose -p … -f - up -d` on the
+    /// machine this task ran on (project `effigy-508-img-8004725814`, image
     /// `alpine:3.19`), captured with `nerdctl inspect` and `nerdctl image
-    /// inspect`, then removed. The window binds it to a render that declares
-    /// the short reference, and to the exact image id the engine reports for
-    /// that reference — which is the point of the id bind: the container's own
-    /// `Image` field is a reference on nerdctl, so the id comes from the image
-    /// table read inside the window.
+    /// inspect`, then removed.
+    ///
+    /// The engine's own bytes are the finding: nerdctl reports the container's
+    /// image as a reference in `Image`/`Config.Image` and exposes no image id
+    /// for the container at all (the committed fixture has no `ImageID`, and no
+    /// field of the container record carries a digest), while `nerdctl image
+    /// inspect` on the same reference does answer an exact id. A reference is mutable, so resolving
+    /// it after the apply cannot prove which image the container was created
+    /// from — a retag inside the window would be invisible. The window therefore
+    /// refuses this real container and names the missing engine API, instead of
+    /// binding it to the id the tag happens to point at now.
     #[test]
-    fn a_native_nerdctl_container_binds_to_the_exact_image_id_its_reference_resolves_to() {
+    fn a_native_nerdctl_container_cannot_bind_an_image_id_from_a_mutable_reference() {
         let rows = parse_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-compose.inspect.json"
@@ -983,6 +986,21 @@ mod tests {
         .expect("the native inspect parses");
         assert_eq!(rows.len(), 1, "one container in the trace");
         let row = &rows[0];
+        assert_eq!(
+            row.image, "docker.io/library/alpine:3.19",
+            "nerdctl reports the container's image as a reference, not an id"
+        );
+        assert_eq!(
+            row.image_reference, "docker.io/library/alpine:3.19",
+            "`Config.Image` is the same mutable reference"
+        );
+        assert!(
+            super::exact_image_id(&row.image).is_none(),
+            "the reference is not an image id, so the container carries none"
+        );
+        // The image table *can* answer an exact id for the reference — which is
+        // exactly why an id resolved through it cannot be attributed to the
+        // container: it says where the tag points now.
         let image_id = parse_image_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-alpine-3.19.image.inspect.json"
@@ -1016,9 +1034,9 @@ mod tests {
             .with_timezone(&chrono::Utc);
         let mut backend = NativeImages {
             selection: selection(),
-            image_id: image_id.clone(),
+            image_id,
         };
-        let receipt = super::receipt(
+        let refused = super::receipt(
             &mut backend,
             Path::new("/fixtures/checkout"),
             Instant::now() + CREATION_WINDOW,
@@ -1033,31 +1051,20 @@ mod tests {
             started,
             completed,
         )
-        .expect("the native container binds to the render");
-        assert_eq!(receipt.created().len(), 1);
-        let created = &receipt.created()[0];
-        assert_eq!(created.container_id(), row.id);
-        assert_eq!(created.service(), "app");
-        assert_eq!(
-            created.image_reference(),
-            "docker.io/library/alpine:3.19",
-            "Compose resolves the render's short reference"
-        );
-        assert_eq!(
-            created.image(),
-            "docker.io/library/alpine:3.19",
-            "nerdctl reports the resolved reference in `Image`"
-        );
-        assert_eq!(
-            created.image_id(),
-            image_id,
-            "the receipt binds the exact image id the render's reference resolves to"
-        );
-        assert_eq!(
-            created.image_id_source(),
-            super::ImageIdSource::ResolvedFromReference,
-            "nerdctl reports a reference, so the id is a resolution of it"
-        );
-        assert_eq!(created.created(), "2026-10-31T04:28:47.205573495Z");
+        .expect_err("a mutable reference is never an image id bind");
+        match refused {
+            effigy_kernel::observe::UnknownReason::Inconsistent(detail) => {
+                assert!(
+                    detail.contains("docker.io/library/alpine:3.19")
+                        && detail.contains("no immutable image id"),
+                    "{detail}"
+                );
+                assert!(
+                    detail.contains("retag"),
+                    "the refusal names the retag the reference cannot see: {detail}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

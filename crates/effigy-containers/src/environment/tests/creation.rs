@@ -274,11 +274,6 @@ fn a_fresh_create_names_the_exact_containers_this_apply_created() {
         IMAGE_ID,
         "the receipt binds the exact image id the render's reference resolves to"
     );
-    assert_eq!(
-        app.image_id_source(),
-        ImageIdSource::Reported,
-        "the engine reported the container's image as an exact id"
-    );
     assert_eq!(app.created(), AFTER_APPLY);
     // The receipt attributes exactly those ids, and only to this run.
     for id in [FRESH, DB] {
@@ -495,13 +490,15 @@ fn a_fully_qualified_spelling_of_the_declared_image_is_accepted() {
     );
 }
 
-/// The reference is not the image. Two containers can carry the render's own
-/// image reference and still run different images — a retag, a rebuilt tag or
-/// an actor's `docker run` of another image under the same name — so the window
-/// binds the **exact image id** the render's reference resolves to on the
-/// applying backend. A matching reference with a different image id refuses.
+/// The reference is not the image, and it is mutable. A tag moved after the
+/// container was created leaves the container carrying the render's own
+/// reference while running a different image — a retag, a rebuilt tag, or an
+/// actor's `docker run` of another image under the same name. The container's
+/// engine-reported id is the immutable fact, so it must equal the id the
+/// render's reference resolves to *now*: here the reference matches and the ids
+/// disagree, and the window refuses. This is the same-reference retag case.
 #[test]
-fn a_matching_image_reference_with_a_mismatched_image_id_refuses_the_window() {
+fn a_same_reference_retag_with_a_different_image_id_refuses_the_window() {
     let mut backend = Inventories::new();
     let mut mismatched = row(PROJECT, FRESH, "app");
     // The reference the render declares, exactly as Compose records it...
@@ -526,18 +523,16 @@ fn a_matching_image_reference_with_a_mismatched_image_id_refuses_the_window() {
     ));
 }
 
-/// A backend whose inspect reports the container's image as a reference
-/// (nerdctl) is bound through that reference: the window resolves what the
-/// container reports and requires the same exact image id the render's own
-/// reference resolves to. Here the container's reference resolves to another
-/// image, so the window refuses.
+/// A backend that reports the container's image only as a reference (nerdctl)
+/// cannot bind an image id at all: the reference is mutable, so resolving it
+/// after the apply says where the tag points now, not which image this container
+/// was created from — a retag inside the window would be invisible. The window
+/// refuses and names the missing engine API instead of accepting the reference
+/// as a stand-in for the id, and it does not even spend an image-table read on
+/// the container's own reference.
 #[test]
-fn a_reported_reference_that_resolves_to_another_image_id_refuses_the_window() {
+fn a_container_that_reports_only_a_reference_refuses_the_window() {
     let mut backend = Inventories::new();
-    backend.image(
-        QUALIFIED_IMAGE,
-        Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence()),
-    );
     let mut reference_only = row(PROJECT, FRESH, "app");
     reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
     reference_only.image = QUALIFIED_IMAGE.to_owned();
@@ -545,42 +540,24 @@ fn a_reported_reference_that_resolves_to_another_image_id_refuses_the_window() {
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
     assert_eq!(
         backend.image_reads(),
-        [IMAGE, QUALIFIED_IMAGE],
-        "the render's reference and the container's own reference are each resolved once"
+        [IMAGE],
+        "only the render's declared reference is resolved; the container's own reference is never a binding"
     );
-    let report = format!("was created from image id `{OTHER_IMAGE_ID}`");
+    let reference = format!("reports image `{QUALIFIED_IMAGE}`");
     assert!(
         matches!(
             &creation,
-            Creation::Unproven(UnknownReason::Inconsistent(detail)) if detail.contains(&report)
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains(&reference)
+                    && detail.contains("no immutable image id")
+                    && detail.contains("retag")
         ),
         "{creation:?}"
     );
-}
-
-/// A reported reference is bound as the exact image id it resolves to, and the
-/// receipt records that the id came from the reference rather than from an id
-/// the engine printed for the container.
-#[test]
-fn a_reported_reference_binds_to_its_exact_image_id() {
-    let mut backend = Inventories::new();
-    let mut reference_only = row(PROJECT, FRESH, "app");
-    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
-    reference_only.image = QUALIFIED_IMAGE.to_owned();
-    backend.then(Vec::new()).then(vec![reference_only]);
-    let (creation, run, _environment) = window(&mut backend, || Ok(()));
-    let receipt = creation.receipt().expect("a completed window is a receipt");
-    let created = receipt.for_service("app").expect("app was created");
-    assert_eq!(created.image_id(), IMAGE_ID);
-    assert_eq!(
-        created.image_id_source(),
-        ImageIdSource::ResolvedFromReference,
-        "nerdctl reports a reference, so the id follows from it"
-    );
-    assert_eq!(
-        creation.created_by(PROJECT, FRESH).verified().copied(),
-        Some(run)
-    );
+    assert!(matches!(
+        creation.created_by(PROJECT, FRESH),
+        Observed::Unknown(UnknownReason::Inconsistent(_))
+    ));
 }
 
 /// An image table that cannot answer for the render's own reference refuses the

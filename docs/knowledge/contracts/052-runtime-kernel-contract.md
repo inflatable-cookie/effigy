@@ -3521,23 +3521,30 @@ values refuses, and an apply with no admitted render refuses too: the container'
 own labels are compared with the render and are never the expectation. An id
 present before is adopted and is never `created_by` this run.
 
-The **image id** is bound, not just the reference. The window reads
-`image inspect` for the render's declared reference under the same deadline and
-requires the container's own image identity to be that exact id: an engine that
-reports the container's image as an id (Docker's `Image`) is compared directly,
-and one that reports it as a reference (nerdctl's `Image`) has that reference
-resolved on the same backend, so the ids must still agree. A matching reference
-whose image id differs refuses — a retagged or rebuilt tag, or another actor's
-container of a different image under the same name, is not this run's target.
-The receipt records which reading it stands on (`ImageIdSource`), so a backend
-that cannot report a container's image id never presents that bind as an
-independent engine fact. An `image inspect` that answers nothing, more than one
-image, or anything that is not an exact image id refuses the whole window.
+The **image id** is bound, not just the reference, and only an id the engine
+reports *for the container* counts. The window reads `image inspect` for the
+render's declared reference under the same deadline and requires the container's
+own reported image id to equal it. That id is immutable and belongs to that
+container, so a tag moved after the container was created makes the two disagree
+and refuses — a retagged or rebuilt tag, or another actor's container of a
+different image under the same name, is not this run's target. A reference the
+container reports is **not** that fact: it is mutable, so resolving it after the
+apply says where the tag points now, not which image the container was created
+from, and a retag inside the window would be invisible. Docker's `Image` is an
+exact id and binds. nerdctl's `Image`/`Config.Image` is the reference and the
+container record exposes no image id at all (`inspect`, `inspect --mode=native`
+and `ps --format json` all carry only the reference), so the window **refuses**
+rather than bind through that reference and names the missing engine API: a
+fresh nerdctl target gets no creation receipt, which is the honest answer until
+an engine reports a container's immutable image identity. An `image inspect`
+that answers nothing, more than one image, or anything that is not an exact
+image id refuses the whole window.
 
 **Refusals.** The run publishes no receipt — and no weaker one — when a service
-identity is missing or duplicated, a label or image disagrees, a creation stamp
-precedes the apply, either inventory is incomplete or times out, the apply
-failed or is unproven, or the window is otherwise partial. A crash or retry
+identity is missing or duplicated, a label, image reference or image id
+disagrees, a container reports no immutable image id, a creation stamp precedes
+the apply, either inventory is incomplete or times out, the apply failed or is
+unproven, or the window is otherwise partial. A crash or retry
 leaves the earlier attempt with no receipt, and the retry's own complete window
 is the only one that names containers.
 
