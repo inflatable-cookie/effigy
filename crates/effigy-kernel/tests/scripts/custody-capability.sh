@@ -5,24 +5,37 @@
 # of it is a secure exec *and* leaves the child with a permitted capability. An
 # unprivileged run owner may not read such a child's `/proc/<pid>/environ`, which
 # is where custody reads the anchor nonce. This script allocates exactly that
-# shape and runs the ignored regression as an ordinary account:
+# shape and runs the ignored regression as an ordinary account.
+#
+# Run it only through the admitted selector, which builds the image and hands
+# this script its path:
 #
 #   sudo -v   # once, so the single `sudo -n setcap` below is warm
-#   sh crates/effigy-kernel/tests/scripts/custody-capability.sh
+#   effigy proof:kernel:custody:capability
 #
-# Every build and test goes through `scripts/oxide-selector.sh`, the repository's
-# admitted Oxide route, so no raw Cargo runs and no selector bypass is possible.
-# Everything the script writes lives in one fresh mktemp fixture: the staged
-# single-link image, and nothing else. Nothing in the checkout is rewritten and
-# no ownership anywhere is changed; the only privileged step is `setcap` on that
-# one disposable copy, which is the shape Linux gateway setup itself installs.
-# The script refuses to run as root, because root would satisfy the ptrace read
-# and prove nothing. The owner's one-run native packet runs it in the proof VM.
+# The selector is the supported entry point because it runs the proof under
+# Effigy's own admission. This script is its second step, takes the built image
+# path as `$1`, and routes the test through `scripts/oxide-selector.sh` like any
+# other selector step does; it never invokes Cargo itself. Everything it writes
+# lives in one fresh mktemp fixture: the staged single-link image, nothing else.
+# Nothing in the checkout is rewritten and no ownership anywhere is changed. The
+# only privileged step is `setcap` on that one disposable copy, which is the
+# shape Linux gateway setup installs. The script refuses to run as root, because
+# root would satisfy the ptrace read and prove nothing.
 set -eu
 if [ "$(id -u)" -eq 0 ]; then
-    printf '%s\n' 'custody-capability: run as the unprivileged owner, not root (root would satisfy the ptrace read)' >&2
+    printf '%s\n' 'custody-capability: run through the selector as the unprivileged owner, not root (root would satisfy the ptrace read)' >&2
     exit 2
 fi
+if [ "$#" -ne 1 ]; then
+    printf '%s\n' 'custody-capability: usage: custody-capability.sh <built-effigy-image>; run `effigy proof:kernel:custody:capability` instead of invoking this script directly' >&2
+    exit 2
+fi
+built=$1
+[ -f "$built" ] || {
+    printf 'custody-capability: %s is not a file (the selector builds it first)\n' "$built" >&2
+    exit 2
+}
 command -v setcap >/dev/null 2>&1 || {
     printf '%s\n' 'custody-capability: setcap is missing; this is a Linux proof (install libcap2-bin)' >&2
     exit 2
@@ -44,10 +57,9 @@ trap cleanup EXIT
 # The owner creates it, so the owner can traverse it; 0755 also lets the
 # privileged setcap and any transcript follow the same path.
 chmod 0755 "$fixture"
-sh scripts/oxide-selector.sh build --bin effigy
 # A single link: gateway setup refuses a multiply-linked image, and the anchor
 # must exec this exact file.
-cp target/debug/effigy "$fixture/effigy"
+cp "$built" "$fixture/effigy"
 chmod 0755 "$fixture/effigy"
 if ! sudo -n setcap cap_net_bind_service=ep "$fixture/effigy"; then
     printf '%s\n' 'custody-capability: `sudo -n setcap` was refused; run `sudo -v` first' >&2
