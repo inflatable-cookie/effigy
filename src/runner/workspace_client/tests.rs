@@ -171,10 +171,11 @@ pub(super) fn publish(
             generation: Generation::new(document.session.generation),
             secret: capability.clone(),
         };
-        // The named proof client, and the client this process resolves to, so a
-        // dispatch under test presents the capability the same way a terminal
-        // would.
-        for client in [TEST_CLIENT.to_owned(), client_id().expect("a client")] {
+        // A dispatch under test presents the capability the way a terminal would,
+        // so this process declares the client the fixture publishes for (an entry
+        // exports exactly this per terminal).
+        std::env::set_var("EFFIGY_WORKSPACE_CLIENT_ID", TEST_CLIENT);
+        for client in [TEST_CLIENT.to_owned()] {
             guest.put_file(
                 &client_capability_path(&client),
                 render_capability(&stored).as_bytes(),
