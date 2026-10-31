@@ -122,15 +122,32 @@ impl channel::Resolver for ProbeResolver {
     }
 }
 
-/// Answers exactly one probe operation, for the session the grant is bound to.
+/// Answers exactly one probe operation, and records that the host reached its
+/// dispatch seam, so a missing reply can be traced instead of guessed.
 #[derive(Debug)]
-pub(crate) struct ProbeObserver;
+pub(crate) struct ProbeObserver {
+    pub(crate) trace: std::path::PathBuf,
+}
+
+impl ProbeObserver {
+    fn note(&self, line: &str) {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.trace)
+        {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+}
 impl channel::Observer for ProbeObserver {
     fn observe(
         &mut self,
         _: &ObserveContext,
         body: &channel::ObserveBody,
     ) -> Result<serde_json::Value, channel::Refusal> {
+        self.note(&format!("observe:{}", body.op));
         if body.op != PROBE_OPERATION || body.target != Some(channel::Target::Host) {
             return Err(channel::Refusal::forbidden(
                 "this disposable serving host observes only the probe operation",
@@ -285,7 +302,14 @@ fn serving_server(
     };
     let host_checkout = request.project_path.clone();
     let _ = (&host_checkout, root);
-    let dispatcher = Dispatcher::new(ProbeAdmission, ProbeResolver, ProbeObserver, ProbeIds);
+    let dispatcher = Dispatcher::new(
+        ProbeAdmission,
+        ProbeResolver,
+        ProbeObserver {
+            trace: request.state_home.join("probe-trace.log"),
+        },
+        ProbeIds,
+    );
     Ok(channel::Server::new(
         negotiation,
         fence,

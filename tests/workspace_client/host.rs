@@ -311,15 +311,27 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         result["published"]["session_run"]
             .as_str()
             .expect("the published session run"),
+        &state_home.join("probe-trace.log"),
     )
     .expect("the retained authority answers a third process");
     assert!(
         authority.negotiated,
         "the retained listener negotiated the pinned protocol from a third process"
     );
-    // The positive request/response on the retained listener is #452's production
-    // gate (reported with this task): silence or a timeout here proves neither
-    // acceptance nor refusal, so no capability claim is asserted.
+    // The unissued capability must be refused on its own connection: silence or a
+    // timeout fails, so this is a real negative proof of the retained grant book.
+    assert!(
+        authority.refused_unissued,
+        "a capability the host never issued is refused: {authority:?}"
+    );
+    // The positive probe request is traced, not asserted: the fixture dispatcher's
+    // observe seam is never reached for it (empty trace) even though this host
+    // answers a typed refusal on the control connection, so the production
+    // positive request/response remains #452's gate.
+    assert!(
+        authority.trace.is_empty() || authority.answered,
+        "a reached dispatcher answers or refuses; the trace must agree: {authority:?}"
+    );
     let session = read_summary(&observe, &root, session_run).expect("the session run is recorded");
     assert!(
         !matches!(session.phase, Phase::Closed | Phase::Stopping),
@@ -559,6 +571,32 @@ fn a_listener_failure_retires_the_session_once() {
                     .and_then(|summary| summary.cleanup_complete),
                 Some(true),
                 "the session it served reports complete cleanup"
+            );
+            // The listener failure is named on the exact session run id and the
+            // exact detached host run id, not merely reported on the socket.
+            assert!(
+                matches!(
+                    session
+                        .as_ref()
+                        .and_then(|summary| summary.workload.clone()),
+                    Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                        cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                        signal: None
+                    })
+                ),
+                "the session run names the listener failure: {}",
+                summary_names(&session)
+            );
+            assert!(
+                matches!(
+                    host.as_ref().and_then(|summary| summary.workload.clone()),
+                    Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                        cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                        signal: None
+                    })
+                ),
+                "the detached host run names the listener failure: {}",
+                summary_names(&host)
             );
             break;
         }
@@ -887,11 +925,16 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         result["published"]["session_run"]
             .as_str()
             .expect("the published session run"),
+        &state_home.join("probe-trace.log"),
     )
     .expect("the retained authority answers after a front-end crash");
     assert!(
         authority.negotiated,
         "the retained listener still negotiates the pinned protocol after a front-end crash"
+    );
+    assert!(
+        authority.refused_unissued,
+        "the retained grant book still refuses an unissued capability: {authority:?}"
     );
 
     // A competing DETACHED host cannot become the live session's owner: it runs

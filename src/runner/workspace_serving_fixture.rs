@@ -197,10 +197,17 @@ pub fn initiate_from_stdin() -> Result<String, String> {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AuthorityProbe {
     /// The retained listener answered this process's pinned TLS handshake and
-    /// protocol greeting. Nothing more is claimed here: silence, EOF or a timeout
-    /// on a later frame proves neither capability acceptance nor a missing one, so
-    /// the positive request/response is #452's production gate.
+    /// protocol greeting.
     pub negotiated: bool,
+    /// The retained grant book ANSWERED the fixture's probe request with the
+    /// exact expected body and this request's id. Silence, EOF or a timeout fails.
+    pub answered: bool,
+    /// The unissued capability was REFUSED on its own connection with a typed
+    /// refusal frame. Silence, EOF or a timeout fails.
+    pub refused_unissued: bool,
+    /// The fixture dispatcher recorded whether its observe seam was reached, so a
+    /// missing reply is traced rather than guessed.
+    pub trace: Vec<String>,
 }
 
 /// Authenticate against a running host from this process: the pinned TLS
@@ -213,6 +220,7 @@ pub fn probe_authority(
     pin: &str,
     capability: &str,
     session_run: &str,
+    trace_path: &std::path::Path,
 ) -> Result<AuthorityProbe, String> {
     use effigy_kernel::id::{Digest, Generation, RunId};
     use effigy_kernel::workspace_channel::{Frame, Hello, Secret, PROTOCOL_V1, SCHEMA};
@@ -238,6 +246,7 @@ pub fn probe_authority(
     let session: RunId = session_run
         .parse()
         .map_err(|_| "the published session run is not a run id".to_owned())?;
+    let trace_path = trace_path.to_path_buf();
     let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
         address,
         pin.clone(),
@@ -259,18 +268,106 @@ pub fn probe_authority(
     let negotiated = matches!(hello, Some(Frame::HelloOk(_)));
     if !negotiated {
         let _ = hello;
-        return Ok(AuthorityProbe { negotiated: false });
+        return Ok(AuthorityProbe {
+            negotiated: false,
+            answered: false,
+            refused_unissued: false,
+            trace: Vec::new(),
+        });
     }
-    // The capability is presented, and nothing further is claimed from this
-    // connection: silence, EOF or a timeout proves neither acceptance nor
-    // refusal, so the positive request/response is #452's production gate and is
-    // reported to it rather than asserted here.
+    // The capability is presented, then the fixture's probe operation is sent.
+    // The reply must be THIS request's answer: silence, EOF, a timeout, a read
+    // error, a refusal or another request's answer all fail.
     write_answer(&mut transport, &Frame::Authenticate(capability))?;
     let _ = read_answer(&mut transport)?;
-    Ok(AuthorityProbe { negotiated })
+    let request_id = effigy_kernel::run::RequestId::new([0x5a; 16]);
+    write_answer(
+        &mut transport,
+        &Frame::Request(effigy_kernel::workspace_channel::Request {
+            id: request_id,
+            context_generation: effigy_kernel::id::Generation::new(1),
+            environment_generation: effigy_kernel::id::Generation::new(1),
+            session_run_id: session,
+            container_id: "fixture".to_owned(),
+            vm_boot_id: "fixture".to_owned(),
+            body: effigy_kernel::workspace_channel::RequestBody::Observe(
+                effigy_kernel::workspace_channel::ObserveBody {
+                    op: crate::runner::workspace_client::serving_fixture::PROBE_OPERATION
+                        .to_owned(),
+                    target: Some(effigy_kernel::workspace_channel::Target::Host),
+                },
+            ),
+        }),
+    )?;
+    let answered = match read_answer_within(&mut transport, std::time::Duration::from_secs(10))? {
+        Some(effigy_kernel::workspace_channel::Frame::Response(response))
+            if response.id == request_id =>
+        {
+            response.outcome
+                == effigy_kernel::workspace_channel::ResponseOutcome::Observed(
+                    serde_json::json!({"answer": "retained-grant-authorised"}),
+                )
+        }
+        _ => false,
+    };
+    drop(transport);
+
+    // The unissued control, on its own connection: a capability the host never
+    // issued must be refused with a typed refusal. Silence fails the proof.
+    let refused_unissued = unissued_is_refused(address, &pin, session)?;
+
+    // The dispatcher's own trace, so a missing reply says where it stopped.
+    let trace = std::fs::read_to_string(&trace_path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    Ok(AuthorityProbe {
+        negotiated,
+        answered,
+        refused_unissued,
+        trace,
+    })
 }
 
-/// One competing process's attempt to become a live session's serving owner.
+/// Present a capability the host never issued and require a typed refusal.
+fn unissued_is_refused(
+    address: std::net::SocketAddr,
+    pin: &effigy_kernel::id::Digest,
+    session: effigy_kernel::id::RunId,
+) -> Result<bool, String> {
+    use effigy_kernel::workspace_channel::{Frame, Hello, PROTOCOL_V1, SCHEMA};
+    let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
+        address,
+        pin.clone(),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|error| format!("the control connection failed: {error}"))?;
+    write_answer(
+        &mut transport,
+        &Frame::Hello(Hello {
+            schema: SCHEMA.to_owned(),
+            protocol_versions: vec![PROTOCOL_V1],
+            effigy_version: "fixture".to_owned(),
+            binary_digest: effigy_kernel::id::Digest([0; 32]),
+            context_generation: effigy_kernel::id::Generation::new(1),
+            session_run_id: session,
+        }),
+    )?;
+    if !matches!(read_answer(&mut transport)?, Some(Frame::HelloOk(_))) {
+        return Err("the control connection did not negotiate".to_owned());
+    }
+    write_answer(
+        &mut transport,
+        &Frame::Authenticate(effigy_kernel::workspace_channel::Secret::new([0x00; 32])),
+    )?;
+    match read_answer_within(&mut transport, std::time::Duration::from_secs(10))? {
+        Some(Frame::Refuse(_)) => Ok(true),
+        _ => Ok(false),
+    }
+}
+
+/// One competing process's report: whether it was refused, and why.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompetingOwner {
     pub refused: bool,
