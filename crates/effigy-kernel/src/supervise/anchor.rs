@@ -24,32 +24,146 @@ impl Image {
 
 /// The anchor's whole substance is the evidence custody reads about it: its
 /// recorded `{pid, boot, start}` generation, its group membership, and the
-/// custody nonce in its environment. Its image is the run's own executable,
-/// and an image that carries a file capability (the installed `effigy` carries
-/// `cap_net_bind_service` for the low-port gateway) is a secure exec: the
-/// kernel clears the dumpable attribute, which makes `/proc/<pid>/environ`
-/// refuse the operator's own reads. Custody then cannot verify the anchor it
-/// holds, refuses to signal it, and the group never closes (effigy#476).
+/// custody nonce in its environment. Its image is the run's own executable, so
+/// when that image carries a file capability (the installed `effigy` carries
+/// `cap_net_bind_service` for the low-port gateway) the anchor inherits it and
+/// two independent kernel rules then hide `/proc/<pid>/environ` from the
+/// unprivileged run owner:
 ///
-/// The anchor runs no workload code, inherits no workload stream and holds no
-/// secret beyond the nonce the contract requires it to expose, so restoring the
-/// readable state gives nothing away and keeps the identity proof exactly as
-/// strict as it was: the recorded generation, group and nonce are all still
-/// required before any signal.
+/// * the exec is a secure exec, so the kernel clears the dumpable attribute;
+/// * `cap_ptrace_access_check` grants a read only when the reader's permitted
+///   capabilities cover the target's, and the owner holds none.
+///
+/// Custody reads that file for the nonce, so it could not verify the anchor it
+/// holds, refused to signal it, and the group never closed (effigy#476). This
+/// was the whole native failure: leaders gone, anchors live and unverifiable.
+///
+/// The anchor runs no workload code, inherits no workload stream and needs no
+/// capability of its own, so it drops every capability and restores the
+/// ordinary dumpable state before it announces its pid. Both are verified, and
+/// the identity proof is exactly as strict as before: the recorded generation,
+/// group membership and nonce are still required before any signal. Nothing
+/// else is given up: a workload keeps its own capabilities and the gateway can
+/// still bind its low ports.
 #[cfg(target_os = "linux")]
-fn restore_evidence_readability() {
+fn make_evidence_readable() -> Result<(), RunError> {
+    drop_capabilities()?;
+    restore_dumpable()?;
+    Ok(())
+}
+
+/// Drop this process's effective, permitted and inheritable capability sets,
+/// which also empties the ambient set: an ambient capability must be in both
+/// the permitted and inheritable sets, so removing it from either removes it
+/// from ambient too. The bounding set needs no change — it only limits future
+/// execs, and the anchor execs nothing — but a caller that starts with a wider
+/// permitted set is handled by the same empty `capset`.
+/// The kernel's own capability ABI (`linux/capability.h`): the header names the
+/// version and target pid, and version 3 writes the 64-bit sets as two words.
+/// `libc` does not expose these on every target Rust builds for, so the layout
+/// is stated here, unchanged since Linux 2.6.26.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct CapabilityHeader {
+    version: u32,
+    pid: i32,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapabilityData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+/// `_LINUX_CAPABILITY_VERSION_3`, the 64-bit-set version.
+#[cfg(target_os = "linux")]
+const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+#[cfg(target_os = "linux")]
+fn capability_sets() -> [CapabilityData; 2] {
+    [
+        CapabilityData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+        CapabilityData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+    ]
+}
+
+/// Drop this process's effective, permitted and inheritable capability sets,
+/// which also empties the ambient set: an ambient capability must be in both
+/// the permitted and inheritable sets, so removing it from either removes it
+/// from ambient too. The bounding set needs no change — it only limits future
+/// execs, and the anchor execs nothing — but a caller that starts with a wider
+/// permitted set is handled by the same empty `capset`.
+#[cfg(target_os = "linux")]
+fn drop_capabilities() -> Result<(), RunError> {
+    // pid 0 is this process; version 3 covers the 64-bit sets in two words.
+    let mut header = CapabilityHeader {
+        version: CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let mut current = capability_sets();
+    // SAFETY: the header names this process and the kernel ABI version, and
+    // `current` provides the two writable words capget fills in.
+    if unsafe { libc::syscall(libc::SYS_capget, &mut header, current.as_mut_ptr()) } != 0 {
+        return Err(RunError::broken(
+            "the custody anchor cannot read its own capabilities",
+        ));
+    }
+    let dropping = capability_sets();
+    // SAFETY: as above; capset replaces only this process's own sets.
+    if unsafe { libc::syscall(libc::SYS_capset, &header, dropping.as_ptr()) } != 0 {
+        return Err(RunError::broken(
+            "the custody anchor cannot drop its capabilities",
+        ));
+    }
+    let mut remaining = capability_sets();
+    // SAFETY: as above; the read-back proves the drop took effect.
+    if unsafe { libc::syscall(libc::SYS_capget, &mut header, remaining.as_mut_ptr()) } != 0 {
+        return Err(RunError::broken(
+            "the custody anchor cannot confirm its capability drop",
+        ));
+    }
+    if remaining
+        .iter()
+        .any(|set| set.effective != 0 || set.permitted != 0 || set.inheritable != 0)
+    {
+        // Without an empty set the owner may still be refused `/proc` reads, so
+        // the anchor would be evidence nobody can check. Refuse to be an anchor
+        // rather than let a settle time out over it.
+        return Err(RunError::broken(
+            "the custody anchor kept a capability and cannot prove its evidence",
+        ));
+    }
+    Ok(())
+}
+
+/// Restore the ordinary dumpable state the secure exec cleared, and prove it.
+#[cfg(target_os = "linux")]
+fn restore_dumpable() -> Result<(), RunError> {
     // SAFETY: PR_GET_DUMPABLE and PR_SET_DUMPABLE take one integer argument and
     // only read or set this process's own dumpable attribute.
-    let state = unsafe { libc::prctl(libc::PR_GET_DUMPABLE) };
-    if state != 0 {
-        // 1 is the ordinary state, and a failed query is not proof that the
-        // environment is unreadable, so neither one changes anything.
-        return;
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1) } != 0 {
+        return Err(RunError::broken(
+            "the custody anchor cannot restore its readable identity evidence",
+        ));
     }
-    // SAFETY: as above; 1 selects the ordinary dumpable state.
-    // A refused request leaves the anchor exactly as it was: custody's identity
-    // requirements do not move, and settlement stays fail-closed.
-    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1) };
+    // SAFETY: as above; the read-back proves the state the owner's read needs.
+    if unsafe { libc::prctl(libc::PR_GET_DUMPABLE) } != 1 {
+        return Err(RunError::broken(
+            "the custody anchor did not become readable identity evidence",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn entry() -> Result<(), RunError> {
@@ -60,7 +174,7 @@ pub(super) fn entry() -> Result<(), RunError> {
         return Err(RunError::broken("anchor nonce missing"));
     }
     #[cfg(target_os = "linux")]
-    restore_evidence_readability();
+    make_evidence_readable()?;
     // SAFETY: supported signals and SIG_IGN/SIG_DFL; this single-threaded helper
     // never forwards or handles workload signals. INT and HUP stay ignored
     // because a terminal delivers them to the whole foreground group, where the

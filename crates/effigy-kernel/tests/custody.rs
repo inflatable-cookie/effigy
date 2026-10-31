@@ -695,6 +695,131 @@ fn custody_settles_an_empty_group_after_its_anchor_exits() {
 /// this is the Linux gateway-setup shape (effigy#476); the fixture models that
 /// exec state for every anchor, which makes this proof the regression. On a
 /// host without that kernel rule it still proves a live anchor retires last.
+/// The real post-capability shape (effigy#476): the anchor image is the
+/// installed `effigy`, which carries `cap_net_bind_service`, and the run owner
+/// is an unprivileged account that holds no capability of its own. Two fresh
+/// bind probes must release and settle with no residue. Before the anchor
+/// freed its own capabilities, both left residue: the secure exec cleared
+/// `dumpable` *and* `cap_ptrace_access_check` refused the owner's read of
+/// `/proc/<anchor>/environ` because the anchor's permitted set was not a subset
+/// of the owner's. The isolated fixture test modelled only `dumpable`, which is
+/// why it passed while this path failed natively.
+///
+/// The image must be a single-link copy with `cap_net_bind_service=ep` and the
+/// test must run as a non-root account; run
+/// `crates/effigy-kernel/tests/scripts/custody-capability.sh`, which allocates
+/// both and passes `EFFIGY_KERNEL_CUSTODY_CAPABILITY_IMAGE`.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "proof: needs a capability-bearing image and a non-root account; run crates/effigy-kernel/tests/scripts/custody-capability.sh"]
+fn custody_settles_two_setup_probes_from_a_capability_bearing_image() {
+    use effigy_kernel::supervise::{Executable, LifecyclePlan, Placement};
+    let image = std::env::var_os("EFFIGY_KERNEL_CUSTODY_CAPABILITY_IMAGE")
+        .map(PathBuf::from)
+        .expect("EFFIGY_KERNEL_CUSTODY_CAPABILITY_IMAGE: the allocated capability image");
+    // The failure needs an owner that holds nothing: a reader with the anchor's
+    // capabilities (or root's) would satisfy the ptrace check and prove nothing.
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let permitted = status
+        .lines()
+        .find(|line| line.starts_with("CapPrm:"))
+        .unwrap_or_default()
+        .trim_start_matches("CapPrm:")
+        .trim();
+    assert_eq!(
+        permitted, "0000000000000000",
+        "run as an unprivileged owner"
+    );
+    let home = home();
+    let budget = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(180)),
+        CancelToken::default(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    let root = StateRoot::effects(&budget, home.path()).unwrap();
+    // The custody image is the product binary, so its own sentinel takes the
+    // recovery invocation the product defines rather than the fixture's.
+    let recovery = Invocation::validated(
+        vec!["effigy".into(), "release".into(), "run".into()],
+        |args| args == ["effigy", "release", "run"],
+    )
+    .unwrap();
+    let mut run = Run::begin(
+        &budget,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: recovery,
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&image).unwrap(),
+                placement: Placement::Inline,
+            }),
+        },
+        &budget.operation().cleanup(Duration::from_secs(30)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    let mut anchors = Vec::new();
+    for _ in 0..2 {
+        let process = ProcessSpec {
+            argv: vec![
+                image.clone().into_os_string(),
+                "__gateway-bind-probe".into(),
+                "127.0.0.1:80".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::from_secs(5),
+            lifetime: Lifetime::Finite(Duration::from_secs(90)),
+            terminal: Terminal::None,
+            label: "gateway setup adapter: effigy".into(),
+        };
+        let mut child = Custody::spawn(&mut run, process, &budget).unwrap();
+        anchors.push(child.anchor().expect("the run is anchored"));
+        let exit = *child
+            .wait(budget.operation())
+            .verified()
+            .expect("the probe reports its exit");
+        assert_eq!(
+            exit.code,
+            0,
+            "the capability-bearing probe binds its low port: {}",
+            String::from_utf8_lossy(&child.tail())
+        );
+        child.complete(&mut run, exit).unwrap();
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let settled = run
+        .settle(
+            &budget.operation().cleanup(Duration::from_secs(60)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+    assert_eq!(settled.cleanup(), CleanupOutcome::Complete);
+    assert!(
+        settled.unresolved().is_empty(),
+        "{:?}",
+        settled.unresolved()
+    );
+    for anchor in anchors {
+        assert!(
+            matches!(
+                effigy_kernel::ident::process_state(anchor.pid),
+                Observed::Absent(_)
+                    | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+            ),
+            "settlement retires every anchor it was given"
+        );
+    }
+}
+
 #[test]
 fn custody_retires_an_anchor_whose_image_cleared_its_evidence() {
     let home = home();

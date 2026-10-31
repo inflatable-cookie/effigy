@@ -1121,15 +1121,21 @@ recovery; the native helper keeps the full nonce verification requirement.
 cgroups add Linux-only infrastructure and delegation policy. Neither replaces the
 portable anchor needed on macOS.
 
-An anchor must be able to show its evidence, so it restores the state a secure
-exec clears. Its image is the run's own executable, and an image that carries a
-file capability — the installed `effigy` carries `cap_net_bind_service` for the
-low-port gateway — is a secure exec: Linux clears the process's dumpable
-attribute, and `/proc/<pid>/environ` then refuses the same account's reads. On
-Linux the entry therefore restores the ordinary dumpable state before it
-acknowledges its pid, so the recorded `{pid, start, boot}` generation, the
-recorded group membership and the nonce all stay readable and the identity
-proof is exactly as strict as above (effigy#476). The anchor runs no workload
+An anchor must be able to show its evidence, so it removes what hides it. Its
+image is the run's own executable, and an image that carries a file capability —
+the installed `effigy` carries `cap_net_bind_service` for the low-port gateway —
+leaves two kernel rules hiding `/proc/<pid>/environ` from the unprivileged run
+owner: the exec is a secure exec, so the dumpable attribute is cleared, and the
+ptrace access check grants a read only when the reader's permitted capabilities
+cover the target's. On Linux the entry therefore drops its effective, permitted
+and inheritable sets — which empties the ambient set too, since an ambient
+capability must be in both the permitted and inheritable sets — and restores the
+ordinary dumpable state before it acknowledges its pid, then verifies both and
+refuses to be an anchor if either fails (effigy#476). The anchor needs no
+capability of its own, and the workload keeps its own capabilities and low-port
+bind. The recorded `{pid, start, boot}` generation, the recorded group
+membership and the nonce all stay readable and the identity proof is exactly as
+strict as above. The anchor runs no workload
 code and its environment holds only the nonce, which is already evidence rather
 than a credential, so nothing else is exposed. A refused restore leaves the
 anchor as it was and settlement fail-closed; it never widens authority. A
