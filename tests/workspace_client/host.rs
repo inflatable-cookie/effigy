@@ -257,6 +257,31 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         TcpStream::connect_timeout(&endpoint, Duration::from_secs(5)).is_ok(),
         "the committed listener is still bound after the initiator exited"
     );
+    // The retained authority, probed from this third process: the pinned TLS
+    // identity the activation published, and the capability its grant book
+    // issued. Both must still answer after the initiating process exited.
+    let authority = effigy::workspace_serving_fixture::probe_authority(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+        result["published"]["pin"]
+            .as_str()
+            .expect("the published pin"),
+        CAPABILITY,
+        result["published"]["session_run"]
+            .as_str()
+            .expect("the published session run"),
+    )
+    .expect("the retained authority answers a third process");
+    assert!(
+        authority.negotiated,
+        "the retained listener negotiated the pinned protocol"
+    );
+    assert!(
+        authority.authenticated,
+        "the retained grant book accepted the capability it issued: {:?}",
+        authority.refusal
+    );
     let session = read_summary(&observe, &root, session_run).expect("the session run is recorded");
     assert!(
         !matches!(session.phase, Phase::Closed | Phase::Stopping),
@@ -684,4 +709,59 @@ fn a_competing_owner_is_refused_inside_the_detached_process() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The startup result is bounded by the caller's own deadline, not by an
+/// internal one: a host that announces late makes the caller give up when it
+/// asked to, and the refusal says so.
+#[test]
+fn startup_honours_the_callers_deadline() {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving-deadline").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let mut request = request(&fixture, &project);
+    // The activation announces only after five seconds.
+    request["activation"]["announce_delay_ms"] = serde_json::json!(5_000);
+
+    let body = serde_json::json!({ "request": request, "budget_ms": 300_u64 });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture-deadline")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the initiating process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(body.to_string().as_bytes())
+        .expect("the request is written");
+    let started = Instant::now();
+    let output = child
+        .wait_with_output()
+        .expect("the initiating process exits");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "a late host is not a success");
+    assert!(
+        stderr.contains("did not announce its session in time") || stderr.contains("TimedOut"),
+        "the refusal names the deadline: {stderr}"
+    );
+    let reported = stderr
+        .split("deadline=")
+        .nth(1)
+        .and_then(|text| text.split("ms").next())
+        .and_then(|text| text.parse::<u128>().ok())
+        .expect("the refusal reports the deadline it honoured");
+    assert!(
+        reported < 3_000,
+        "the caller's 300ms deadline bounded the wait, not the 5s announcement ({reported}ms)"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the caller gave up before the host announced ({elapsed:?})"
+    );
 }

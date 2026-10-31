@@ -131,6 +131,10 @@ pub(crate) struct DisposableActivation {
     /// process, so the kernel's one-serving-owner fence is exercised.
     #[serde(default)]
     pub(crate) contend: bool,
+    /// Delay the announcement by this long, so a caller's startup deadline is
+    /// what bounds the wait.
+    #[serde(default)]
+    pub(crate) announce_delay_ms: u64,
 }
 
 /// What one serving host announced to its front end: the committed session it
@@ -248,12 +252,17 @@ impl ServingHost {
     ) -> Result<ServingPublished, RunError> {
         let until = std::time::Instant::now() + budget;
         loop {
-            if std::time::Instant::now() > until {
+            let remaining = until.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
                 return Err(RunError::unavailable(
                     "the workspace serving host did not announce its session in time",
                 ));
             }
-            let event = self.client.event(cx.operation()).map_err(|error| {
+            // Each read is bounded by what is left of the *requested* budget, so a
+            // silent host costs the caller exactly its own deadline and never the
+            // effect context's.
+            let operation = cx.operation().child(remaining);
+            let event = self.client.event(&operation).map_err(|error| {
                 RunError::unavailable(format!("the serving host event stream ended: {error}"))
             })?;
             match event {
