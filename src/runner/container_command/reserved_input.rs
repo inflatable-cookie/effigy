@@ -48,7 +48,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{BackendKind, BackendSelection};
 use effigy_containers::EffectiveContainerPolicy;
@@ -88,12 +88,6 @@ type EnvError = effigy_containers::environment::EnvError;
 fn evidence() -> Evidence {
     Evidence::new("reserved publication input builder".into(), None).expect("fixed evidence")
 }
-
-/// How far the backend's container clock may trail this host's before a creation
-/// stamp stops proving that the container appeared after the decision saw the
-/// project empty. The daemon runs on this machine (or its VM), so this only
-/// absorbs scheduling and stamp granularity.
-const CREATION_CLOCK_TOLERANCE: Duration = Duration::from_secs(2);
 
 fn unavailable(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::unavailable(message))
@@ -201,13 +195,6 @@ pub(in crate::runner) trait ReservedBackendObservation {
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<VerifiedBinding>;
-    /// When the backend reports that this exact container was created.
-    fn created_at(
-        &mut self,
-        policy: &EffectiveContainerPolicy,
-        container_id: &str,
-        deadline: PublicationDeadline,
-    ) -> Observed<SystemTime>;
     /// The guest's own boot, machine type and C library in that exact container.
     fn identity(
         &mut self,
@@ -453,20 +440,6 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         }
     }
 
-    fn created_at(
-        &mut self,
-        policy: &EffectiveContainerPolicy,
-        container_id: &str,
-        deadline: PublicationDeadline,
-    ) -> Observed<SystemTime> {
-        crate::runner::container_runtime_prep::observed_container_created_at(
-            policy.repo_root.as_path(),
-            policy,
-            container_id,
-            deadline.at(),
-        )
-    }
-
     fn identity(
         &mut self,
         policy: &EffectiveContainerPolicy,
@@ -596,6 +569,30 @@ fn environment_record_bounded(
     }
 }
 
+/// The one owner fact a fresh workspace target needs and no owner provides.
+///
+/// The kernel's fresh-target check accepts a candidate whose `created_by` names
+/// this run, so that value must be a verified creation fact: which run, on which
+/// backend, created this exact full container id. The engine adapters record none
+/// (their apply effect names the engine, context and project; Compose's labels
+/// name the project and service), and neither a creation timestamp inside this
+/// activation's window nor the absence of a container before the apply proves
+/// *who* created it. A competing Compose actor creates the same project, service
+/// and labels, so attributing it to this run would satisfy the kernel on the
+/// builder's word.
+pub(in crate::runner) const MISSING_TARGET_CREATION_OWNER: &str =
+    "an engine creation receipt naming the activation run and the exact full container id \
+     (`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`)";
+
+/// A fresh workspace target cannot be published until that owner exists.
+fn fresh_target_refusal() -> EnvError {
+    refused(format!(
+        "workspace has no verified creation identity for a fresh target, so this activation \
+         cannot publish it; the missing owner signature is {MISSING_TARGET_CREATION_OWNER}. \
+         Re-run once the environment's container exists so the decision observes it"
+    ))
+}
+
 /// What a caller must hand the pre-decision plan.
 pub(in crate::runner) struct ReservedPlanRequest<'a> {
     /// The policy this activation was loaded from. [`plan`] derives the rendered
@@ -622,8 +619,6 @@ pub(in crate::runner) struct ReservedPublicationPlan {
     deadline: PublicationDeadline,
     backend_label: String,
     render_digest: String,
-    /// When planning observed this project had no running container, if it did.
-    absence_observed_at: Option<SystemTime>,
 }
 
 impl std::fmt::Debug for ReservedPublicationPlan {
@@ -670,6 +665,13 @@ impl ReservedPublicationPlan {
         &self.render_digest
     }
 
+    /// The two frozen digests, for a test that must hand-build a decision no
+    /// production caller can construct.
+    #[cfg(test)]
+    pub(in crate::runner) fn frozen_digests(&self) -> (Digest, Digest) {
+        (self.selection.clone(), self.inputs.clone())
+    }
+
     pub(in crate::runner) fn deadline(&self) -> PublicationDeadline {
         self.deadline
     }
@@ -703,12 +705,10 @@ impl ReservedPublicationPlan {
             ArtifactEvidence::Unselected { .. } => {}
         }
         match &target {
-            TargetEvidence::Absent { project, backend } => {
-                if project != &self.policy.project_name || backend != &self.backend_label {
-                    return Err(refused(
-                        "workspace target evidence names another project or backend",
-                    ));
-                }
+            TargetEvidence::Absent { .. } => {
+                // Refuse before the decision is frozen rather than let a fresh
+                // target reach the kernel's `created_by` check unattributed.
+                return Err(fresh_target_refusal());
             }
             TargetEvidence::Observed(identity) => {
                 if identity.backend != self.backend_label {
@@ -805,7 +805,6 @@ pub(in crate::runner) fn plan(
     deadline.remaining()?;
     // Before anything applies: a container already running for this project is a
     // live predecessor, and this apply may recreate it.
-    let predecessor_observed_at = SystemTime::now();
     let predecessor = verified(
         observation.predecessor(policy, deadline),
         "workspace predecessor",
@@ -831,11 +830,6 @@ pub(in crate::runner) fn plan(
         deadline,
         backend_label: local.backend_label,
         render_digest: local.render_digest,
-        absence_observed_at: if predecessor.running {
-            None
-        } else {
-            Some(predecessor_observed_at)
-        },
     }))
 }
 
@@ -1108,7 +1102,7 @@ pub(in crate::runner) fn observe<'a>(
         created_by,
     } = facts;
     let reservation_generation = *reservation_generation;
-    let created_by = *created_by;
+    let _ = created_by;
     // The decision must be this plan's decision: another plan's frozen
     // materialisation, selection or inputs would publish bytes the decision
     // never compared.
@@ -1173,35 +1167,11 @@ pub(in crate::runner) fn observe<'a>(
             }
             None
         }
-        TargetEvidence::Absent { project, backend } => {
-            if project != &plan.policy.project_name || backend != &plan.backend_label {
-                return Err(refused(
-                    "workspace target evidence names another project or backend",
-                ));
-            }
-            // A fresh project's target is attributed to this activation only with
-            // the backend's own creation fact for this exact full id, inside the
-            // window this activation observed empty and applied in. An
-            // unattributable target refuses rather than satisfying the kernel's
-            // fresh-target check on the builder's word.
-            let absent_since = plan.absence_observed_at.ok_or_else(|| {
-                refused("workspace target is fresh but the plan never observed this project empty")
-            })?;
-            let created = verified(
-                observation.created_at(policy, &binding.container_id, deadline),
-                "workspace target creation",
-            )?;
-            if created
-                .checked_add(CREATION_CLOCK_TOLERANCE)
-                .is_none_or(|created| created < absent_since)
-            {
-                return Err(refused(format!(
-                    "workspace container {} was created before this activation observed the project \
-                     empty, so this run cannot claim it created it",
-                    binding.container_id
-                )));
-            }
-            Some(created_by)
+        TargetEvidence::Absent { .. } => {
+            // No owner proves which run created this container, so a fresh target
+            // is never attributed to this activation — even when the decision
+            // somehow froze one.
+            return Err(fresh_target_refusal());
         }
     };
     deadline.remaining()?;

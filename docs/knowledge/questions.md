@@ -865,13 +865,16 @@ than inventing them:
   address. Until an owner observes the
   address actually reachable from the guest for a default-configured profile,
   such a Colima workspace cannot publish through the reserved path.
-* **A container's creator.** No owner records "this run created container X": the
-  engine's apply effect names the engine, context and project, not the target, and
-  Compose's own labels name the project and service. The reserved publication
-  therefore proves absence-then-creation instead — this activation's own gated
-  apply, the decision's absence observation of the project, and the backend's
-  creation stamp for the exact full container id inside that window — and refuses
-  when any of those is missing. A foreign Compose actor creating the same project
-  and service inside the same window is indistinguishable from this apply, which
-  is why the kernel's fresh-target check still needs a creation receipt from the
-  backend adapter to become proof rather than strong evidence.
+* **A container's creator — blocking the fresh-target path.** No owner records
+  "this run created container X": the engine's apply effect names the engine,
+  context and project, Compose's labels name the project and service, and a
+  creation stamp inside this activation's window only proves *when* the container
+  appeared, not *who* created it — a competing Compose actor creates the same
+  project, service and labels. The reserved publication therefore refuses every
+  fresh target (`TargetEvidence::Absent`) at decision time and again at
+  observation, and names the missing signature:
+  `EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`, a
+  backend creation receipt naming the run and the exact full container id. A
+  re-observed target is exact identity matching and publishes normally, so a
+  workspace can publish after its container exists; the first up of a brand-new
+  environment cannot publish through the reserved path until that owner exists.

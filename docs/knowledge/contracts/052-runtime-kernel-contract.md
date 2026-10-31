@@ -3027,11 +3027,12 @@ after the apply, in the same process, on the admitted activation: it re-verifies
 the exact primary binding, takes the **image platform** (OS, architecture,
 variant) from the backend's own `runtime image inspect` of the image that
 container runs and the loader family from the image root the guest reports,
-requires the guest's diagnostic machine type to agree with the image, attributes a
-fresh target to this activation only with the backend's own creation stamp for the
-exact full id inside the window this activation observed the project empty (a
-container created before that observation, or no creation fact at all, refuses
-rather than satisfying the kernel's fresh-target check), selects the
+requires the guest's diagnostic machine type to agree with the image, refuses a
+**fresh** target outright because no owner proves which run created a container
+(so the kernel's `created_by` fresh-target check is never satisfied on the
+builder's word; the missing signature is
+`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`, and a
+re-observed target is exact identity matching that needs no attribution), selects the
 pinned artifact family from the *image* platform, authenticates it against its
 producer receipt under the same deadline, and refuses a target the frozen
 decision did not name. Execution is claimed only for native execution: an image

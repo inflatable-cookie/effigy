@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{BackendKind, BackendReason, BackendSelection};
 use effigy_containers::BackendId;
@@ -165,6 +165,15 @@ fn host_identity(platform: &str, libc: &str) -> WorkspaceContainerIdentity {
     }
 }
 
+/// The exact container the fake backend binds.
+fn bound_container() -> ContainerIdentity {
+    ContainerIdentity {
+        container_id: CONTAINER_ID.to_owned(),
+        vm_boot_id: BOOT_ID.to_owned(),
+        backend: "colima-nerdctl".into(),
+    }
+}
+
 fn idle_predecessor() -> PredecessorState {
     PredecessorState {
         running: false,
@@ -181,7 +190,6 @@ struct FakeBackend {
     identity: Observed<WorkspaceContainerIdentity>,
     image: Observed<ObservedImagePlatform>,
     artifact: Observed<PathBuf>,
-    created_at: Observed<SystemTime>,
     /// How long each observation pretends to take, so expiry can be exercised
     /// while one is in flight.
     takes: Option<Duration>,
@@ -204,8 +212,6 @@ impl FakeBackend {
             identity: Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
             image: Observed::Verified(image_facts(), evidence()),
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
-            // A container created after planning observed the project empty.
-            created_at: Observed::Verified(SystemTime::now(), evidence()),
             takes: None,
             reads: Rc::new(Cell::new(0)),
         }
@@ -286,15 +292,6 @@ impl ReservedBackendObservation for FakeBackend {
     ) -> Observed<VerifiedBinding> {
         self.call();
         self.binding.clone()
-    }
-    fn created_at(
-        &mut self,
-        _: &EffectiveContainerPolicy,
-        _: &str,
-        _: PublicationDeadline,
-    ) -> Observed<SystemTime> {
-        self.call();
-        self.created_at.clone()
     }
     fn identity(
         &mut self,
@@ -466,23 +463,6 @@ fn decision(inputs: PublishInputs) -> ReservedDecisionFacts {
     }
 }
 
-/// The decision the caller would freeze for a fresh project on this plan.
-fn fresh_decision(plan: &ReservedPublicationPlan) -> ReservedDecisionFacts {
-    let inputs = plan
-        .publish_inputs(
-            ArtifactEvidence::Unselected {
-                image_reference: "example:one".into(),
-                backend: plan.backend_label().to_owned(),
-            },
-            TargetEvidence::Absent {
-                project: plan.policy().project_name.clone(),
-                backend: plan.backend_label().to_owned(),
-            },
-        )
-        .expect("fresh decision inputs");
-    decision(inputs)
-}
-
 /// The decision the caller would freeze when it re-observed a live target.
 fn reobserved_decision(
     plan: &ReservedPublicationPlan,
@@ -593,7 +573,17 @@ fn colima_preserves_the_admitted_profile_and_renders_the_observed_gateway() {
         rendered.contains("effigy-host: 192.168.5.2") || rendered.contains("\"192.168.5.2\""),
         "{rendered}"
     );
-    // A decision input that names another backend is refused, not published.
+    // A re-observed target that names this backend is a decision this plan can
+    // freeze; a fresh target is refused (below), and a foreign backend refuses.
+    assert!(planned
+        .publish_inputs(
+            ArtifactEvidence::Unselected {
+                image_reference: "example:one".into(),
+                backend: planned.backend_label().to_owned(),
+            },
+            TargetEvidence::Observed(bound_container()),
+        )
+        .is_ok());
     assert!(planned
         .publish_inputs(
             ArtifactEvidence::Unselected {
@@ -605,7 +595,7 @@ fn colima_preserves_the_admitted_profile_and_renders_the_observed_gateway() {
                 backend: planned.backend_label().to_owned(),
             },
         )
-        .is_ok());
+        .is_err());
     assert!(planned
         .publish_inputs(
             ArtifactEvidence::Unselected {
@@ -870,7 +860,7 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
         },
         evidence(),
     );
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -902,10 +892,7 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
                 image_reference: "example:one".into(),
                 backend: plan.backend_label().to_owned(),
             },
-            TargetEvidence::Absent {
-                project: plan.policy().project_name.clone(),
-                backend: plan.backend_label().to_owned(),
-            },
+            TargetEvidence::Observed(bound_container()),
         )
         .expect("decision inputs");
     inputs.target = TargetEvidence::Observed(ContainerIdentity {
@@ -942,7 +929,7 @@ fn an_unknown_image_platform_refuses() {
     backend.image = Observed::Unknown(UnknownReason::Inconsistent(
         "image inspect is unavailable".into(),
     ));
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -969,7 +956,7 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
     backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -1005,7 +992,7 @@ fn emulated_execution_is_refused_rather_than_claimed() {
         evidence(),
     );
     backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -1039,7 +1026,7 @@ fn an_image_without_a_provable_c_library_refuses() {
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
     backend.identity = Observed::Verified(host_identity(host_machine(), ""), evidence());
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -1068,7 +1055,7 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = effigy_containers::with_test_effigy_home(&observation.home, || {
         observe(
@@ -1089,7 +1076,7 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
 }
 
 #[test]
-fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_platform() {
+fn a_bound_target_carries_the_verified_platform_and_never_an_invented_creator() {
     let observation = observation_checkout("fresh");
     let artifact = produced_artifact(&observation.root, host_family());
     let mut backend = FakeBackend::colima();
@@ -1098,7 +1085,7 @@ fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_plat
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
     let project = plan.policy().project_name.clone();
 
     let prepared = effigy_containers::with_test_effigy_home(&observation.home, || {
@@ -1160,8 +1147,10 @@ fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_plat
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].identity.container_id, CONTAINER_ID);
     assert_eq!(targets[0].project, project);
-    // A fresh project's container is created by this activation.
-    assert_eq!(targets[0].created_by, Some(facts.created_by));
+    // No owner proves which run created the container, so the candidate carries
+    // no creator at all: the kernel's fresh-target check is never satisfied by
+    // the builder's word.
+    assert_eq!(targets[0].created_by, None);
     assert_eq!(
         input.context.activation.container.container_id,
         CONTAINER_ID
@@ -1317,7 +1306,7 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
         },
         evidence(),
     );
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -1343,7 +1332,7 @@ fn a_policy_that_is_not_the_plans_render_is_refused() {
     let policy = rendered_policy(&observation.root);
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let probe = probe_factory();
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     let error = observe(
         ReservedObservationRequest {
@@ -1393,7 +1382,7 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
-    let facts = fresh_decision(&plan);
+    let facts = reobserved_decision(&plan, bound_container());
 
     // The same shape built for real, so the ownership claim is exercised: the
     // input's probe is the one the injected factory made for this target, and
@@ -1752,21 +1741,65 @@ fn an_expired_budget_reads_no_environment_record() {
 }
 
 #[test]
-fn a_container_that_predates_the_absence_observation_is_not_attributed() {
-    let observation = observation_checkout("created-before");
+fn a_fresh_target_is_refused_for_the_missing_creation_owner() {
+    let observation = observation_checkout("fresh-refused");
     let artifact = produced_artifact(&observation.root, host_family());
     let mut backend = FakeBackend::colima();
     backend.artifact = Observed::Verified(artifact, evidence());
-    // The plan observes the project empty now; the container the backend reports
-    // afterwards was created an hour ago, so a competing actor made it and this
-    // run cannot claim it.
-    backend.created_at =
-        Observed::Verified(SystemTime::now() - Duration::from_secs(3600), evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+
+    // No owner proves which run created a container, so a fresh target is never
+    // given a `created_by` on the builder's word: the decision is refused before
+    // it is frozen.
+    let error = plan
+        .publish_inputs(
+            ArtifactEvidence::Unselected {
+                image_reference: "example:one".into(),
+                backend: plan.backend_label().to_owned(),
+            },
+            TargetEvidence::Absent {
+                project: plan.policy().project_name.clone(),
+                backend: plan.backend_label().to_owned(),
+            },
+        )
+        .expect_err("a fresh target has no verified creation identity")
+        .to_string();
+
+    assert!(error.contains("no verified creation identity"), "{error}");
+    assert!(
+        error.contains("EnvironmentBackend::created_by"),
+        "the refusal names the missing owner signature: {error}"
+    );
+}
+
+#[test]
+fn a_frozen_fresh_decision_is_refused_at_observation_too() {
+    let observation = observation_checkout("fresh-frozen");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
     let policy = rendered_policy(&observation.root);
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
-    let facts = fresh_decision(&plan);
+    // Only a hand-built decision can still say `Absent`: the observation must not
+    // attribute it either.
+    let (selection, inputs_digest) = plan.frozen_digests();
+    let facts = decision(PublishInputs {
+        artifact: ArtifactEvidence::Unselected {
+            image_reference: "example:one".into(),
+            backend: plan.backend_label().to_owned(),
+        },
+        selection,
+        inputs_digest,
+        target: TargetEvidence::Absent {
+            project: plan.policy().project_name.clone(),
+            backend: plan.backend_label().to_owned(),
+        },
+        platform: None,
+        guest: Some(plan.guest_inputs().clone()),
+    });
 
     let error = observe(
         ReservedObservationRequest {
@@ -1778,123 +1811,8 @@ fn a_container_that_predates_the_absence_observation_is_not_attributed() {
         &facts,
         &mut backend,
     )
-    .expect_err("a pre-existing container is never a fresh target")
+    .expect_err("a frozen fresh decision is still unattributable")
     .to_string();
 
-    assert!(
-        error.contains("created before this activation observed the project empty"),
-        "{error}"
-    );
-}
-
-#[test]
-fn an_unknown_creation_fact_refuses_attribution() {
-    let observation = observation_checkout("created-unknown");
-    let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima();
-    backend.artifact = Observed::Verified(artifact, evidence());
-    backend.created_at = Observed::Unknown(UnknownReason::Inconsistent(
-        "the backend reports no creation time".into(),
-    ));
-    let policy = rendered_policy(&observation.root);
-    let plan = planned_in_home(&observation, &policy, &mut backend);
-    let rendered = plan.rendered_policy();
-    let probe = probe_factory();
-    let facts = fresh_decision(&plan);
-
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut backend,
-    )
-    .expect_err("no creation fact, no attribution")
-    .to_string();
-
-    assert!(error.contains("target creation is unknown"), "{error}");
-}
-
-#[test]
-fn a_plan_that_never_observed_absence_attributes_nothing() {
-    let observation = observation_checkout("no-absence");
-    let artifact = produced_artifact(&observation.root, host_family());
-    let policy = rendered_policy(&observation.root);
-
-    // The render digest of this checkout's plan, learned from an idle plan.
-    let mut idle = FakeBackend::colima();
-    idle.artifact = Observed::Verified(artifact.clone(), evidence());
-    let idle_plan = planned_in_home(&observation, &policy, &mut idle);
-    let render_digest = idle_plan.render_digest().to_owned();
-
-    // A live predecessor already on that very render is compatible, but the plan
-    // then has no absence record: a fresh-target decision cannot be attributed.
-    let mut live = FakeBackend::colima();
-    live.artifact = Observed::Verified(artifact, evidence());
-    live.predecessor = Observed::Verified(
-        PredecessorState {
-            running: true,
-            desired: Some(render_digest),
-        },
-        evidence(),
-    );
-    let plan = planned_in_home(&observation, &policy, &mut live);
-    assert!(
-        plan.absence_observed_at.is_none(),
-        "a live predecessor means the plan observed no absence"
-    );
-    let rendered = plan.rendered_policy();
-    let probe = probe_factory();
-    let facts = fresh_decision(&plan);
-
-    let error = observe(
-        ReservedObservationRequest {
-            repo_root: &observation.root,
-        },
-        &plan,
-        &rendered,
-        &probe,
-        &facts,
-        &mut live,
-    )
-    .expect_err("no absence record, no fresh attribution")
-    .to_string();
-
-    assert!(
-        error.contains("never observed this project empty"),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_stalled_backend_record_on_any_path_refuses_at_the_deadline() {
-    let (_fixture, root, _home) = checkout("stalled-record");
-    let policy = rendered_policy(&root);
-    // Reading the admitted backend record establishes the checkout identity
-    // token; a token path that blocks on read is the post-apply stall the
-    // binding and selection observations must both survive.
-    std::fs::create_dir_all(root.join(".git")).expect("git directory");
-    stalled(
-        &root
-            .join(".git")
-            .join(effigy_core::worktree_scope::CHECKOUT_TOKEN_FILE),
-    );
-
-    let started = Instant::now();
-    let observed = super::observed_backend_bounded(
-        &policy,
-        PublicationDeadline::new(started + Duration::from_millis(50)),
-    );
-
-    assert!(
-        matches!(observed, Observed::Unknown(_)),
-        "a stalled record cannot become a verified backend"
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "the record observation stopped at its deadline"
-    );
+    assert!(error.contains("no verified creation identity"), "{error}");
 }

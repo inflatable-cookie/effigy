@@ -799,60 +799,6 @@ fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, S
     })
 }
 
-/// When the backend reports that one verified container was created.
-///
-/// This is the only creation fact an owner exposes for an exact full id: the
-/// daemon's own `.Created` stamp. A publication that must attribute a container
-/// to its own apply compares it with the moment it observed the project empty,
-/// so a container that already existed is never adopted as freshly created.
-pub(in crate::runner) fn observed_container_created_at(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    container_id: &str,
-    deadline: Instant,
-) -> effigy_kernel::observe::Observed<std::time::SystemTime> {
-    use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
-    let output = match effigy_containers::exec::inspect_containers_for_policy(
-        repo_root,
-        policy,
-        std::slice::from_ref(&container_id.to_owned()),
-        Some(deadline),
-    ) {
-        Ok(output) => output.stdout,
-        Err(error) => {
-            return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "the container inspect is unavailable: {error}"
-            )))
-        }
-    };
-    let created = serde_json::from_slice::<serde_json::Value>(&output)
-        .ok()
-        .and_then(|records| {
-            records
-                .as_array()?
-                .first()?
-                .get("Created")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .and_then(|created| chrono::DateTime::parse_from_rfc3339(created.trim()).ok())
-        .map(|created| created.with_timezone(&chrono::Utc))
-        .and_then(|created| {
-            let seconds = u64::try_from(created.timestamp()).ok()?;
-            let nanos = created.timestamp_subsec_nanos();
-            std::time::UNIX_EPOCH.checked_add(std::time::Duration::new(seconds, nanos))
-        });
-    match created {
-        Some(created) => Observed::Verified(
-            created,
-            Evidence::new("backend container creation time".into(), None).expect("fixed evidence"),
-        ),
-        None => Observed::Unknown(UnknownReason::Inconsistent(
-            "the container inspect names no creation time".into(),
-        )),
-    }
-}
-
 /// Verify the owned binding of `service`: the running container that this
 /// checkout and scope own. Readiness itself is Running plus the service's own
 /// health check, which the bring-up wait already decided (C1); an exec that
