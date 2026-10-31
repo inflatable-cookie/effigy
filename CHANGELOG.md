@@ -509,7 +509,6 @@ During v0.x, MINOR bumps may include breaking changes.
   also refuses an entry the closure digest cannot name, such as an extra empty
   directory.
 
-
 ### Changed
 
 - **No command plane shows a canned progress label.** The Q-017 live-state
