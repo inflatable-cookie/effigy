@@ -862,6 +862,11 @@ During v0.x, MINOR bumps may include breaking changes.
   first publishes, and the second adopts that checkout when it matches the pin.
   A published checkout at another revision fails the second run and is left
   untouched. Where the checkout lands does not change.
+- **A text-only command failure carries its next action in `--json`.** A
+  failure whose payload is text, not a JSON object, now puts its `next:` line in
+  `error.human.next_action`, the same action the text form prints. Its
+  `what_failed` is the payload's first line, not a generic `json output
+  available` sentence. A failure with no action keeps `next_action: null`.
 - **Bundle source steps name what they do, and warnings stay off `--json`.** A
   local `path` source reads `snapshotting local bundle <name>` and
   `snapshotted local bundle <name>`, not a fetch. Each source's step ends once,
