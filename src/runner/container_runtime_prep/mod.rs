@@ -972,8 +972,8 @@ fn compose_service_config_hashes(
         )
         .map_err(|failure| {
             RunnerError::task_invocation(format!(
-                "compose config --hash failed: {:?}",
-                failure.failure
+                "compose config --hash did not complete in the {} phase; the backend cannot                  report this render's service hashes",
+                failure.phase.label()
             ))
         })?;
     if !captured.status.success() {
