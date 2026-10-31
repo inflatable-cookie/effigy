@@ -3027,7 +3027,11 @@ after the apply, in the same process, on the admitted activation: it re-verifies
 the exact primary binding, takes the **image platform** (OS, architecture,
 variant) from the backend's own `runtime image inspect` of the image that
 container runs and the loader family from the image root the guest reports,
-requires the guest's diagnostic machine type to agree with the image, selects the
+requires the guest's diagnostic machine type to agree with the image, attributes a
+fresh target to this activation only with the backend's own creation stamp for the
+exact full id inside the window this activation observed the project empty (a
+container created before that observation, or no creation fact at all, refuses
+rather than satisfying the kernel's fresh-target check), selects the
 pinned artifact family from the *image* platform, authenticates it against its
 producer receipt under the same deadline, and refuses a target the frozen
 decision did not name. Execution is claimed only for native execution: an image
@@ -3046,7 +3050,8 @@ with its includes, source lock, bundle and catalog roots and every fragment), an
 finding and authenticating the produced artifact (its version and receipt
 sidecars and its digest), and the admitted backend record and the Colima
 profile's gateway (the first establishes the checkout identity token, so it may
-write). A clock check before or after a synchronous read cannot
+write). That bound holds before and after the apply: the post-apply binding reads
+the same bounded record observation. A clock check before or after a synchronous read cannot
 enforce a budget while it is blocked, so the publication stops waiting at the one
 deadline and reports that fact unknown; an abandoned worker only reads. The
 producer's probe is owned, built by an injected factory from the identity the

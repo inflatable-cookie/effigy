@@ -48,7 +48,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use effigy_containers::environment::{BackendKind, BackendSelection};
 use effigy_containers::EffectiveContainerPolicy;
@@ -88,6 +88,12 @@ type EnvError = effigy_containers::environment::EnvError;
 fn evidence() -> Evidence {
     Evidence::new("reserved publication input builder".into(), None).expect("fixed evidence")
 }
+
+/// How far the backend's container clock may trail this host's before a creation
+/// stamp stops proving that the container appeared after the decision saw the
+/// project empty. The daemon runs on this machine (or its VM), so this only
+/// absorbs scheduling and stamp granularity.
+const CREATION_CLOCK_TOLERANCE: Duration = Duration::from_secs(2);
 
 fn unavailable(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::unavailable(message))
@@ -195,6 +201,13 @@ pub(in crate::runner) trait ReservedBackendObservation {
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<VerifiedBinding>;
+    /// When the backend reports that this exact container was created.
+    fn created_at(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        container_id: &str,
+        deadline: PublicationDeadline,
+    ) -> Observed<SystemTime>;
     /// The guest's own boot, machine type and C library in that exact container.
     fn identity(
         &mut self,
@@ -415,11 +428,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         );
         match bound {
             Ok(container) => {
-                let selected = crate::runner::environment::observed_backend(
-                    policy.repo_root.as_path(),
-                    policy,
-                    deadline.at(),
-                );
+                let selected = observed_backend_bounded(policy, deadline);
                 // The whole selection, not just its engine: two Colima profiles
                 // or two Docker contexts share an engine while naming different
                 // backends, so only the full value fences the planned profile.
@@ -442,6 +451,20 @@ impl ReservedBackendObservation for ContainerBackendObservation {
             }
             Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
         }
+    }
+
+    fn created_at(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        container_id: &str,
+        deadline: PublicationDeadline,
+    ) -> Observed<SystemTime> {
+        crate::runner::container_runtime_prep::observed_container_created_at(
+            policy.repo_root.as_path(),
+            policy,
+            container_id,
+            deadline.at(),
+        )
     }
 
     fn identity(
@@ -529,7 +552,7 @@ pub(in crate::runner) type ReservedProbeFactory<'a> =
 /// Reading it establishes the checkout's identity token (a write) and resolves the
 /// environment, then reads the record, so a stalled filesystem cannot hold the
 /// publication past its deadline.
-fn observed_backend_bounded(
+pub(in crate::runner) fn observed_backend_bounded(
     policy: &EffectiveContainerPolicy,
     deadline: PublicationDeadline,
 ) -> Observed<BackendSelection> {
@@ -599,6 +622,8 @@ pub(in crate::runner) struct ReservedPublicationPlan {
     deadline: PublicationDeadline,
     backend_label: String,
     render_digest: String,
+    /// When planning observed this project had no running container, if it did.
+    absence_observed_at: Option<SystemTime>,
 }
 
 impl std::fmt::Debug for ReservedPublicationPlan {
@@ -780,6 +805,7 @@ pub(in crate::runner) fn plan(
     deadline.remaining()?;
     // Before anything applies: a container already running for this project is a
     // live predecessor, and this apply may recreate it.
+    let predecessor_observed_at = SystemTime::now();
     let predecessor = verified(
         observation.predecessor(policy, deadline),
         "workspace predecessor",
@@ -805,6 +831,11 @@ pub(in crate::runner) fn plan(
         deadline,
         backend_label: local.backend_label,
         render_digest: local.render_digest,
+        absence_observed_at: if predecessor.running {
+            None
+        } else {
+            Some(predecessor_observed_at)
+        },
     }))
 }
 
@@ -1147,6 +1178,28 @@ pub(in crate::runner) fn observe<'a>(
                 return Err(refused(
                     "workspace target evidence names another project or backend",
                 ));
+            }
+            // A fresh project's target is attributed to this activation only with
+            // the backend's own creation fact for this exact full id, inside the
+            // window this activation observed empty and applied in. An
+            // unattributable target refuses rather than satisfying the kernel's
+            // fresh-target check on the builder's word.
+            let absent_since = plan.absence_observed_at.ok_or_else(|| {
+                refused("workspace target is fresh but the plan never observed this project empty")
+            })?;
+            let created = verified(
+                observation.created_at(policy, &binding.container_id, deadline),
+                "workspace target creation",
+            )?;
+            if created
+                .checked_add(CREATION_CLOCK_TOLERANCE)
+                .is_none_or(|created| created < absent_since)
+            {
+                return Err(refused(format!(
+                    "workspace container {} was created before this activation observed the project \
+                     empty, so this run cannot claim it created it",
+                    binding.container_id
+                )));
             }
             Some(created_by)
         }

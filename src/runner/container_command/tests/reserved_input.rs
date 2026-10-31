@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use effigy_containers::environment::{BackendKind, BackendReason, BackendSelection};
 use effigy_containers::BackendId;
@@ -181,6 +181,7 @@ struct FakeBackend {
     identity: Observed<WorkspaceContainerIdentity>,
     image: Observed<ObservedImagePlatform>,
     artifact: Observed<PathBuf>,
+    created_at: Observed<SystemTime>,
     /// How long each observation pretends to take, so expiry can be exercised
     /// while one is in flight.
     takes: Option<Duration>,
@@ -203,6 +204,8 @@ impl FakeBackend {
             identity: Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
             image: Observed::Verified(image_facts(), evidence()),
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
+            // A container created after planning observed the project empty.
+            created_at: Observed::Verified(SystemTime::now(), evidence()),
             takes: None,
             reads: Rc::new(Cell::new(0)),
         }
@@ -283,6 +286,15 @@ impl ReservedBackendObservation for FakeBackend {
     ) -> Observed<VerifiedBinding> {
         self.call();
         self.binding.clone()
+    }
+    fn created_at(
+        &mut self,
+        _: &EffectiveContainerPolicy,
+        _: &str,
+        _: PublicationDeadline,
+    ) -> Observed<SystemTime> {
+        self.call();
+        self.created_at.clone()
     }
     fn identity(
         &mut self,
@@ -1736,5 +1748,153 @@ fn an_expired_budget_reads_no_environment_record() {
             .join(effigy_core::worktree_scope::CHECKOUT_TOKEN_FILE)
             .exists(),
         "an expired read establishes no checkout identity"
+    );
+}
+
+#[test]
+fn a_container_that_predates_the_absence_observation_is_not_attributed() {
+    let observation = observation_checkout("created-before");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    // The plan observes the project empty now; the container the backend reports
+    // afterwards was created an hour ago, so a competing actor made it and this
+    // run cannot claim it.
+    backend.created_at =
+        Observed::Verified(SystemTime::now() - Duration::from_secs(3600), evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    let facts = fresh_decision(&plan);
+
+    let error = observe(
+        ReservedObservationRequest {
+            repo_root: &observation.root,
+        },
+        &plan,
+        &rendered,
+        &probe,
+        &facts,
+        &mut backend,
+    )
+    .expect_err("a pre-existing container is never a fresh target")
+    .to_string();
+
+    assert!(
+        error.contains("created before this activation observed the project empty"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_unknown_creation_fact_refuses_attribution() {
+    let observation = observation_checkout("created-unknown");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    backend.created_at = Observed::Unknown(UnknownReason::Inconsistent(
+        "the backend reports no creation time".into(),
+    ));
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    let facts = fresh_decision(&plan);
+
+    let error = observe(
+        ReservedObservationRequest {
+            repo_root: &observation.root,
+        },
+        &plan,
+        &rendered,
+        &probe,
+        &facts,
+        &mut backend,
+    )
+    .expect_err("no creation fact, no attribution")
+    .to_string();
+
+    assert!(error.contains("target creation is unknown"), "{error}");
+}
+
+#[test]
+fn a_plan_that_never_observed_absence_attributes_nothing() {
+    let observation = observation_checkout("no-absence");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let policy = rendered_policy(&observation.root);
+
+    // The render digest of this checkout's plan, learned from an idle plan.
+    let mut idle = FakeBackend::colima();
+    idle.artifact = Observed::Verified(artifact.clone(), evidence());
+    let idle_plan = planned_in_home(&observation, &policy, &mut idle);
+    let render_digest = idle_plan.render_digest().to_owned();
+
+    // A live predecessor already on that very render is compatible, but the plan
+    // then has no absence record: a fresh-target decision cannot be attributed.
+    let mut live = FakeBackend::colima();
+    live.artifact = Observed::Verified(artifact, evidence());
+    live.predecessor = Observed::Verified(
+        PredecessorState {
+            running: true,
+            desired: Some(render_digest),
+        },
+        evidence(),
+    );
+    let plan = planned_in_home(&observation, &policy, &mut live);
+    assert!(
+        plan.absence_observed_at.is_none(),
+        "a live predecessor means the plan observed no absence"
+    );
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    let facts = fresh_decision(&plan);
+
+    let error = observe(
+        ReservedObservationRequest {
+            repo_root: &observation.root,
+        },
+        &plan,
+        &rendered,
+        &probe,
+        &facts,
+        &mut live,
+    )
+    .expect_err("no absence record, no fresh attribution")
+    .to_string();
+
+    assert!(
+        error.contains("never observed this project empty"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_stalled_backend_record_on_any_path_refuses_at_the_deadline() {
+    let (_fixture, root, _home) = checkout("stalled-record");
+    let policy = rendered_policy(&root);
+    // Reading the admitted backend record establishes the checkout identity
+    // token; a token path that blocks on read is the post-apply stall the
+    // binding and selection observations must both survive.
+    std::fs::create_dir_all(root.join(".git")).expect("git directory");
+    stalled(
+        &root
+            .join(".git")
+            .join(effigy_core::worktree_scope::CHECKOUT_TOKEN_FILE),
+    );
+
+    let started = Instant::now();
+    let observed = super::observed_backend_bounded(
+        &policy,
+        PublicationDeadline::new(started + Duration::from_millis(50)),
+    );
+
+    assert!(
+        matches!(observed, Observed::Unknown(_)),
+        "a stalled record cannot become a verified backend"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the record observation stopped at its deadline"
     );
 }
