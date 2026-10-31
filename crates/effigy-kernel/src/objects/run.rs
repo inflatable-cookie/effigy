@@ -104,21 +104,21 @@ impl Objects {
             };
             run.root.dir().sync().map_err(StoreError::from)?;
             if let Some((sealed, tree)) = &sealed_tree {
+                // Verified again under this gate: a private tree altered
+                // after sealing never becomes canonical.
+                let verified = objects::open(tree, closure.digest(), &observe)?;
+                if verified.closure != *closure {
+                    return Err(RunError::broken("the sealed preflight is not this closure"));
+                }
+                // The receipt's inventory pins the bytes *and* the private
+                // modes exactly as they were verified at seal time. A tree
+                // whose bytes still hash the same but whose modes drifted
+                // (a file left 0700, say, which is still private) is not the
+                // sealed artifact and must never become canonical.
+                if verified.inventory != sealed.inventory() {
+                    return Err(RunError::broken("the sealed preflight inventory changed"));
+                }
                 if objects.entry(&name).map_err(StoreError::from)?.is_none() {
-                    // Verified again under this gate: a private tree altered
-                    // after sealing never becomes canonical.
-                    let verified = objects::open(tree, closure.digest(), &observe)?;
-                    if verified.closure != *closure {
-                        return Err(RunError::broken("the sealed preflight is not this closure"));
-                    }
-                    // The receipt's inventory pins the bytes *and* the private
-                    // modes exactly as they were verified at seal time. A tree
-                    // whose bytes still hash the same but whose modes drifted
-                    // (a file left 0700, say, which is still private) is not the
-                    // sealed artifact and must never become canonical.
-                    if verified.inventory != sealed.inventory() {
-                        return Err(RunError::broken("the sealed preflight inventory changed"));
-                    }
                     crate::fault_point!(ObjectRenameBefore)?;
                     #[cfg(test)]
                     crate::objects::preflight::test_hooks::promote_point();
@@ -162,16 +162,25 @@ impl Objects {
                     crate::fault_point!(ObjectRenameAfter)?;
                 }
             }
+            let published = objects::open(&objects, closure.digest(), &observe)?;
+            if published.closure != *closure {
+                return Err(RunError::broken("object collision"));
+            }
+            if let Some(sealed) = sealed {
+                // Canonical objects, including existing and concurrent winners,
+                // must describe the exact bytes and modes the receipt verified.
+                if published.inventory != sealed.inventory() {
+                    return Err(RunError::broken(
+                        "the canonical preflight inventory changed",
+                    ));
+                }
+            }
             // The private seal tree is this publication's to remove, under the
             // gate it holds, whether it was the source or already canonical.
             if let Some(sealed) = sealed {
                 #[cfg(test)]
                 crate::objects::preflight::test_hooks::consume_point();
                 crate::objects::preflight::consume(&staging, sealed.token())?;
-            }
-            let published = objects::open(&objects, closure.digest(), &observe)?;
-            if published.closure != *closure {
-                return Err(RunError::broken("object collision"));
             }
             crate::fault_point!(ObjectPublishBefore)?;
             run.store.transaction(&run.cx, |txn| {

@@ -853,6 +853,129 @@ fn preflight_publisher_refuses_a_sealed_tree_whose_modes_changed() {
     );
 }
 
+/// A canonical object never exempts a still-present seal from verification.
+#[test]
+fn preflight_existing_object_refuses_an_altered_seal() {
+    for alteration in ["bytes", "mode", "extra"] {
+        let home = tempfile::tempdir().unwrap();
+        let value = closure("existing");
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let receipt = seal(&cx, &root, &value).unwrap();
+        private_dir(&objects_dir(home.path()));
+        plant_object(&objects_dir(home.path()), &value);
+        let dir = tree_dir(home.path(), &receipt).join(value.digest());
+        match alteration {
+            "bytes" => std::fs::write(dir.join("compose.yaml"), b"changed").unwrap(),
+            "mode" => std::fs::set_permissions(
+                dir.join("compose.yaml"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap(),
+            _ => {
+                let extra = dir.join("extra");
+                std::fs::write(&extra, b"extra").unwrap();
+                std::fs::set_permissions(extra, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+        }
+        let result = attempt_env_run(home.path(), "dev", 1, |run| {
+            Objects::publish_sealed_desired(run, &receipt, &value)
+        });
+        assert!(result.is_err(), "altered {alteration} accepted: {result:?}");
+        assert!(tree_dir(home.path(), &receipt).exists());
+        assert_eq!(
+            count(&store(&cx, &root), "SELECT count(*) FROM object_refs"),
+            0
+        );
+    }
+}
+
+/// Existing and concurrent canonical winners must match the receipt's exact
+/// inventory, even if a prior publication already consumed the staged seal.
+#[test]
+fn preflight_canonical_modes_must_match_the_receipt_on_every_branch() {
+    for branch in ["existing", "concurrent", "consumed"] {
+        let home = tempfile::tempdir().unwrap();
+        let value = closure("canonical modes");
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let receipt = seal(&cx, &root, &value).unwrap();
+        if branch == "consumed" {
+            publish(home.path(), "previous", 1, &receipt, &value);
+            assert!(!tree_dir(home.path(), &receipt).exists());
+            std::fs::set_permissions(
+                objects_dir(home.path())
+                    .join(value.digest())
+                    .join("compose.yaml"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        } else if branch == "concurrent" {
+            let path = home.path().to_path_buf();
+            let planted = value.clone();
+            test_hooks::promote(move || {
+                plant_object_with_mode(&objects_dir(&path), &planted, 0o700);
+            });
+        } else {
+            private_dir(&objects_dir(home.path()));
+            plant_object_with_mode(&objects_dir(home.path()), &value, 0o700);
+        }
+        let refs_before = count(&store(&cx, &root), "SELECT count(*) FROM object_refs");
+        let result = attempt_env_run(home.path(), "dev", 2, |run| {
+            let result = Objects::publish_sealed_desired(run, &receipt, &value);
+            // Inspect before settlement: an unreferenced rejected winner is
+            // subsequently reclaimed by the ordinary run cleanup.
+            assert_eq!(
+                mode(
+                    &objects_dir(home.path())
+                        .join(value.digest())
+                        .join("compose.yaml")
+                ),
+                0o700
+            );
+            result
+        });
+        assert!(
+            matches!(result, Err(RunError::Broken(_))),
+            "{branch}: {result:?}"
+        );
+        assert_eq!(
+            count(&store(&cx, &root), "SELECT count(*) FROM object_refs"),
+            refs_before
+        );
+        assert_eq!(
+            tree_dir(home.path(), &receipt).exists(),
+            branch != "consumed"
+        );
+    }
+}
+
+/// A consumed receipt can replay against an exact canonical object, or restage
+/// its exact closure when retention has removed that object.
+#[test]
+fn preflight_consumed_receipt_replays_with_or_without_a_canonical_object() {
+    for retain in [true, false] {
+        let home = tempfile::tempdir().unwrap();
+        let value = closure("consumed replay");
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let receipt = seal(&cx, &root, &value).unwrap();
+        publish(home.path(), "dev", 1, &receipt, &value);
+        assert!(!tree_dir(home.path(), &receipt).exists());
+        if !retain {
+            std::fs::remove_dir_all(objects_dir(home.path()).join(value.digest())).unwrap();
+        }
+        assert_eq!(
+            publish(home.path(), "dev", 2, &receipt, &value),
+            value.digest()
+        );
+        let observed = read_env(home.path(), "dev", Role::Desired);
+        let verified = observed.verified().unwrap();
+        assert_eq!(verified.closure, value);
+        assert_eq!(verified.inventory, receipt.inventory());
+    }
+}
+
 #[test]
 fn preflight_seal_refuses_a_receipt_that_is_not_this_closure() {
     let home = tempfile::tempdir().unwrap();

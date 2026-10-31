@@ -509,7 +509,9 @@ During v0.x, MINOR bumps may include breaking changes.
   exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
   than replacing), verifying any concurrent winner in full against the
-  receipt's bytes, digest and per-entry private modes, and reclaiming one
+  receipt's bytes, digest and per-entry private modes (including existing
+  canonical objects and consumed-receipt replay), refusing any altered seal
+  still present even when canonical bytes already exist, and reclaiming one
   provably dead seal artifact per publication after its own fenced commit. The
   staging token records the minting process's pid and incarnation before any
   file exists, so a live helper is never raced even between creating its lease

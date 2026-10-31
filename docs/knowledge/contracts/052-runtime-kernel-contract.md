@@ -2464,7 +2464,11 @@ objects gate, one reference transaction — consuming a receipt as its source: i
 re-verifies the private tree under the gate against the receipt's verified
 inventory (bytes, digest and every entry's private mode, so a tree whose modes
 drifted is refused even though its digest still matches), moves it with one
-exclusive no-replace rename, verifies any concurrent winner in full, and records
+exclusive no-replace rename, and verifies the canonical byte/mode inventory
+against the receipt even for existing objects and concurrent winners. Any
+still-present seal is verified before consumption even when the canonical
+object already exists; replay with a consumed seal verifies the canonical
+inventory too. The publisher records
 the object row and desired reference exactly as `publish_desired` does. There is no second
 publisher, no direct preflight promotion and no revocable-rename primitive. It
 refuses any run whose owner is not an environment or whose owner gate is not
