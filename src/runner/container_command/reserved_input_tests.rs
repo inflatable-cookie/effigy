@@ -1249,8 +1249,9 @@ fn an_observation_that_outlives_the_budget_is_a_timeout_not_a_panic() {
     let mut backend = FakeBackend::colima();
     // The addressing observation outlives the budget. In a debug build a panic
     // here would abort the publication instead of leaving it pending/unknown.
-    backend.takes = Some(Duration::from_millis(20));
-    let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(1));
+    // The budget survives the first observation's start and not its end.
+    backend.takes = Some(Duration::from_millis(150));
+    let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(100));
 
     let error = effigy_containers::with_test_effigy_home(&home, || {
         plan(

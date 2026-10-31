@@ -719,8 +719,9 @@ pub(in crate::runner) fn plan(
         .is_ok_and(|remaining| remaining < SOURCE_CLOSURE_FLOOR)
     {
         return Err(unavailable(format!(
-            "workspace publication has less than {SOURCE_CLOSURE_FLOOR:?} left, which cannot \
-             close the checkout's source pins"
+            "workspace publication has less than {}ms left, which cannot close the checkout's \
+             source pins",
+            SOURCE_CLOSURE_FLOOR.as_millis()
         )));
     }
     // One read of the checkout's identity, path map and pinned source closure:
