@@ -117,13 +117,13 @@ pub(super) fn run_builtin_test_targets_tui(
 /// One suite's result from the session state the TUI recorded for it.
 ///
 /// The session reports what it observed; this is the only place that decides
-/// what those facts mean for a suite. A suite the operator stopped is
-/// cancelled and a suite that never started is not started; neither is a
-/// failure invented by the projection, and neither is a pass.
+/// what those facts mean for a suite. A suite the session ended is cancelled
+/// (the suite never reported a result of its own), and a suite that never
+/// started is not started; neither is a failure invented by the projection,
+/// and neither is a pass.
 fn suite_result(
     suite: BuiltinTestRunnable,
     state: Option<&effigy_tui::multiprocess::SessionEntryState>,
-    stopped_by_user: bool,
 ) -> BuiltinTestExecResult {
     use effigy_tui::multiprocess::SessionEntryState;
 
@@ -135,10 +135,7 @@ fn suite_result(
                 .and_then(|value| value.parse::<i32>().ok());
             (BuiltinTestOutcome::Failed, code)
         }
-        Some(SessionEntryState::Stopped { .. }) if stopped_by_user => {
-            (BuiltinTestOutcome::Cancelled, None)
-        }
-        Some(SessionEntryState::Stopped { .. }) => (BuiltinTestOutcome::Failed, None),
+        Some(SessionEntryState::Stopped { .. }) => (BuiltinTestOutcome::Cancelled, None),
         Some(SessionEntryState::NotStarted) | None => (BuiltinTestOutcome::NotStarted, None),
     };
     BuiltinTestExecResult {
@@ -164,7 +161,7 @@ fn builtin_test_results_from_tui(
         .into_iter()
         .map(|suite| {
             let state = states.get(suite.name.as_str()).copied();
-            suite_result(suite, state, outcome.stopped_by_user)
+            suite_result(suite, state)
         })
         .collect()
 }
@@ -1082,7 +1079,9 @@ mod tests {
     }
 
     /// The interactive projection: the session's recorded states decide every
-    /// suite's result, and only a suite that ran and passed is a success.
+    /// suite's result, and only a suite that ran and passed is a success. A
+    /// suite the session ended is a cancellation whether the operator quit the
+    /// session, stopped that one tab, or the run itself was stopped.
     #[test]
     fn interactive_session_states_project_to_suite_outcomes() {
         let fixture = tempfile::tempdir().expect("fixture");
@@ -1119,6 +1118,12 @@ mod tests {
                     BuiltinTestOutcome::NotStarted,
                     BuiltinTestOutcome::NotStarted,
                 ],
+            ),
+            (
+                "the session ended a member without the operator quitting",
+                vec![("one", SessionEntryState::Passed), ("two", stopped.clone())],
+                false,
+                vec![BuiltinTestOutcome::Passed, BuiltinTestOutcome::Cancelled],
             ),
             (
                 "every member passed",

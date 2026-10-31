@@ -863,9 +863,18 @@ run = "exit 130"
     assert_eq!(record["members"][0]["state"], "failed");
     assert_eq!(record["members"][0]["exit_code"], 7);
     assert_eq!(record["members"][1]["state"], "not_started");
+    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+    let view = read_kernel_run_view(root.as_path(), &run_id);
+    assert_eq!(
+        view["state"], "failed",
+        "an ordinary member failure still closes as failed: {view}"
+    );
+    assert_eq!(view["exit_code"], 1);
 
     // Exit 130 classifies as cancellation for the member and the group, and
-    // still stops later members.
+    // still stops later members. The group's durable run closeout records the
+    // same outcome the group ledger does, so `run status` and the group record
+    // never disagree about a cancelled run.
     let run_dir =
         run_group_and_capture(root.as_path(), &["tasks", "qa-group", "run", "interrupted"]);
     let record: Value = read_run_record(&run_dir);
@@ -873,6 +882,12 @@ run = "exit 130"
     assert_eq!(record["members"][0]["state"], "cancelled");
     assert_eq!(record["members"][0]["exit_code"], 130);
     assert_eq!(record["members"][1]["state"], "not_started");
+    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+    let view = read_kernel_run_view(root.as_path(), &run_id);
+    assert_eq!(
+        view["state"], "cancelled",
+        "the durable run closeout agrees with the cancelled group: {view}"
+    );
 }
 
 /// Run the group through the compiled binary, tolerate its failing exit, and
@@ -893,6 +908,22 @@ fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
         .collect();
     runs.sort_by_key(|path| fs::metadata(path).unwrap().modified().unwrap());
     runs.pop().expect("one finalized run")
+}
+
+/// The durable kernel run record for `run_id`, read through the surface an
+/// operator uses, so a test proves the persisted view rather than a file
+/// layout.
+fn read_kernel_run_view(root: &Path, run_id: &str) -> Value {
+    let output = run_effigy(root, &["--json", "run", "status", run_id]);
+    assert!(
+        output.status.success(),
+        "effigy run status {run_id}: {:?} | stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: Value =
+        serde_json::from_slice(&output.stdout).expect("run status is one JSON document");
+    envelope["result"]["run"].clone()
 }
 
 fn read_run_record(run_dir: &Path) -> Value {

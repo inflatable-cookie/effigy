@@ -13,42 +13,6 @@ use crate::core::{LogEntry, LogEntryKind};
 
 const FAILURE_TAIL_LINES: usize = 24;
 
-/// Project every supervised entry's recorded final state.
-///
-/// The supervisor's own exit facts are the session's outcome authority: a
-/// successful exit is a pass, any other exit status is a failure, a signal is
-/// a stop (the entry never reported a status), and an entry with no process is
-/// one that never started. No entry becomes a pass by omission.
-pub(super) fn collect_entry_states(process_diagnostics: &[(String, String)]) -> Vec<SessionEntry> {
-    let mut entries = process_diagnostics
-        .iter()
-        .map(|(name, diagnostic)| SessionEntry {
-            name: name.clone(),
-            state: entry_state(diagnostic),
-        })
-        .collect::<Vec<SessionEntry>>();
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
-    entries
-}
-
-fn entry_state(diagnostic: &str) -> SessionEntryState {
-    let diagnostic = diagnostic.trim();
-    if diagnostic == "exit=0" {
-        return SessionEntryState::Passed;
-    }
-    if diagnostic.starts_with("signal=") {
-        return SessionEntryState::Stopped {
-            detail: diagnostic.to_owned(),
-        };
-    }
-    if diagnostic == "not-tracked" || diagnostic == "not started" {
-        return SessionEntryState::NotStarted;
-    }
-    SessionEntryState::Failed {
-        detail: diagnostic.to_owned(),
-    }
-}
-
 pub(super) fn render_process_summary(
     entries: &[SessionEntry],
     process_logs: &HashMap<String, VecDeque<LogEntry>>,

@@ -26,11 +26,16 @@ pub(super) fn shutdown_and_render_summary(
 ) -> Result<Vec<SessionEntry>, MultiProcessTuiError> {
     progress::run_shutdown_with_progress(terminal, supervisor);
 
-    // The supervisor's own final state for every entry it supervised is the
-    // session's one outcome authority: the same facts the summary renders are
-    // the facts a caller projects, so no caller re-derives a pass from the
-    // absence of a failure.
-    let entries = summary::collect_entry_states(&supervisor.exit_diagnostics());
+    // The session's own final state for every entry it supervised is the one
+    // outcome authority: the same facts the summary renders are the facts a
+    // caller projects, so no caller re-derives a pass from the absence of a
+    // failure.
+    let mut entries = supervisor
+        .entry_states()
+        .into_iter()
+        .map(|(name, state)| SessionEntry { name, state })
+        .collect::<Vec<SessionEntry>>();
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
 
     terminal::restore_terminal(terminal)?;
     summary::render_process_summary(&entries, process_logs, process_started_at, diagnostics)?;

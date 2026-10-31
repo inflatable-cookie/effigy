@@ -41,13 +41,37 @@ pub enum SessionEntryState {
     /// The entry reported a successful exit.
     Passed,
     /// The entry reported a non-zero exit, or a final state that proves no
-    /// successful completion (a wait error, a closed terminal, no exit at
-    /// all).
+    /// successful completion (a wait error, no exit at all).
     Failed { detail: String },
-    /// The entry was stopped by a signal: it never reported an exit status.
+    /// The session ended the entry: it never reported an exit status of its
+    /// own.
     Stopped { detail: String },
     /// The entry never started, so it never reported anything.
     NotStarted,
+}
+
+impl SessionEntryState {
+    /// The state a session recorded as one text record: `exit=0` or another
+    /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
+    /// supervisor reported. A session that keeps a typed record reports that
+    /// record instead, so a stop it caused is never read as a failure.
+    pub fn from_record(record: &str) -> Self {
+        let record = record.trim();
+        if record == "exit=0" {
+            return Self::Passed;
+        }
+        if record.starts_with("signal=") {
+            return Self::Stopped {
+                detail: record.to_owned(),
+            };
+        }
+        if record == "not-tracked" || record == "not started" {
+            return Self::NotStarted;
+        }
+        Self::Failed {
+            detail: record.to_owned(),
+        }
+    }
 }
 
 /// One supervised entry's recorded result.
@@ -86,7 +110,10 @@ pub trait SessionProcesses {
     fn startup_finished(&self) -> bool;
     fn cancel_startup(&self);
     fn take_startup_error(&self) -> Option<ProcessManagerError>;
-    fn exit_diagnostics(&self) -> Vec<(String, String)>;
+    /// Every supervised entry's final state, as this session recorded it. This
+    /// is the session's one outcome report: the summary renders it and the
+    /// caller projects it, so no caller infers a result from silence.
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)>;
     fn terminate_all_graceful_with_progress(
         &self,
         timeout: std::time::Duration,
@@ -116,8 +143,11 @@ impl SessionProcesses for ProcessSupervisor {
     fn take_startup_error(&self) -> Option<ProcessManagerError> {
         ProcessSupervisor::take_startup_error(self)
     }
-    fn exit_diagnostics(&self) -> Vec<(String, String)> {
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)> {
         ProcessSupervisor::exit_diagnostics(self)
+            .into_iter()
+            .map(|(name, record)| (name, SessionEntryState::from_record(&record)))
+            .collect()
     }
     fn terminate_all_graceful_with_progress(
         &self,

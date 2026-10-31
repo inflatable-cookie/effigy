@@ -1,65 +1,57 @@
 use std::collections::{HashMap, VecDeque};
 
-use super::{collect_entry_states, failure_log_tail, format_process_status};
+use super::{failure_log_tail, format_process_status};
 use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::{SessionEntry, SessionEntryState};
 use effigy_ui::theme::Theme;
 
+/// A text record from a supervisor that keeps no typed state is read
+/// honestly: only `exit=0` is a pass, a signal is a stop the session ended,
+/// and an entry the supervisor never tracked never started.
 #[test]
-fn collect_entry_states_projects_every_supervised_entry_honestly() {
-    let diagnostics = vec![
-        ("cancelled".to_owned(), "signal=15".to_owned()),
-        ("failed".to_owned(), "exit=7".to_owned()),
-        ("never-started".to_owned(), "not-tracked".to_owned()),
-        ("passed".to_owned(), "exit=0".to_owned()),
-        ("unknown".to_owned(), "unknown exit".to_owned()),
+fn a_text_record_projects_every_supervised_entry_honestly() {
+    let cases = [
+        ("exit=0", SessionEntryState::Passed),
+        (
+            "exit=7",
+            SessionEntryState::Failed {
+                detail: "exit=7".to_owned(),
+            },
+        ),
+        (
+            "signal=15",
+            SessionEntryState::Stopped {
+                detail: "signal=15".to_owned(),
+            },
+        ),
+        ("not-tracked", SessionEntryState::NotStarted),
+        ("not started", SessionEntryState::NotStarted),
+        (
+            "unknown exit",
+            SessionEntryState::Failed {
+                detail: "unknown exit".to_owned(),
+            },
+        ),
     ];
 
-    let entries = collect_entry_states(&diagnostics);
-
-    assert_eq!(
-        entries,
-        vec![
-            SessionEntry {
-                name: "cancelled".to_owned(),
-                state: SessionEntryState::Stopped {
-                    detail: "signal=15".to_owned()
-                },
-            },
-            SessionEntry {
-                name: "failed".to_owned(),
-                state: SessionEntryState::Failed {
-                    detail: "exit=7".to_owned()
-                },
-            },
-            SessionEntry {
-                name: "never-started".to_owned(),
-                state: SessionEntryState::NotStarted,
-            },
-            SessionEntry {
-                name: "passed".to_owned(),
-                state: SessionEntryState::Passed,
-            },
-            SessionEntry {
-                name: "unknown".to_owned(),
-                state: SessionEntryState::Failed {
-                    detail: "unknown exit".to_owned()
-                },
-            },
-        ]
-    );
+    for (record, expected) in cases {
+        assert_eq!(
+            SessionEntryState::from_record(record),
+            expected,
+            "record {record}"
+        );
+    }
 }
 
 #[test]
 fn a_terminated_entry_is_never_reported_as_a_pass() {
-    for diagnostic in ["signal=9", "signal=15", "signal=11"] {
-        let entries = collect_entry_states(&[(("suite").to_owned(), diagnostic.to_owned())]);
+    for record in ["signal=9", "signal=15", "signal=11"] {
         assert_eq!(
-            entries[0].state,
+            SessionEntryState::from_record(record),
             SessionEntryState::Stopped {
-                detail: diagnostic.to_owned()
+                detail: record.to_owned()
             },
-            "a signal is a stop, not a pass: {diagnostic}"
+            "a signal is a stop, not a pass: {record}"
         );
     }
 }

@@ -1300,7 +1300,8 @@ interactive run before the suite reported a result, and `not_started` when the
 suite never ran. Only `passed` sets `success`; `cancelled` and `not_started`
 carry no success and no suite exit code in `code`. A cancelled interactive run
 exits `130`, the interrupted convention a QA-group member records as
-`cancelled`.
+`cancelled`; the group then closes its durable kernel run the same way, so
+`effigy run status` reports `cancelled` rather than a failed check.
 
 ## Setup, Bootstrap, and Config
 

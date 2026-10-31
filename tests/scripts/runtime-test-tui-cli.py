@@ -114,6 +114,31 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
             assert time.monotonic() < deadline, bytes(transcript[-6000:])
         assert child.returncode == 0, bytes(transcript[-6000:])
 
+    # An operator stop is a cancellation, not a failure and never a pass: the
+    # suite the session ended is reported `cancelled` and the run exits with
+    # the interrupted code.
+    (project / "suite-pid").unlink(missing_ok=True)
+    with terminal_session(["test", "death", "--tui"]) as (child, master, transcript, drain, until):
+        until(lambda: (project / "suite-pid").exists(), "cancellable suite readiness")
+        deadline = time.monotonic() + 20
+        while child.poll() is None:
+            drain()
+            try:
+                os.write(master, b"\x03")
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                child.wait(timeout=10)
+                break
+            time.sleep(.1)
+            assert time.monotonic() < deadline, bytes(transcript[-6000:])
+        stopped = bytes(transcript)
+        assert child.returncode == 130, (child.returncode, stopped[-6000:])
+        assert b"cancelled" in stopped, stopped[-6000:]
+        # The dead suite is named by the result it produced, never as a pass.
+        assert b"death" in stopped, stopped[-6000:]
+    print(json.dumps({"proof": "interactive-test-stop", "exit": 130, "outcome": "cancelled"}))
+
     def alive(pid):
         try:
             os.kill(pid, 0)

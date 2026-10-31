@@ -1134,14 +1134,17 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 
 - An interactive `effigy test` run that the operator stops can no longer report
-  a terminated suite as passed. The supervised session's own recorded state for
-  every suite is the one outcome authority: a suite that finished keeps its own
-  result, a suite the stop ended is `cancelled`, and a suite that never started
-  is `not_started`. `effigy.test.results.v1` targets carry `outcome`
-  (`passed`, `failed`, `cancelled`, `not_started`) beside the unchanged
-  `success` and `code` fields, the text results name the same state, and a
-  cancelled run exits `130` so a durable QA-group run records the same outcome.
-  The session summary no longer renders a signal-terminated process as `OK`.
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A cancelled QA-group run now closes its
+  durable kernel run as `cancelled` instead of `failed`, so `effigy run status`
+  and the group record agree. The session summary no longer renders a
+  signal-terminated process as `OK`.
 
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
