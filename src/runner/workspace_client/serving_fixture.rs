@@ -35,7 +35,6 @@ use effigy_kernel::workspace_session::{
     ChannelListener, ServingProbe, SessionLaunch, SessionRef, SessionSupervisor,
 };
 
-use super::host_dispatch::HostDispatch;
 use super::serving::ServingOwner;
 use super::serving_host::{
     cleanup_budget, recovery_invocation, DisposableActivation, ServingHostRequest,
@@ -74,6 +73,80 @@ impl ServingProbe for SelfDial {
                 "the disposable listener did not answer its own pinned handshake: {error}"
             ))),
         }
+    }
+}
+
+/// The fixture-only dispatcher. It exists so the process proof can require a real
+/// authenticated request/response on the retained listener: one deterministic
+/// probe operation is answered, and every other seam refuses by name. It is
+/// compiled only under `workspace-serving-fixture` and is not a production
+/// dispatcher, an admission engine or a credential store.
+pub(crate) const PROBE_OPERATION: &str = "fixture:probe";
+
+/// The one deterministic answer the probe operation returns.
+pub(crate) fn probe_reply(session: &effigy_kernel::run::Session) -> serde_json::Value {
+    serde_json::json!({
+        "operation": PROBE_OPERATION,
+        "session_run": session.run.to_string(),
+        "session_generation": session.generation.get(),
+        "answer": "retained-grant-authorised",
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct ProbeAdmission;
+impl channel::Admission for ProbeAdmission {
+    fn admit(
+        &mut self,
+        _: &EffectContext,
+        _: &effigy_kernel::run::AdmissionTicket,
+        _: &ResolvedInvocation,
+    ) -> Result<(), channel::Refusal> {
+        Err(channel::Refusal::forbidden(
+            "this disposable serving host admits no invocation",
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ProbeResolver;
+impl channel::Resolver for ProbeResolver {
+    fn resolve(
+        &mut self,
+        _: &EffectContext,
+        _: &channel::InvocationBody,
+    ) -> Result<ResolvedInvocation, channel::Refusal> {
+        Err(channel::Refusal::forbidden(
+            "this disposable serving host resolves no invocation",
+        ))
+    }
+}
+
+/// Answers exactly one probe operation, for the session the grant is bound to.
+#[derive(Debug)]
+pub(crate) struct ProbeObserver;
+impl channel::Observer for ProbeObserver {
+    fn observe(
+        &mut self,
+        _: &ObserveContext,
+        body: &channel::ObserveBody,
+    ) -> Result<serde_json::Value, channel::Refusal> {
+        if body.op != PROBE_OPERATION || body.target != Some(channel::Target::Host) {
+            return Err(channel::Refusal::forbidden(
+                "this disposable serving host observes only the probe operation",
+            ));
+        }
+        Ok(serde_json::json!({"answer": "retained-grant-authorised"}))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ProbeIds;
+impl channel::RunIds for ProbeIds {
+    fn next(&mut self) -> Result<effigy_kernel::id::RunId, channel::Refusal> {
+        Err(channel::Refusal::forbidden(
+            "this disposable serving host admits no run",
+        ))
     }
 }
 
@@ -173,7 +246,7 @@ fn serving_server(
     session: &SessionRef,
     pin: Digest,
     root: &StateRoot,
-) -> Result<channel::Server<HostDispatch, HostDispatch, HostDispatch, HostDispatch>, RunError> {
+) -> Result<channel::Server<ProbeAdmission, ProbeResolver, ProbeObserver, ProbeIds>, RunError> {
     let capability = Secret::parse(&disposable.capability)
         .map_err(|_| RunError::refused("the disposable capability is not a capability"))?;
     let kernel_session = Session {
@@ -211,12 +284,8 @@ fn serving_server(
         vm_boot_id: "fixture".to_owned(),
     };
     let host_checkout = request.project_path.clone();
-    let dispatcher = Dispatcher::new(
-        HostDispatch::new(host_checkout.clone(), root.clone()),
-        HostDispatch::new(host_checkout.clone(), root.clone()),
-        HostDispatch::new(host_checkout.clone(), root.clone()),
-        HostDispatch::new(host_checkout, root.clone()),
-    );
+    let _ = (&host_checkout, root);
+    let dispatcher = Dispatcher::new(ProbeAdmission, ProbeResolver, ProbeObserver, ProbeIds);
     Ok(channel::Server::new(
         negotiation,
         fence,
@@ -269,7 +338,7 @@ pub(crate) fn activate<'r>(
     root: &'r StateRoot,
     request: &ServingHostRequest,
     disposable: &DisposableActivation,
-) -> Result<ServiceOwner<'r>, RunError> {
+) -> Result<ServiceOwner<'r, ProbeAdmission, ProbeResolver, ProbeObserver, ProbeIds>, RunError> {
     let cleanup = cleanup_budget();
     let mut adapter = ServingSettlement;
     let name = environment_name(request, disposable);

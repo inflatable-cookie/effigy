@@ -757,10 +757,16 @@ fn fixture_selection(
 }
 
 /// One serving turn over the retained custody.
-fn serve_turn<'a>(
-    service: &mut ServiceOwner<'a>,
+fn serve_turn<'a, Ad, Rs, Ob, Id>(
+    service: &mut ServiceOwner<'a, Ad, Rs, Ob, Id>,
     streams: &mut impl Streams,
-) -> Result<bool, ServeError> {
+) -> Result<bool, ServeError>
+where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
     service.serve_pending(streams)
 }
 

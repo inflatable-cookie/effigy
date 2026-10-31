@@ -501,8 +501,19 @@ impl std::fmt::Display for ServingEnd {
 /// and every client the session admitted. [`Self::serve`] is its loop and
 /// [`Self::retire`] is its one settle.
 #[derive(Debug)]
-pub(crate) struct ServiceOwner<'a> {
-    owner: ChannelOwner<'a>,
+pub(crate) struct ServiceOwner<
+    'a,
+    Ad = HostDispatch,
+    Rs = HostDispatch,
+    Ob = HostDispatch,
+    Id = HostDispatch,
+> where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
+    owner: ServingOwner<'a, ServerTlsTransport, HostChannelAcceptor, Ad, Rs, Ob, Id>,
     session: SessionRef,
     lease: ServingLease,
     served: usize,
@@ -524,7 +535,15 @@ impl<'a> ServiceOwner<'a> {
         let adopted = ServingOwner::adopt_production(owner)?;
         Self::retained(adopted, session, lease)
     }
+}
 
+impl<'a, Ad, Rs, Ob, Id> ServiceOwner<'a, Ad, Rs, Ob, Id>
+where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
     /// The same custody on an injected server and an explicitly published
     /// lease, so a disposable activation can be exercised without the
     /// production dispatcher and validated facts.
@@ -534,7 +553,7 @@ impl<'a> ServiceOwner<'a> {
     /// lease and the validated facts must agree), and the caller here is the same
     /// process that just published this lease for this session.
     pub(crate) fn retained(
-        owner: ChannelOwner<'a>,
+        owner: ServingOwner<'a, ServerTlsTransport, HostChannelAcceptor, Ad, Rs, Ob, Id>,
         session: SessionRef,
         lease: ServingLease,
     ) -> Result<Self, AdoptError> {
@@ -569,26 +588,6 @@ impl<'a> ServiceOwner<'a> {
             lease,
             served: 0,
         })
-    }
-
-    /// Adopt a committed handoff on an injected server: the proofs use it to
-    /// measure the same supervision over scripted connections.
-    pub(crate) fn adopt_on(
-        handoff: ServingHandoff<'a>,
-        server: effigy_kernel::workspace_channel::Server<
-            super::host_dispatch::HostDispatch,
-            super::host_dispatch::HostDispatch,
-            super::host_dispatch::HostDispatch,
-            super::host_dispatch::HostDispatch,
-        >,
-    ) -> Result<Self, AdoptError> {
-        let ServingHandoff {
-            owner,
-            session,
-            lease,
-        } = handoff;
-        let adopted = ServingOwner::adopt_owned(owner, server)?;
-        Self::retained(adopted, session, lease)
     }
 
     /// The session in service.
