@@ -3888,9 +3888,12 @@ must equal the required creations plus that one workspace replacement, if any.
 No extra service or foreign ID is adopted. Zero-change re-up stays attached.
 This replaces the image-reference-only prediction that refused routine workspace
 configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
-Old references must resolve to the old containers' immutable IDs before and after
-apply. Receipt schema v5 records scoped image capabilities, independent reference lookups, required new services and the workspace's
-pre-apply predecessor separately; earlier receipt schemas are not upgraded.
+Container-attested image IDs must match their reference lookups before and after
+apply. For reference-only predecessors, those lookups prove reference stability,
+not the old container's actual image; attached rows use the scoped reference/config-hash
+capability above. Receipt schema v5 records scoped image capabilities, independent
+reference lookups, required new services and the workspace's pre-apply predecessor
+separately; earlier receipt schemas are not upgraded.
 Isolated journal-case reproduction uses `effigy test:focused:journal-heavy` with
 `-j 1`, retaining the covering selector's 600-second per-test budget. Image tag
 moves, unproved image identity, partial or failed apply, unknown
@@ -5375,8 +5378,9 @@ review).** Never adopt a container created by another checkout, project or
 stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
 Compose apply and exact full-ID inventories before and after it. Only an ID
 new in that window, with the complete expected created set and exact managed,
-project, service, checkout/scope, generation and immutable-image evidence, may
-bind a fresh target. Missing, extra, ambiguous, changed or unreadable evidence
+project, service, checkout/scope, generation and the image-capability evidence
+defined in §8.12, may bind a fresh target. Newly created reference-only rows infer
+only the stable gate-scoped resolution; attached rows never gain a creator receipt. Missing, extra, ambiguous, changed or unreadable evidence
 refuses publication; attached/reused containers never receive a new creator
 receipt. Recheck preflight identity under the gate and keep the complete-set
 decision and its journal evidence tied to that activation. A same-user actor
