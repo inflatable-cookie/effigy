@@ -205,6 +205,19 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- **A workspace session's custody can live in a detached process.** A serving
+  host supervisor starts before the session run is adopted or the listener
+  exists, performs the activation in its own process, announces the committed
+  session over the kernel's bounded engine-event channel, and then keeps that
+  same run, listener, key, grant book and admitted clients while it serves and
+  settles exactly once. The initiating command only launches it and reads the
+  result: an absent acknowledgement is an error, an unacknowledged detach is the
+  kernel's owner-loss path, and no dropped local owner is reported as success.
+  The container-up producer stays #452's (`ContainerUp` refuses by name in this
+  head); the process-lifetime proof runs the same launcher with the disposable
+  activation the `workspace-serving-fixture` feature compiles in, so it proves
+  process custody and not container-mode preparation.
+
 - **A workspace terminal keeps its own capability, and a session's service has
   recovery, down and retirement seams.** A guest capability is now stored per
   client (`/run/effigy/client/capabilities/<client>`, 0600 in a 0700 directory,

@@ -36,6 +36,28 @@ pub use terminal::{
 };
 
 pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
+/// Disposable-fixture support: record one environment's own `active`
+/// publication exactly as an activation commit does, through the same fence
+/// check and the same transaction, so a process-lifetime proof can admit a
+/// session run without a container activation.
+///
+/// This is never part of an ordinary build (`test-support` is off by default),
+/// and it adds no authority: it writes the row the activation itself writes, for
+/// the exact owner fence it is given, and refuses when that fence disagrees with
+/// the journal.
+#[cfg(feature = "test-support")]
+pub fn publish_active_for_fixture(
+    cx: &crate::ctx::EffectContext,
+    root: &crate::root::StateRoot,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    let mut store = crate::store::Store::open(cx, root)?;
+    store.transaction(cx, |txn| {
+        attachments::check_activation_fence(txn.conn(), owner)?;
+        attachments::publish_active_state(txn, owner)
+    })
+}
+
 pub use attachments::{
     unfinished_guest_binary, AttachMode, AttachmentTicket, Attachments, GuestBinaryTicket,
     GuestPublicationReceipt, GuestPublicationTicket, Holder, Liveness, TransitionPermit,

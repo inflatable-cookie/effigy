@@ -60,6 +60,9 @@ mod uninstall_command;
 mod util;
 mod workspace_client;
 mod workspace_command;
+#[cfg(feature = "workspace-serving-fixture")]
+#[doc(hidden)]
+pub mod workspace_serving_fixture;
 mod workspace_transport;
 
 pub(in crate::runner) use bundle_command::run_bundle;

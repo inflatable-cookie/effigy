@@ -525,16 +525,22 @@ impl<'a> ServiceOwner<'a> {
         Self::retained(adopted, session, lease)
     }
 
-    /// The same custody on an injected server, so the proofs can exercise the
-    /// supervision without the production dispatcher.
+    /// The same custody on an injected server and an explicitly published
+    /// lease, so a disposable activation can be exercised without the
+    /// production dispatcher and validated facts.
+    ///
+    /// This is the injected path only: [`Self::adopt`] keeps the strict
+    /// production check (the launch must have published exactly the committed
+    /// lease and the validated facts must agree), and the caller here is the same
+    /// process that just published this lease for this session.
     pub(crate) fn retained(
         owner: ChannelOwner<'a>,
         session: SessionRef,
         lease: ServingLease,
     ) -> Result<Self, AdoptError> {
-        // Adoption is only ever the committed lease: a server that published
-        // another one is not this session's service.
-        if owner.locator().map(|locator| locator.bound().lease()) != Some(&lease) {
+        if lease.session().run != session.run()
+            || lease.session().generation != session.generation()
+        {
             let mut owner = owner;
             owner.stop();
             return Err(AdoptError::WrongSession);

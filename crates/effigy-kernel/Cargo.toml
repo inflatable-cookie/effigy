@@ -9,6 +9,10 @@ description = "Synchronous runtime foundation for Effigy engines"
 [features]
 # Injection hooks are absent from ordinary builds; no production default.
 fault-injection = []
+# Disposable-fixture support for process-lifetime proofs: one transaction that
+# records an environment's own active publication without a container
+# activation. Absent from every product build.
+test-support = []
 
 [dependencies]
 effigy-ui = { path = "../effigy-ui" }

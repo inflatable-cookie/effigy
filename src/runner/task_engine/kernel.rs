@@ -559,6 +559,24 @@ pub(in crate::runner) fn valid_next(argv: &[OsString]) -> bool {
 /// Hidden kernel entry points (`__kernel-sentinel`, `__kernel-supervise`).
 /// `None` means an ordinary invocation.
 pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
+    // The workspace-serving process-lifetime proof's initiating front end: it
+    // starts one detached serving host, acknowledges the kernel detach and
+    // returns, leaving the host serving. Present only in a fixture build.
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_from_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
     if !entry.starts_with("__kernel-") {
         return None;
     }

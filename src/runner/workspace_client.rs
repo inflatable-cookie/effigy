@@ -61,6 +61,12 @@ pub(crate) mod serving_facts;
 // session's listener, key, grants and admitted clients after the call that
 // selected it returns.
 pub(crate) mod supervisor;
+// #507's detached serving host: the supervisor that performs the activation in
+// its own process and then keeps the session's run, listener, key, grants and
+// admitted clients through serving and one settlement.
+#[cfg(feature = "workspace-serving-fixture")]
+pub(crate) mod serving_fixture;
+pub(crate) mod serving_host;
 
 pub(crate) use serving_facts::ServingFacts;
 
