@@ -138,22 +138,61 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
         return Ok(declared.into_owned());
     }
     // A terminal that was not opened by an entry still gets its own file rather
-    // than a shared one. The identity is the terminal's own *session*, not the
-    // command's process id: every command in that terminal shares one session, so
-    // a capability issued to the first command is reused by the next one, while a
-    // different terminal (its own session) is a different client and can neither
-    // present nor replace it.
-    // SAFETY: getsid(0) reads the calling process's session id and nothing else.
-    let session = unsafe { libc::getsid(0) };
-    if session < 0 {
-        return Err(RunnerError::task_invocation(format!(
-            "this terminal's session identity is unavailable ({}); a capability is stored per \
-             terminal, so none is stored here - open the terminal with `effigy workspace` or run \
-             the command on the host",
-            std::io::Error::last_os_error()
-        )));
+    // than a shared one. Its identity is the terminal itself — the controlling
+    // tty — so every command in one terminal reuses the capability the first was
+    // issued, and two separate terminals are two clients even when they share a
+    // login session. A terminal with no controlling tty falls back to its session;
+    // with neither, the client is refused by name rather than sharing a file.
+    terminal_client_identity(controlling_terminal().as_deref(), current_session())
+}
+
+/// The identity one terminal's commands share: its controlling tty when it has
+/// one, else its session, else a refusal.
+pub(crate) fn terminal_client_identity(
+    tty: Option<&std::path::Path>,
+    session: libc::pid_t,
+) -> Result<String, RunnerError> {
+    if let Some(tty) = tty {
+        if let Some(name) = tty.file_name().and_then(|name| name.to_str()) {
+            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Ok(format!("tty-{name}"));
+            }
+        }
     }
-    Ok(format!("terminal-{session}"))
+    if session >= 0 {
+        return Ok(format!("terminal-{session}"));
+    }
+    Err(RunnerError::task_invocation(
+        "this terminal has no controlling tty and no session identity; a capability is stored \
+         per terminal, so none is stored here - open the terminal with `effigy workspace` or run \
+         the command on the host",
+    ))
+}
+
+/// The controlling terminal of this process, when it has one.
+fn controlling_terminal() -> Option<std::path::PathBuf> {
+    let mut buffer = vec![0u8; 1024];
+    // SAFETY: ttyname_r writes at most buffer.len() bytes for the fd and does not
+    // retain the pointer.
+    let result = unsafe {
+        libc::ttyname_r(
+            libc::STDIN_FILENO,
+            buffer.as_mut_ptr() as *mut libc::c_char,
+            buffer.len(),
+        )
+    };
+    if result != 0 {
+        return None;
+    }
+    let end = buffer.iter().position(|byte| *byte == 0).unwrap_or(0);
+    let name = std::str::from_utf8(&buffer[..end]).ok()?;
+    Some(std::path::PathBuf::from(name))
+}
+
+/// This process's session id, or a negative value when unavailable.
+fn current_session() -> libc::pid_t {
+    // SAFETY: getsid(0) reads the calling process's session id and nothing else.
+    unsafe { libc::getsid(0) }
 }
 
 /// What one terminal's file records: the capability the host issued it and the
