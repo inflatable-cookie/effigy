@@ -501,10 +501,12 @@ During v0.x, MINOR bumps may include breaking changes.
   otherwise a private, synced `state/staging/preflight-*` tree is promoted with
   one exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
-  than replacing). The filesystem work runs on one helper so the deadline holds
-  even when a synchronous write, sync or verify stalls; a helper still running
-  after the caller times out can no longer begin the promotion, and the next
-  seal removes its abandoned private tree. `Objects::publish_desired` then
+  than replacing). Staging and verification run on one helper so the deadline
+  holds even when a synchronous write, sync or verify stalls, while the
+  promotion is the caller's own work under the objects gate it holds for the
+  whole call, after one last deadline and cancellation check; a helper that
+  outlives its caller holds no gate and has no promotion path, so nothing is
+  ever promoted after the caller returns. `Objects::publish_desired` then
   records and reconciles that same trusted object. The kernel's object verifier
   also refuses an entry the closure digest cannot name, such as an extra empty
   directory.

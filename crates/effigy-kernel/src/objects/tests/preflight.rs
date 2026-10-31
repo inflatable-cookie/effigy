@@ -1,13 +1,17 @@
-//! Preflight sealing proofs: the deadline is bounded even when filesystem work
-//! stalls, promotion is one exclusive no-replace rename that never accepts an
-//! unverified winner, staging is private and crash durable, and a sealed object
-//! is exactly what the publisher later records.
+//! Preflight sealing proofs: the deadline bounds every wait (including a
+//! stalled fast path and a stalled stage), no promotion can begin once the
+//! caller has returned, the promotion runs inside the objects gate the caller
+//! took, it is one exclusive no-replace rename that never accepts an unverified
+//! winner, staging is private and crash durable, and a sealed object is exactly
+//! what the publisher later records.
 use super::*;
+use crate::gate::{Gate, GateState};
 use crate::objects::preflight::{test_hooks, STAGING_PREFIX};
 use crate::objects::{Closure, Objects};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -174,34 +178,53 @@ fn preflight_seal_fast_path_verifies_bytes_modes_and_extra_entries() {
     assert_eq!(seal(&cx, &root, &value).unwrap(), digest);
 }
 
+/// A helper parked at its last decision point — durable stage, deadline checked,
+/// ready to report — is released only *after* the caller has already returned.
+/// Nothing may be promoted then, and the object never appears.
 #[test]
 fn preflight_seal_timeout_never_promotes_after_the_caller_returns() {
     let home = tempfile::tempdir().unwrap();
-    let cx = context(EffectClass::Mutate);
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
     let value = closure("late");
-    // The helper stalls in synchronous filesystem work after a durable stage.
-    test_hooks::stall_staging(Some(Duration::from_millis(2_000)));
-    let started = Instant::now();
-    let result = Objects::seal_for_preflight(&cx, &root, &value, soon(50));
-    let waited = started.elapsed();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    test_hooks::stall_staging(move || {
+        let _ = entered_tx.send(());
+        // The proof releases this only once the caller has returned.
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+    let sealed_home = home.path().to_path_buf();
+    let sealed_value = value.clone();
+    let caller = std::thread::spawn(move || {
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, &sealed_home).unwrap();
+        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(150))
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the helper reached its last decision point");
+    let result = caller.join().unwrap();
     assert!(
         matches!(result, Err(RunError::Unavailable(_))),
         "{result:?}"
     );
     assert!(
-        waited < Duration::from_millis(1_000),
-        "the caller returned at its deadline, not when the stall ended: {waited:?}"
+        !objects_dir(home.path()).join(value.digest()).exists(),
+        "nothing was promoted by the deadline"
     );
-    assert!(!objects_dir(home.path()).join(value.digest()).exists());
-    // The helper resumes, sees the caller gone and abandons its private tree.
-    assert!(settled_seal_trees(home.path()).is_empty());
+    // Only now may the parked helper continue: it has no promotion path, so the
+    // object still cannot appear. It removes its own private tree.
+    let _ = release_tx.send(());
+    assert!(
+        settled_seal_trees(home.path()).is_empty(),
+        "the abandoned helper removed its own private stage"
+    );
     assert!(
         !objects_dir(home.path()).join(value.digest()).exists(),
-        "no promotion began after the caller timed out"
+        "no promotion began after the caller returned"
     );
-    test_hooks::stall_staging(None);
-    // A later seal still publishes the closure and recovery left nothing behind.
+    // A later seal still publishes the closure.
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
     assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
 }
 
@@ -213,23 +236,64 @@ fn preflight_seal_fast_path_is_bounded_by_the_same_deadline() {
     let value = closure("verify");
     let digest = seal(&cx, &root, &value).unwrap();
     // Verification of an existing object can stall too; the caller's deadline
-    // still bounds the call.
-    test_hooks::stall_verification(Some(Duration::from_millis(2_000)));
+    // still bounds the call and leaves the object it verified untouched.
+    test_hooks::stall_verification(|| std::thread::sleep(Duration::from_millis(2_000)));
     let started = Instant::now();
     let result = Objects::seal_for_preflight(&cx, &root, &value, soon(50));
     let waited = started.elapsed();
-    test_hooks::stall_verification(None);
     assert!(
         matches!(result, Err(RunError::Unavailable(_))),
         "{result:?}"
     );
-    assert!(waited < Duration::from_millis(1_000), "{waited:?}");
+    assert!(
+        waited < Duration::from_millis(1_000),
+        "the caller returned at its deadline, not when the stall ended: {waited:?}"
+    );
     assert_eq!(
         std::fs::read(objects_dir(home.path()).join(&digest).join("compose.yaml")).unwrap(),
         *value.files()["compose.yaml"],
         "a bounded fast path never removes or rewrites the object it verifies"
     );
     assert_eq!(seal(&cx, &root, &value).unwrap(), digest);
+}
+
+/// The rename is the caller's, on the caller's thread, while the objects gate it
+/// took is still held: no objects write happens outside that custody.
+#[test]
+fn preflight_seal_promotes_inside_the_objects_gate() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let value = closure("custody");
+    let (probe_cx, probe_root) = (cx.clone(), root.clone());
+    let held = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&held);
+    test_hooks::promotion(move || {
+        let observe = probe_cx.operation().observe().expect("finite observation");
+        let id = probe_root
+            .store_gate(&probe_cx, "objects")
+            .expect("objects gate identity");
+        observed.store(
+            matches!(
+                Gate::probe(&observe, &probe_root, &id),
+                Observed::Verified(GateState::Held(_), _)
+            ),
+            Ordering::SeqCst,
+        );
+    });
+    assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
+    assert!(
+        held.load(Ordering::SeqCst),
+        "the promotion ran while this call held the objects gate"
+    );
+    assert!(objects_dir(home.path()).join(value.digest()).is_dir());
+    // And the gate is free again once the call returns.
+    let observe = cx.operation().observe().unwrap();
+    let id = root.store_gate(&cx, "objects").unwrap();
+    assert!(matches!(
+        Gate::probe(&observe, &root, &id),
+        Observed::Verified(GateState::Free, _)
+    ));
 }
 
 #[test]
@@ -242,8 +306,8 @@ fn preflight_seal_accepts_a_verified_winner_and_refuses_an_unsafe_one() {
         let fired = Arc::new(AtomicBool::new(false));
         let (path, planted) = (home.path().to_path_buf(), value.clone());
         let hook_fired = Arc::clone(&fired);
-        test_hooks::before_promotion(move || {
-            // A competing sealer publishes between this seal's staging and its
+        test_hooks::promotion(move || {
+            // A competing sealer published between this seal's staging and its
             // rename, so the no-replace rename reports the existing entry.
             plant_object(&objects_dir(&path), &planted, file_mode);
             hook_fired.store(true, Ordering::SeqCst);
@@ -420,8 +484,9 @@ fn helper_crashed_sealer() {
     let root = StateRoot::effects(&cx, &home).unwrap();
     let value = closure("crash");
     let marker = home.join(MARKER);
-    test_hooks::before_promotion(move || {
-        // The stage is durable and the rename has not happened yet.
+    test_hooks::promotion(move || {
+        // The stage is durable, the gate is held and the rename has not
+        // happened yet.
         std::fs::write(&marker, b"in the promotion gate").unwrap();
         std::thread::sleep(Duration::from_secs(120));
     });

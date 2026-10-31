@@ -2432,12 +2432,16 @@ nor holder records are added to the machine database.
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
 
 Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
-preflight seal (§7.1–§7.4, effigy#509) creates one private tree, writes it
-`O_EXCL`/0600, syncs content and directories, promotes it with one exclusive
-no-replace rename, and removes it on every exit; a seal whose caller's deadline
-passed before that rename leaves an abandoned tree that the next seal removes
-while it holds the objects gate. Seal trees never name a run and a run's own
-staging tree is still removed only by its durable settle.
+preflight seal (§7.1–§7.4, effigy#509) holds the objects gate for the whole
+call, writes its one private tree `O_EXCL`/0600 on a staging helper, and syncs
+content and directories there; the promotion is the caller's own work, on its
+own thread, under that gate and after one last deadline and cancellation check,
+so it is one exclusive no-replace rename and nothing outside the gate ever
+moves an object. A helper that outlives its caller only ever writes inside that
+private tree — it holds no gate and has no promotion path — and the tree is
+removed by the helper itself or by the next seal's recovery, which stops at the
+new caller's deadline. Seal trees never name a run and a run's own staging tree
+is still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
