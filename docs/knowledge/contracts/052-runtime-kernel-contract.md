@@ -4912,6 +4912,16 @@ generation while P's context remains selected.
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
 
+**Creator attribution ruling (Tom, 2026-10-31).** A foreign actor creating an
+identically labelled container during the apply window remains in the threat
+model. Before/after container ID sets, labels, timestamps and image-reference
+checks cannot prove which actor created that container, even under `Gate(Env)`.
+The v0.15 first-up path must use an Effigy-owned engine create/apply operation
+that returns the exact created container IDs as authenticated effect results,
+then verify those IDs against the intended project, service, image and target
+before publication. The provisional Option C inventory-difference design is
+rejected; a foreign creation is never adopted as this activation's target.
+
 | Window | What the guest resolves | Recovery |
 | --- | --- | --- |
 | The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a foreign creation is never adopted as this activation's target, and no later step may re-target |
