@@ -2418,7 +2418,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; only the owning durable settle removes it |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree by its sealer or the next seal |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2430,6 +2430,14 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
+
+Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
+preflight seal (§7.1–§7.4, effigy#509) creates one private tree, writes it
+`O_EXCL`/0600, syncs content and directories, promotes it with one exclusive
+no-replace rename, and removes it on every exit; a seal whose caller's deadline
+passed before that rename leaves an abandoned tree that the next seal removes
+while it holds the objects gate. Seal trees never name a run and a run's own
+staging tree is still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not

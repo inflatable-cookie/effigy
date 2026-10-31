@@ -295,8 +295,10 @@ fn read_tree(
     if depth == 0 {
         return Err(invalid("object tree too deep"));
     }
+    let mut listed = 0usize;
     for entry in dir.list(MAX_FILES)? {
         cx.check("object read").map_err(StoreError::Interrupted)?;
+        listed += 1;
         *entries_left = entries_left
             .checked_sub(1)
             .ok_or_else(|| invalid("too many object entries"))?;
@@ -338,8 +340,16 @@ fn read_tree(
             files.insert(path, bytes);
         }
     }
+    if listed == 0 {
+        // A closure is a set of files, so no directory it produces is empty and
+        // the digest alone covers every entry. An entry the digest cannot name
+        // (an extra empty directory) is refused rather than silently trusted.
+        return Err(invalid("object directory is empty"));
+    }
     Ok(())
 }
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+mod preflight;

@@ -493,6 +493,22 @@ During v0.x, MINOR bumps may include breaking changes.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
+- **A container render can be sealed before it is applied, then reconciled
+  after.** `effigy_kernel::objects::Objects::seal_for_preflight` publishes a
+  frozen closure under the caller's deadline with no run, journal row or
+  reference: an existing object is accepted only when the kernel's closure
+  verifier reads back exactly those bytes, private modes and entries, and
+  otherwise a private, synced `state/staging/preflight-*` tree is promoted with
+  one exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
+  than replacing). The filesystem work runs on one helper so the deadline holds
+  even when a synchronous write, sync or verify stalls; a helper still running
+  after the caller times out can no longer begin the promotion, and the next
+  seal removes its abandoned private tree. `Objects::publish_desired` then
+  records and reconciles that same trusted object. The kernel's object verifier
+  also refuses an entry the closure digest cannot name, such as an extra empty
+  directory.
+
 
 ### Changed
 
