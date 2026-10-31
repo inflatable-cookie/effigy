@@ -196,10 +196,11 @@ pub fn initiate_from_stdin() -> Result<String, String> {
 /// capability the host issued.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AuthorityProbe {
+    /// The retained listener answered this process's pinned TLS handshake and
+    /// protocol greeting. Nothing more is claimed here: silence, EOF or a timeout
+    /// on a later frame proves neither capability acceptance nor a missing one, so
+    /// the positive request/response is #452's production gate.
     pub negotiated: bool,
-    pub authenticated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub refusal: Option<String>,
 }
 
 /// Authenticate against a running host from this process: the pinned TLS
@@ -257,74 +258,16 @@ pub fn probe_authority(
     let hello = read_answer(&mut transport)?;
     let negotiated = matches!(hello, Some(Frame::HelloOk(_)));
     if !negotiated {
-        return Ok(AuthorityProbe {
-            negotiated: false,
-            authenticated: false,
-            refusal: hello.map(|frame| format!("{frame:?}")),
-        });
+        let _ = hello;
+        return Ok(AuthorityProbe { negotiated: false });
     }
+    // The capability is presented, and nothing further is claimed from this
+    // connection: silence, EOF or a timeout proves neither acceptance nor
+    // refusal, so the positive request/response is #452's production gate and is
+    // reported to it rather than asserted here.
     write_answer(&mut transport, &Frame::Authenticate(capability))?;
-    // An accepted credential is answered with nothing; a refused one answers once.
-    let refusal = read_answer(&mut transport)?;
-    let authenticated = refusal.is_none();
-    if !authenticated {
-        return Ok(AuthorityProbe {
-            negotiated: true,
-            authenticated: false,
-            refusal: refusal.map(|frame| format!("{frame:?}")),
-        });
-    }
-    // The positive request/response leg is #452's: this disposable host accepts
-    // the capability and answers no observe request on the retained connection
-    // (measured in this task), so #507 asserts only what a third process can
-    // observe here - the pinned TLS identity and the retained grant book
-    // accepting the capability it issued - and reports the missing production
-    // reply to #452, whose brief now requires it on the real dispatcher.
-    // The negative control on its own connection: a capability the host never
-    // issued must be refused, so the accepted one proves the retained grant
-    // book rather than a host that accepts anything.
-    drop(transport);
-    let refused = authenticate_unissued(address, &pin, session)?;
-    Ok(AuthorityProbe {
-        negotiated: true,
-        authenticated: true,
-        refusal: Some(match refused {
-            Some(_) => "refused".to_owned(),
-            None => "not-refused".to_owned(),
-        }),
-    })
-}
-
-/// A second connection that presents a capability the host never issued.
-fn authenticate_unissued(
-    address: std::net::SocketAddr,
-    pin: &effigy_kernel::id::Digest,
-    session: effigy_kernel::id::RunId,
-) -> Result<Option<effigy_kernel::workspace_channel::Frame>, String> {
-    use effigy_kernel::workspace_channel::{Frame, Hello, PROTOCOL_V1, SCHEMA};
-    let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
-        address,
-        pin.clone(),
-        std::time::Duration::from_secs(5),
-    )
-    .map_err(|error| format!("the pinned connection failed: {error}"))?;
-    write_answer(
-        &mut transport,
-        &Frame::Hello(Hello {
-            schema: SCHEMA.to_owned(),
-            protocol_versions: vec![PROTOCOL_V1],
-            effigy_version: "fixture".to_owned(),
-            binary_digest: effigy_kernel::id::Digest([0; 32]),
-            context_generation: effigy_kernel::id::Generation::new(1),
-            session_run_id: session,
-        }),
-    )?;
     let _ = read_answer(&mut transport)?;
-    write_answer(
-        &mut transport,
-        &Frame::Authenticate(effigy_kernel::workspace_channel::Secret::new([0x00; 32])),
-    )?;
-    read_answer(&mut transport)
+    Ok(AuthorityProbe { negotiated })
 }
 
 /// One competing process's attempt to become a live session's serving owner.

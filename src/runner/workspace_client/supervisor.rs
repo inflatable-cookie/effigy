@@ -295,7 +295,7 @@ impl ServingHandoff<'static> {
     /// that switched and was read back, under exactly the lease the commit
     /// recorded. This is the one route into service, so there is no
     /// receipt-only constructor that could skip the state fence.
-    pub(crate) fn fenced(
+    fn fenced(
         owner: WorkspaceOwner,
         state: SelectionState,
         committed: &ServingLease,
@@ -306,8 +306,9 @@ impl ServingHandoff<'static> {
 }
 
 impl<'a> ServingHandoff<'a> {
-    /// The same boundary for an already-owned channel (the proofs build one
-    /// directly): identical fence, no separate route into service.
+    /// The same boundary for an already-owned channel: test-only, because a
+    /// production handoff must come from the committed obligation (`committed`).
+    #[cfg(test)]
     pub(crate) fn fenced_owned(
         owner: OwnedWorkspaceChannel<'a>,
         state: SelectionState,
