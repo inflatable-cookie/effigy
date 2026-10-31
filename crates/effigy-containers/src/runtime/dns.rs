@@ -217,20 +217,24 @@ enum ProfileRead {
 
 fn bounded_profile_text(path: &Path) -> Result<String, ProfileRead> {
     use std::io::Read;
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
+    // Open once and inspect that descriptor: a path can be replaced between a
+    // separate metadata call and the open, which would let a FIFO or device be
+    // the thing being read.
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(ProfileRead::Missing)
         }
         Err(error) => return Err(ProfileRead::Unreadable(error.to_string())),
     };
+    let metadata = file
+        .metadata()
+        .map_err(|error| ProfileRead::Unreadable(error.to_string()))?;
     if !metadata.is_file() {
         return Err(ProfileRead::Unreadable(
             "the profile path is not a regular file".into(),
         ));
     }
-    let file =
-        std::fs::File::open(path).map_err(|error| ProfileRead::Unreadable(error.to_string()))?;
     let mut bytes = Vec::new();
     file.take(COLIMA_PROFILE_LIMIT + 1)
         .read_to_end(&mut bytes)

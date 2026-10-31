@@ -3044,7 +3044,9 @@ resolving the operator workspace and composing its manifest, the whole local
 planning sequence (the alias render, the checkout identity, the source closure
 with its includes, source lock, bundle and catalog roots and every fragment), and
 finding and authenticating the produced artifact (its version and receipt
-sidecars and its digest). A clock check before or after a synchronous read cannot
+sidecars and its digest), and the admitted backend record and the Colima
+profile's gateway (the first establishes the checkout identity token, so it may
+write). A clock check before or after a synchronous read cannot
 enforce a budget while it is blocked, so the publication stops waiting at the one
 deadline and reports that fact unknown; an abandoned worker only reads. The
 producer's probe is owned, built by an injected factory from the identity the

@@ -127,6 +127,14 @@ pub(in crate::runner) fn record_until(
     policy: &EffectiveContainerPolicy,
     until: Instant,
 ) -> Observed<EnvRecord> {
+    // Refuse an expired budget before any filesystem work: establishing the
+    // checkout token writes and resolving the environment reads.
+    let remaining = until.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Observed::Unknown(UnknownReason::TimedOut {
+            phase: "environment record".into(),
+        });
+    }
     // The environment resource is scoped by this checkout's identity token, which
     // a prepare establishes. Failing to establish or resolve it is unknown
     // evidence, never an absent record.

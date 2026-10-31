@@ -241,12 +241,10 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         deadline: PublicationDeadline,
     ) -> Observed<BackendSelection> {
         // The record's own answer, with an unreadable record or recorded backend
-        // kept `Unknown` instead of collapsing into the policy default.
-        crate::runner::environment::observed_backend(
-            policy.repo_root.as_path(),
-            policy,
-            deadline.at(),
-        )
+        // kept `Unknown` instead of collapsing into the policy default. Reading it
+        // establishes (and may write) the checkout token and reads the store, so
+        // it runs on the publication's bounded worker.
+        observed_backend_bounded(policy, deadline)
     }
 
     fn addressing(
@@ -291,7 +289,22 @@ impl ReservedBackendObservation for ContainerBackendObservation {
             // The profile's own configuration, never the renderer's default: a
             // profile that names no gateway does not prove the address its guest
             // would use.
-            match effigy_containers::runtime_gateway_observation(&selected.context) {
+            let profile = selected.context.clone();
+            let gateway =
+                bounded_publication_read("colima-profile-gateway", deadline.at(), move || {
+                    Ok(effigy_containers::runtime_gateway_observation(&profile))
+                });
+            match match gateway {
+                Ok(observation) => observation,
+                Err(BoundedReadRefusal::TimedOut) => {
+                    return Observed::Unknown(UnknownReason::TimedOut {
+                        phase: "Colima profile gateway".into(),
+                    })
+                }
+                Err(BoundedReadRefusal::Unavailable(reason)) => {
+                    return Observed::Unknown(UnknownReason::Inconsistent(reason))
+                }
+            } {
                 Observed::Verified(Some(configured), _) => {
                     match configured.trim().parse::<IpAddr>() {
                         Ok(gateway) if !gateway.is_unspecified() && !gateway.is_multicast() => {
@@ -376,7 +389,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                 "a container of this project is running but its ownership is unproven: {error}"
             )));
         }
-        let desired = match crate::runner::environment::record_until(policy, deadline.at()) {
+        let desired = match environment_record_bounded(policy, deadline) {
             Observed::Verified(record, _) => record.desired,
             Observed::Absent(_) => None,
             Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -510,6 +523,55 @@ impl ReservedBackendObservation for ContainerBackendObservation {
 /// at the publication closure's boundary.
 pub(in crate::runner) type ReservedProbeFactory<'a> =
     Box<dyn Fn(&ContainerIdentity) -> Result<Box<dyn WorkspaceGuestProbe + 'a>, RunnerError> + 'a>;
+
+/// The admitted backend selection, read on the publication's bounded worker.
+///
+/// Reading it establishes the checkout's identity token (a write) and resolves the
+/// environment, then reads the record, so a stalled filesystem cannot hold the
+/// publication past its deadline.
+fn observed_backend_bounded(
+    policy: &EffectiveContainerPolicy,
+    deadline: PublicationDeadline,
+) -> Observed<BackendSelection> {
+    let owned = policy.clone();
+    match bounded_publication_read("workspace-backend-record", deadline.at(), move || {
+        Ok(crate::runner::environment::observed_backend(
+            owned.repo_root.as_path(),
+            &owned,
+            deadline.at(),
+        ))
+    }) {
+        Ok(observed) => observed,
+        Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
+            phase: "workspace backend record".into(),
+        }),
+        Err(BoundedReadRefusal::Unavailable(reason)) => {
+            Observed::Unknown(UnknownReason::Inconsistent(reason))
+        }
+    }
+}
+
+/// The environment record, read on the publication's bounded worker.
+fn environment_record_bounded(
+    policy: &EffectiveContainerPolicy,
+    deadline: PublicationDeadline,
+) -> Observed<effigy_containers::environment::EnvRecord> {
+    let owned = policy.clone();
+    match bounded_publication_read("workspace-environment-record", deadline.at(), move || {
+        Ok(crate::runner::environment::record_until(
+            &owned,
+            deadline.at(),
+        ))
+    }) {
+        Ok(observed) => observed,
+        Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
+            phase: "workspace environment record".into(),
+        }),
+        Err(BoundedReadRefusal::Unavailable(reason)) => {
+            Observed::Unknown(UnknownReason::Inconsistent(reason))
+        }
+    }
+}
 
 /// What a caller must hand the pre-decision plan.
 pub(in crate::runner) struct ReservedPlanRequest<'a> {
@@ -1357,5 +1419,5 @@ impl std::fmt::Debug for ReservedEnrolmentSecret {
 }
 
 #[cfg(test)]
-#[path = "reserved_input_tests.rs"]
+#[path = "tests/reserved_input.rs"]
 mod tests;

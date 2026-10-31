@@ -485,7 +485,7 @@ impl WorkspaceSelectionIo for OwnedSelectionIo<'_> {
 }
 
 #[cfg(test)]
-#[path = "reserved_guest_tests.rs"]
+#[path = "tests/reserved_guest.rs"]
 mod tests;
 
 /// Re-open I/O for the obligation's exact target; this carries no authority to

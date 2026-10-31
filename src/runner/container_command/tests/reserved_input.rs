@@ -1682,3 +1682,59 @@ fn a_stalled_manifest_refuses_at_the_deadline_before_planning() {
     );
     assert_eq!(backend.count(), 0, "no backend fact was read");
 }
+
+#[test]
+fn a_stalled_colima_profile_refuses_at_the_deadline() {
+    let (_fixture, root, home) = checkout("stalled-profile");
+    let policy = rendered_policy(&root);
+    // A profile file that blocks on read is the case a clock check cannot
+    // interrupt; the production addressing observation must give up at the
+    // publication's deadline instead of holding planning.
+    let colima_home = home.join("colima");
+    std::fs::create_dir_all(colima_home.join("effigy")).expect("colima profile directory");
+    stalled(&colima_home.join("effigy/colima.yaml"));
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "COLIMA_HOME",
+        Some(colima_home.display().to_string()),
+    )]);
+    let mut observation = ContainerBackendObservation;
+
+    let started = Instant::now();
+    let observed = observation.addressing(
+        &policy,
+        &colima_selection("effigy"),
+        PublicationDeadline::new(started + Duration::from_millis(50)),
+    );
+
+    match observed {
+        Observed::Unknown(_) => {}
+        other => panic!("a stalled profile cannot be a verified address: {other:?}"),
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the profile observation stopped at its deadline"
+    );
+}
+
+#[test]
+fn an_expired_budget_reads_no_environment_record() {
+    let (_fixture, root, _home) = checkout("expired-record");
+    let policy = rendered_policy(&root);
+
+    let observed =
+        crate::runner::environment::record_until(&policy, Instant::now() - Duration::from_secs(1));
+
+    assert!(
+        matches!(observed, Observed::Unknown(UnknownReason::TimedOut { .. })),
+        "an expired budget is a timeout, not a filesystem read"
+    );
+    // The identity token a genuine read would establish is absent: the expired
+    // budget refused before any filesystem work.
+    assert!(
+        !root
+            .join(".git")
+            .join(effigy_core::worktree_scope::CHECKOUT_TOKEN_FILE)
+            .exists(),
+        "an expired read establishes no checkout identity"
+    );
+}
