@@ -32,8 +32,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and clears readiness when a listener becomes unavailable.
   A bounded generation drain gap resets terminal framing and reports truncation
   while preserving the declared restart policy and merged secret lookahead.
-  Recognized launcher boolean flags no longer cause spurious secret-in-argv
-  refusals; schema-sensitive values and unknown metadata remain protected.
+  Approved launcher boolean switches no longer cause spurious secret-in-argv
+  refusals; schema-sensitive values, secret-bearing keys and unclassified
+  environment values remain protected.
   Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
   explicit colour preferences, NO_COLOR and CI.
 

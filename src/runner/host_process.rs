@@ -1780,19 +1780,30 @@ fn classify_environment(
         .collect()
 }
 
-/// These launcher switches have a closed boolean domain, not application or
-/// credential provenance. Unexpected values still fail closed as secrets;
-/// schema sensitivity and aliases of known secrets take precedence above.
+/// Owner-approved launcher switch provenance: a closed boolean domain and
+/// namespace, never arbitrary Claude environment values. Secret-bearing name
+/// segments, schema sensitivity and known-secret aliases take precedence.
 fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
-    matches!(
+    if !matches!(value.to_str(), Some("0" | "1" | "true" | "false")) {
+        return false;
+    }
+    let known = matches!(
         name,
-        "CLAUDECODE"
-            | "CLAUDE_CODE_CHILD_SESSION"
-            | "CLAUDE_CODE_SESSION_ATTENDED"
-            | "AI_AGENT"
-            | "COREPACK_ENABLE_AUTO_PIN"
-            | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
-    ) && matches!(value.to_str(), Some("0" | "1" | "true" | "false"))
+        "CLAUDECODE" | "AI_AGENT" | "COREPACK_ENABLE_AUTO_PIN" | "COREPACK_ENABLE_DOWNLOAD_PROMPT"
+    );
+    let switch = name.strip_prefix("CLAUDE_CODE_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && name.len() <= 128
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    });
+    (known || switch)
+        && !name.split('_').any(|segment| {
+            ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
+                .iter()
+                .any(|secret| segment.eq_ignore_ascii_case(secret))
+        })
 }
 
 /// Only transport/session facts with established non-secret meaning. All
@@ -2846,6 +2857,8 @@ mod tests {
             ("CLAUDECODE", "1"),
             ("CLAUDE_CODE_CHILD_SESSION", "1"),
             ("CLAUDE_CODE_SESSION_ATTENDED", "1"),
+            ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1"),
+            ("CLAUDE_CODE_UNRECOGNIZED_SWITCH", "1"),
             ("AI_AGENT", "1"),
             ("COREPACK_ENABLE_AUTO_PIN", "0"),
             ("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"),
@@ -2878,6 +2891,23 @@ mod tests {
             sensitive.get(std::ffi::OsStr::new("AI_AGENT")),
             Some(EnvValue::Secret(_))
         ));
+        let namespace_sensitive = super::classify_environment(
+            environment(),
+            &Default::default(),
+            &[("CLAUDE_CODE_UNRECOGNIZED_SWITCH".into(), true)]
+                .into_iter()
+                .collect(),
+        )
+        .unwrap();
+        for name in [
+            "CLAUDE_CODE_UNRECOGNIZED_SWITCH",
+            "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS",
+        ] {
+            assert!(matches!(
+                namespace_sensitive.get(std::ffi::OsStr::new(name)),
+                Some(EnvValue::Secret(_))
+            ));
+        }
         let suspicious = super::classify_environment(
             [
                 (
@@ -2886,6 +2916,21 @@ mod tests {
                 ),
                 ("CLAUDE_TOKEN".into(), EnvValue::Plain("1".into())),
                 ("PASEO_TOKEN".into(), EnvValue::Plain("0".into())),
+                ("CLAUDE_CODE_API_KEY".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_api_kEy".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_TOKEN".into(), EnvValue::Plain("0".into())),
+                ("CLAUDE_CODE_SECRET".into(), EnvValue::Plain("true".into())),
+                (
+                    "CLAUDE_CODE_PASSWORD".into(),
+                    EnvValue::Plain("false".into()),
+                ),
+                ("CLAUDE_CODE_CREDENTIAL".into(), EnvValue::Plain("1".into())),
+                ("CLAUDE_CODE_AUTH".into(), EnvValue::Plain("1".into())),
+                (
+                    "CLAUDE_CODE_UNKNOWN".into(),
+                    EnvValue::Plain("opaque".into()),
+                ),
+                ("OTHER_BOOLEAN_SWITCH".into(), EnvValue::Plain("1".into())),
             ]
             .into_iter()
             .collect(),
@@ -3326,7 +3371,7 @@ if not Path('first.pid').exists():
     connection.sendmsg([b'x'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [1]))])
     sys.exit(3)
 Path('second.pid').write_text(str(os.getpid()))
-Path('session-flags.json').write_text(json.dumps({name: os.environ.get(name) for name in ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED']}))
+Path('session-flags.json').write_text(json.dumps({name: os.environ.get(name) for name in ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS', 'CLAUDE_CODE_UNRECOGNIZED_SWITCH']}))
 sys.stdout.write('secret\nrestarted\n')
 sys.stdout.flush()
 os.execv('/bin/sleep', ['sleep', '60'])
@@ -3379,16 +3424,27 @@ os.execv('/bin/sleep', ['sleep', '60'])
         let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
         let deadline =
             Instant::now() + effigy_kernel::custody::STOP_MARGIN + Duration::from_secs(15);
-        while !fs::read_to_string(&log).is_ok_and(|text| text.contains("restarted\n")) {
+        let read = loop {
+            match effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024) {
+                Ok(read)
+                    if read
+                        .bytes
+                        .windows(b"restarted\n".len())
+                        .any(|part| part == b"restarted\n") =>
+                {
+                    break read
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("canonical restart read failed: {error}"),
+            }
             assert!(
                 Instant::now() < deadline,
-                "host did not restart after its bounded drain; canonical={:?}",
-                fs::read_to_string(&log)
+                "host did not commit its restart output within the bounded drain/retry window"
             );
             thread::sleep(Duration::from_millis(25));
-        }
+        };
         let restart_elapsed = started.elapsed();
-        let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
         let first: u32 = fs::read_to_string(fixture.checkout.join("first.pid"))
             .unwrap()
             .parse()
@@ -3405,7 +3461,12 @@ os.execv('/bin/sleep', ['sleep', '60'])
         drop(guard);
         let record: HostProcessStopRecord =
             read_private_json(&log.with_extension("stop.json")).unwrap();
-        for name in ["CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED"] {
+        for name in [
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS",
+            "CLAUDE_CODE_UNRECOGNIZED_SWITCH",
+        ] {
             assert_eq!(inherited[name], serde_json::json!(std::env::var(name).ok()));
         }
         assert!(held && first != second);
@@ -3638,18 +3699,22 @@ print(json.dumps(out.getvalue()))
         let started = Instant::now();
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
-        // The public stop budget includes the declared grace, custody's
-        // drain/reap margin and the requester's five-second pickup margin.
-        // Slow durable appends under shared I/O load are not a leaked reader.
-        let bound = Duration::from_secs(policy.host_processes[0].shutdown_grace_secs + 5)
-            + effigy_kernel::custody::STOP_MARGIN;
+        // This proof must stop before custody's drain-deadline margin, even
+        // under shared I/O load; a complete report at the deadline is too late.
+        let bound = effigy_kernel::custody::STOP_MARGIN / 2;
         assert!(
             started.elapsed() < bound,
-            "elapsed={:?}, bound={bound:?}: {report:?}",
+            "elapsed={:?}, prompt bound={bound:?}: {report:?}",
             started.elapsed()
         );
         assert!(report.complete(), "{report:?}");
         assert!(group_members(pid).is_empty());
+        let stop: HostProcessStopRecord =
+            read_private_json(&log.with_extension("stop.json")).unwrap();
+        assert!(
+            !stop.custody.unwrap().capture_truncated,
+            "an unconsumed style reader must not force a capture drain deadline"
+        );
         let read = effigy_kernel::custody::MergedLog::read_plain(&log, None, 0, 64 * 1024).unwrap();
         let text = std::str::from_utf8(&read.bytes).unwrap();
         assert!(!text.contains("opaque-457-full-pipe-key") && !text.contains('\x1b'));
@@ -4765,6 +4830,15 @@ while True:
         let fixture = fixture();
         let domain = "reclaim-successor.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "successor");
+        struct Stop<'a>(&'a Path, &'a EffectiveContainerPolicy);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = super::kernel_run::stop_host_processes_for_container(self.0, self.1);
+            }
+        }
+        // Resume guards inside the pause loop unwind before this owner guard,
+        // so a failed boundary observation cannot strand a paused/live fixture.
+        let _cleanup = Stop(&fixture.checkout, &policy);
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let first = published_owner(domain);
@@ -4773,7 +4847,46 @@ while True:
             .first()
             .and_then(|status| status.pid)
             .expect("custody receipt names the child group");
-        kill_recorded_run(&listener_state(&policy), leader);
+        // This fixture isolates route succession. A kill inside durable append
+        // must instead refuse restart for operator recovery (covered by the
+        // kernel fault harness); never clear that pending barrier here.
+        let state_path = listener_state(&policy);
+        let supervisor = read_json(&state_path)["supervisor_pid"].as_u64().unwrap() as i32;
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("app.log");
+        struct Resume(Option<Pid>);
+        impl Drop for Resume {
+            fn drop(&mut self) {
+                if let Some(pid) = self.0 {
+                    let _ = kill(pid, Signal::SIGCONT);
+                }
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let pid = Pid::from_raw(supervisor);
+            kill(pid, Signal::SIGSTOP).unwrap();
+            let mut resume = Resume(Some(pid));
+            wait_until("the recorded owner to pause", || {
+                std::process::Command::new("ps")
+                    .args(["-o", "state=", "-p", &supervisor.to_string()])
+                    .output()
+                    .is_ok_and(|out| out.status.success() && out.stdout.contains(&b'T'))
+            });
+            let committed = effigy_kernel::custody::MergedLog::identity(&log);
+            if committed
+                .is_ok_and(|proof| fs::metadata(&log).is_ok_and(|file| file.len() == proof.length))
+            {
+                kill_recorded_run(&state_path, leader);
+                resume.0 = None;
+                break;
+            }
+            drop(resume);
+            assert!(
+                Instant::now() < deadline,
+                "owner did not reach a committed append boundary"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
         assert!(
             RouteTable::load(&route_table_path())
                 .expect("route table")
@@ -4783,7 +4896,8 @@ while True:
         );
 
         // No `down`: the same checkout path replaces its own route on the next
-        // start, whatever the previous generation did.
+        // start after a committed-boundary crash. Interrupted appends remain
+        // an explicit operator-recovery refusal, not automatic route recovery.
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("a successor run replaces the route its predecessor left");
         let successor = published_owner(domain);

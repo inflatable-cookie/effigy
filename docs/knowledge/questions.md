@@ -637,6 +637,12 @@ safe bytes awaiting sync and acknowledge no durability; Effigy-owned readers
 must honor the durable committed extent and hide failed/torn suffixes.
 The manual hold remains
 until combined writer, security, style and bundled follower proof and review.
+On 2026-10-31 the owner approved a bounded boolean `CLAUDE_CODE_*` launcher
+switch namespace instead of expanding exact flag lists. Secret-bearing name
+segments, schema-sensitive declarations and known-secret aliases override it;
+non-boolean and outside unknown values stay Secret. The custody argv guard
+remains unchanged; contract 052 records the complete value-domain boundary.
+
 
 
 ## Q-018: Primary Linux proof environment for v0.15

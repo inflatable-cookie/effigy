@@ -86,12 +86,16 @@ impl MergedLog {
     }
 
     /// Read-only canonical provenance and snapshot extent.
+    /// Returns `WouldBlock` during writer commit; polling fronts retry rather
+    /// than blocking their UI or bypassing the durable boundary.
     pub fn identity(path: &Path) -> io::Result<PlainLog> {
         migration::identity(path)
     }
 
     /// Read an identity-addressed plain slice. Unknown/replaced identities reset
     /// the byte offset with a typed cutover event; legacy bytes are refused.
+    /// Returns `WouldBlock` during writer commit. One-shot callers may retry
+    /// within their own deadline, without reading an unacknowledged suffix.
     pub fn read_plain(
         path: &Path,
         expected: Option<FileIdentity>,

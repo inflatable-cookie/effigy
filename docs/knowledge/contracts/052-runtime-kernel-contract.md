@@ -1410,12 +1410,25 @@ only where identity, byte offset and text exactly match its canonical read;
 missing, stale or expired style data renders plain. TUI typed ingest renders
 those spans directly, without ANSI interpretation or a second redactor.
 
-Launcher boolean metadata (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`,
-`CLAUDE_CODE_SESSION_ATTENDED`, `AI_AGENT` and the named Corepack switches) has a closed recognized value domain. Unexpected values and unknown
-launcher-prefixed names remain secret; no prefix-wide exemption is used.
-Explicit schema sensitivity and aliases containing a known secret override all
-metadata exceptions. This avoids treating ordinary `0`/`1` flags as secret argv
-substrings without weakening the custody argv guard.
+Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
+non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
+Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
+nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
+`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
+and aliases containing a known secret also override all metadata exceptions.
+Non-boolean values and unknown names outside the namespace remain Secret;
+the established exact launcher flags keep their closed-domain classification.
+The custody argv guard is unchanged. This policy avoids an expanding list of
+individual Claude flags without trusting arbitrary environment values.
+
+Canonical shared-lock reads intentionally return `WouldBlock` during writer
+commit. TUI followers retry on their next poll without blocking all panes;
+one-shot consumers may retry within their own deadline or report temporary
+unavailability. They never fall back to raw or uncommitted suffixes. Tests wait
+for a committed extent, rather than a raw visible write, before asserting text.
+The full-pipe/unconsumed-tap stop proof requires closure before half the kernel
+drain margin and a non-truncated durable capture report, distinguishing prompt
+stop from waiting for a drain deadline.
 
 The initiating TUI capability is non-secret and fixed before detached host
 handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI
