@@ -87,6 +87,12 @@ During v0.x, MINOR bumps may include breaking changes.
   captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+- Bump `rustls-webpki` 0.103.15 → 0.103.16 and `webpki-root-certs` 1.0.9 →
+  1.0.10, clearing RUSTSEC-2026-0382 and RUSTSEC-2026-0383 in every TLS path
+  Effigy ships (the workspace host channel and the gateway). Lockfile-only:
+  no API, behaviour or configuration change. These were the versions the
+  `check:supply-chain` (`cargo deny`) gate refused on `main`, which is what
+  bounced unrelated work until the bump landed.
 
 ### Breaking
 
