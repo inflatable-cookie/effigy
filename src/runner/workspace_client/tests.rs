@@ -175,13 +175,11 @@ pub(super) fn publish(
         // so this process declares the client the fixture publishes for (an entry
         // exports exactly this per terminal).
         std::env::set_var("EFFIGY_WORKSPACE_CLIENT_ID", TEST_CLIENT);
-        for client in [TEST_CLIENT.to_owned()] {
-            guest.put_file(
-                &client_capability_path(&client),
-                render_capability(&stored).as_bytes(),
-                0o600,
-            );
-        }
+        guest.put_file(
+            &client_capability_path(TEST_CLIENT),
+            render_capability(&stored).as_bytes(),
+            0o600,
+        );
     }
 }
 
