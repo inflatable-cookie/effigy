@@ -3238,15 +3238,16 @@ The intended hash needs the frozen closure at its final content-addressed path
 before the one apply publishes it, and the preflight must not put it there: the only
 owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
 acquire `Gate(Env)` — which the gated recheck cannot do — publish desired state, and
-run on a fixed budget rather than the publication's one deadline. A hand-written
-seal cannot meet the same bar either, because the primitives it needs are the
-kernel's own and are not exposed: private staging under the staging family, an
-exclusive no-replace directory promotion (`fs::DirFd::move_to` is a plain
-`renameat`), and the trusted closure verifier that rejects extra entries,
-untrusted modes and a wrong digest. The missing owner signature is
-`effigy_kernel::objects::Objects::seal_for_preflight(cx, root, closure, deadline)`.
-Until it exists the preflight **reads** an already-published render (every closure
-file at its final path with the exact frozen bytes) and otherwise refuses. Ownership
+run on a fixed budget rather than the publication's one deadline. The kernel owner is
+`Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight`: it
+verifies the frozen closure into one private `staging/preflight-<token>/<digest>`
+tree (`O_EXCL`, 0600, kernel closure verifier) inside the deadline, takes no gate
+and writes nothing canonical; only `Objects::publish_sealed_desired` under
+`Gate(Env)` promotes it, re-verifying the tree first. The reserved preflight seals
+the plan's render, points its Compose inputs at that private tree, and hashes the
+exact bytes the apply will publish; the receipt's tree is read-only for this
+purpose and a wrong or altered tree can only cause a refusal, never an unsafe
+publication. Ownership
 resolution (canonicalization plus the scope-token read) is bounded by the
 deadline;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`

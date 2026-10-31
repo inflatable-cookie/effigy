@@ -900,15 +900,16 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     // published this closure, materialize the exact frozen bytes at the exact paths
     // the apply will use (content-addressed, so the apply finds them present), all
     // on the publication's bounded worker.
-    if let Err(refusal) = require_published_render(policy, deadline) {
-        return match refusal {
-            BoundedReadRefusal::TimedOut => Observed::Unknown(UnknownReason::TimedOut {
+    let sealed = match seal_render_for_preflight(policy, deadline) {
+        Ok(sealed) => sealed,
+        Err(BoundedReadRefusal::Unavailable(reason)) => return unknown(reason),
+        Err(BoundedReadRefusal::TimedOut) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
                 phase: "workspace render preflight".into(),
-            }),
-            BoundedReadRefusal::Unavailable(reason) => unknown(reason),
-        };
-    }
-    let intended = match compose_service_config_hashes(repo_root, policy, deadline) {
+            })
+        }
+    };
+    let intended = match compose_service_config_hashes(repo_root, &sealed.policy, deadline) {
         Ok(hashes) => hashes,
         Err(error) => {
             return unknown(format!(
@@ -972,80 +973,110 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     )
 }
 
-/// The owner API this preflight needs and no owner provides.
+/// The verified private seal of one frozen render, for a read-only preflight.
 ///
-/// `compose config --hash` can only describe a render Compose can read, so a
-/// preflight that runs before the one apply needs the plan's frozen closure at its
-/// final content-addressed path. Both existing ways to get it there are unusable
-/// here: `policy::render::prepare`/`prepare_resolved` acquire the environment's
-/// owner gate (so they cannot run inside the activation gate the recheck runs
-/// under) and publish the desired render (desired state must not change during a
-/// preflight), and their operation context is a fixed budget rather than the
-/// publication's one deadline. Writing the objects here by hand is exactly the
-/// unsafe staging this correction removed. So the preflight only *reads* an
-/// already-published render and otherwise refuses, naming the missing signature.
-pub(in crate::runner) const MISSING_RENDER_PREFLIGHT_OWNER: &str =
-    "a gate-free, deadline-bounded owner that materializes one frozen render closure read-only — \
-     private staging, atomic no-replace promotion into objects/<closure digest>/, no Gate(Env), no \
-     desired-state mutation, nothing promoted after the deadline \
-     (`policy::render::materialize_render_for_preflight(policy, deadline) -> \
-     Result<(), ContainerPolicyError>`)";
+/// The kernel owner (`Objects::seal_for_preflight`) stages the closure in a
+/// private tree, `O_EXCL`/0600, verifies it with the kernel's own closure
+/// verifier inside the deadline, and returns a receipt. Nothing canonical is
+/// written, no gate is taken and no desired state changes; only
+/// `Objects::publish_sealed_desired` under `Gate(Env)` can make those bytes
+/// canonical.
+struct SealedRender {
+    /// A clone of the policy whose Compose inputs name the sealed tree, so the
+    /// backend hashes exactly the bytes the apply will publish.
+    policy: EffectiveContainerPolicy,
+    /// The sealed tree's root, from the kernel's documented staging layout
+    /// `state/staging/preflight-<token>/<digest>`.
+    #[allow(dead_code)]
+    root: PathBuf,
+}
 
-/// Require this policy's frozen render to be published already.
-///
-/// Reads only: no gate, no writes, no desired state. Every closure file must
-/// already be at its final path with the exact frozen bytes, which is what the one
-/// apply will read; anything else refuses with the missing owner signature rather
-/// than creating an object.
-fn require_published_render(
+impl SealedRender {
+    /// The frozen render's digest, as the receipt verified it.
+    #[allow(dead_code)]
+    fn digest(&self) -> String {
+        self.root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned()
+    }
+}
+
+/// Seal this policy's frozen render for the preflight, inside the publication's
+/// one deadline and without any authority a Prepare has.
+fn seal_render_for_preflight(
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
-) -> Result<(), BoundedReadRefusal> {
+) -> Result<SealedRender, BoundedReadRefusal> {
+    use effigy_kernel::ctx::{
+        CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement,
+    };
+
+    let live = |phase: &str| {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                BoundedReadRefusal::Unavailable(format!(
+                    "the render preflight deadline expired {phase}"
+                ))
+            })
+    };
+    live("before sealing the render")?;
     let Some(render) = policy.render.as_ref() else {
         return Err(BoundedReadRefusal::Unavailable(
-            "the workspace render has no frozen closure to hash".into(),
+            "the workspace render has no frozen closure to seal".into(),
         ));
     };
-    let owned_path = render.path.clone();
-    let owned_files: Vec<(String, Vec<u8>)> = render
-        .closure
-        .files()
-        .iter()
-        .map(|(relative, bytes)| (relative.clone(), bytes.clone()))
-        .collect();
-    let missing = MISSING_RENDER_PREFLIGHT_OWNER;
-    crate::runner::workspace_command::provisioning::bounded_publication_read(
-        "workspace-render-preflight-read",
-        deadline,
-        move || {
-            for (relative, bytes) in owned_files {
-                let path = owned_path.join(&relative);
-                match std::fs::read(&path) {
-                    Ok(existing) if existing == bytes => continue,
-                    Ok(_) => {
-                        return Err(RunnerError::task_invocation(format!(
-                            "the render object `{}` holds other bytes than this closure",
-                            path.display()
-                        )))
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        return Err(RunnerError::task_invocation(format!(
-                            "the frozen render is not published at `{}`, and publishing it here \
-                             would need {missing}",
-                            path.display()
-                        )))
-                    }
-                    Err(error) => {
-                        return Err(RunnerError::task_invocation(format!(
-                            "cannot read the render object `{}`: {error}",
-                            path.display()
-                        )))
-                    }
-                }
-            }
-            Ok(())
+    let cx = OperationContext::new(
+        Deadline::At(deadline),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
         },
+        EffectClass::Prepare,
+        Placement::Host,
     )
+    .effects()
+    .map_err(|_| {
+        BoundedReadRefusal::Unavailable(
+            "the render preflight cannot take a Prepare capability".into(),
+        )
+    })?;
+    let root = effigy_containers::environment::state_root(&cx, policy.repo_root.as_path())
+        .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?;
+    let sealed =
+        effigy_kernel::objects::Objects::seal_for_preflight(&cx, &root, &render.closure, deadline)
+            .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?;
+    // The receipt names no canonical object; its private tree follows the
+    // documented layout `staging/preflight-<token>/<digest>`. A wrong guess is
+    // fail-closed: Compose cannot read it, so the guard refuses.
+    let sealed_root = root
+        .state_directory()
+        .path()
+        .join("staging")
+        .join(format!("preflight-{}", sealed.token()))
+        .join(sealed.digest());
+    let mut policy = policy.clone();
+    for file in &mut policy.compose_files {
+        let Ok(relative) = file.strip_prefix(&render.path) else {
+            return Err(BoundedReadRefusal::Unavailable(
+                "a Compose input is outside the render's closure".into(),
+            ));
+        };
+        *file = sealed_root.join(relative);
+    }
+    live("after sealing the render")?;
+    Ok(SealedRender {
+        policy,
+        root: sealed_root,
+    })
 }
 
 /// The service -> config-hash map one rendered policy produces.

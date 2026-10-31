@@ -1272,12 +1272,11 @@ fn the_inspected_config_hash_needs_a_service_and_a_hash() {
     assert!(super::inspected_config_hash(b"not json").is_err());
 }
 
-/// The preflight may only read an already-published render. An unpublished one
-/// refuses with the missing owner signature, acquires no gate and writes nothing.
+/// The preflight seals an unpublished frozen render through the kernel owner and
+/// hashes exactly those bytes, and the kernel publisher then accepts them.
 #[test]
-fn an_unpublished_render_refuses_the_preflight_instead_of_publishing_it() {
-    let fixture =
-        effigy_test_support::Fixture::new("effigy-preflight-unpublished-").expect("fixture");
+fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-seal-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     fs::create_dir_all(&checkout).expect("checkout");
@@ -1296,37 +1295,71 @@ fn an_unpublished_render_refuses_the_preflight_instead_of_publishing_it() {
     effigy_containers::with_test_effigy_home(&home, || {
         let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
-        assert!(
-            !render.path.exists(),
-            "the render is unpublished before the preflight"
-        );
+        assert!(!render.path.exists(), "the render is unpublished");
 
-        let refusal = super::require_published_render(
+        let sealed = super::seal_render_for_preflight(
             &policy,
             std::time::Instant::now() + std::time::Duration::from_secs(30),
-        );
-        let reason = match refusal {
-            Err(super::BoundedReadRefusal::Unavailable(reason)) => reason,
-            other => panic!("an unpublished render must refuse: {other:?}"),
-        };
+        )
+        .expect("the kernel owner seals the frozen render");
 
-        assert!(
-            reason.contains("materialize_render_for_preflight"),
-            "the refusal names the missing owner signature: {reason}"
-        );
+        // The sealed tree is the documented private staging layout, holds the
+        // frozen bytes with private modes, and the Compose inputs the preflight
+        // hashes name that tree rather than the canonical object directory.
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(sealed.digest(), render.closure.digest());
+        for (relative, bytes) in render.closure.files() {
+            let path = sealed.root.join(relative);
+            assert_eq!(fs::read(&path).expect("sealed object"), *bytes);
+            assert_eq!(
+                fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+                0o600,
+                "sealed files are private: {}",
+                path.display()
+            );
+        }
+        for file in &sealed.policy.compose_files {
+            assert!(
+                file.starts_with(&sealed.root),
+                "the hashed input is the sealed tree: {}",
+                file.display()
+            );
+        }
         assert!(
             !render.path.exists(),
-            "the preflight writes no object at all"
+            "the preflight writes no canonical object"
+        );
+
+        // The kernel publisher then accepts this very closure, unchanged.
+        effigy_containers::policy::render::prepare_resolved(&policy)
+            .expect("the kernel publisher accepts the render");
+        assert_eq!(
+            fs::read(
+                render.path.join(
+                    render
+                        .closure
+                        .files()
+                        .keys()
+                        .next()
+                        .expect("one render file")
+                )
+            )
+            .expect("published bytes"),
+            render
+                .closure
+                .files()
+                .values()
+                .next()
+                .expect("bytes")
+                .clone()
         );
     });
 }
 
-/// Once the render is published through the kernel owner (the reconcile/apply
-/// path), the same read succeeds and the preflight hashes exactly those bytes.
+/// An expired budget seals nothing at all.
 #[test]
-fn a_published_render_is_accepted_for_the_preflight_unchanged() {
-    let fixture =
-        effigy_test_support::Fixture::new("effigy-preflight-published-").expect("fixture");
+fn an_expired_preflight_budget_seals_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-expired-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     fs::create_dir_all(&checkout).expect("checkout");
@@ -1345,65 +1378,17 @@ fn a_published_render_is_accepted_for_the_preflight_unchanged() {
     effigy_containers::with_test_effigy_home(&home, || {
         let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
-        // Publish it the way the apply does: the kernel's own Prepare publication.
-        let published = effigy_containers::policy::render::prepare_resolved(&policy)
-            .expect("kernel publication of the frozen render");
-        assert_eq!(
-            published
-                .render
-                .as_ref()
-                .map(|render| render.closure.digest()),
-            Some(render.closure.digest()),
-            "the kernel publishes this very closure"
-        );
-
-        super::require_published_render(
-            &policy,
-            std::time::Instant::now() + std::time::Duration::from_secs(30),
-        )
-        .expect("the published render is readable");
-
-        // Exactly the frozen bytes, private modes, and no staging residue.
-        use std::os::unix::fs::PermissionsExt;
-        for (relative, bytes) in render.closure.files() {
-            let path = render.path.join(relative);
-            assert_eq!(fs::read(&path).expect("published object"), *bytes);
-            assert_eq!(
-                fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
-                0o600,
-                "published objects are private: {}",
-                path.display()
-            );
-        }
-        let mut residue = Vec::new();
-        for entry in fs::read_dir(&render.path).expect("render directory") {
-            let path = entry.expect("entry").path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("tmp") || name.contains("preflight"))
-            {
-                residue.push(path);
-            }
-        }
-        assert!(residue.is_empty(), "no partial staging: {residue:?}");
-
-        // A render object holding other bytes still refuses.
-        let first = render
-            .closure
-            .files()
-            .keys()
-            .next()
-            .expect("one render file")
-            .clone();
-        fs::write(render.path.join(&first), b"other bytes").expect("tamper");
         assert!(
-            super::require_published_render(
+            super::seal_render_for_preflight(
                 &policy,
-                std::time::Instant::now() + std::time::Duration::from_secs(30),
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
             )
             .is_err(),
-            "a differing object refuses"
+            "an expired budget refuses"
+        );
+        assert!(
+            !render.path.exists(),
+            "an expired preflight writes no canonical object"
         );
     });
 }
