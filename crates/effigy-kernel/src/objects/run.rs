@@ -2,7 +2,7 @@
 use super::*;
 use crate::ctx::Capability;
 use crate::fs::FileName;
-use crate::objects::{self, Closure, Objects};
+use crate::objects::{self, Closure, Objects, SealedPreflight};
 use crate::root::Family;
 use rusqlite::OptionalExtension;
 
@@ -14,6 +14,36 @@ impl Objects {
     /// desired reference. A crash selects the previous or the complete new
     /// closure. Settle removes abandoned staging and unreferenced publications.
     pub fn publish_desired(run: &mut Run<'_>, closure: &Closure) -> Result<String, RunError> {
+        Self::publish(run, closure, None)
+    }
+    /// Publish exactly the closure a preflight seal verified, taking its private
+    /// verified tree as the source instead of staging the bytes again.
+    ///
+    /// This is the same fenced publisher — one journalled intent, one objects
+    /// gate, one reference transaction — so canonical promotion still happens
+    /// only here, under the caller's `Gate(Env)`, and never in the seal. The
+    /// receipt is re-verified under the gate before it is moved, so a private
+    /// tree altered after sealing never becomes canonical. A receipt whose tree
+    /// a completed publication already consumed, or whose tree is gone, costs a
+    /// fresh stage rather than a failure.
+    pub fn publish_sealed_desired(
+        run: &mut Run<'_>,
+        sealed: &SealedPreflight,
+        closure: &Closure,
+    ) -> Result<String, RunError> {
+        if !sealed.matches(closure) {
+            return Err(RunError::refused(
+                "the preflight seal does not describe this closure",
+            ));
+        }
+        Self::publish(run, closure, Some(sealed))
+    }
+
+    fn publish(
+        run: &mut Run<'_>,
+        closure: &Closure,
+        sealed: Option<&SealedPreflight>,
+    ) -> Result<String, RunError> {
         run.can_effect()?;
         if run.root.is_machine() {
             return Err(RunError::refused(
@@ -43,37 +73,75 @@ impl Objects {
                 .family(Family::Staging)
                 .map_err(StoreError::from)?
                 .expect("created family");
-            run.root.dir().sync().map_err(StoreError::from)?;
-            crate::fault_point!(ObjectStageBefore)?;
-            let stage = staging
-                .child(&run.id.to_string(), crate::fs::Trust::Private, true)
-                .map_err(StoreError::from)?
-                .expect("created staging");
-            crate::fault_point!(ObjectStageCreated)?;
-            if objects.entry(&name).map_err(StoreError::from)?.is_none() {
-                let dir = stage
-                    .child(name.as_str(), crate::fs::Trust::Private, true)
-                    .map_err(StoreError::from)?
-                    .expect("created closure");
-                crate::fault_point!(ObjectSealBefore)?;
-                objects::write(&dir, closure, &run.cx)?;
-                crate::fault_point!(ObjectSealAfter)?;
-                stage.sync().map_err(StoreError::from)?;
-                staging.sync().map_err(StoreError::from)?;
-                crate::fault_point!(ObjectRenameBefore)?;
-                stage
-                    .move_to(&name, &objects, &name)
-                    .map_err(StoreError::from)?;
-                objects.sync().map_err(StoreError::from)?;
-                stage.sync().map_err(StoreError::from)?;
-                crate::fault_point!(ObjectRenameAfter)?;
-            }
             let observe = run
                 .cx
                 .operation()
                 .child(std::time::Duration::from_secs(30))
                 .observe()
                 .map_err(|_| RunError::unavailable("object observation budget"))?;
+            // A preflight receipt names a private, already written tree; it is
+            // consumed here or nowhere.
+            let sealed_tree = match sealed {
+                Some(sealed) => sealed.stage(run.root)?,
+                None => None,
+            };
+            run.root.dir().sync().map_err(StoreError::from)?;
+            if let Some(tree) = &sealed_tree {
+                if objects.entry(&name).map_err(StoreError::from)?.is_none() {
+                    // Verified again under this gate: a private tree altered
+                    // after sealing never becomes canonical.
+                    let verified = objects::open(tree, closure.digest(), &observe)?;
+                    if verified.closure != *closure {
+                        return Err(RunError::broken("the sealed preflight is not this closure"));
+                    }
+                    crate::fault_point!(ObjectRenameBefore)?;
+                    if !tree
+                        .move_to_exclusive(&name, &objects, &name)
+                        .map_err(StoreError::from)?
+                    {
+                        // Another publication won the name; trust only the
+                        // verifier's reading of it.
+                        let winner = objects::open(&objects, closure.digest(), &observe)?;
+                        if winner.closure != *closure {
+                            return Err(RunError::broken("object collision"));
+                        }
+                    }
+                    objects.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameAfter)?;
+                }
+            } else {
+                crate::fault_point!(ObjectStageBefore)?;
+                let stage = staging
+                    .child(&run.id.to_string(), crate::fs::Trust::Private, true)
+                    .map_err(StoreError::from)?
+                    .expect("created staging");
+                crate::fault_point!(ObjectStageCreated)?;
+                if objects.entry(&name).map_err(StoreError::from)?.is_none() {
+                    let dir = stage
+                        .child(name.as_str(), crate::fs::Trust::Private, true)
+                        .map_err(StoreError::from)?
+                        .expect("created closure");
+                    crate::fault_point!(ObjectSealBefore)?;
+                    objects::write(&dir, closure, &run.cx)?;
+                    crate::fault_point!(ObjectSealAfter)?;
+                    stage.sync().map_err(StoreError::from)?;
+                    staging.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameBefore)?;
+                    stage
+                        .move_to(&name, &objects, &name)
+                        .map_err(StoreError::from)?;
+                    objects.sync().map_err(StoreError::from)?;
+                    stage.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameAfter)?;
+                }
+            }
+            // The private seal tree is this publication's to remove, under the
+            // gate it holds, whether it was the source or already canonical.
+            if let Some(sealed) = sealed {
+                #[cfg(test)]
+                crate::objects::preflight::test_hooks::consume_point();
+                crate::objects::preflight::consume(&staging, sealed.token())?;
+            }
             let published = objects::open(&objects, closure.digest(), &observe)?;
             if published.closure != *closure {
                 return Err(RunError::broken("object collision"));

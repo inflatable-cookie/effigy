@@ -94,11 +94,29 @@ impl Role {
         }
     }
 }
+/// One entry of a verified closure tree: its path relative to the tree root
+/// (`""` is the root), kind, private mode and byte length. It is the inventory
+/// a preflight receipt carries, and it is read from the same walk that proves
+/// the closure digest, so it can only ever describe entries that walk accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedEntry {
+    pub path: String,
+    pub kind: SealedKind,
+    pub mode: u32,
+    pub len: u64,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedKind {
+    Directory,
+    File,
+}
 /// A verified read snapshot, including the location engines give their backend.
 #[derive(Debug)]
 pub struct Object {
     pub path: PathBuf,
     pub closure: Closure,
+    /// Every entry of the verified tree, root first.
+    pub inventory: Vec<SealedEntry>,
 }
 #[derive(Debug)]
 pub struct Objects;
@@ -263,17 +281,27 @@ pub(crate) fn open(
         .child(name.as_str(), Trust::Private, false)?
         .ok_or_else(|| invalid("referenced object missing"))?;
     let mut files = BTreeMap::new();
+    let mut inventory = vec![SealedEntry {
+        path: String::new(),
+        kind: SealedKind::Directory,
+        mode: dir.stat()?.st_mode as u32 & 0o777,
+        len: 0,
+    }];
     let mut left = MAX_BYTES;
     let mut entries_left = MAX_FILES * MAX_DEPTH;
     read_tree(
         &dir,
         "",
         &mut files,
+        &mut inventory,
         &mut left,
         &mut entries_left,
         MAX_DEPTH,
         cx,
     )?;
+    // A canonical order, so the inventory a receipt carries is comparable
+    // without depending on directory listing order.
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
     let closure = Closure::new(files)?;
     if closure.digest != digest {
         return Err(invalid("object digest mismatch"));
@@ -281,12 +309,15 @@ pub(crate) fn open(
     Ok(Object {
         path: dir.path().into(),
         closure,
+        inventory,
     })
 }
+#[allow(clippy::too_many_arguments)]
 fn read_tree(
     dir: &DirFd,
     prefix: &str,
     files: &mut BTreeMap<String, Vec<u8>>,
+    inventory: &mut Vec<SealedEntry>,
     left: &mut usize,
     entries_left: &mut usize,
     depth: usize,
@@ -312,6 +343,12 @@ fn read_tree(
             .entry(&name)?
             .ok_or_else(|| invalid("object vanished"))?;
         if stat.st_mode & libc::S_IFMT == libc::S_IFDIR {
+            inventory.push(SealedEntry {
+                path: path.clone(),
+                kind: SealedKind::Directory,
+                mode: stat.st_mode as u32 & 0o777,
+                len: 0,
+            });
             let child = dir
                 .child(name.as_str(), Trust::Private, false)?
                 .ok_or_else(|| invalid("object vanished"))?;
@@ -319,6 +356,7 @@ fn read_tree(
                 &child,
                 &format!("{path}/"),
                 files,
+                inventory,
                 left,
                 entries_left,
                 depth - 1,
@@ -337,6 +375,12 @@ fn read_tree(
                     limit: MAX_BYTES as u64,
                 })?;
             *left -= bytes.len();
+            inventory.push(SealedEntry {
+                path: path.clone(),
+                kind: SealedKind::File,
+                mode: stat.st_mode as u32 & 0o777,
+                len: bytes.len() as u64,
+            });
             files.insert(path, bytes);
         }
     }
@@ -352,4 +396,5 @@ fn read_tree(
 #[cfg(test)]
 pub(crate) mod tests;
 
-mod preflight;
+pub(crate) mod preflight;
+pub use preflight::SealedPreflight;

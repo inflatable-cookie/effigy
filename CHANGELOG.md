@@ -493,25 +493,25 @@ During v0.x, MINOR bumps may include breaking changes.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
-- **A container render can be sealed before it is applied, then reconciled
-  after.** `effigy_kernel::objects::Objects::seal_for_preflight` publishes a
-  frozen closure under the caller's deadline with no run, journal row or
-  reference: an existing object is accepted only when the kernel's closure
-  verifier reads back exactly those bytes, private modes and entries, and
-  otherwise a private, synced `state/staging/preflight-*` tree is promoted with
-  one exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+- **A container render can be sealed and verified before it is applied, then
+  published by the one fenced publisher.** `effigy_kernel::objects::
+  Objects::seal_for_preflight` writes the frozen closure into one private,
+  uniquely tokened `state/staging/preflight-<token>/` tree (`O_EXCL`/0600, synced
+  content and directories), verifies it with the kernel's closure verifier
+  inside the caller's deadline, and returns a typed `SealedPreflight` receipt
+  (digest, token, verified-at and the byte/mode inventory). It publishes nothing:
+  a helper that outlives its caller may write only its own private tree and has
+  no promotion path, and its owner lease keeps recovery from touching a live
+  tree, so a stalled write or sync can finish late only there. `Objects::
+  publish_sealed_desired` is the existing fenced publisher consuming that
+  receipt: it re-verifies the tree under the objects gate, moves it with one
+  exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
-  than replacing). Staging and verification run on one helper so the deadline
-  holds even when a synchronous write, sync or verify stalls, while the
-  promotion is the caller's own work under the objects gate it holds for the
-  whole call, after one last deadline and cancellation check; a helper that
-  outlives its caller holds no gate, removes nothing and has no promotion path,
-  so nothing is ever promoted after the caller returns and its private stage is
-  left to the next seal's recovery. The deadline bounds those waits and
-  decisions, not an in-flight filesystem syscall, exactly as `atomic_replace`
-  already assumes. `Objects::publish_desired` then records and reconciles that
-  same trusted object. The kernel's object verifier also refuses an entry the
-  closure digest cannot name, such as an extra empty directory.
+  than replacing), verifies any concurrent winner, and records the object row
+  and desired reference in the same transaction. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical. The kernel's
+  object verifier also refuses an entry the closure digest cannot name, such as
+  an extra empty directory.
 
 ### Changed
 

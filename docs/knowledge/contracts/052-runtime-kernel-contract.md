@@ -2418,7 +2418,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree by the seal that promoted it or the next seal's recovery |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree only by the fenced publisher that consumed its receipt or by recovery of a dead lease |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2432,29 +2432,34 @@ nor holder records are added to the machine database.
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
 
 Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
-preflight seal (§7.1–§7.4, effigy#509) holds the objects gate for the whole
-call, writes its one private tree `O_EXCL`/0600 on a staging helper, and syncs
-content and directories there; the promotion is the caller's own work, on its
-own thread, under that gate and after one last deadline and cancellation check,
-so it is one exclusive no-replace rename and nothing outside the gate ever
-moves an object. A helper that outlives its caller only ever writes inside that
-private tree — it holds no gate, removes nothing and has no promotion path — and
-the tree is removed by the next seal's recovery, which runs under the gate and
-stops at its own caller's deadline. Seal trees never name a run and a run's own
-staging tree is still removed only by its durable settle.
+preflight seal (§7.1–§7.4, effigy#509) **never publishes**: it writes one
+private, uniquely tokened tree (`preflight-<token>/`, `O_EXCL`/0600, content and
+directories synced) beside its owner lease (`preflight-<token>.lock`, held by
+`flock`), verifies the tree with the kernel closure verifier inside the caller's
+deadline, and returns a typed `SealedPreflight` receipt carrying the digest, the
+token, when verification finished and the byte/mode inventory of every entry. The
+lease is created before the tree, so recovery — which runs under the objects gate
+and stops at its own caller's deadline — removes only trees whose lease proves
+them dead; a live helper's or a live receipt's tree is never removed or raced. A
+helper that outlives its caller may write only its own private tree, holds no
+gate and has no promotion path at all.
 
-The deadline bounds every *wait* and every *decision* of a preflight seal: the
-objects gate wait, the helper's staging and verification, and the check
-immediately before the rename. It cannot bound a single in-flight filesystem
-syscall, because no such syscall is interruptible — the same limit
-`record::atomic_replace` already has, whose own deadline check precedes its
-open/write/fsync/rename with no check between (K8 bounds waits, not syscalls).
-Two consequences are recorded rather than papered over: a promotion whose last
-check passed can still enter `renameat2`/`renameatx_np` after the instant (the
-instruction boundary between check and syscall), and an abandoned helper can
-finish writing its private tree after its caller returned. Closing the first
-needs a lease-bound or revocable exclusive move, which this contract does not
-provide.
+Canonical promotion stays exactly where it was: the fenced publisher.
+`publish_sealed_desired` is that same publisher — one journalled intent, one
+objects gate, one reference transaction — consuming a receipt as its source: it
+re-verifies the private tree under the gate, moves it with one exclusive
+no-replace rename, verifies any concurrent winner, and records the object row and
+desired reference exactly as `publish_desired` does. There is no second
+publisher, no direct preflight promotion and no revocable-rename primitive. Seal
+trees never name a run and a run's own staging tree is still removed only by its
+durable settle.
+
+The seal's deadline bounds every wait and decision it takes — the objects gate
+wait for recovery, the helper's staging and verification, and the hand-off of the
+receipt — so a stalled single filesystem syscall can finish late only inside that
+private tree, never in canonical objects (K8's no detached canonical writer).
+The publisher's own deadline is §5.5's record semantics, the same limit
+`atomic_replace` already has.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
