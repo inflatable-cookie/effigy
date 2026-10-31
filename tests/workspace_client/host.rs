@@ -1085,18 +1085,32 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
 /// client is a different identity and never shares its store.
 #[test]
 fn two_commands_in_one_terminal_share_one_client_identity() {
-    // Both commands are children of this test, so they share its session: the
-    // terminal identity two real commands in one shell would share.
-    let first = client_identity_of(&[]);
-    let second = client_identity_of(&[]);
+    // A declared client is the only identity a command without a terminal has, so
+    // the reuse proof declares one exactly as an entry does.
+    let declared_env = [("EFFIGY_WORKSPACE_CLIENT_ID", "terminal-a")];
+    let first = client_identity_of(&declared_env);
+    let second = client_identity_of(&declared_env);
     assert_eq!(first, second, "a terminal's commands share one identity");
     // Redirecting a command's input does not change its terminal identity, so a
     // command run with a redirected stdin reuses the capability the terminal was
     // issued rather than falling back to another client.
-    let redirected = client_identity_with_redirected_input(&[]);
+    let redirected = client_identity_with_redirected_input(&declared_env);
     assert_eq!(
         first, redirected,
         "a redirected stdin does not change the terminal's identity"
+    );
+    // A command with no declared client and no terminal has no identity at all, so
+    // it can neither read nor write a shared capability record.
+    let bare = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture-client")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("the command process runs");
+    assert!(
+        !bare.status.success(),
+        "a command with no terminal and no declared client has no client identity"
     );
     assert!(
         first.starts_with("terminal-"),
@@ -1121,10 +1135,12 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
     );
     // A command with no terminal falls back to its session; it never shares a
     // terminal client's record.
-    let sessionless = effigy::workspace_serving_fixture::terminal_identity(None, 4242)
-        .expect("a session identity");
-    assert_eq!(sessionless, "terminal-4242");
-    assert_ne!(sessionless, first_tty, "a terminal is not a session client");
+    // A command with no terminal has NO client identity: a session-wide one would
+    // share a single capability file between independent clients.
+    assert!(
+        effigy::workspace_serving_fixture::terminal_identity(None, 4242).is_err(),
+        "a command with no terminal is refused, never given a shared identity"
+    );
     assert!(
         effigy::workspace_serving_fixture::terminal_identity(None, -1).is_err(),
         "a client with neither a terminal nor a session is refused, never shared"
@@ -1132,11 +1148,10 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
 
     // Isolation: an entry-declared client is a different client, so its store is
     // a different file and no command of one can present the other's authority.
-    let declared = client_identity_of(&[("EFFIGY_WORKSPACE_CLIENT_ID", "terminal-a")]);
     let other = client_identity_of(&[("EFFIGY_WORKSPACE_CLIENT_ID", "terminal-b")]);
-    assert_eq!(declared, "terminal-a");
+    assert_eq!(first, "terminal-a");
     assert_eq!(other, "terminal-b");
-    assert_ne!(declared, first, "a declared client is not the ambient one");
+    assert_ne!(first, other, "two declared clients are two clients");
 }
 
 /// The same command with its input redirected, as a shell pipeline does.
@@ -1176,4 +1191,38 @@ fn client_identity_of(env: &[(&str, &str)]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// A contender that cannot launch, or that actually becomes a second host, is NOT
+/// a refusal: only the kernel's own owner-gate refusal may pass the contention
+/// proof, so these two cases must fail it.
+#[test]
+fn a_contender_that_is_not_refused_by_the_owner_gate_is_not_a_refusal() {
+    let fixture =
+        effigy_test_support::Fixture::new("workspace-serving-contender").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = request(&fixture, &project);
+
+    // Nothing is serving this checkout, so a contender is admitted and announces
+    // its own host: that is not a refusal of a second owner.
+    let uncontended = detached_contender(&request);
+    assert_eq!(
+        uncontended["refused"].as_bool(),
+        Some(false),
+        "an admitted contender is not a refusal: {uncontended}"
+    );
+
+    // A contender whose launcher cannot even open the journal is not a refusal
+    // either: an unavailable launcher proves nothing about ownership.
+    let mut broken = request.clone();
+    broken["state_home"] = serde_json::json!("/nonexistent-effigy-state-home");
+    let failed = detached_contender(&broken);
+    assert_eq!(
+        failed["refused"].as_bool(),
+        Some(false),
+        "a launcher error is not a refusal: {failed}"
+    );
 }

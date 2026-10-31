@@ -394,31 +394,21 @@ pub fn compete_detached(request_json: &str) -> Result<CompetingOwner, String> {
     // refusal counts; an unavailable or broken launcher proves nothing.
     let mut host = match serving_host::start(&cx, &root, &request, &executable) {
         Ok(host) => host,
-        Err(error) if error.category() == effigy_kernel::human::Category::Refused => {
-            return Ok(CompetingOwner {
-                refused: true,
-                reason: Some(error.to_string()),
-            })
-        }
         Err(error) => {
+            // Only the kernel's own owner-gate refusal is a second-owner refusal.
+            // Any other launcher error proves nothing and must FAIL the proof.
             return Ok(CompetingOwner {
-                refused: false,
-                reason: Some(format!("the contender was not refused: {error}")),
-            })
+                refused: is_owner_gate_refusal(&error),
+                reason: Some(error.to_string()),
+            });
         }
     };
     match host.await_serving(&cx, Duration::from_secs(20)) {
         // Only a typed refusal of the second owner counts. An unavailable or
         // timed-out contender proves nothing, so it is reported as not-refused.
-        Err(error) if error.category() == effigy_kernel::human::Category::Refused => {
-            Ok(CompetingOwner {
-                refused: true,
-                reason: Some(error.to_string()),
-            })
-        }
         Err(error) => Ok(CompetingOwner {
-            refused: false,
-            reason: Some(format!("the contender was not refused: {error}")),
+            refused: is_owner_gate_refusal(&error),
+            reason: Some(error.to_string()),
         }),
         Ok(published) => {
             let _ = host.stop(&cx);
@@ -431,6 +421,14 @@ pub fn compete_detached(request_json: &str) -> Result<CompetingOwner, String> {
             })
         }
     }
+}
+
+/// Whether one contender outcome is the kernel's own owner-gate refusal: the
+/// workspace task is held by the live session, so a second owner is refused
+/// before it can launch anything. Nothing else counts as a second-owner refusal.
+pub(crate) fn is_owner_gate_refusal(error: &effigy_kernel::run::RunError) -> bool {
+    error.category() == effigy_kernel::human::Category::Refused
+        && error.to_string().contains("is held by")
 }
 
 /// The client identity this process resolves for capability storage. Two commands

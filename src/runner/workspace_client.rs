@@ -149,8 +149,10 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
     terminal_client_identity(None, current_session())
 }
 
-/// The identity one terminal's commands share: its terminal DEVICE when it has
-/// one, else its session, else a refusal.
+/// The identity one terminal's commands share: its terminal DEVICE. A command
+/// with no terminal has no identity and is refused, because the only other
+/// candidates (its session, its process) are shared with, or change between,
+/// independent clients.
 ///
 /// The device number (`st_rdev`) is the one fact that identifies an individual
 /// terminal: every pty slave in a session can report the same filesystem inode and
@@ -165,13 +167,13 @@ pub(crate) fn terminal_client_identity(
     if let Some(device) = terminal {
         return Ok(format!("tty-{device:x}"));
     }
-    if session >= 0 {
-        return Ok(format!("terminal-{session}"));
-    }
+    let _ = session;
     Err(RunnerError::task_invocation(
-        "this process has no controlling terminal and no session identity; a capability is \
-         stored per terminal, so none is stored here - open the terminal with `effigy workspace` \
-         or run the command on the host",
+        "this command has no terminal of its own and no declared client, so it has no client \
+         identity to store a capability under: a capability is stored per terminal, and a \
+         session-wide identity would share one file between independent clients. Open the \
+         terminal with `effigy workspace` (which declares the client) or run the command on the \
+         host",
     ))
 }
 

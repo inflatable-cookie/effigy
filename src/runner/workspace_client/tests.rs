@@ -2575,4 +2575,28 @@ fn two_real_pseudo_terminals_resolve_two_client_identities() {
         first.starts_with("tty-"),
         "a terminal client is identified by its device: {first}"
     );
+    // The capability handoff itself: each identity names its own record, so two
+    // terminal clients can never read or replace one file.
+    let first_path = super::client_capability_path(&first);
+    let second_path = super::client_capability_path(&second);
+    assert_ne!(
+        first_path, second_path,
+        "two terminal clients have two capability records"
+    );
+    let root = tempfile::tempdir().expect("a private fixture root");
+    for (path, secret) in [(&first, 0xa1u8), (&second, 0xb2u8)] {
+        super::store_capability(
+            root.path(),
+            path,
+            &super::StoredCapability {
+                generation: Generation::new(1),
+                secret: Secret::new([secret; 32]),
+            },
+        )
+        .expect("the terminal's capability is stored");
+    }
+    let stored = std::fs::read_dir(root.path().join("capabilities"))
+        .expect("the capability directory exists")
+        .count();
+    assert_eq!(stored, 2, "each terminal client keeps its own record");
 }
