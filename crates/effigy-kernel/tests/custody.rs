@@ -607,6 +607,171 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     );
 }
 
+/// effigy#520, parent-only proof (review finding 7dfec217). The fixture spawns a
+/// genuine custody child itself, so it records the custody receipt (identity,
+/// group and nonce), the anchor's identity and the run's own sentinel identity.
+/// This proof kills ONLY that recorded owner, by pid, and signals no sentinel,
+/// supervisor, anchor or workload: the run's own sentinel must recover and settle
+/// it, and the anchor and the sentinel must both be gone afterwards with a
+/// complete, residue-free close. Nothing here substitutes for the owner-
+/// coordinated source-immutable Oxide proof.
+#[test]
+fn owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("anchor-owner-loss")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("owner-loss.json").exists());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("owner-loss.json")).unwrap())
+            .unwrap();
+    eprintln!("owner-loss record: {record}");
+    let run: RunId = serde_json::from_value(record["run"].clone()).unwrap();
+    let receipt: ProcessReceipt = serde_json::from_value(record["process"].clone()).unwrap();
+    let anchor: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(record["anchor"].clone()).unwrap();
+    let sentinel: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(record["sentinel"].clone()).unwrap();
+    assert!(
+        record["supervisor"].is_null(),
+        "an inline run has no supervisor"
+    );
+    // Recorded evidence, before the owner dies: the receipt carries the run's
+    // custody nonce and the group the child leads; the anchor is a different,
+    // live generation inside exactly that group; and effigy#520 puts the whole
+    // group in a session of its own, so the anchor's session is that group too.
+    assert_eq!(
+        receipt.pgid, receipt.identity.pid,
+        "the leader leads its group"
+    );
+    assert!(
+        receipt.nonce.starts_with(&format!("{run}:")),
+        "the receipt carries the run's custody nonce: {}",
+        receipt.nonce
+    );
+    assert_eq!(
+        effigy_kernel::ident::process_identity(anchor.pid).verified(),
+        Some(&anchor),
+        "the recorded anchor generation is live"
+    );
+    assert_ne!(
+        anchor.pid, receipt.identity.pid,
+        "the anchor is not the leader"
+    );
+    // SAFETY: getpgid and getsid only observe this proof's recorded fixtures.
+    let (anchor_group, anchor_session) = unsafe {
+        (
+            libc::getpgid(anchor.pid as i32),
+            libc::getsid(anchor.pid as i32),
+        )
+    };
+    assert_eq!(
+        anchor_group, receipt.pgid as i32,
+        "the anchor joins the recorded group"
+    );
+    assert_eq!(
+        anchor_session, receipt.pgid as i32,
+        "the group and its anchor own their session"
+    );
+    let live = |identity: &effigy_kernel::ident::ProcessIdentity| {
+        matches!(
+            effigy_kernel::ident::process_state(identity.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
+    assert!(
+        live(&sentinel),
+        "the run's own sentinel is the recovery writer"
+    );
+    assert!(
+        live(&receipt.identity),
+        "the workload runs under the recorded group"
+    );
+    // Only the recorded owner goes, by pid. No sentinel, supervisor, anchor or
+    // workload pid is signalled anywhere in this proof.
+    assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
+    let owner_status = loop {
+        if let Some(status) = owner.0.try_wait().unwrap() {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&owner_status),
+        Some(libc::SIGKILL),
+        "only the owner died"
+    );
+    // The sentinel settles on its own: the close is complete (cleanup recorded,
+    // every effect terminal) and no effect is left as residue.
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observed = cx.operation().observe().unwrap();
+    eventually(|| match fresh_status(&observed, &root, run) {
+        Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
+        Observed::Verified(RunStatus::Closed { effects, .. }, _) => {
+            panic!("the sentinel did not settle cleanly: {effects:?}")
+        }
+        _ => false,
+    });
+    let closed = fresh_status(&observed, &root, run);
+    let (workload, effects) = match &closed {
+        Observed::Verified(
+            RunStatus::Closed {
+                workload, effects, ..
+            },
+            _,
+        ) => (workload.clone(), effects.clone()),
+        other => panic!("the run is not closed: {other:?}"),
+    };
+    eprintln!("owner-loss close: workload {workload:?} effects {effects:?}");
+    let residue: Vec<_> = effects
+        .iter()
+        .filter(|effect| effect.reason.is_some())
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "the settled run left residue: {residue:?}"
+    );
+    // Both the group's evidence and the sentinel are gone within a deadline:
+    // that is the cleanup this proof owes, with no helper left behind.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while live(&anchor) || live(&sentinel) || live(&receipt.identity) {
+        assert!(
+            Instant::now() < deadline,
+            "anchor {}, sentinel {} and workload {} must all be gone",
+            anchor.pid,
+            sentinel.pid,
+            receipt.identity.pid
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    for (name, identity) in [
+        ("anchor", &anchor),
+        ("sentinel", &sentinel),
+        ("workload", &receipt.identity),
+    ] {
+        assert!(
+            matches!(
+                effigy_kernel::ident::process_state(identity.pid),
+                Observed::Absent(_)
+                    | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+            ),
+            "{name} {} is neither absent nor a reaping zombie",
+            identity.pid
+        );
+    }
+}
+
 /// Q-014 (Tom 2026-10-27): a run that completes on its own leaves no anchor.
 /// This is a direct hand-run invocation outside any suite marker, so settlement
 /// alone retires the group evidence; nothing sweeps it afterwards. effigy#520
