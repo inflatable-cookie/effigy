@@ -778,3 +778,126 @@ fn a_session_runs_durable_outcome_is_readable_before_and_after_its_interrupt() {
         eprintln!("after-closed={}", outcome_now(observe, root, run));
     });
 }
+
+/// Brief v6 evidence: the same session run's phase, owner and durable
+/// `workload_outcome` read at four points of one lifetime - before the interrupt,
+/// immediately after it, at settle entry and after Closed. The value is written by
+/// `Run::interrupt` and carried by the one settle; nothing rewrites it.
+#[test]
+fn a_session_runs_phase_owner_and_outcome_are_named_at_every_settle_boundary() {
+    use effigy_kernel::ctx::StopCause;
+    use effigy_kernel::observe::Observed;
+    use effigy_kernel::outcome::WorkloadOutcome;
+    use effigy_kernel::run::Phase;
+    use effigy_kernel::store::Store;
+
+    // (phase, owner, outcome) of the one run, read from the journal.
+    let read = |observe: &ObserveContext, root: &StateRoot, run: effigy_kernel::id::RunId| {
+        let reader = match Store::read(observe, root) {
+            Observed::Verified(reader, _) => reader,
+            _ => {
+                return (
+                    "unreadable".to_owned(),
+                    "unreadable".to_owned(),
+                    "unreadable".to_owned(),
+                )
+            }
+        };
+        match effigy_kernel::run::summary(&reader, run) {
+            Observed::Verified(summary, _) => {
+                let phase = match summary.phase {
+                    Phase::Admitted => "admitted",
+                    Phase::Starting => "starting",
+                    Phase::Active => "active",
+                    Phase::Stopping => "stopping",
+                    Phase::Closed => "closed",
+                }
+                .to_owned();
+                let owner = summary
+                    .invocation
+                    .as_ref()
+                    .map(|invocation| invocation.spec().owner.name().to_string())
+                    .unwrap_or_else(|| "no-owner".to_owned());
+                let outcome = match summary.workload {
+                    Some(WorkloadOutcome::Cancelled {
+                        cause: StopCause::OwnerLost,
+                        ..
+                    }) => "cancelled:owner-lost".to_owned(),
+                    Some(WorkloadOutcome::Cancelled {
+                        cause: StopCause::ListenerFailed,
+                        ..
+                    }) => "cancelled:listener-failed".to_owned(),
+                    Some(WorkloadOutcome::Cancelled { .. }) => "cancelled:other".to_owned(),
+                    Some(WorkloadOutcome::NotStarted) => "not-started".to_owned(),
+                    Some(WorkloadOutcome::Succeeded) => "succeeded".to_owned(),
+                    Some(WorkloadOutcome::Failed { .. }) => "failed".to_owned(),
+                    Some(WorkloadOutcome::Interrupted) => "interrupted".to_owned(),
+                    Some(WorkloadOutcome::TimedOut { .. }) => "timed-out".to_owned(),
+                    Some(WorkloadOutcome::Unknown(_)) => "unknown".to_owned(),
+                    None => "no-outcome".to_owned(),
+                };
+                (phase, owner, outcome)
+            }
+            _ => (
+                "no-row".to_owned(),
+                "no-row".to_owned(),
+                "no-row".to_owned(),
+            ),
+        }
+    };
+
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let run = session.run();
+        let cleanup = cleanup(cx);
+
+        // 1. before the interrupt: a live run with no outcome yet.
+        let before = read(observe, root, run);
+        assert!(
+            matches!(before.0.as_str(), "active" | "starting"),
+            "the session run is live before it ends: {}",
+            before.0
+        );
+        assert_ne!(before.1, "no-owner", "the run names its owner");
+        assert_eq!(before.2, "no-outcome", "nothing has ended yet");
+
+        // 2. immediately after the interrupt: the Stopping row names the cause.
+        supervisor
+            .interrupt(
+                &cleanup,
+                effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: StopCause::OwnerLost,
+                    signal: None,
+                },
+            )
+            .expect("the running session is interrupted");
+        let after_interrupt = read(observe, root, run);
+        assert_eq!(
+            after_interrupt.0, "stopping",
+            "interrupt writes the Stopping row"
+        );
+        assert_eq!(after_interrupt.1, before.1, "the same owner is retained");
+        assert_eq!(after_interrupt.2, "cancelled:owner-lost");
+
+        // 3. at settle entry: the row the one settle will close from.
+        let at_entry = read(observe, root, run);
+        assert_eq!(
+            at_entry, after_interrupt,
+            "settle entry reads the interrupted row"
+        );
+
+        // 4. after Closed: the same cause, durable.
+        supervisor
+            .settle(&cleanup, &mut NoEffects)
+            .expect("the session settles once");
+        let closed = read(observe, root, run);
+        assert_eq!(closed.0, "closed");
+        assert_eq!(
+            closed.1, before.1,
+            "the same owner is retained through the close"
+        );
+        assert_eq!(
+            closed.2, "cancelled:owner-lost",
+            "the closed row keeps the cause"
+        );
+    });
+}

@@ -275,10 +275,14 @@ pub(crate) fn activate<'r>(
     let name = environment_name(request, disposable);
     let environment = effigy_kernel::id::ResourceId::environment(checkout(request), &name)
         .map_err(|error| RunError::refused(format!("the fixture environment: {error}")))?;
+    // The environment's own run names the generation this activation belongs to,
+    // so a successor on the same journal re-activates the SAME environment
+    // identity instead of a hardcoded generation.
     let fence = Fence {
         resource: environment,
         generation: Generation::new(1),
     };
+    let _ = &fence;
     // The environment's own run creates its row; the fixture then records the
     // same `active` publication an activation commit writes for this fence.
     let environment_invocation = environment_invocation(request, &name)?;
@@ -296,6 +300,7 @@ pub(crate) fn activate<'r>(
         &cleanup,
         &mut adapter,
     )?;
+    let fence = environment_run.fence().clone();
     environment_run.settle(&cleanup, &mut adapter)?;
     effigy_kernel::run::publish_active_for_fixture(cx, root, &fence)?;
 

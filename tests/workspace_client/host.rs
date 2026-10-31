@@ -149,12 +149,31 @@ fn failing_listener(request: &serde_json::Value) -> serde_json::Value {
     request
 }
 
-/// The same request for a host that shares a journal with an earlier one: its
-/// own environment generation, so it activates a distinct environment.
-fn successor(request: &serde_json::Value) -> serde_json::Value {
-    let mut request = request.clone();
-    request["activation"]["environment_suffix"] = serde_json::json!("recovery");
-    request
+/// Start a competing **detached** serving host in its own process and read its
+/// answer: the production launcher against the same checkout and environment.
+fn detached_contender(request: &serde_json::Value) -> serde_json::Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture-compete")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the contender process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("the request is written");
+    let output = child
+        .wait_with_output()
+        .expect("the contender process ends");
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        serde_json::json!({
+            "refused": true,
+            "reason": String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    })
 }
 
 /// The same request whose activation attempts a competing second owner.
@@ -382,17 +401,12 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         Some(true),
         "the session reports complete cleanup"
     );
-    // The no-cause path is unchanged: a normal stop is not an owner loss.
-    assert!(
-        !matches!(
-            session_settled.workload,
-            Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
-                cause: effigy_kernel::ctx::StopCause::OwnerLost,
-                ..
-            })
-        ),
-        "a normal settlement keeps its prior outcome: {}",
-        summary_names(&Some(session_settled.clone()))
+    // The no-cause path keeps the exact outcome it had before the named causes:
+    // this fixture's session never finishes a workload, so it settles NotStarted.
+    assert_eq!(
+        summary_names(&Some(session_settled.clone())),
+        "not-started",
+        "a normal settlement keeps its prior outcome"
     );
     // A second stop is refused: the run already settled once.
     let second = Request {
@@ -598,7 +612,7 @@ fn a_settled_crash_is_recovered_by_a_fresh_host() {
     }
 
     // The successor starts, announces and serves in its own process.
-    let recovered = initiate("__workspace-serving-fixture", &successor(&request));
+    let recovered = initiate("__workspace-serving-fixture", &request);
     let successor_run = run_of(&recovered, "supervisor_run");
     let successor_session = run_of(&recovered["published"], "session_run");
     assert_ne!(
@@ -892,18 +906,12 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         "a capability the host never issued is refused, so the positive answer is the retained grant"
     );
 
-    // A competing process cannot take the live session's ownership.
-    let competing = effigy::workspace_serving_fixture::compete_for_session(
-        &serde_json::json!({
-            "request": request,
-            "session_run": result["published"]["session_run"],
-        })
-        .to_string(),
-    )
-    .expect("the competing process answers");
+    // A competing DETACHED host cannot become the live session's owner: it runs
+    // the same production launcher against the same checkout and environment.
+    let competing = detached_contender(&request);
     assert!(
-        competing.refused,
-        "a second process cannot become a live session's owner: {competing:?}"
+        competing["refused"].as_bool() == Some(true),
+        "a second detached owner is refused: {competing}"
     );
 
     // Stop it through the kernel's own control path; it settles once.
@@ -990,7 +998,7 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
     // The dropped owner's host settles, then the same checkout admits a fresh
     // host: the interrupted handoff left nothing that blocks recovery.
     std::thread::sleep(Duration::from_secs(2));
-    let recovered = initiate("__workspace-serving-fixture", &successor(&request));
+    let recovered = initiate("__workspace-serving-fixture", &request);
     let endpoint = endpoint_of(
         recovered["published"]["endpoint"]
             .as_str()

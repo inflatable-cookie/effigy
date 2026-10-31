@@ -17,9 +17,7 @@ use effigy_kernel::ctx::OpenReason;
 use effigy_kernel::root::StateRoot;
 
 use super::task_engine;
-use super::workspace_client::serving_host::{
-    self, cleanup_budget, recovery_invocation, ServingHostRequest, ServingSettlement,
-};
+use super::workspace_client::serving_host::{self, ServingHostRequest};
 
 /// Start one disposable serving host, wait for its committed session, then
 /// acknowledge the kernel detach and return that result as JSON. The caller is
@@ -183,17 +181,6 @@ pub fn initiate_then_crash_stdin() -> Result<String, String> {
     initiate_then_crash(body.trim())
 }
 
-/// Read one competing-process request from stdin and answer it.
-pub fn compete_stdin() -> Result<String, String> {
-    use std::io::Read;
-    let mut body = String::new();
-    std::io::stdin()
-        .read_to_string(&mut body)
-        .map_err(|error| format!("the request could not be read: {error}"))?;
-    compete_for_session(body.trim())
-        .and_then(|competing| serde_json::to_string(&competing).map_err(|error| error.to_string()))
-}
-
 /// Read one request from stdin, initiate it and print the result.
 pub fn initiate_from_stdin() -> Result<String, String> {
     use std::io::Read;
@@ -342,109 +329,49 @@ pub struct CompetingOwner {
     pub reason: Option<String>,
 }
 
-/// Try, from this process, to begin the session run another process is serving.
-/// The kernel refuses: a live run belongs to its owner, so a second process can
-/// never become the session's serving owner.
-pub fn compete_for_session(request_json: &str) -> Result<CompetingOwner, String> {
-    let value: serde_json::Value =
+/// A competing **detached serving host**: a second process starts the production
+/// launcher against the same checkout and environment identity, and the
+/// activation must refuse. A successful start would be a second owner, so it is
+/// stopped immediately and reported as failed contention.
+pub fn compete_detached(request_json: &str) -> Result<CompetingOwner, String> {
+    let request: ServingHostRequest =
         serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
-    let request: ServingHostRequest = serde_json::from_value(
-        value
-            .get("request")
-            .ok_or_else(|| "the request names no serving request".to_owned())?
-            .clone(),
-    )
-    .map_err(|error| format!("the request: {error}"))?;
-    let session_run: effigy_kernel::id::RunId = value
-        .get("session_run")
-        .and_then(|run| run.as_str())
-        .ok_or_else(|| "the request names no session run".to_owned())?
-        .parse()
-        .map_err(|_| "the session run is not a run id".to_owned())?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let location = effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(&request.project_path),
     };
     let root = StateRoot::checkout_effects(&cx, &request.state_home, &location)
         .map_err(|error| format!("the state root: {error}"))?;
-    let observe = task_engine::observe_context(std::time::Duration::from_secs(10));
-    let reader = match effigy_kernel::store::Store::read(&observe, &root) {
-        effigy_kernel::observe::Observed::Verified(reader, _) => reader,
-        _ => return Err("the session journal is unreadable".to_owned()),
-    };
-    let live = matches!(
-        effigy_kernel::run::summary(&reader, session_run),
-        effigy_kernel::observe::Observed::Verified(summary, _)
-            if !matches!(summary.phase, effigy_kernel::run::Phase::Closed)
-    );
-    if !live {
-        return Ok(CompetingOwner {
-            refused: false,
-            reason: Some("the session is not live".to_owned()),
-        });
-    }
-    // The ownership boundary itself: this process asks the kernel to begin the
-    // very run another process is serving. A live run belongs to its owner, so
-    // the kernel must refuse; a success here would be a second owner.
-    let attempt = effigy_kernel::run::Run::begin(
-        &cx,
-        &root,
-        &effigy_kernel::id::ResolvedInvocation::new(effigy_kernel::id::InvocationSpec {
-            owner: effigy_kernel::id::ResourceId::environment(
-                effigy_kernel::id::CheckoutId::new(
-                    effigy_kernel::id::CheckoutKind::EphemeralClone,
-                    request.checkout,
-                ),
-                &request.environment,
-            )
-            .map_err(|error| format!("the environment: {error}"))?,
-            task: effigy_kernel::id::TaskId::new(
-                effigy_kernel::id::CheckoutId::new(
-                    effigy_kernel::id::CheckoutKind::EphemeralClone,
-                    request.checkout,
-                ),
-                "",
-                effigy_kernel::id::Surface::Published,
-                "workspace-contender",
-                Some(&request.profile),
-            )
-            .map_err(|error| format!("the task: {error}"))?,
-            route: effigy_kernel::id::Route::Task,
-            argv: vec![std::ffi::OsString::from("effigy")],
-            cwd: String::new(),
-            target: effigy_kernel::id::ExecutionTarget::Host,
-            env: std::collections::BTreeMap::new(),
-            gates: Vec::new(),
-            attachments: Vec::new(),
-            class: effigy_kernel::ctx::EffectClass::Observe,
-            placement: effigy_kernel::ctx::Placement::Host,
-            provenance: std::collections::BTreeMap::new(),
-        })
-        .map_err(|error| format!("the contender invocation: {error}"))?,
-        effigy_kernel::run::BeginOpts {
-            id: session_run,
-            wait: effigy_kernel::gate::Wait::FailFast,
-            acknowledge: Vec::new(),
-            next: recovery_invocation().map_err(|error| error.to_string())?,
-            custody: None,
-        },
-        &cleanup_budget(),
-        &mut ServingSettlement,
-    );
-    match attempt {
+    let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
+    let mut host = serving_host::start(&cx, &root, &request, &executable)
+        .map_err(|error| format!("the contender could not even launch: {error}"))?;
+    match host.await_serving(&cx, Duration::from_secs(20)) {
         Err(error) => Ok(CompetingOwner {
             refused: true,
             reason: Some(error.to_string()),
         }),
-        Ok(mut stolen) => {
-            // A second owner was admitted: settle it and report the failure.
-            let _ = stolen.settle(&cleanup_budget(), &mut ServingSettlement);
+        Ok(published) => {
+            let _ = host.stop(&cx);
             Ok(CompetingOwner {
                 refused: false,
-                reason: Some("a second process began the live session run".to_owned()),
+                reason: Some(format!(
+                    "a second detached owner announced session {}",
+                    published.session_run
+                )),
             })
         }
     }
+}
+
+/// Read one request from stdin and start a competing detached host for it.
+pub fn compete_detached_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|error| format!("the request could not be read: {error}"))?;
+    compete_detached(body.trim())
+        .and_then(|competing| serde_json::to_string(&competing).map_err(|error| error.to_string()))
 }
 
 fn write_answer(
@@ -465,8 +392,15 @@ fn write_answer(
 fn read_answer(
     transport: &mut crate::runner::workspace_transport::TlsChannelTransport,
 ) -> Result<Option<effigy_kernel::workspace_channel::Frame>, String> {
+    read_answer_within(transport, std::time::Duration::from_millis(600))
+}
+
+fn read_answer_within(
+    transport: &mut crate::runner::workspace_transport::TlsChannelTransport,
+    budget: std::time::Duration,
+) -> Result<Option<effigy_kernel::workspace_channel::Frame>, String> {
     use effigy_kernel::workspace_channel::Transport;
-    let until = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    let until = std::time::Instant::now() + budget;
     let mut buffer = Vec::new();
     loop {
         if buffer.len() >= 4 {

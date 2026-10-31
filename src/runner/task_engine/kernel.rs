@@ -634,7 +634,7 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     #[cfg(feature = "workspace-serving-fixture")]
     if entry == "__workspace-serving-fixture-compete" {
         return Some(
-            match crate::runner::workspace_serving_fixture::compete_stdin() {
+            match crate::runner::workspace_serving_fixture::compete_detached_stdin() {
                 Ok(result) => {
                     println!("{result}");
                     0
