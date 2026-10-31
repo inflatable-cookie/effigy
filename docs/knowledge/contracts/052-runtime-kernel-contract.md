@@ -3087,8 +3087,11 @@ Retries retain the same lease; stop, owner loss and settlement revoke publicatio
 The numeric `SessionLaunch::qualify` route proves host liveness only; its lease
 cannot authorize a guest selection without `qualify_guest` evidence.
 
-This is the normative production seam (effigy#481), not implemented transport or backend qualification. Only APIs marked
-implemented below are the merged #484 seam. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
+This is the normative production seam (effigy#481). The guest client, the pinned TLS transport (effigy#483), the host
+channel dispatcher (effigy#452) and the serving owner are implemented. Not implemented: the production activation caller
+(`environment::workspace::up_prepared` has only test call sites), the wider Observe surface beyond `runs:list` and
+`runs:status`, backend/consumer qualification, and the end-to-end container-mode proof. Only APIs marked implemented below
+are merged seams. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
 E-step/fault/retry proposals remain [non-normative,
 unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates), with no acceptance claims; [existing API
 detail](#appendix-a-existing-workspace-api-reference) is informative. Other signatures below are proposed code-first handoffs.

@@ -87,6 +87,12 @@ During v0.x, MINOR bumps may include breaking changes.
   captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+- Bump `rustls-webpki` 0.103.15 → 0.103.16 and `webpki-root-certs` 1.0.9 →
+  1.0.10, clearing RUSTSEC-2026-0382 and RUSTSEC-2026-0383 in every TLS path
+  Effigy ships (the workspace host channel and the gateway). Lockfile-only:
+  no API, behaviour or configuration change. These were the versions the
+  `check:supply-chain` (`cargo deny`) gate refused on `main`, which is what
+  bounced unrelated work until the bump landed.
 
 ### Breaking
 
@@ -674,6 +680,18 @@ During v0.x, MINOR bumps may include breaking changes.
   thing it awaits instead of a runtime report that never comes. Each site's
   disposition is recorded in
   [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed pane keeps the colour its captured child would have drawn, and its
+  captured byte stream stays plain.** A nested Cargo or Oxide producer whose
+  output Effigy captures through its custody writer receives the initiating
+  pane's ANSI capability and keeps its colour in the pane, while that captured
+  log and every `--json`, doctor, status and error reader keep sanitized plain
+  text and never interpret terminal controls. `NO_COLOR`, CI and an explicit
+  colour preference still win, and a pane without ANSI support, or one whose
+  style window expired, renders plain text. This is a statement about the
+  captured stream only: output a child writes through a descriptor it inherited,
+  instead of through that writer, is outside it, and securing that direct log
+  path is open lead `a52a71e5`, not a v0.15 claim. See
+  [guide 012](docs/guides/012-dev-process-manager-tui.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while
