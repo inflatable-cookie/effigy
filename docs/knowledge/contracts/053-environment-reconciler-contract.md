@@ -105,13 +105,19 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
 - **Creation inference.** That apply record uses the same permit, gate,
-  retention and one caller deadline. Ordinary unsealed applies produce an explicit unproven
+  retention and one caller deadline. Ordinary unsealed applies produce an explicit
+  unproven
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
   immutable image identities. The post-apply service set must equal the frozen
-  set; new IDs must equal the creation/recreation set expected before apply,
-  and attached services must retain their exact IDs. The record is
+  set. Before apply, the workspace predecessor is allowed to remain attached or
+  be replaced for any Compose reason, including environment, mount and entrypoint
+  changes at the same image reference. Replacement requires its predecessor to
+  disappear and one new full ID absent from the complete pre-apply set. The
+  new-ID difference must equal that optional workspace replacement plus the
+  required fresh/recreated services; other attached dependencies retain their
+  exact IDs (owner ruling, 2026-10-31; 052 §8.12). The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
   v0.15 guarantee. Failed apply or incomplete observations produce no creation

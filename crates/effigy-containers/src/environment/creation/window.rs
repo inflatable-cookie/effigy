@@ -85,6 +85,7 @@ pub(crate) struct CreationWindow {
 #[derive(Debug)]
 pub(crate) struct InventoryDifference {
     pub expected_created: BTreeMap<String, Option<String>>,
+    pub workspace_predecessor: Option<String>,
     pub created: Vec<CreatedContainer>,
     pub attached: Vec<String>,
     pub observed: Vec<Workload>,
@@ -188,6 +189,7 @@ impl CreationWindow {
         }
         Ok(InventoryDifference {
             expected_created: self.expected.created,
+            workspace_predecessor: self.expected.workspace_predecessor,
             created,
             attached,
             observed: after,

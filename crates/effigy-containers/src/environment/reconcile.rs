@@ -1096,6 +1096,7 @@ impl<'r> EnvRun<'r> {
         let record = match window.and_then(|window| window.close(backend, request)) {
             Ok(creation::InventoryDifference {
                 expected_created,
+                workspace_predecessor,
                 created,
                 attached,
                 observed,
@@ -1108,6 +1109,7 @@ impl<'r> EnvRun<'r> {
                 observed,
                 workdir: request.workdir.to_path_buf(),
                 expected_created,
+                workspace_predecessor,
                 created,
                 attached,
             },

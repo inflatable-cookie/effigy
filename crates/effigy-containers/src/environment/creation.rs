@@ -25,7 +25,7 @@ const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
 
 pub const CREATION_LOOKBACK: usize = 64;
 
-pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v2";
+pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v3";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatedContainer {
@@ -70,6 +70,7 @@ pub struct CreationReceipt {
     observed: Vec<Workload>,
     workdir: std::path::PathBuf,
     expected_created: std::collections::BTreeMap<String, Option<String>>,
+    workspace_predecessor: Option<String>,
     created: Vec<CreatedContainer>,
     attached: Vec<String>,
 }
@@ -160,9 +161,14 @@ impl CreationReceipt {
         &self.context
     }
 
-    /// Expected new services fixed before apply; a value names the replaced ID.
+    /// Required new services fixed before apply; a value names the replaced ID.
     pub fn expected_created(&self) -> &std::collections::BTreeMap<String, Option<String>> {
         &self.expected_created
+    }
+
+    /// Pre-apply workspace ID, allowed to remain attached or be replaced once.
+    pub fn workspace_predecessor(&self) -> Option<&str> {
+        self.workspace_predecessor.as_deref()
     }
 
     pub fn created(&self) -> &[CreatedContainer] {
@@ -273,6 +279,7 @@ pub enum RecordedCreation {
         observed: Vec<Workload>,
         workdir: std::path::PathBuf,
         expected_created: std::collections::BTreeMap<String, Option<String>>,
+        workspace_predecessor: Option<String>,
         created: Vec<CreatedContainer>,
         attached: Vec<String>,
     },
@@ -365,6 +372,7 @@ pub(super) fn outcome(
             project,
             primary_service,
             expected_created,
+            workspace_predecessor,
             created,
             attached,
             generation,
@@ -379,6 +387,7 @@ pub(super) fn outcome(
             engine,
             context,
             expected_created,
+            workspace_predecessor,
             created,
             attached,
             generation,

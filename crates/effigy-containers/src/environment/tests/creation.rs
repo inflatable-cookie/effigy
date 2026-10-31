@@ -193,20 +193,33 @@ fn fresh_reup_and_partial_recreation_partition_exact_ids() {
 }
 
 #[test]
-fn new_ids_must_equal_the_independently_expected_set_and_keep_attached_ids() {
+fn new_ids_must_equal_the_allowed_workspace_and_expected_dependency_set() {
     let render = render(&[PRIMARY, "database"]);
     let workspace = row(PRIMARY, 'a');
     let database = row("database", 'b');
-    // Identical service/image/ownership values do not authorize replacing an
-    // unchanged attached ID, even when the resulting service set is complete.
-    assert!(infer(
+    // The workspace may be recreated for any Compose configuration reason;
+    // the complete declared inventory and exact dependency ID still constrain it.
+    let (created, attached) = infer(
         &mut Fake::new(
             vec![workspace.clone(), database.clone()],
-            vec![row(PRIMARY, 'd'), database.clone()]
+            vec![row(PRIMARY, 'd'), database.clone()],
         ),
-        &render
+        &render,
     )
-    .is_err());
+    .unwrap();
+    assert_eq!(created[0].container_id(), id('d'));
+    assert_eq!(attached, [database.id.clone()]);
+    // Both predecessor and replacement, or a foreign extra, must still refuse.
+    for extra in [workspace.clone(), row("foreign", 'f')] {
+        assert!(infer(
+            &mut Fake::new(
+                vec![workspace.clone(), database.clone()],
+                vec![row(PRIMARY, 'd'), database.clone(), extra],
+            ),
+            &render,
+        )
+        .is_err());
+    }
     // The workspace is expected to be fresh, but the attached dependency isn't.
     assert!(infer(
         &mut Fake::new(
@@ -227,9 +240,10 @@ fn new_ids_must_equal_the_independently_expected_set_and_keep_attached_ids() {
         .insert(old.image_reference.clone(), old.image.clone());
     let window = CreationWindow::open(&mut fake, request(&render)).unwrap();
     let difference = window.close(&mut fake, request(&render)).unwrap();
+    assert!(difference.expected_created.is_empty());
     assert_eq!(
-        difference.expected_created,
-        BTreeMap::from([(PRIMARY.to_owned(), Some(old.id.clone()))])
+        difference.workspace_predecessor.as_deref(),
+        Some(old.id.as_str())
     );
     // A requested reference change must result in a new full ID, not reuse.
     let mut fake = Fake::new(
@@ -638,6 +652,86 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
             !attached
         );
         let _ = run.finish(false);
+    }
+}
+
+#[test]
+fn same_image_workspace_env_mount_and_entrypoint_recreation_bind_the_new_id() {
+    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    for (key, value) in [
+        ("environment", serde_json::json!({"CONFIG_REVISION": "two"})),
+        ("volumes", serde_json::json!(["/checkout/cache:/cache"])),
+        (
+            "entrypoint",
+            serde_json::json!(["/bin/sh", "-c", "sleep 120"]),
+        ),
+    ] {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let original = render(&[PRIMARY, "database"]);
+        let mut compose: serde_json::Value =
+            serde_json::from_slice(&original.files()["compose.yml"]).unwrap();
+        compose["services"][PRIMARY][key] = value;
+        let render = Closure::new(
+            [("compose.yml".into(), serde_json::to_vec(&compose).unwrap())]
+                .into_iter()
+                .collect(),
+        )
+        .unwrap();
+        assert_ne!(original.digest(), render.digest());
+        let reservation = fresh_reservation(&ctx, &stack);
+        let mut run =
+            EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
+                .unwrap();
+        let old = row(PRIMARY, 'a');
+        let replacement = row(PRIMARY, 'd');
+        let database = row("database", 'b');
+        let after = vec![replacement.clone(), database.clone()];
+        let mut fake = Fake::new(vec![old.clone(), database], after.clone());
+        let outcome = run
+            .create_with(&mut fake, &selection(), request(&render), || Ok(()))
+            .unwrap();
+        let receipt = outcome.receipt().expect("same-image recreation receipt");
+        assert_eq!(
+            receipt.workspace_predecessor(),
+            Some(old.id.as_str()),
+            "{key}"
+        );
+        assert_eq!(
+            receipt.created_ids().collect::<Vec<_>>(),
+            [replacement.id.as_str()],
+            "{key}"
+        );
+        assert_eq!(receipt.attached(), [id('b')], "{key}");
+        let retry = run
+            .create_with(&mut fake, &selection(), request(&render), || {
+                panic!("second apply")
+            })
+            .unwrap();
+        assert_eq!(retry, outcome);
+        fake.inventories.push_back(verified(after));
+        let candidate = verified(vec![TargetCandidate {
+            identity: ContainerIdentity {
+                container_id: replacement.id,
+                vm_boot_id: "boot".into(),
+                backend: "fixture".into(),
+            },
+            project: PROJECT.into(),
+            created_by: Some(run.id()),
+        }]);
+        assert!(
+            run.bind_target_observing(
+                &reservation,
+                candidate,
+                &mut fake,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .is_ok(),
+            "{key}"
+        );
+        run.finish(false).unwrap();
     }
 }
 

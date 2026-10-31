@@ -297,10 +297,12 @@ During v0.x, MINOR bumps may include breaking changes.
   Workspace attribution requires a sealed render with explicit managed, scope
   and checkout labels; ordinary unsealed applies provide no creation receipt.
   Docker observations and apply plans pin the recorded context or endpoint.
-  The pre-apply expectation now distinguishes missing services, verified image-reference
-  replacements and unchanged attached IDs. Unexpected replacement of an attached
-  ID refuses attribution, including configuration-only recreation without a
-  verified expectation. The v2 receipt preserves expected services and replaced IDs.
+  The pre-apply expectation distinguishes required fresh services, verified
+  dependency image-reference replacements and the workspace predecessor. Workspace
+  environment, mount and entrypoint edits may recreate at the same image reference:
+  exactly one new workspace ID replaces the absent predecessor, while unchanged
+  services stay attached and extra/foreign IDs refuse. The v3 receipt records the
+  workspace predecessor separately from required creations.
 
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers

@@ -3830,16 +3830,21 @@ Resolve each frozen service's immutable image ID before activation and recheck
 under the gate. The gate-scoped observations verify every row's exact ID, project,
 service, managed, scope and checkout labels and exact image reference/immutable ID.
 The post-apply service set must equal the frozen declared set; missing, extra,
-duplicate or replaced inventory rows refuse. Attached containers retain their IDs;
-only IDs absent before and present after can enter the created set. Before apply, an independent expectation records
-missing services as fresh, explicitly changed image references as replacements
-of their exact old IDs, and all other services as attached to their exact IDs.
+duplicate or foreign inventory rows refuse. Before apply, the expectation records
+missing services as requiring fresh IDs and non-workspace image-reference changes
+as requiring replacements of their exact old IDs. Other attached dependencies
+retain their exact IDs. The existing workspace service may retain its predecessor
+ID or replace it for any Compose recreation reason, including environment,
+mount and entrypoint changes at the same image reference. A replacement must be
+absent from the entire pre-apply ID set, its predecessor must disappear, and
+exactly one verified workspace row must remain. The complete new-ID difference
+must equal the required creations plus that one workspace replacement, if any.
+No extra service or foreign ID is adopted. Zero-change re-up stays attached.
+This replaces the image-reference-only prediction that refused routine workspace
+configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
 Old references must resolve to the old containers' immutable IDs before and after
-apply. The new-ID difference must equal the IDs for precisely those expected new
-services; an unchanged attached ID cannot be replaced. Configuration-only
-recreation has no verified expectation in this bounded path and therefore
-refuses attribution if Compose replaces it. Receipt schema v2 records the
-expected services and replaced IDs; v1 evidence is not upgraded.
+apply. Receipt schema v3 records the required new services and the workspace's
+pre-apply predecessor separately; earlier receipt schemas are not upgraded.
 Isolated journal-case reproduction uses `effigy test:focused:journal-heavy` with
 `-j 1`, retaining the covering selector's 600-second per-test budget. Image tag
 moves, reference-only container image identity, partial or failed apply, unknown

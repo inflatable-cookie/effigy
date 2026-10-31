@@ -4,6 +4,7 @@ use super::*;
 #[derive(Debug)]
 pub(super) struct ExpectedInventory {
     pub(super) created: BTreeMap<String, Option<String>>,
+    pub(super) workspace_predecessor: Option<String>,
     attached: BTreeMap<String, String>,
     previous_images: BTreeMap<String, String>,
 }
@@ -16,6 +17,7 @@ impl ExpectedInventory {
     ) -> Result<Self, CreationRefusal> {
         let mut expected = Self {
             created: BTreeMap::new(),
+            workspace_predecessor: None,
             attached: BTreeMap::new(),
             previous_images: BTreeMap::new(),
         };
@@ -27,31 +29,40 @@ impl ExpectedInventory {
                 None => {
                     expected.created.insert(service.clone(), None);
                 }
-                Some(row) if desired.image.as_deref() != Some(row.image_reference.as_str()) => {
-                    // An explicitly changed image reference is a verifiable
-                    // recreation input. The old container must still match
-                    // the immutable identity of its own reference; a retag is
-                    // uncertainty, even when replacement was requested.
-                    let resolved = match backend.image_id_until(
-                        request.workdir,
-                        &row.image_reference,
-                        request.deadline,
-                    ) {
-                        Observed::Verified(id, _) => exact_image_id(&id),
-                        _ => None,
-                    };
-                    if resolved.is_none() || resolved != exact_image_id(&row.image) {
-                        return Err(CreationRefusal::ImageMismatch(row.id.clone()));
-                    }
-                    expected
-                        .previous_images
-                        .insert(row.image_reference.clone(), row.image.clone());
-                    expected
-                        .created
-                        .insert(service.clone(), Some(row.id.clone()));
-                }
                 Some(row) => {
-                    expected.attached.insert(service.clone(), row.id.clone());
+                    let image_changed =
+                        desired.image.as_deref() != Some(row.image_reference.as_str());
+                    if image_changed {
+                        // The old container must still match its immutable
+                        // reference identity, even when replacement is allowed.
+                        let resolved = match backend.image_id_until(
+                            request.workdir,
+                            &row.image_reference,
+                            request.deadline,
+                        ) {
+                            Observed::Verified(id, _) => exact_image_id(&id),
+                            _ => None,
+                        };
+                        if resolved.is_none() || resolved != exact_image_id(&row.image) {
+                            return Err(CreationRefusal::ImageMismatch(row.id.clone()));
+                        }
+                        expected
+                            .previous_images
+                            .insert(row.image_reference.clone(), row.image.clone());
+                    }
+                    if service == request.primary_service {
+                        // Compose may recreate the workspace for env, mounts,
+                        // entrypoint or other config changes at the same image.
+                        // Before apply, permit exactly this predecessor to stay
+                        // attached or disappear in favour of one fresh full ID.
+                        expected.workspace_predecessor = Some(row.id.clone());
+                    } else if image_changed {
+                        expected
+                            .created
+                            .insert(service.clone(), Some(row.id.clone()));
+                    } else {
+                        expected.attached.insert(service.clone(), row.id.clone());
+                    }
                 }
             }
         }
@@ -104,6 +115,24 @@ impl ExpectedInventory {
                 )));
             }
             expected_new.insert(row.id.to_ascii_lowercase());
+        }
+        if let Some(predecessor) = &self.workspace_predecessor {
+            let row = current.get(request.primary_service).ok_or_else(|| {
+                CreationRefusal::Partial("declared workspace service is missing".into())
+            })?;
+            if !row.id.eq_ignore_ascii_case(predecessor) {
+                if previous.contains(&row.id.to_ascii_lowercase())
+                    || after
+                        .iter()
+                        .any(|row| row.id.eq_ignore_ascii_case(predecessor))
+                {
+                    return Err(CreationRefusal::Partial(
+                        "workspace replacement reused a pre-apply ID or kept its predecessor"
+                            .into(),
+                    ));
+                }
+                expected_new.insert(row.id.to_ascii_lowercase());
+            }
         }
         let actual_new: BTreeSet<_> = after
             .iter()
