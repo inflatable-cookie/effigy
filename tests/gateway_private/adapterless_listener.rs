@@ -10,6 +10,7 @@
 //! holds. Disposable loopback fixtures, a private gateway and a fake Docker
 //! backend only; every child is stopped by the fixture that started it.
 use super::*;
+use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
 
 const LISTENER_NAME: &str = "web";
 
@@ -149,12 +150,93 @@ impl AdapterlessSetup {
     }
 }
 
+/// A listener generation's child as Effigy recorded it: the leader PID with the
+/// boot and start identity that prove it is still that process.
+struct RecordedListenerChild {
+    pid: u32,
+    boot: String,
+    start: GatewayStartIdentity,
+}
+
+/// Every child generation a listener state file under the fixture root still
+/// records. A settled `down` clears these fields, so only a generation that
+/// outlived its own stop is listed. Reads state only; nothing is signalled.
+fn recorded_listener_children(dir: &Path, found: &mut Vec<RecordedListenerChild>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path.is_dir() {
+            recorded_listener_children(&path, found);
+        } else if path.to_string_lossy().ends_with(".listener.json") {
+            let Some(state) = fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            else {
+                continue;
+            };
+            let (Some(pid), Some(boot)) = (
+                state["child_pid"].as_u64(),
+                state["child_boot_identity"].as_str(),
+            ) else {
+                continue;
+            };
+            let Ok(start) = serde_json::from_value::<GatewayStartIdentity>(
+                state["child_start_identity"].clone(),
+            ) else {
+                continue;
+            };
+            found.push(RecordedListenerChild {
+                pid: pid as u32,
+                boot: boot.to_owned(),
+                start,
+            });
+        }
+    }
+}
+
+/// Signal the recorded child generations that still hold their recorded
+/// identity, and their process groups. Each generation is started as its own
+/// session leader, so the group reaches a watch loop's grandchildren as well.
+/// A PID the OS reused, or a changed boot, is not this fixture's process and
+/// is left alone. Runs whether or not the proof's own `down` settled.
+fn terminate_recorded_listener_children(fixture_root: &Path) {
+    let mut children = Vec::new();
+    let Ok(checkouts) = fs::read_dir(fixture_root) else {
+        return;
+    };
+    for checkout in checkouts.flatten().map(|entry| entry.path()) {
+        recorded_listener_children(
+            &checkout.join(".effigy/runtime/host-processes"),
+            &mut children,
+        );
+    }
+    for child in children {
+        let Ok(live) = read_live_process_identity(child.pid) else {
+            continue;
+        };
+        if live.boot_identity != child.boot || live.start_identity != child.start {
+            continue;
+        }
+        let pid = nix::unistd::Pid::from_raw(child.pid as i32);
+        eprintln!(
+            "adapterless fixture stopped listener child {} and its group",
+            child.pid
+        );
+        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+    }
+}
+
 /// The fixture directory goes away when this struct's `fixture` field drops,
 /// which is after this `Drop`. Stopping the daemon while its private root still
 /// exists is what keeps a suite sweep from finding an orphaned gateway; the
 /// caller's `GatewayCleanup` covers the panic path and stops the same daemon.
+/// Recorded listener children are signalled first, by identity, so a failed or
+/// unwinding proof cannot leave its plain server running.
 impl Drop for AdapterlessSetup {
     fn drop(&mut self) {
+        terminate_recorded_listener_children(self.fixture.path());
         let status = Command::new(EFFIGY)
             .args([
                 "gateway",

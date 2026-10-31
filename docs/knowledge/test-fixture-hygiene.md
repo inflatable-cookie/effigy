@@ -78,6 +78,14 @@ recorded state the suite now reads from the kernel directly.
 `Fixture` removes its tree on drop, waiting for kernel sentinels first
 (`wait_kernel_helpers`), and never follows a symlink inside it.
 
+An adapterless listener proof starts plain servers through Effigy, so the
+child is a generation Effigy supervises, not the fixture's own. Its state file
+records the child's PID with its boot and start identity. The fixture's `Drop`
+reads those records and signals a child (and its group) only while the live
+process still matches that identity. A PID reused by the OS, or a changed
+boot, is left alone. This runs after the proof's own `container down`, so it
+also covers an unwinding or unsettled proof.
+
 ## Placement
 
 Fixtures live in the run's temporary directory: with `[scratch]` configured
@@ -92,6 +100,12 @@ internal SSD.
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
 template.
+
+Live Colima container fixtures stage under `~/.cache` until the `effigy`
+profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
+`mounts: []`, and Effigy writes no mounts, so the change is a host edit that
+needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
+change can close it.
 
 ## Kernel fault fixtures
 

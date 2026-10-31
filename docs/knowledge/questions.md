@@ -587,6 +587,10 @@ staging exception. Once the mount works, move those fixtures to Builds scratch
 and close papercut `62e6b400-03df-411b-9368-846ccffbad4a`. Barge may later
 own this under Barge Q-009; that does not change the interim install gate.
 
+Assessed 2026-10-31 (effigy#515): no repository-side fix. Effigy writes no
+Colima mounts, and the `effigy` profile's `colima.yaml` still has `mounts: []`.
+The change stays a host edit behind a profile restart, so it waits for this gate.
+
 ## Q-017: Workspace client and operator feedback at v0.15
 
 Status: answered
