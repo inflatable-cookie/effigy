@@ -208,7 +208,7 @@ fn new_ids_must_equal_the_allowed_workspace_and_expected_dependency_set() {
     )
     .unwrap();
     assert_eq!(created[0].container_id(), id('d'));
-    assert_eq!(attached, [database.id.clone()]);
+    assert_eq!(attached.as_slice(), std::slice::from_ref(&database.id));
     // Both predecessor and replacement, or a foreign extra, must still refuse.
     for extra in [workspace.clone(), row("foreign", 'f')] {
         assert!(infer(
