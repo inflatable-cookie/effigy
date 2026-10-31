@@ -47,6 +47,10 @@
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 3
     },
+    "crates/effigy-containers/src/policy/render/preflight.rs": {
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::rename": 1
+    },
     "crates/effigy-containers/src/policy/render/publication.rs": {
       "std::fs::rename": 1,
       "std::fs::write": 1
@@ -533,6 +537,10 @@
     "crates/effigy-containers/src/policy/project.rs": {
       "std::fs::write": 5
     },
+    "crates/effigy-containers/src/policy/render/preflight/tests.rs": {
+      "std::fs::rename": 1,
+      "std::fs::write": 4
+    },
     "crates/effigy-containers/src/policy/render/tests.rs": {
       "std::fs::write": 21
     },
@@ -817,7 +825,7 @@
     "src/runner/container_runtime_prep/tests.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
-      "std::fs::write": 18
+      "std::fs::write": 19
     },
     "src/runner/db_seed.rs": {
       "std::fs::write": 5
