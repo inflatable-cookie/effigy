@@ -124,7 +124,7 @@ pub fn process_executable(pid: u32) -> std::io::Result<std::path::PathBuf> {
     {
         // `/proc/<pid>/exe` resolves to the file that was executed; a process we
         // may not inspect is unreadable rather than unknown-but-assumed.
-        return std::fs::read_link(format!("/proc/{pid}/exe"));
+        std::fs::read_link(format!("/proc/{pid}/exe"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
