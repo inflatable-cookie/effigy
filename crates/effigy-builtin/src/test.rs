@@ -114,23 +114,29 @@ pub(super) fn try_run_builtin_test(
     // through that custody instead, and streams their output.
     let should_tui = (!ports.custody_holds_host_suites() || ports.has_test_tui_source())
         && execution::should_run_builtin_test_tui(flags.tui, runnable.len(), flags.output_json);
-    let results = if should_tui {
+    // The noninteractive path has no operator session to stop, so only the
+    // interactive one can contribute the session-level cancellation fact.
+    let session = if should_tui {
         execution::run_builtin_test_targets_tui(ports, runnable)?
     } else {
-        execution::run_builtin_test_targets_parallel(
-            ports,
-            runnable,
-            max_parallel,
-            flags.output_json,
-        )?
+        execution::BuiltinTestSession {
+            results: execution::run_builtin_test_targets_parallel(
+                ports,
+                runnable,
+                max_parallel,
+                flags.output_json,
+            )?,
+            stopped_by_user: false,
+        }
     };
     render::finalize_builtin_test_outcome(
-        &results,
+        &session.results,
         &target_set.targets,
         suite_selection.requested_suite.as_deref(),
         &suite_selection.passthrough,
         flags.verbose_results,
         flags.output_json,
+        session.stopped_by_user,
     )
 }
 

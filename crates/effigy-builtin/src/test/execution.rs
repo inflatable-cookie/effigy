@@ -41,12 +41,24 @@ pub(super) fn should_run_builtin_test_tui(
     force_tui || suite_count > 1
 }
 
+/// What one interactive session produced: every suite's result, and whether
+/// the operator stopped the session before the suites finished. Both facts
+/// belong to the run's outcome: a suite the stop never reached is not started,
+/// and the run it was part of is cancelled rather than failed.
+pub(super) struct BuiltinTestSession {
+    pub(super) results: Vec<BuiltinTestExecResult>,
+    pub(super) stopped_by_user: bool,
+}
+
 pub(super) fn run_builtin_test_targets_tui(
     ports: &dyn BuiltinRuntimePorts,
     runnable: Vec<BuiltinTestRunnable>,
-) -> Result<Vec<BuiltinTestExecResult>, BuiltinError> {
+) -> Result<BuiltinTestSession, BuiltinError> {
     if runnable.is_empty() {
-        return Ok(Vec::new());
+        return Ok(BuiltinTestSession {
+            results: Vec::new(),
+            stopped_by_user: false,
+        });
     }
     let tab_order = runnable
         .iter()
@@ -111,7 +123,10 @@ pub(super) fn run_builtin_test_targets_tui(
 
     let results = builtin_test_results_from_tui(runnable, &outcome);
     finish_sweep(sweep)?;
-    Ok(results)
+    Ok(BuiltinTestSession {
+        results,
+        stopped_by_user: outcome.stopped_by_user,
+    })
 }
 
 /// One suite's result from the session state the TUI recorded for it.
@@ -1209,7 +1224,7 @@ mod tests {
         );
         let results = builtin_test_results_from_tui(runnable, &outcome);
 
-        let text = cancelled_run(&results, false);
+        let text = cancelled_run(&results, false, true);
         assert!(
             text.contains("ok") && text.contains("cancelled"),
             "text keeps the pass and names the cancelled suite: {text}"
@@ -1220,7 +1235,7 @@ mod tests {
         );
 
         let payload: serde_json::Value =
-            serde_json::from_str(&cancelled_run(&results, true)).expect("cancelled run JSON");
+            serde_json::from_str(&cancelled_run(&results, true, true)).expect("cancelled run JSON");
         assert_eq!(payload["schema"], "effigy.test.results.v1");
         let targets = payload["targets"].as_array().expect("targets");
         assert_eq!(targets[0]["outcome"], "passed");
@@ -1233,7 +1248,11 @@ mod tests {
     /// Finalize the stopped run and return the rendered payload: the same
     /// projection every front end reads, proving the cancellation reaches the
     /// text and the machine contract from one place.
-    fn cancelled_run(results: &[BuiltinTestExecResult], output_json: bool) -> String {
+    fn cancelled_run(
+        results: &[BuiltinTestExecResult],
+        output_json: bool,
+        stopped_by_user: bool,
+    ) -> String {
         let error = crate::test::render::finalize_builtin_test_outcome(
             results,
             &[],
@@ -1241,6 +1260,7 @@ mod tests {
             &[],
             false,
             output_json,
+            stopped_by_user,
         )
         .expect_err("a cancelled run is not a success");
         match error {
@@ -1257,27 +1277,107 @@ mod tests {
         }
     }
 
+    /// Finalize and report the run's own attribution: success, cancelled, or
+    /// failed. A completed failure stays a failed check; a stop before a suite
+    /// started is still the run's cancellation; a run where every suite passed
+    /// is a success even if the operator quit the session afterwards.
     #[test]
-    fn an_unstarted_suite_keeps_the_ordinary_failure_exit() {
-        let fixture = tempfile::tempdir().expect("fixture");
-        let runnable = vec![named_suite(fixture.path(), "one")];
-        let outcome = tui_outcome(vec![("one", SessionEntryState::NotStarted)], false);
-        let results = builtin_test_results_from_tui(runnable, &outcome);
+    fn the_run_outcome_attributes_cancellation_to_the_session_not_to_a_quiet_suite() {
+        use crate::test::render::finalize_builtin_test_outcome;
 
-        let error = crate::test::render::finalize_builtin_test_outcome(
-            &results,
-            &[],
-            None,
-            &[],
-            false,
-            false,
-        )
-        .expect_err("an unstarted suite proves nothing");
-        match error {
-            BuiltinError::BuiltinTestNonZero { cancelled, .. } => {
-                assert!(!cancelled, "an unstarted suite is not an operator stop")
+        #[derive(Debug)]
+        enum Expected {
+            Success,
+            Cancelled,
+            Failed,
+        }
+
+        let fixture = tempfile::tempdir().expect("fixture");
+        let stopped = SessionEntryState::Stopped {
+            detail: "signal=15".to_owned(),
+        };
+        let failed = SessionEntryState::Failed {
+            detail: "exit=7".to_owned(),
+        };
+        let cases = [
+            (
+                "all passed, quit after completion",
+                vec![
+                    ("one", SessionEntryState::Passed),
+                    ("two", SessionEntryState::Passed),
+                ],
+                true,
+                Expected::Success,
+            ),
+            (
+                "stopped before any suite started",
+                vec![
+                    ("one", SessionEntryState::NotStarted),
+                    ("two", SessionEntryState::NotStarted),
+                ],
+                true,
+                Expected::Cancelled,
+            ),
+            (
+                "stopped with a suite never started",
+                vec![
+                    ("one", SessionEntryState::Passed),
+                    ("two", SessionEntryState::NotStarted),
+                ],
+                true,
+                Expected::Cancelled,
+            ),
+            (
+                "a suite the session ended without a quit",
+                vec![("one", SessionEntryState::Passed), ("two", stopped)],
+                false,
+                Expected::Cancelled,
+            ),
+            (
+                "a completed failure during a stop",
+                vec![("one", SessionEntryState::Passed), ("two", failed)],
+                true,
+                Expected::Failed,
+            ),
+            (
+                "never started without a stop",
+                vec![("one", SessionEntryState::NotStarted)],
+                false,
+                Expected::Failed,
+            ),
+        ];
+
+        for (case, entries, stopped_by_user, expected) in cases {
+            let runnable = entries
+                .iter()
+                .map(|(name, _)| named_suite(fixture.path(), name))
+                .collect::<Vec<BuiltinTestRunnable>>();
+            let outcome = tui_outcome(entries, stopped_by_user);
+            let session = BuiltinTestSession {
+                results: builtin_test_results_from_tui(runnable, &outcome),
+                stopped_by_user,
+            };
+            let finalized = finalize_builtin_test_outcome(
+                &session.results,
+                &[],
+                None,
+                &[],
+                false,
+                false,
+                session.stopped_by_user,
+            );
+            match (expected, finalized) {
+                (Expected::Success, Ok(Some(_))) => {}
+                (Expected::Success, other) => panic!("{case}: expected success, got {other:?}"),
+                (expected, Err(BuiltinError::BuiltinTestNonZero { cancelled, .. })) => {
+                    assert_eq!(
+                        cancelled,
+                        matches!(expected, Expected::Cancelled),
+                        "run attribution for `{case}`"
+                    );
+                }
+                (expected, other) => panic!("{case}: expected {expected:?}, got {other:?}"),
             }
-            other => panic!("unexpected error: {other}"),
         }
     }
 }

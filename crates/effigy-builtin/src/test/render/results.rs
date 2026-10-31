@@ -164,6 +164,13 @@ pub(crate) fn append_builtin_test_filter_hint(
     hint::append_builtin_test_filter_hint(rendered, results, requested_suite, passthrough)
 }
 
+/// Turn the run's per-suite results into the task's own outcome.
+///
+/// A suite that reported a failure keeps the ordinary failed exit. Otherwise a
+/// run the operator stopped is a cancellation, whether its suites were ended by
+/// the stop or never started because of it, and the task carries the
+/// interrupted convention (130) so a durable run record reads the same outcome
+/// the text and JSON do. Only a run in which every suite passed is a success.
 pub(crate) fn finalize_builtin_test_outcome(
     results: &[BuiltinTestExecResult],
     targets: &[BuiltinTestTarget],
@@ -171,6 +178,7 @@ pub(crate) fn finalize_builtin_test_outcome(
     passthrough: &[String],
     verbose_results: bool,
     output_json: bool,
+    stopped_by_user: bool,
 ) -> Result<Option<String>, BuiltinError> {
     let mut failures = results
         .iter()
@@ -197,20 +205,16 @@ pub(crate) fn finalize_builtin_test_outcome(
         return Ok(Some(rendered));
     }
 
-    // A run the operator stopped is a cancellation, not a failed check, and
-    // the task carries the interrupted convention (130) so a durable run
-    // record reads the same outcome the text and JSON do. A suite that never
-    // started, or any suite that reported its own failure, keeps the ordinary
-    // failure exit.
-    let cancelled = results
+    // A completed failure is a failed check whatever else happened; a run the
+    // operator stopped (or one whose suite the session ended) is a
+    // cancellation, and a suite the stop never reached is still not started.
+    let cancelled = !results
         .iter()
-        .any(|result| result.outcome == BuiltinTestOutcome::Cancelled)
-        && !results.iter().any(|result| {
-            matches!(
-                result.outcome,
-                BuiltinTestOutcome::Failed | BuiltinTestOutcome::NotStarted
-            )
-        });
+        .any(|result| result.outcome == BuiltinTestOutcome::Failed)
+        && (stopped_by_user
+            || results
+                .iter()
+                .any(|result| result.outcome == BuiltinTestOutcome::Cancelled));
     let rendered = render_builtin_test_outcome_rendered(
         results,
         targets,

@@ -161,13 +161,24 @@ fn run_child_case(case: &str, root: &Path) {
                 root,
                 30_000,
             )];
-            super::run_multiprocess_tui(
+            let outcome = super::run_multiprocess_tui(
                 root.to_path_buf(),
                 processes,
                 Vec::new(),
                 MultiProcessTuiOptions::default(),
             )
             .unwrap_or_else(|error| panic!("cancelled before first child starts: {error}"));
+            // The child never started, so the session records no result for
+            // it: a stop before an attempt is not a failure and not a pass.
+            assert!(outcome.stopped_by_user);
+            assert_eq!(
+                outcome.entries,
+                vec![super::SessionEntry {
+                    name: "first".to_owned(),
+                    state: super::SessionEntryState::NotStarted,
+                }],
+                "a cancelled attempt that never started is not started"
+            );
         }
         "normal" => {
             let processes = vec![

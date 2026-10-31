@@ -84,10 +84,10 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
             if child.poll() is None:
                 child.terminate()
                 try:
-                    child.wait(timeout=12)
+                    child.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     child.kill()
-                    child.wait(timeout=12)
+                    child.wait(timeout=20)
             deadline = time.monotonic() + 18
             while not gates_free() and time.monotonic() < deadline:
                 drain()
@@ -116,27 +116,28 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
 
     # An operator stop is a cancellation, not a failure and never a pass: the
     # suite the session ended is reported `cancelled` and the run exits with
-    # the interrupted code.
-    (project / "suite-pid").unlink(missing_ok=True)
-    with terminal_session(["test", "death", "--tui"]) as (child, master, transcript, drain, until):
-        until(lambda: (project / "suite-pid").exists(), "cancellable suite readiness")
-        deadline = time.monotonic() + 20
+    # the interrupted code. The suite is waiting for input, so the stop is what
+    # ends it.
+    for stale in ["ready", "geometry", "answer"]:
+        (project / stale).unlink(missing_ok=True)
+    with terminal_session(["test", "local", "--tui"]) as (child, master, transcript, drain, until):
+        until(lambda: (project / "ready").exists(), "cancellable suite readiness")
+        try:
+            os.write(master, b"\x03")
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+        deadline = time.monotonic() + 30
         while child.poll() is None:
             drain()
-            try:
-                os.write(master, b"\x03")
-            except OSError as error:
-                if error.errno != errno.EIO:
-                    raise
-                child.wait(timeout=10)
-                break
-            time.sleep(.1)
             assert time.monotonic() < deadline, bytes(transcript[-6000:])
+            time.sleep(.05)
+        drain()
         stopped = bytes(transcript)
         assert child.returncode == 130, (child.returncode, stopped[-6000:])
         assert b"cancelled" in stopped, stopped[-6000:]
-        # The dead suite is named by the result it produced, never as a pass.
-        assert b"death" in stopped, stopped[-6000:]
+        # The result names the suite the stop ended, never as a completed pass.
+        assert b"local" in stopped, stopped[-6000:]
     print(json.dumps({"proof": "interactive-test-stop", "exit": 130, "outcome": "cancelled"}))
 
     def alive(pid):

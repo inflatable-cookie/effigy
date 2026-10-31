@@ -257,12 +257,16 @@ impl State<'_, '_> {
         }
     }
     fn stop_one(&mut self, name: &str) -> Result<(), ProcessManagerError> {
-        self.stop_with(name, &task_engine::cleanup_context(CLEANUP))
+        self.stop_with(name, &task_engine::cleanup_context(CLEANUP), &[])
     }
+    /// Stop one attempt. `forwarded` names signals this session already sent
+    /// to the group, so an exit their delivery caused is attributed to the
+    /// stop rather than to the suite's own result.
     fn stop_with(
         &mut self,
         name: &str,
         cleanup: &effigy_kernel::ctx::CleanupContext,
+        forwarded: &[i32],
     ) -> Result<(), ProcessManagerError> {
         let entry =
             self.entries
@@ -280,16 +284,21 @@ impl State<'_, '_> {
                 self.forced.insert(name.to_owned());
             }
             if entry.exit.is_none() {
+                // Contract 052: a process a stop ended reports the interrupted
+                // convention `128 + signal`. Only such an exit is this stop's
+                // doing; any other exit status is the suite's own result, so a
+                // completed failure is never relabelled as a cancellation.
+                let mut delivered = forwarded.to_vec();
+                delivered.extend(report.signals.iter().map(|sent| sent.signal));
                 entry.exit = Some(match report.leader {
                     Observed::Verified(exit, _) => match self.run.complete(process, exit) {
-                        // A suite that reported success before the stop reached
-                        // it keeps its own result.
                         Ok(()) if exit.code == 0 => {
                             EntryExit::Reported(format!("exit={}", exit.code))
                         }
-                        // The session ended this attempt: it never reported a
-                        // result of its own, so it is a cancellation.
-                        Ok(()) => EntryExit::Stopped,
+                        Ok(()) if delivered.iter().any(|signal| exit.code == 128 + signal) => {
+                            EntryExit::Stopped
+                        }
+                        Ok(()) => EntryExit::Reported(format!("exit={}", exit.code)),
                         Err(error) => EntryExit::Reported(format!("unrecorded exit: {error}")),
                     },
                     _ => EntryExit::Reported("unknown exit".into()),
@@ -335,7 +344,7 @@ impl State<'_, '_> {
         let names = self.entries.keys().cloned().collect::<Vec<_>>();
         let cleanup = task_engine::cleanup_context(CLEANUP);
         for name in names {
-            if let Err(error) = self.stop_with(&name, &cleanup) {
+            if let Err(error) = self.stop_with(&name, &cleanup, &[libc::SIGTERM]) {
                 self.entries.get_mut(&name).expect("known suite").exit =
                     Some(EntryExit::Reported(error.to_string()));
             }
@@ -646,6 +655,52 @@ mod tests {
                 signal: None,
             })
             .is_empty());
+    }
+
+    /// A suite that reported its own failure is a failed check even when the
+    /// session's stop arrives before the session observed that exit: the stop
+    /// never produced the exit, so the result keeps its own code.
+    #[test]
+    fn a_suite_that_reported_its_own_failure_keeps_the_failure_across_a_stop() {
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let mut run =
+            TaskRun::standalone_foreground(fixture.path(), "effigy test").expect("memory owner");
+        {
+            let parent = RefCell::new(&mut run);
+            let source = source(
+                &parent,
+                vec![named_spec(
+                    fixture.path(),
+                    "failed",
+                    "touch failed.done; exit 7",
+                )],
+            )
+            .expect("source");
+            wait(source.as_ref(), |event| {
+                event.kind == ProcessEventKind::Started
+            });
+            // The suite finishes on its own; the session is not pumped, so the
+            // stop is its first observation of the attempt.
+            let done = fixture.path().join("failed.done");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !done.exists() {
+                assert!(Instant::now() < deadline, "suite never finished");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            source.terminate_process("failed").expect("verified stop");
+            assert_eq!(
+                source.entry_states(),
+                vec![(
+                    "failed".into(),
+                    SessionEntryState::Failed {
+                        detail: "exit=7".into()
+                    }
+                )],
+                "a completed failure is not a cancellation"
+            );
+        }
+        assert!(run.close(WorkloadOutcome::Failed { code: 7 }).is_empty());
     }
 
     /// A stop before the session started an attempt leaves it never started,
