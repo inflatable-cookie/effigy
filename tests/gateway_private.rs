@@ -3873,6 +3873,12 @@ impl Drop for ManagedContainerCleanup {
                 fs::read_to_string(&self.docker_log).unwrap_or_default()
             );
         }
+        // A settled generation clears its own record during `down`, so the
+        // recorded groups are captured first and swept after the stop.
+        let recorded = adapterless_listener::recorded_fixture_processes(
+            &self.checkouts,
+            &self.private_gateway,
+        );
         for checkout in &self.checkouts {
             // Best-effort: down every declared environment, so manifests with
             // several environments still leave nothing running behind.
@@ -3897,6 +3903,9 @@ impl Drop for ManagedContainerCleanup {
                     let _ = child.wait();
                 }
             }
+        }
+        for record in &recorded {
+            adapterless_listener::terminate_recorded_group(record);
         }
     }
 }
@@ -3987,6 +3996,18 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
         .env("CAROOT", &cleanup.foreign_ca)
         .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
+    // `oxide` injects its own `CARGO_PROFILE_OXIDE_*` profile settings into the
+    // test process. Effigy's argv classifier reads a short inherited value as a
+    // secret when it appears in an argument (the watch-mode respawn proof then
+    // refuses its own listener), so a fixture never passes them to Effigy.
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_str()
+            .is_some_and(|name| name.starts_with("CARGO_PROFILE_OXIDE_"))
+        {
+            command.env_remove(key);
+        }
+    }
     command
 }
 

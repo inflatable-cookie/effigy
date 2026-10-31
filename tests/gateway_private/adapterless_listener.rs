@@ -10,7 +10,18 @@
 //! holds. Disposable loopback fixtures, a private gateway and a fake Docker
 //! backend only; every child is stopped by the fixture that started it.
 use super::*;
-use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
+use effigy_gateway::identity::{
+    read_live_process_identity, GatewayStartIdentity, LiveProcessIdentity,
+};
+
+/// The interrupted-parent proof's owner helper, and the environment and
+/// watchdog it runs under.
+const OWNER_HELPER: &str = "adapterless_listener::managed_host_adapterless_cleanup_owner_helper";
+const OWNER_ROOT_ENV: &str = "EFFIGY_ADAPTERLESS_OWNER_ROOT";
+/// Waits for the owner to disappear, then stops the recorded group and the
+/// descendant it was handed. `$1` is the owner, `$2` the group, `$3` the
+/// descendant.
+const OWNER_WATCHDOG: &str = "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; kill -KILL -- \"-$2\" 2>/dev/null; kill -KILL \"$3\" 2>/dev/null; exit 0";
 
 const LISTENER_NAME: &str = "web";
 
@@ -152,7 +163,7 @@ impl AdapterlessSetup {
 
 /// A listener generation's child as Effigy recorded it: the leader PID with the
 /// boot and start identity that prove it is still that process.
-struct RecordedListenerChild {
+pub(super) struct RecordedListenerChild {
     pid: u32,
     boot: String,
     start: GatewayStartIdentity,
@@ -195,6 +206,99 @@ fn recorded_listener_children(dir: &Path, found: &mut Vec<RecordedListenerChild>
     }
 }
 
+/// Process IDs whose process group is `pgid`, read from the process table.
+/// Reads only; nothing is signalled here.
+fn process_group_members(pgid: u32) -> Vec<u32> {
+    let Ok(output) = Command::new("ps").args(["-axo", "pid=,pgid="]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line
+                .split_whitespace()
+                .map(|field| field.parse::<u32>().ok());
+            let pid = fields.next()??;
+            let group = fields.next()??;
+            (group == pgid).then_some(pid)
+        })
+        .collect()
+}
+
+/// Whether `live` began at or after the recorded leader in the same boot. A
+/// process that joins the leader's group later than the leader started is one
+/// of its descendants; an earlier one cannot be.
+fn started_at_or_after(live: &LiveProcessIdentity, recorded: &RecordedListenerChild) -> bool {
+    if live.boot_identity != recorded.boot {
+        return false;
+    }
+    match (&live.start_identity, &recorded.start) {
+        (
+            GatewayStartIdentity::Linux { start_ticks: now },
+            GatewayStartIdentity::Linux { start_ticks: then },
+        ) => now >= then,
+        (
+            GatewayStartIdentity::Macos {
+                start_seconds: now_seconds,
+                start_microseconds: now_micros,
+            },
+            GatewayStartIdentity::Macos {
+                start_seconds: then_seconds,
+                start_microseconds: then_micros,
+            },
+        ) => (now_seconds, now_micros) >= (then_seconds, then_micros),
+        _ => false,
+    }
+}
+
+/// Signal one recorded generation and what it still owns: its leader while the
+/// leader holds its recorded identity, and every process in its group that
+/// began at or after the leader. A leader that already exited leaves its group
+/// members running under the same record, so they are stopped too. Each PID is
+/// signalled on its own identity; a PID that is no longer this record's process
+/// is left alone.
+pub(super) fn terminate_recorded_group(record: &RecordedListenerChild) {
+    let mut owned = Vec::new();
+    for pid in process_group_members(record.pid) {
+        let Ok(live) = read_live_process_identity(pid) else {
+            continue;
+        };
+        let keep = if pid == record.pid {
+            live.boot_identity == record.boot && live.start_identity == record.start
+        } else {
+            started_at_or_after(&live, record)
+        };
+        if keep {
+            owned.push(pid);
+        }
+    }
+    for pid in owned {
+        eprintln!(
+            "adapterless fixture stopped process {pid} in group {} it owned",
+            record.pid
+        );
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+}
+
+/// Every recorded generation under the given checkouts and private gateway root,
+/// read before a stop. A settled listener clears its own record, so the proof
+/// takes this snapshot before `container down` and sweeps it afterwards.
+pub(super) fn recorded_fixture_processes(
+    checkouts: &[PathBuf],
+    private_gateway: &Path,
+) -> Vec<RecordedListenerChild> {
+    let mut found = Vec::new();
+    for checkout in checkouts {
+        recorded_listener_children(&checkout.join(".effigy/runtime/host-processes"), &mut found);
+    }
+    recorded_gateway_daemons(private_gateway, &mut found);
+    found
+}
+
 /// Signal the recorded child generations that still hold their recorded
 /// identity, and their process groups. Each generation is started as its own
 /// session leader, so the group reaches a watch loop's grandchildren as well.
@@ -212,19 +316,7 @@ fn terminate_recorded_listener_children(fixture_root: &Path) {
         );
     }
     for child in children {
-        let Ok(live) = read_live_process_identity(child.pid) else {
-            continue;
-        };
-        if live.boot_identity != child.boot || live.start_identity != child.start {
-            continue;
-        }
-        let pid = nix::unistd::Pid::from_raw(child.pid as i32);
-        eprintln!(
-            "adapterless fixture stopped listener child {} and its group",
-            child.pid
-        );
-        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
-        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+        terminate_recorded_group(&child);
     }
 }
 
@@ -276,19 +368,7 @@ fn terminate_recorded_gateway_daemons(fixture_root: &Path) {
     let mut daemons = Vec::new();
     recorded_gateway_daemons(fixture_root, &mut daemons);
     for daemon in daemons {
-        let Ok(live) = read_live_process_identity(daemon.pid) else {
-            continue;
-        };
-        if live.boot_identity != daemon.boot || live.start_identity != daemon.start {
-            continue;
-        }
-        let pid = nix::unistd::Pid::from_raw(daemon.pid as i32);
-        eprintln!(
-            "adapterless fixture stopped gateway daemon {} and its group",
-            daemon.pid
-        );
-        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
-        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+        terminate_recorded_group(&daemon);
     }
 }
 
@@ -497,7 +577,9 @@ fn managed_host_adapterless_listener_bound_elsewhere_waits_until_the_child_exits
         .split(" at ")
         .nth(1)
         .and_then(|rest| rest.split(' ').next())
-        .expect("the reserved address is named")
+        .unwrap_or_else(|| {
+            panic!("the reserved address is named; diagnostic: {diagnostic:?}; state: {state}")
+        })
         .parse::<SocketAddr>()
         .expect("reserved address");
     assert!(reserved.ip().is_loopback(), "{reserved}");
@@ -1319,4 +1401,186 @@ fn managed_host_adapterless_cleanup_leaves_a_reused_pid_alone() {
     );
     child.kill().expect("stop our own sleeper");
     child.wait().expect("reap our own sleeper");
+}
+
+/// A group leader that runs `script` under `sh -c`, so a backgrounded job stays
+/// in the leader's group after the leader exits.
+fn spawn_shell_group(script: &str) -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    Command::new("sh")
+        .args(["-c", script])
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn owned shell group")
+}
+
+/// Waits for a PID that a fixture wrote into `path`.
+fn wait_for_pid(path: &Path) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(pid) = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no pid written to {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Whether `pid` still names a process that the kernel has not reaped.
+fn pid_alive(pid: u32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+}
+
+/// A recorded leader exits while its background job keeps running in the same
+/// group. The record names only the leader, so the sweep must still stop the
+/// descendant through its group and start identity.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_descendant_after_its_leader_exits() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-descendant");
+    fs::create_dir(&checkout).expect("descendant checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let _sweep = SurvivorSweep(fixture.path());
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 1",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let leader_pid = leader.id();
+    leader.wait().expect("the recorded leader exits");
+    let descendant = wait_for_pid(&pidfile);
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives its leader before the sweep"
+    );
+    assert!(
+        process_group_members(leader_pid).contains(&descendant),
+        "the descendant stays in the leader's group"
+    );
+
+    terminate_recorded_listener_children(fixture.path());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !pid_alive(descendant),
+        "the sweep must stop the descendant after its leader exited"
+    );
+    eprintln!(
+        "descendant proof: leader {leader_pid} exited; descendant {descendant} in its group was stopped"
+    );
+}
+
+/// The owner an interrupted-parent proof starts. It records its own group and a
+/// descendant, starts a watchdog, and then waits. Only
+/// `managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`
+/// runs it.
+#[test]
+#[ignore = "started by the interrupted-parent cleanup proof"]
+fn managed_host_adapterless_cleanup_owner_helper() {
+    let root = PathBuf::from(std::env::var_os(OWNER_ROOT_ENV).expect("owner fixture root"));
+    let checkout = root.join("checkout-owner");
+    fs::create_dir_all(&checkout).expect("owner checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let descendant = wait_for_pid(&pidfile);
+    // The watchdog outlives this owner and is the only cleanup an interrupted
+    // owner gets: no `Drop` runs in a killed process.
+    let watchdog = {
+        use std::os::unix::process::CommandExt;
+        Command::new("sh")
+            .args([
+                "-c",
+                OWNER_WATCHDOG,
+                "watchdog",
+                &std::process::id().to_string(),
+                &leader.id().to_string(),
+                &descendant.to_string(),
+            ])
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("owner watchdog")
+    };
+    fs::write(
+        root.join("owner.pids"),
+        format!("{} {} {}", leader.id(), descendant, watchdog.id()),
+    )
+    .expect("owner pid record");
+    let _ = leader.wait();
+}
+
+/// Interrupted parent: the owner is SIGKILLed, so its `Drop` never runs. The
+/// watchdog it started must still stop the recorded group and its descendant.
+#[test]
+fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent() {
+    let fixture = managed_host_fixture();
+    let root = fixture.path().to_path_buf();
+    // Backstop: if this proof fails, the recorded identities still get stopped.
+    let _sweep = SurvivorSweep(&root);
+    let mut owner = Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", OWNER_HELPER, "--ignored", "--nocapture"])
+        .env(OWNER_ROOT_ENV, &root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start the owner helper");
+    let pids = root.join("owner.pids");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let text = loop {
+        if let Some(text) = fs::read_to_string(&pids)
+            .ok()
+            .filter(|text| text.split_whitespace().count() == 3)
+        {
+            break text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the owner helper never recorded its survivors"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    let fields: Vec<u32> = text
+        .split_whitespace()
+        .map(|field| field.parse().expect("owner pid"))
+        .collect();
+    let (leader, descendant, watchdog) = (fields[0], fields[1], fields[2]);
+
+    owner.kill().expect("interrupt the owner");
+    owner.wait().expect("reap the interrupted owner");
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while (pid_alive(descendant) || pid_alive(leader)) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !pid_alive(descendant),
+        "the watchdog must stop the descendant after its owner was interrupted"
+    );
+    assert!(
+        !pid_alive(leader),
+        "the watchdog must stop the recorded group leader after its owner was interrupted"
+    );
+    eprintln!(
+        "interrupted-parent proof: owner interrupted; watchdog {watchdog} stopped group {leader} and descendant {descendant}"
+    );
 }
