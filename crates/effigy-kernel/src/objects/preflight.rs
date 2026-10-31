@@ -1,9 +1,10 @@
 //! Preflight sealing (§7.1–§7.4): verify the frozen closure an adapter is
 //! about to apply, in one private owner-only tree, and hand back a typed
-//! receipt. This call **never** publishes: nothing here writes canonical
-//! `objects/`, so a helper that outlives its caller has no promotion path and
-//! canonical promotion stays exactly where it was — the fenced publisher
-//! transaction, which consumes the receipt under its objects gate.
+//! receipt. This call **never** publishes: nothing in it writes canonical
+//! `objects/`, takes a gate, or acquires `Gate(Env)`, so a helper that outlives
+//! its caller has no promotion path and canonical promotion stays exactly where
+//! it was — the fenced publisher transaction, which consumes the receipt under
+//! `Gate(Env)`.
 //!
 //! Layout under the checkout's private `state/staging/`:
 //!
@@ -14,12 +15,19 @@
 //! preflight-<token>/      the staged closure, `<token>/<digest>/…`
 //! ```
 //!
-//! The lease is created before the directory, so a tree a recovery finds
-//! without a held lease is provably dead; a live helper's or a live receipt's
-//! lease is never removed or raced. Staging and verification run on one helper
-//! thread while the caller waits no longer than its deadline: a stalled write or
-//! sync can finish late only inside that private tree, never in canonical
-//! objects (K8's no detached canonical writer).
+//! The helper creates and locks the lease **before** it creates the tree, and
+//! recovery only ever inspects a tree, never a lease on its own. A live helper
+//! can therefore never have its lease unlinked before it locks it, and a tree a
+//! recovery can see is either leased by a live owner or provably dead.
+//!
+//! Recovery removes a tree only on positive proof: its lease is absent, or its
+//! lease is present and acquirable. A lease it cannot open or inspect (a trust
+//! failure, a hard link or symlink, an I/O error, descriptor exhaustion) proves
+//! nothing about its owner, so that tree is left untouched for a later
+//! publication. The fenced publisher runs recovery after its own commit and
+//! swallows every failure, so no residue state can turn a committed publication
+//! into a failure, and the seal's calling thread never runs any of this: it
+//! performs no filesystem work at all and waits only within its deadline.
 use super::*;
 use crate::ctx::{Capability, Deadline, EffectClass, EffectContext};
 use crate::fs::{self, FileName, Trust};
@@ -322,24 +330,35 @@ pub(crate) fn recover(staging: &DirFd) {
         let Some(token) = token_of_tree(name.as_str()) else {
             continue;
         };
-        let Ok(Some((lease, free))) = lease_state(staging, token) else {
-            // No lease at all: nothing in this layout creates a tree without one
-            // first, so it is dead residue. A lease we cannot open is skipped,
-            // never assumed dead.
-            let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
-            let _ = staging.sync();
-            return;
+        let lease = match lease_state(staging, token) {
+            // No lease file at all: nothing in this layout creates a tree before
+            // its lease, so it is dead residue (an older build, or a consumed
+            // tree whose lease went first). Removal stays under this gate.
+            Ok(None) => {
+                let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
+                let _ = staging.sync();
+                return;
+            }
+            // A lease we cannot open or inspect (trust failure, hard link or
+            // symlink, I/O error, descriptor exhaustion) proves nothing about its
+            // owner: a live helper or a live receipt may still hold it, so the
+            // tree is left exactly as it is.
+            Err(_) => continue,
+            // Held: a live helper or a live returned receipt owns this tree.
+            Ok(Some((lease, false))) => {
+                drop(lease);
+                continue;
+            }
+            Ok(Some((lease, true))) => lease,
         };
-        if !free {
-            // A live helper or a live returned receipt owns this tree.
-            continue;
-        }
+        // The lease is acquirable, so its owner is gone: this tree is dead.
         let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
         if let Ok(lease_path) = lease_name(token) {
             let _ = staging.remove(&lease_path, false);
         }
         let _ = staging.sync();
-        // The lease stays held until the tree is gone.
+        // The lease stays held until the tree is gone, so no second recovery and
+        // no late helper can interleave.
         drop(lease);
         return;
     }

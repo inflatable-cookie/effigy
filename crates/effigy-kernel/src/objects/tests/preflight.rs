@@ -391,6 +391,79 @@ fn preflight_recovery_never_races_an_owner_at_the_lease_boundary() {
     );
 }
 
+/// Recovery removes a tree only on positive proof. A live receipt whose lease
+/// cannot be inspected — a trust failure after the fact, a replaced path, an I/O
+/// error — proves nothing, so its tree and bytes are left exactly as they were,
+/// and the receipt still publishes afterwards.
+#[test]
+fn preflight_recovery_leaves_a_live_tree_whose_lease_cannot_be_inspected() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("opaque");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let live = seal(&cx, &root, &value).unwrap();
+    let live_tree = tree_dir(home.path(), &live);
+    let live_lease = lease_dir(home.path(), &live);
+    let compose = live_tree.join(value.digest()).join("compose.yaml");
+    // The receipt still owns a held lease; widen only the lease's mode so that
+    // recovery's `Trust::Private` open refuses it. That is an inspection failure,
+    // not proof of death.
+    std::fs::set_permissions(&live_lease, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        !lease_free(&live_lease),
+        "the live receipt still holds the lease recovery cannot inspect"
+    );
+    let other = closure("other");
+    let publishable = seal(&cx, &root, &other).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 1, &publishable, &other),
+        other.digest()
+    );
+    assert!(live_tree.exists(), "the uninspectable tree was not removed");
+    assert!(live_lease.exists());
+    assert_eq!(
+        std::fs::read(&compose).unwrap(),
+        *value.files()["compose.yaml"],
+        "the live tree's bytes are untouched"
+    );
+    assert!(!objects_dir(home.path()).join(value.digest()).exists());
+    // A replaced lease path is the same shape of failure: recovery refuses to
+    // read through it and leaves the tree alone.
+    std::fs::remove_file(&live_lease).unwrap();
+    std::os::unix::fs::symlink(home.path().join("elsewhere"), &live_lease).unwrap();
+    let second = seal(&cx, &root, &closure("second")).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 2, &second, &closure("second")),
+        closure("second").digest()
+    );
+    assert!(
+        live_tree.exists(),
+        "a symlinked lease is not proof of death"
+    );
+    assert_eq!(
+        std::fs::read(&compose).unwrap(),
+        *value.files()["compose.yaml"]
+    );
+    // The receipt was never invalidated: once its lease is readable again it
+    // still publishes exactly its closure and is consumed normally.
+    std::fs::remove_file(&live_lease).unwrap();
+    std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&live_lease, b"").unwrap();
+    std::fs::set_permissions(&live_lease, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 3, &live, &value),
+        value.digest()
+    );
+    assert!(!live_tree.exists(), "a published receipt is consumed");
+    assert_eq!(
+        read_env(home.path(), "dev", Role::Desired)
+            .verified()
+            .unwrap()
+            .closure,
+        value
+    );
+}
+
 /// Recovery never touches a tree whose lease is held, so a helper still working
 /// after its caller timed out is never raced.
 #[test]

@@ -509,9 +509,12 @@ During v0.x, MINOR bumps may include breaking changes.
   exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
   than replacing), verifying any concurrent winner in full, and reclaiming one
-  provably dead seal tree per publication after its own fenced commit. Receipt
-  consumption is refused unless the run is owned by an environment and its
-  `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  provably dead seal tree per publication after its own fenced commit. A seal
+  tree is removed only on positive proof that its owner is gone — an absent
+  lease, or one that can be acquired; a lease that cannot be opened or inspected
+  leaves the tree untouched, so a live helper or a live receipt is never raced.
+  Receipt consumption is refused unless the run is owned by an environment and
+  its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
   that authority. Recovery is infallible and post-commit, so residue can never
   turn a committed publication into a failure. Replay is idempotent, and a
   private tree altered after sealing never becomes canonical.

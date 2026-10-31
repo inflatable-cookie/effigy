@@ -2448,7 +2448,11 @@ publisher that already holds the objects gate ever unlinks a lease, a tree is
 dead exactly when its lease is acquirable; a live helper's or a live returned
 receipt's tree always carries a held lease and is never removed or raced.
 Recovery never inspects a lease that has no tree, so it cannot unlink one a
-helper is about to lock.
+helper is about to lock. It removes a tree only on positive proof: the lease is
+absent, or present and acquirable. A lease it cannot open or inspect — a trust
+failure, a hard link or symlink, an I/O error, descriptor exhaustion — proves
+nothing about its owner, so that tree is left untouched for a later
+publication.
 
 Canonical promotion stays exactly where it was: the fenced publisher.
 `publish_sealed_desired` is that same publisher — one journalled intent, one
