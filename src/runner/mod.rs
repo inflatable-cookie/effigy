@@ -105,10 +105,12 @@ pub(in crate::runner) use workspace_command::run_workspace;
 /// (contract 052 §8.6, §8.11), so the guest dispatch runs first. Anything else
 /// is an ordinary host command and takes the host dispatch unchanged.
 pub fn run_command(cmd: effigy_cli::Command) -> Result<String, RunnerError> {
-    if let Some(rendered) = workspace_client::guest_command(&cmd)? {
-        return Ok(rendered);
-    }
-    entrypoints::run_command(cmd)
+    let context = effigy_context::EffigyRuntimeContext::capture_lossy(
+        None,
+        command_context::command_repo_override_for_context(&cmd),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    run_command_with_context(cmd, &context)
 }
 
 /// [`run_command`] with an already-captured runtime context.
@@ -116,7 +118,7 @@ pub fn run_command_with_context(
     cmd: effigy_cli::Command,
     context: &effigy_context::EffigyRuntimeContext,
 ) -> Result<String, RunnerError> {
-    if let Some(rendered) = workspace_client::guest_command(&cmd)? {
+    if let Some(rendered) = workspace_client::guest_command(&cmd, context.invocation_cwd())? {
         return Ok(rendered);
     }
     entrypoints::run_command_with_context(cmd, context)

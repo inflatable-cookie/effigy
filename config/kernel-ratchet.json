@@ -76,7 +76,8 @@
       "std.fs.OpenOptions.write": 2
     },
     "crates/effigy-core/src/worktree_scope.rs": {
-      "std.fs.OpenOptions.write": 2
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::remove_file": 1
     },
     "crates/effigy-deps/src/bun_apply.rs": {
       "std::fs::remove_file": 2,
@@ -410,6 +411,13 @@
       "std::fs::remove_file": 1,
       "std::fs::rename": 1,
       "std::fs::write": 4
+    },
+    "src/runner/workspace_command/staged_probe_tests.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1
+    },
+    "src/runner/workspace_transport/session_tests.rs": {
+      "std.process.Command.new": 1
     }
   },
   "tests": {

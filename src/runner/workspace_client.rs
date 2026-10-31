@@ -1433,26 +1433,12 @@ impl Transport for BoxedTransport {
     }
 }
 
-/// Run one command inside a prepared container-mode workspace.
+/// Run one command inside a prepared container-mode workspace, from the
+/// working directory the runner resolved for this invocation.
 ///
 /// A local read is answered from the pinned context. Everything else crosses
 /// the one channel; a refusal is returned as an error and never retried
 /// against guest state or a guest engine.
-pub(crate) fn dispatch(
-    cmd: &Command,
-    published: &PublishedGuestContext,
-    guest: &mut dyn GuestReader,
-    checkout: &mut dyn CheckoutReader,
-    opener: &mut dyn ChannelOpener,
-) -> Result<String, RunnerError> {
-    let cwd = std::env::current_dir().map_err(|error| {
-        RunnerError::task_invocation(format!("cannot read the working directory: {error}"))
-    })?;
-    dispatch_in(cmd, published, guest, checkout, opener, &cwd)
-}
-
-/// [`dispatch`] from a named working directory, so a proof does not depend on
-/// where the test process happens to stand.
 pub(crate) fn dispatch_in(
     cmd: &Command,
     published: &PublishedGuestContext,
@@ -1766,8 +1752,9 @@ fn local_read_error(error: LocalReadError) -> RunnerError {
 ///
 /// `Ok(None)` means this process is not a prepared container-mode guest: the
 /// ordinary host dispatch runs unchanged, and nothing was written. Hybrid mode
-/// always takes this path (§8.10 R1).
-pub(crate) fn guest_command(cmd: &Command) -> Result<Option<String>, RunnerError> {
+/// always takes this path (§8.10 R1). `cwd` is the directory the command was
+/// invoked from, as the runner captured it.
+pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>, RunnerError> {
     // The staged guest probe is executed by the producer inside the created
     // container. It is the guest's own entry, handled by `guest_probe`, so it
     // takes the ordinary dispatch rather than the channel.
@@ -1784,7 +1771,7 @@ pub(crate) fn guest_command(cmd: &Command) -> Result<Option<String>, RunnerError
         backend: published.document.backend.clone(),
         budget: CHANNEL_OPEN_BUDGET,
     };
-    dispatch(cmd, &published, &mut guest, &mut checkout, &mut opener).map(Some)
+    dispatch_in(cmd, &published, &mut guest, &mut checkout, &mut opener, cwd).map(Some)
 }
 
 /// A container-mode guest never runs the host engines locally, so a raw

@@ -757,13 +757,6 @@ fn an_unrecorded_switch_is_refused_not_served() {
             || stderr.contains("has not switched and been read back"),
         "the refusal names the missing switch: {stderr}"
     );
-    // The refused host exits on its own; let it finish before the fixture's
-    // journal directory is cleaned up.
-    let until = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(50));
-        break;
-    }
 }
 
 /// A competing second owner for one session refuses inside the detached process,
