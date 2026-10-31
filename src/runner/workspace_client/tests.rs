@@ -2646,6 +2646,16 @@ impl Default for PtyLog {
     }
 }
 
+/// A one-shot action a fake writer runs from inside an effect, so a proof can
+/// change the owning attachment's lifetime between two of them.
+struct PtyHook(Box<dyn FnMut() + Send>);
+
+impl std::fmt::Debug for PtyHook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PtyHook")
+    }
+}
+
 /// A production-shaped fake terminal writer: bounded and non-blocking, and it
 /// records exactly what a child PTY master would report. It is not a real child.
 #[derive(Debug)]
@@ -2655,6 +2665,8 @@ struct FakePty {
     batch: usize,
     /// Resizes it refuses with a full queue before accepting one.
     resize_blocks: usize,
+    /// Runs once, after the first write effect returns.
+    after_first_write: Option<PtyHook>,
 }
 
 impl FakePty {
@@ -2663,6 +2675,7 @@ impl FakePty {
             log,
             batch: usize::MAX,
             resize_blocks: 0,
+            after_first_write: None,
         }
     }
 
@@ -2675,6 +2688,13 @@ impl FakePty {
 
     fn refusing_resizes(mut self, blocks: usize) -> Self {
         self.resize_blocks = blocks;
+        self
+    }
+
+    /// Run `hook` once, after the first write effect returns: the proof that the
+    /// owner's lifetime is read again before the *next* partial write.
+    fn after_first_write(mut self, hook: impl FnMut() + Send + 'static) -> Self {
+        self.after_first_write = Some(PtyHook(Box::new(hook)));
         self
     }
 }
@@ -2691,6 +2711,10 @@ impl TerminalWriter for FakePty {
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
         log.written.extend_from_slice(&bytes[..room]);
+        drop(log);
+        if let Some(mut hook) = self.after_first_write.take() {
+            (hook.0)();
+        }
         Ok(room)
     }
 
@@ -3778,6 +3802,120 @@ fn a_run_with_no_terminal_owner_refuses_input_and_attach() {
     ));
     assert_eq!(custody.runs(), 0);
     assert_eq!(log.lock().expect("pty log").retired, 0);
+}
+
+#[test]
+fn a_partial_write_is_fenced_before_the_next_chunk() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    // The owning row, released from inside the writer's own effect: a handle of
+    // its own, so the proof can end the owner's lifetime mid-frame.
+    let mut releaser =
+        run::resume_owner(&cx, &root, terminal_session(), run).expect("owner attachment");
+    let releasing_context = cx.clone();
+    let releasing_root = root.clone();
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(
+                FakePty::new(log.clone())
+                    .bounded(4, usize::MAX)
+                    .after_first_write(move || {
+                        releaser
+                            .release(&releasing_context, &releasing_root, Release::Eof)
+                            .expect("the owning client's end of stream");
+                    }),
+            ),
+        )
+        .expect("the run's terminal opens");
+    let witness =
+        run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    custody.start(&witness, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+
+    // Eight bytes, four per write effect: the first chunk lands, the owner's
+    // end of stream follows it, and the second chunk must never be written.
+    custody
+        .input(&witness, b"12345678")
+        .expect("the owning attachment types");
+    wait_until("the writer to retire on the released row", || {
+        log.lock().expect("pty log").retired == 1
+    });
+    assert_eq!(
+        written(&log),
+        b"1234",
+        "exactly one partial write landed; the next chunk was fenced out"
+    );
+    let terminal = custody.terminal_mut(run).expect("the run's terminal");
+    assert!(terminal.retired(), "the released row retired the writer");
+    assert_eq!(terminal.pending(), 0, "the retired writer drops its queue");
+}
+
+#[test]
+fn a_queued_resize_is_fenced_by_the_owners_lifetime() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    // A writer that takes four bytes and then stays full, so the geometry waits
+    // behind queued input.
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
+        )
+        .expect("the run's terminal opens");
+    let mut owner =
+        run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+
+    custody
+        .input(&owner, b"12345678")
+        .expect("the owning attachment types");
+    wait_until("the writer to take what it accepts", || {
+        written(&log) == b"1234"
+    });
+    // The newest geometry is queued while the writer is full...
+    custody
+        .resize(&owner, size(50, 120))
+        .expect("the owning attachment resizes its terminal");
+    // ...and the owner's end of stream arrives before it can be applied. The
+    // resize effect is fenced on the same row, so it must never land.
+    owner
+        .release(&cx, &root, Release::Eof)
+        .expect("the owning client's end of stream");
+    wait_until("the writer to retire on the released row", || {
+        log.lock().expect("pty log").retired == 1
+    });
+    assert!(
+        sizes(&log).is_empty(),
+        "a queued geometry was applied after the owning row was released: {:?}",
+        sizes(&log)
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        sizes(&log).is_empty(),
+        "the retired writer never applies a size"
+    );
 }
 
 #[test]

@@ -242,7 +242,8 @@ During v0.x, MINOR bumps may include breaking changes.
   run for a session. Input and resize re-read the run's owning attachment with
   `Attachment::attached_observed` immediately before every effect, and each
   owner drives its writer from its own pump, which re-reads the run's resumed
-  owning row immediately before every write and resize and on every idle tick.
+  owning row immediately before every writer effect — each partial write, each
+  resize — and on every idle tick.
   A stale, released, replaced or foreign attachment, a second terminal, or a run
   this session owns no terminal for therefore refuses with zero bytes and zero
   resize, and no effect lands against a row released between turns. Input is

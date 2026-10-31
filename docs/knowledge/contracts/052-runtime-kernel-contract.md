@@ -4544,11 +4544,12 @@ handoff its caller opens entries through. Opening a terminal resumes the run's
 owning handle, so a run this session did not admit has no owner to write for and
 is refused. The connection fences the live attachment it was handed, and the
 owner's writer runs on its own pump: the pump re-reads the resumed owning row
-with `Attachment::attached_observed` immediately before *every* write, resize
-and idle tick, so a stale, released, replaced or foreign attachment, a second
-terminal, and a run this session owns no terminal for refuse with zero bytes and
-zero resize, and no effect can land against a row that was released between
-turns. Input is bounded at two frames and then refuses rather than growing a
+with `Attachment::attached_observed` immediately before every writer effect —
+each partial write, each resize, and each idle tick — so a stale, released,
+replaced or foreign attachment, a second terminal, and a run this session owns
+no terminal for refuse with zero bytes and zero resize, and no effect can land
+against a row that was released between turns or between two chunks of one
+frame. Input is bounded at two frames and then refuses rather than growing a
 queue; the pump drains what a slow child refused on its own cadence, so
 backpressured input completes even when the connection is live and idle and never
 needs the client to type again; resize keeps one size and never replays an older

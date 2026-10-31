@@ -416,12 +416,15 @@ fn spawn_pump(
         .spawn(move || pump(shared, observe, root, owner, writer))
 }
 
-/// The pump: re-read the owning attachment, then hand the writer what it takes.
+/// The pump: re-read the owning attachment immediately before each effect, and
+/// hand the writer exactly one effect at a time.
 ///
-/// The ownership check and the effect are one step, so no write or resize can
-/// happen against a row that was released between turns — and the check runs on
-/// every idle tick too, so owner EOF retires the writer without waiting for the
-/// connection to send anything.
+/// "One effect" is one partial write or one resize, so *every* writer effect —
+/// including the second and later chunks of a large frame, and the geometry that
+/// follows them — has its own lifetime read immediately before it. A row
+/// released between turns, or between two partial writes, therefore stops the
+/// next effect instead of letting it land. The row is also read on every idle
+/// tick, so owner EOF retires the writer without waiting for connection traffic.
 fn pump(
     shared: Arc<Shared>,
     observe: ObserveContext,
@@ -430,85 +433,134 @@ fn pump(
     mut writer: Box<dyn TerminalWriter>,
 ) {
     loop {
-        // The owning attachment's lifetime, immediately before the effect.
-        let live = matches!(owner.attached_observed(&observe, &root), Ok(true));
-        let step = {
-            let mut outbox = shared.lock();
+        // What is there to do? Nothing is effected here.
+        let (wants_write, wants_resize) = {
+            let outbox = shared.lock();
             if outbox.stop {
                 return;
             }
-            if !live {
-                outbox.pending.clear();
-                outbox.latest = None;
-                outbox.retired = true;
-                outbox.stop = true;
-                Pumped::Closed
-            } else {
-                pump_once(&mut outbox, writer.as_mut())
+            (
+                !outbox.pending.is_empty(),
+                outbox
+                    .latest
+                    .filter(|size| Some(*size) != outbox.applied)
+                    .is_some(),
+            )
+        };
+        if !wants_write && !wants_resize {
+            // An idle turn still reads the owning row, so owner EOF retires the
+            // writer with no traffic and no connection turn to wait for.
+            if !owner_live(&owner, &observe, &root) {
+                retire(&shared, writer.as_mut());
+                return;
             }
+            if !wait(&shared) {
+                return;
+            }
+            continue;
+        }
+        // Exactly one effect, with the owning row read immediately before it.
+        if !owner_live(&owner, &observe, &root) {
+            retire(&shared, writer.as_mut());
+            return;
+        }
+        let step = if wants_write {
+            write_once(&shared, writer.as_mut())
+        } else {
+            resize_once(&shared, writer.as_mut())
         };
         match step {
             Pumped::Closed => {
-                let _ = writer.retire();
+                retire(&shared, writer.as_mut());
                 return;
             }
-            // Ask again immediately: the next turn re-reads the row before the
-            // next effect.
-            Pumped::Progress => continue,
+            // Ask again immediately. The next turn re-reads the owning row
+            // before the next partial write, the geometry, or the idle tick.
+            Pumped::Progress => {}
+            // A full writer keeps the remainder queued; retry on the next tick.
             Pumped::Idle => {
-                let outbox = shared.lock();
-                if outbox.stop {
+                if !wait(&shared) {
                     return;
                 }
-                let _ = shared
-                    .wake
-                    .wait_timeout(outbox, DRAIN_INTERVAL)
-                    .unwrap_or_else(PoisonError::into_inner);
             }
         }
     }
 }
 
-/// One pump turn: write what the writer takes, then apply the newest geometry.
-///
-/// A writer that is momentarily full keeps the remainder here, and the next tick
-/// retries it — or a notification from the connection does, whichever comes
-/// first.
-fn pump_once(outbox: &mut Outbox, writer: &mut dyn TerminalWriter) -> Pumped {
-    let mut progress = false;
-    while !outbox.pending.is_empty() {
-        let taken = {
-            let bytes = outbox.pending.make_contiguous();
-            writer.write(bytes)
-        };
-        match taken {
-            // The writer is momentarily full: the rest stays here, which is what
-            // bounds a burst.
-            Ok(0) => break,
-            Ok(written) => {
-                let written = written.min(outbox.pending.len());
-                outbox.pending.drain(..written);
-                outbox.delivered = outbox.delivered.saturating_add(written);
-                progress = true;
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-            Err(_) => return Pumped::Closed,
-        }
+/// Whether the run's owning attachment is still attached, read now.
+fn owner_live(owner: &Attachment, observe: &ObserveContext, root: &StateRoot) -> bool {
+    matches!(owner.attached_observed(observe, root), Ok(true))
+}
+
+/// Wait for new work or the next tick. `false` means the owner is gone.
+fn wait(shared: &Shared) -> bool {
+    let outbox = shared.lock();
+    if outbox.stop {
+        return false;
     }
-    if let Some(size) = outbox.latest.filter(|size| Some(*size) != outbox.applied) {
-        match writer.resize(size) {
-            Ok(()) => {
-                outbox.applied = Some(size);
-                progress = true;
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-            Err(_) => return Pumped::Closed,
-        }
+    let _ = shared
+        .wake
+        .wait_timeout(outbox, DRAIN_INTERVAL)
+        .unwrap_or_else(PoisonError::into_inner);
+    true
+}
+
+/// Retire the writer exactly once and stop the pump.
+fn retire(shared: &Shared, writer: &mut dyn TerminalWriter) {
+    {
+        let mut outbox = shared.lock();
+        outbox.pending.clear();
+        outbox.latest = None;
+        outbox.retired = true;
+        outbox.stop = true;
     }
-    if progress {
-        Pumped::Progress
-    } else {
-        Pumped::Idle
+    let _ = writer.retire();
+}
+
+/// One partial write, and nothing else. The bytes stay queued until a writer
+/// takes them, so a burst is bounded here rather than in the writer.
+fn write_once(shared: &Shared, writer: &mut dyn TerminalWriter) -> Pumped {
+    let mut outbox = shared.lock();
+    if outbox.stop {
+        return Pumped::Closed;
+    }
+    if outbox.pending.is_empty() {
+        return Pumped::Idle;
+    }
+    let taken = {
+        let bytes = outbox.pending.make_contiguous();
+        writer.write(bytes)
+    };
+    match taken {
+        Ok(0) => Pumped::Idle,
+        Ok(written) => {
+            let written = written.min(outbox.pending.len());
+            outbox.pending.drain(..written);
+            outbox.delivered = outbox.delivered.saturating_add(written);
+            Pumped::Progress
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Pumped::Idle,
+        Err(_) => Pumped::Closed,
+    }
+}
+
+/// One resize of the newest geometry, and nothing else. An older size is never
+/// applied: the newest one stays held and is retried only while it is newest.
+fn resize_once(shared: &Shared, writer: &mut dyn TerminalWriter) -> Pumped {
+    let mut outbox = shared.lock();
+    if outbox.stop {
+        return Pumped::Closed;
+    }
+    let Some(size) = outbox.latest.filter(|size| Some(*size) != outbox.applied) else {
+        return Pumped::Idle;
+    };
+    match writer.resize(size) {
+        Ok(()) => {
+            outbox.applied = Some(size);
+            Pumped::Progress
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Pumped::Idle,
+        Err(_) => Pumped::Closed,
     }
 }
 
