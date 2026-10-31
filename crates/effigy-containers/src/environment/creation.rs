@@ -10,16 +10,18 @@
 //! * the window opens under the exclusive `Gate(Env)` the apply already holds,
 //!   so no other Effigy activation of this project can interleave;
 //! * it takes one exact-identity inventory of the project's containers
-//!   (`ps -a --no-trunc` by project label, then one `inspect` of those exact
-//!   ids: full id, labels, image id and the container's own `Created` stamp);
+//!   (`ps -a --no-trunc` by project label, then one `inspect` of exactly those
+//!   full ids: labels, image id and reference, and the container's own
+//!   `Created`), and refuses an inspect that does not answer exactly the listed
+//!   ids once each;
 //! * it records the apply's start and its own successful outcome;
 //! * it takes the same inventory again immediately after the apply;
 //! * a container absent before and present after appeared inside this window,
-//!   and must then carry Effigy's managed, project, scope and checkout labels,
-//!   its Compose project and a single service identity, an image id (and a
-//!   `com.docker.compose.image` label that agrees when Compose wrote one) and a
-//!   `Created` stamp no older than the apply start. Anything else refuses, and
-//!   the run publishes no receipt.
+//!   and must then match the **admitted render's own declared values** for its
+//!   service: Effigy's managed, project, scope and checkout labels exactly as
+//!   the render declares them, a service the render declares, the image
+//!   reference the render declares, and a `Created` stamp no older than the
+//!   apply start. Anything else refuses, and the run publishes no receipt.
 //!
 //! **Threat boundary** (contract 052 §8.12): this excludes a foreign process
 //! that deliberately creates a container carrying Effigy's own managed,
@@ -32,16 +34,18 @@
 //!
 //! A timestamp, before/after absence and matching labels are each insufficient
 //! on their own — that is why the receipt binds all of them *to the run whose
-//! gated apply produced them*, and why each refusal leaves the run with no
-//! receipt rather than a weaker one.
+//! gated apply produced them* and to the render's exact expected values, why
+//! the receipt has no public constructor, and why each refusal leaves the run
+//! with no receipt rather than a weaker one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use effigy_kernel::id::{ResourceId, RunId};
-use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
+use effigy_kernel::objects::Closure;
+use effigy_kernel::observe::{AbsenceProof, CreatorRef, Evidence, Observed, UnknownReason};
 
 use super::backend::{BackendSelection, EnvironmentBackend, Workload};
 use crate::runtime::scope::{
@@ -52,8 +56,10 @@ use crate::runtime::scope::{
 const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
 /// Compose marks `compose run` containers with this label.
 const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
-/// Compose records the image it created the container from, when it does.
-const COMPOSE_IMAGE_LABEL: &str = "com.docker.compose.image";
+
+/// The ownership labels the render must declare for every service this window
+/// attributes.
+const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, CHECKOUT_LABEL];
 
 /// How long the window may take: one absolute deadline covers the before read,
 /// the apply and the after read. A first apply that outlasts it publishes no
@@ -62,27 +68,70 @@ const COMPOSE_IMAGE_LABEL: &str = "com.docker.compose.image";
 pub const CREATION_WINDOW: Duration = Duration::from_secs(30 * 60);
 
 /// One container the window proved this run's apply created.
+///
+/// It is read-only outside this module: only the gated window that took the
+/// inventories builds one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedContainer {
-    /// The exact full container id the engine returned for this create.
-    pub container_id: String,
-    /// The Compose service the container belongs to.
-    pub service: String,
-    /// The image id the container runs.
-    pub image: String,
+    container_id: String,
+    service: String,
+    image: String,
+    image_reference: String,
+    created: String,
+}
+
+impl CreatedContainer {
+    /// The exact full container id the engine reported for this create.
+    pub fn container_id(&self) -> &str {
+        &self.container_id
+    }
+
+    /// The Compose service the container belongs to, as the render declares it.
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// The image the engine reports for the container (`Image`): the image id
+    /// on Docker, the resolved reference on nerdctl.
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+
+    /// The image reference Compose created the container from
+    /// (`Config.Image`), which the admitted render declares for this service.
+    pub fn image_reference(&self) -> &str {
+        &self.image_reference
+    }
+
     /// The container's own `Created` stamp, RFC 3339.
-    pub created: String,
+    pub fn created(&self) -> &str {
+        &self.created
+    }
 }
 
 /// What the window read on both sides of the one apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreationEvidence {
+    source: String,
+    before: usize,
+    after: usize,
+}
+
+impl CreationEvidence {
     /// The inventories and the apply this receipt is built from, in words.
-    pub source: String,
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     /// Containers in the project immediately before the apply.
-    pub before: usize,
+    pub fn before(&self) -> usize {
+        self.before
+    }
+
     /// Containers in the project immediately after it.
-    pub after: usize,
+    pub fn after(&self) -> usize {
+        self.after
+    }
 }
 
 /// The receipt of one gated apply's creation window.
@@ -90,31 +139,76 @@ pub struct CreationEvidence {
 /// It binds the environment run, the exact full container ids, the backend and
 /// context, the project, the apply's own start and completion, the containers
 /// the window adopted and the inventory evidence it read.
+///
+/// There is **no public constructor**: the only fields are set by the gated
+/// before/apply/after window in this module, so a caller cannot pair its own
+/// run id with someone else's container.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreationReceipt {
-    /// The environment this window belongs to.
-    pub environment: ResourceId,
-    /// The environment run whose one gated apply produced this window.
-    pub run: RunId,
-    /// The exact engine the apply targeted.
-    pub engine: String,
-    /// The Colima profile, or the Docker context or host.
-    pub context: String,
-    /// The Compose project.
-    pub project: String,
-    /// When the apply started, RFC 3339, from this host's clock.
-    pub apply_started: String,
-    /// When the apply reported success, RFC 3339.
-    pub apply_completed: String,
-    /// The exact containers this window proved were created, by service.
-    pub created: Vec<CreatedContainer>,
-    /// Containers already present before the apply: adopted, never created
-    /// here.
-    pub attached: Vec<String>,
-    pub evidence: CreationEvidence,
+    environment: ResourceId,
+    run: RunId,
+    engine: String,
+    context: String,
+    project: String,
+    apply_started: String,
+    apply_completed: String,
+    created: Vec<CreatedContainer>,
+    attached: Vec<String>,
+    evidence: CreationEvidence,
 }
 
 impl CreationReceipt {
+    /// The environment this window belongs to.
+    pub fn environment(&self) -> &ResourceId {
+        &self.environment
+    }
+
+    /// The environment run whose one gated apply produced this window.
+    pub fn run(&self) -> RunId {
+        self.run
+    }
+
+    /// The exact engine the apply targeted.
+    pub fn engine(&self) -> &str {
+        &self.engine
+    }
+
+    /// The Colima profile, or the Docker context or host.
+    pub fn context(&self) -> &str {
+        &self.context
+    }
+
+    /// The Compose project.
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// When the apply started, RFC 3339, from this host's clock.
+    pub fn apply_started(&self) -> &str {
+        &self.apply_started
+    }
+
+    /// When the apply reported success, RFC 3339.
+    pub fn apply_completed(&self) -> &str {
+        &self.apply_completed
+    }
+
+    /// The exact containers this window proved were created, by service.
+    pub fn created(&self) -> &[CreatedContainer] {
+        &self.created
+    }
+
+    /// Containers already present before the apply: adopted, never created
+    /// here.
+    pub fn attached(&self) -> &[String] {
+        &self.attached
+    }
+
+    /// The inventories and the apply this receipt was built from.
+    pub fn evidence(&self) -> &CreationEvidence {
+        &self.evidence
+    }
+
     /// The run this receipt attributes `container_id` to.
     ///
     /// `Verified` only for an exact full id this window proved its run
@@ -142,7 +236,7 @@ impl CreationReceipt {
             );
         }
         Observed::Absent(AbsenceProof::NoCreator {
-            creator: effigy_kernel::observe::CreatorRef {
+            creator: CreatorRef {
                 project: project.to_owned(),
                 container_id: container_id.to_owned(),
             },
@@ -159,11 +253,12 @@ impl CreationReceipt {
 
 /// What one environment run's gated apply proved about container creation.
 ///
-/// `Proven` is the only variant that can attribute a container; `NothingCreated`
-/// is the proof that this run's apply reached no backend (a refused permit or a
-/// fault before the effect) and `Unproven` is the reason a window could not be
-/// taken. A caller compares `created_by` with its own activation run and
-/// refuses on everything else.
+/// `Proven` is the only variant that can attribute a container, and it can
+/// only be built by the gated window: `CreationReceipt` has no public
+/// constructor. `NothingCreated` is the proof that this run's apply reached no
+/// backend (a refused permit or a fault before the effect) and `Unproven` is
+/// the reason a window could not be taken. A caller compares `created_by` with
+/// its own activation run and refuses on everything else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Creation {
     /// A complete window, boxed: the receipt is much larger than the refusals
@@ -179,7 +274,7 @@ impl Creation {
         match self {
             Self::Proven(receipt) => receipt.created_by(project, container_id),
             Self::NothingCreated => Observed::Absent(AbsenceProof::NoCreator {
-                creator: effigy_kernel::observe::CreatorRef {
+                creator: CreatorRef {
                     project: project.to_owned(),
                     container_id: container_id.to_owned(),
                 },
@@ -188,6 +283,7 @@ impl Creation {
         }
     }
 
+    /// The receipt, when this run's window completed.
     pub fn receipt(&self) -> Option<&CreationReceipt> {
         match self {
             Self::Proven(receipt) => Some(receipt.as_ref()),
@@ -206,6 +302,116 @@ impl Creation {
     }
 }
 
+/// The exact values the admitted render declares for one service.
+#[derive(Debug, Default)]
+struct DeclaredService {
+    /// The ownership labels the render itself writes for the service.
+    labels: BTreeMap<String, String>,
+    /// The image reference the render declares for the service.
+    image: Option<String>,
+}
+
+/// Read the render's own declarations: which services it declares, the
+/// ownership labels it writes for each and the image reference it names.
+///
+/// The render is the one authority for these values. A value declared twice
+/// with different spellings refuses, because the window cannot then say which
+/// one the apply used.
+fn declared_services(render: &Closure) -> Result<BTreeMap<String, DeclaredService>, UnknownReason> {
+    let mut declared: BTreeMap<String, DeclaredService> = BTreeMap::new();
+    for (path, bytes) in render.files() {
+        let lower = path.to_ascii_lowercase();
+        if !(lower.ends_with(".yml") || lower.ends_with(".yaml")) {
+            continue;
+        }
+        let document: serde_yaml::Value = serde_yaml::from_slice(bytes).map_err(|error| {
+            inconsistent(format!(
+                "the admitted render file `{path}` is not Compose YAML: {error}"
+            ))
+        })?;
+        let Some(services) = document
+            .get("services")
+            .and_then(|value| value.as_mapping())
+        else {
+            continue;
+        };
+        for (name, body) in services {
+            let Some(name) = name.as_str() else { continue };
+            let Some(body) = body.as_mapping() else {
+                continue;
+            };
+            let service = declared.entry(name.to_owned()).or_default();
+            if let Some(labels) = body.get("labels") {
+                for (key, value) in label_pairs(labels)? {
+                    if !OWNERSHIP_LABELS.contains(&key.as_str()) {
+                        continue;
+                    }
+                    match service.labels.get(&key) {
+                        Some(existing) if existing != &value => {
+                            return Err(inconsistent(format!(
+                                "the admitted render declares `{key}` as both `{existing}` and `{value}` for service `{name}`"
+                            )))
+                        }
+                        Some(_) => {}
+                        None => {
+                            service.labels.insert(key, value);
+                        }
+                    }
+                }
+            }
+            if let Some(image) = body.get("image").and_then(|value| value.as_str()) {
+                match &service.image {
+                    Some(existing) if existing != image => {
+                        return Err(inconsistent(format!(
+                            "the admitted render declares image `{existing}` and `{image}` for service `{name}`"
+                        )))
+                    }
+                    Some(_) => {}
+                    None => service.image = Some(image.to_owned()),
+                }
+            }
+        }
+    }
+    Ok(declared)
+}
+
+/// Every `key=value` pair a Compose `labels:` value declares, as a mapping or
+/// as a list of `key=value` strings.
+fn label_pairs(value: &serde_yaml::Value) -> Result<Vec<(String, String)>, UnknownReason> {
+    let mut pairs = Vec::new();
+    match value {
+        serde_yaml::Value::Mapping(mapping) => {
+            for (key, value) in mapping {
+                let Some(key) = key.as_str() else { continue };
+                let Some(value) = yaml_scalar(value) else {
+                    continue;
+                };
+                pairs.push((key.to_owned(), value));
+            }
+        }
+        serde_yaml::Value::Sequence(entries) => {
+            for entry in entries {
+                let Some(text) = entry.as_str() else { continue };
+                let Some((key, value)) = text.split_once('=') else {
+                    continue;
+                };
+                pairs.push((key.to_owned(), value.to_owned()));
+            }
+        }
+        _ => {}
+    }
+    Ok(pairs)
+}
+
+fn yaml_scalar(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(text) => Some(text.clone()),
+        serde_yaml::Value::Bool(flag) => Some(flag.to_string()),
+        serde_yaml::Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
 /// How the one apply ended, as the window reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ApplyOutcome {
@@ -217,13 +423,14 @@ pub(super) enum ApplyOutcome {
     Uncertain(String),
 }
 
-/// One gated apply's open window: the inventory it opened with and the apply
-/// start it recorded.
+/// One gated apply's open window: the inventory it opened with, the render it
+/// binds and the apply start it recorded.
 pub(super) struct CreationWindow<'a> {
     backend: &'a mut dyn EnvironmentBackend,
     workdir: &'a Path,
     selection: &'a BackendSelection,
     project: &'a str,
+    render: Option<&'a Closure>,
     environment: ResourceId,
     run: RunId,
     deadline: Instant,
@@ -234,11 +441,13 @@ pub(super) struct CreationWindow<'a> {
 
 impl<'a> CreationWindow<'a> {
     /// Take the inventory immediately before the apply and record its start.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn open(
         backend: &'a mut dyn EnvironmentBackend,
         workdir: &'a Path,
         selection: &'a BackendSelection,
         project: &'a str,
+        render: Option<&'a Closure>,
         environment: ResourceId,
         run: RunId,
         deadline: Instant,
@@ -250,6 +459,7 @@ impl<'a> CreationWindow<'a> {
             workdir,
             selection,
             project,
+            render,
             environment,
             run,
             deadline,
@@ -266,6 +476,7 @@ impl<'a> CreationWindow<'a> {
             workdir,
             selection,
             project,
+            render,
             environment,
             run,
             deadline,
@@ -300,11 +511,24 @@ impl<'a> CreationWindow<'a> {
             }
             Observed::Unknown(reason) => return Creation::Unproven(reason),
         };
+        let Some(render) = render else {
+            // No admitted render means no exact expected values for scope,
+            // checkout, service or image, and the window refuses rather than
+            // trust what a container reports about itself.
+            return Creation::Unproven(UnknownReason::Inconsistent(format!(
+                "the apply of run {run} has no admitted render, so no service, label or image expectation can be bound"
+            )));
+        };
+        let declared = match declared_services(render) {
+            Ok(declared) => declared,
+            Err(reason) => return Creation::Unproven(reason),
+        };
         match receipt(
             selection,
             environment,
             run,
             project,
+            &declared,
             &before,
             &after,
             &apply_started,
@@ -324,6 +548,7 @@ fn receipt(
     environment: ResourceId,
     run: RunId,
     project: &str,
+    declared: &BTreeMap<String, DeclaredService>,
     before: &[Workload],
     after: &[Workload],
     apply_started: &str,
@@ -379,46 +604,46 @@ fn receipt(
                 row.id
             )));
         }
-        for (label, expected) in [
-            (MANAGED_LABEL, Some("true")),
-            (PROJECT_LABEL, Some(project)),
-            (COMPOSE_PROJECT_LABEL, Some(project)),
-        ] {
-            if row.labels.get(label).map(String::as_str) != expected {
+        // The render is the authority for every expected value below. A
+        // container's own labels are only ever compared with it, never trusted.
+        let expected = declared.get(service).ok_or_else(|| {
+            inconsistent(format!(
+                "service `{service}` of container `{}` is not a service the admitted render declares",
+                row.id
+            ))
+        })?;
+        for label in OWNERSHIP_LABELS {
+            let Some(declared_value) = expected.labels.get(label) else {
                 return Err(inconsistent(format!(
-                    "container `{}` created in this window carries {label} `{}`, not `{}`",
-                    row.id,
-                    row.labels.get(label).map(String::as_str).unwrap_or(""),
-                    expected.unwrap_or("")
+                    "the admitted render declares no {label} label for service `{service}`, so container `{}` cannot be bound to it",
+                    row.id
                 )));
-            }
-        }
-        for label in [SCOPE_LABEL, CHECKOUT_LABEL] {
-            if row
-                .labels
-                .get(label)
-                .map(|value| value.trim().is_empty())
-                .unwrap_or(true)
-            {
+            };
+            let actual = row.labels.get(label).map(String::as_str).unwrap_or("");
+            if actual != declared_value {
                 return Err(inconsistent(format!(
-                    "container `{}` created in this window carries no {label} label",
+                    "container `{}` carries {label} `{actual}` while the admitted render declares `{declared_value}` for service `{service}`",
                     row.id
                 )));
             }
+        }
+        let expected_image = expected.image.as_ref().ok_or_else(|| {
+            inconsistent(format!(
+                "the admitted render declares no image for service `{service}`, so container `{}` cannot be bound to an intended image",
+                row.id
+            ))
+        })?;
+        if !reference_matches(expected_image, &row.image_reference) {
+            return Err(inconsistent(format!(
+                "container `{}` was created from image `{}` while the admitted render declares `{expected_image}` for service `{service}`",
+                row.id, row.image_reference
+            )));
         }
         if row.image.trim().is_empty() {
             return Err(inconsistent(format!(
                 "container `{}` created in this window reports no image id",
                 row.id
             )));
-        }
-        if let Some(compose_image) = row.labels.get(COMPOSE_IMAGE_LABEL) {
-            if compose_image != &row.image {
-                return Err(inconsistent(format!(
-                    "container `{}` runs image `{}` but its Compose image label names `{compose_image}`",
-                    row.id, row.image
-                )));
-            }
         }
         let created_at = parse_stamp(&row.created).ok_or_else(|| {
             inconsistent(format!(
@@ -456,6 +681,7 @@ fn receipt(
             container_id: row.id.clone(),
             service: service.to_owned(),
             image: row.image.clone(),
+            image_reference: row.image_reference.clone(),
             created: row.created.clone(),
         });
     }
@@ -476,7 +702,7 @@ fn receipt(
         attached,
         evidence: CreationEvidence {
             source: format!(
-                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}",
+                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}, bound to the admitted render",
                 selection.kind.label(),
                 selection.context
             ),
@@ -484,6 +710,50 @@ fn receipt(
             after: after.len(),
         },
     })
+}
+
+/// Whether the container's image reference is the render's declared one.
+///
+/// Exact text first, then the same reference in its fully-qualified spelling:
+/// Compose resolves a short reference before it creates the container, so
+/// `postgres:16` and `docker.io/library/postgres:16` name the same image. Only
+/// spellings of one reference match; nothing here widens what may be
+/// attributed.
+fn reference_matches(declared: &str, actual: &str) -> bool {
+    !declared.trim().is_empty()
+        && !actual.trim().is_empty()
+        && normalize_reference(declared) == normalize_reference(actual)
+}
+
+/// The fully-qualified spelling of one image reference: `docker.io/library/`
+/// for a bare name, the registry when the first component is a host, `latest`
+/// when no tag or digest is named.
+fn normalize_reference(reference: &str) -> String {
+    let reference = reference.trim();
+    let (name, digest) = match reference.split_once('@') {
+        Some((name, digest)) => (name, Some(digest)),
+        None => (reference, None),
+    };
+    let after_slash = name.rfind('/').map_or(0, |index| index + 1);
+    let (repository, tag) = match name[after_slash..].rfind(':') {
+        Some(offset) => {
+            let index = after_slash + offset;
+            (name[..index].to_owned(), Some(name[index + 1..].to_owned()))
+        }
+        None => (name.to_owned(), None),
+    };
+    let repository = match repository.split_once('/') {
+        None => format!("docker.io/library/{repository}"),
+        Some((first, _)) if first.contains('.') || first.contains(':') || first == "localhost" => {
+            repository
+        }
+        Some(_) => format!("docker.io/{repository}"),
+    };
+    match (tag, digest) {
+        (_, Some(digest)) => format!("{repository}@{digest}"),
+        (Some(tag), None) => format!("{repository}:{tag}"),
+        (None, None) => format!("{repository}:latest"),
+    }
 }
 
 fn inconsistent(detail: String) -> UnknownReason {
@@ -498,4 +768,115 @@ fn parse_stamp(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|time| time.with_timezone(&Utc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_reference, reference_matches};
+    use crate::environment::backend::parse_inspect;
+    use crate::environment::tests::{env as test_env, selection};
+    use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
+    use std::collections::BTreeMap;
+
+    /// Compose resolves a short reference before it creates a container, so
+    /// the fully-qualified spelling of one reference is the same image.
+    #[test]
+    fn one_image_reference_matches_in_its_fully_qualified_spellings() {
+        for (declared, actual) in [
+            ("postgres:16", "docker.io/library/postgres:16"),
+            ("postgres", "docker.io/library/postgres:latest"),
+            ("library/redis:7", "docker.io/library/redis:7"),
+            ("ghcr.io/acme/api:1", "ghcr.io/acme/api:1"),
+            ("localhost:5000/acme/api:1", "localhost:5000/acme/api:1"),
+            ("acme/api@sha256:abc", "docker.io/acme/api@sha256:abc"),
+        ] {
+            assert!(reference_matches(declared, actual), "{declared} / {actual}");
+            assert!(reference_matches(actual, declared), "{actual} / {declared}");
+        }
+        // A different image or tag never matches, however it is spelled.
+        for (declared, actual) in [
+            ("postgres:16", "postgres:17"),
+            ("postgres:16", "docker.io/library/mysql:16"),
+            ("ghcr.io/acme/api:1", "ghcr.io/acme/web:1"),
+            ("postgres:16", ""),
+            ("", "postgres:16"),
+        ] {
+            assert!(
+                !reference_matches(declared, actual),
+                "{declared} / {actual}"
+            );
+        }
+        assert_eq!(
+            normalize_reference("acme/api:2"),
+            "docker.io/acme/api:2",
+            "a repository with a namespace is not in `library/`"
+        );
+    }
+
+    /// A native trace, not a fake: the container below was created by
+    /// `colima nerdctl --profile effigy -- compose up -d` on the machine this
+    /// task ran on (project `effigy-508-trace-1793419616-36063`, image
+    /// `alpine:3.19`), captured with `nerdctl inspect`, then removed. The
+    /// window binds it to a render that declares the short reference, which is
+    /// what Compose resolves before it creates the container.
+    #[test]
+    fn a_native_nerdctl_container_binds_to_the_renders_short_image_reference() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/environment/colima-nerdctl-compose.inspect.json"
+        ));
+        let rows = parse_inspect(bytes).expect("the native inspect parses");
+        assert_eq!(rows.len(), 1, "one container in the trace");
+        let row = &rows[0];
+        let project = row.labels[PROJECT_LABEL].clone();
+        let declared = BTreeMap::from([(
+            "app".to_owned(),
+            super::DeclaredService {
+                labels: BTreeMap::from([
+                    (MANAGED_LABEL.to_owned(), "true".to_owned()),
+                    (PROJECT_LABEL.to_owned(), project.clone()),
+                    (SCOPE_LABEL.to_owned(), "508trace".to_owned()),
+                    (
+                        CHECKOUT_LABEL.to_owned(),
+                        row.labels[CHECKOUT_LABEL].clone(),
+                    ),
+                ]),
+                image: Some("alpine:3.19".to_owned()),
+            },
+        )]);
+        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:07:00Z")
+            .expect("start")
+            .with_timezone(&chrono::Utc);
+        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:08:00Z")
+            .expect("completion")
+            .with_timezone(&chrono::Utc);
+        let receipt = super::receipt(
+            &selection(),
+            test_env("stack").resource,
+            effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
+            &project,
+            &declared,
+            &[],
+            &rows,
+            "2026-10-31T04:07:00.000000000Z",
+            started,
+            completed,
+        )
+        .expect("the native container binds to the render");
+        assert_eq!(receipt.created().len(), 1);
+        let created = &receipt.created()[0];
+        assert_eq!(created.container_id(), row.id);
+        assert_eq!(created.service(), "app");
+        assert_eq!(
+            created.image_reference(),
+            "docker.io/library/alpine:3.19",
+            "Compose resolves the render's short reference"
+        );
+        assert_eq!(
+            created.image(),
+            "docker.io/library/alpine:3.19",
+            "nerdctl reports the resolved reference in `Image`"
+        );
+        assert_eq!(created.created(), "2026-10-31T04:07:43.603235578Z");
+    }
 }

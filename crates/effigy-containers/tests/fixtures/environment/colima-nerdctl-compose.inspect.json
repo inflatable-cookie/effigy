@@ -1,0 +1,172 @@
+[
+    {
+        "Id": "1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9",
+        "Created": "2026-10-31T04:07:43.603235578Z",
+        "Path": "sleep",
+        "Args": [
+            "901"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "Pid": 292997,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-10-31T04:07:43.715513634Z",
+            "FinishedAt": ""
+        },
+        "Image": "docker.io/library/alpine:3.19",
+        "ResolvConfPath": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/resolv.conf",
+        "HostnamePath": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/hostname",
+        "HostsPath": "/var/lib/nerdctl/1935db59/etchosts/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/hosts",
+        "LogPath": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9-json.log",
+        "Name": "effigy-508-trace-1793419616-36063-app-1",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "AppArmorProfile": "nerdctl-default",
+        "HostConfig": {
+            "ContainerIDFile": "/tmp/compose-1577937097/cid",
+            "LogConfig": {
+                "driver": "json-file",
+                "address": "/run/containerd/containerd.sock"
+            },
+            "NetworkMode": "effigy-508-trace-1793419616-36063_default",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "CapAdd": [],
+            "CapDrop": [],
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": [],
+            "GroupAdd": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "6",
+                "10",
+                "11",
+                "20",
+                "26",
+                "27"
+            ],
+            "IpcMode": "private",
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "ReadonlyRootfs": false,
+            "UTSMode": "",
+            "ShmSize": 0,
+            "Sysctls": {
+                "net.ipv4.ip_unprivileged_port_start": "0"
+            },
+            "Runtime": "io.containerd.runc.v2",
+            "CpusetMems": "",
+            "CpusetCpus": "",
+            "CpuQuota": 0,
+            "CpuShares": 0,
+            "CpuPeriod": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "Memory": 0,
+            "MemorySwap": 0,
+            "MemoryReservation": 0,
+            "MemorySwappiness": null,
+            "PidsLimit": 0,
+            "Ulimits": null,
+            "OomKillDisable": false,
+            "Devices": null,
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": [],
+            "BlkioDeviceReadBps": [],
+            "BlkioDeviceWriteBps": [],
+            "BlkioDeviceReadIOps": [],
+            "BlkioDeviceWriteIOps": []
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/resolv.conf",
+                "Destination": "/etc/resolv.conf",
+                "Mode": "bind,rprivate",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/var/lib/nerdctl/1935db59/etchosts/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/hosts",
+                "Destination": "/etc/hosts",
+                "Mode": "bind,rprivate",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9/hostname",
+                "Destination": "/etc/hostname",
+                "Mode": "bind,rprivate",
+                "RW": true,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "app",
+            "AttachStdin": false,
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOSTNAME=app"
+            ],
+            "Image": "docker.io/library/alpine:3.19",
+            "Labels": {
+                "com.docker.compose.config-hash": "54a18893bdde4301d0c8c037250be57f6f245fe33e41f5e005be6225fe9b9a7a",
+                "com.docker.compose.project": "effigy-508-trace-1793419616-36063",
+                "com.docker.compose.service": "app",
+                "com.effigy.checkout": "/Volumes/Builds/scratch/effigy/508-trace.1Ww7li",
+                "com.effigy.managed": "true",
+                "com.effigy.project": "effigy-508-trace-1793419616-36063",
+                "com.effigy.scope": "508trace",
+                "io.containerd.image.config.stop-signal": "SIGTERM",
+                "nerdctl/auto-remove": "false",
+                "nerdctl/dns": "{\"DNSServers\":null,\"DNSResolvConfOptions\":null,\"DNSSearchDomains\":null}",
+                "nerdctl/extraHosts": "[]",
+                "nerdctl/host-config": "{\"BlkioWeight\":0,\"CidFile\":\"/tmp/compose-1577937097/cid\",\"Devices\":null}",
+                "nerdctl/hostname": "app",
+                "nerdctl/ipc": "{\"mode\":\"private\"}",
+                "nerdctl/log-config": "{\"driver\":\"json-file\",\"address\":\"/run/containerd/containerd.sock\"}",
+                "nerdctl/log-uri": "binary:///usr/local/bin/nerdctl?_NERDCTL_INTERNAL_LOGGING=%2Fvar%2Flib%2Fnerdctl%2F1935db59",
+                "nerdctl/name": "effigy-508-trace-1793419616-36063-app-1",
+                "nerdctl/namespace": "default",
+                "nerdctl/networks": "[\"effigy-508-trace-1793419616-36063_default\"]",
+                "nerdctl/platform": "linux/arm64/v8",
+                "nerdctl/state-dir": "/var/lib/nerdctl/1935db59/containers/default/1b3bec95ebfe1fff8e52b2e397e5d591a9ef8da3447cf1a74355f13c42266ab9"
+            }
+        },
+        "NetworkSettings": {
+            "Ports": {},
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "IPAddress": "10.4.19.4",
+            "IPPrefixLen": 24,
+            "MacAddress": "f6:4e:a2:e4:ee:a8",
+            "Networks": {
+                "unknown-eth0": {
+                    "IPAddress": "10.4.19.4",
+                    "IPPrefixLen": 24,
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "MacAddress": "f6:4e:a2:e4:ee:a8"
+                }
+            }
+        }
+    }
+]
+

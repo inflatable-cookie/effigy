@@ -1290,7 +1290,7 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let fake = Fake::new();
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
     run.publish_desired(&closure("one")).unwrap();
-    run.apply_with(&selection(), PROJECT, up_workdir(), || fake.apply())
+    run.apply_with(&selection(), PROJECT, up_workdir(), None, || fake.apply())
         .unwrap();
     // The operator stops the activation after the backend acted.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));

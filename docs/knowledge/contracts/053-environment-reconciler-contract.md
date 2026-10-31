@@ -213,10 +213,15 @@ it only by the run's **creation window**, whose rules and threat boundary are
 052 §8.12. The window is part of the apply effect seam, not something a caller
 starts:
 
-* `Up` carries the checkout the apply reads (`workdir`). Under the exclusive
-  `Gate(Env)` the apply already holds, and after the permit's attach check, the
-  run takes the project's exact-identity inventory, records the apply's start,
-  runs the one Compose apply, and takes the same inventory again.
+* `Up` carries the checkout the apply reads (`workdir`) and the render it
+  publishes. Under the exclusive `Gate(Env)` the apply already holds, and after
+  the permit's attach check, the run takes the project's exact-identity
+  inventory, records the apply's start, runs the one Compose apply, and takes
+  the same inventory again.
+* An inventory is exact or it is nothing: every listed id is a full 64-hex
+  container id listed once, and the inspect must answer exactly the listed ids
+  once each. A short, duplicated, missing or additional row makes the whole
+  read `Unknown`, before and after the apply.
 * `EnvRun::creation()` — `WorkspaceActivation::creation()` for a reserved
   workspace activation — answers `Creation::Proven(CreationReceipt)`,
   `NothingCreated` (the apply was refused before it reached the backend) or
@@ -224,6 +229,17 @@ starts:
   returns `Verified(run)` only for an exact full id this window proved the run
   created; every other id is `Absent(NoCreator)`, scoped to what the window
   covers, and an unproven window is `Unknown`.
+* Every expected value comes from the **admitted render**, never from what a
+  container reports about itself: the service must be one the render declares,
+  its `com.effigy.managed`, `.project`, `.scope` and `.checkout` labels and its
+  image reference must equal the values the render writes for that service
+  (a short and a fully-qualified spelling of one reference agree; nothing else
+  does), and a render that declares one of them twice with different values
+  refuses. No admitted render means no receipt.
+* `CreationReceipt`, `CreatedContainer` and `CreationEvidence` have no public
+  constructor and expose read-only accessors, so a caller cannot pair its own
+  run id with someone else's container. The only builder is the gated
+  before/apply/after window.
 * Both inventories are supervised by one absolute deadline
   (`CREATION_WINDOW`, also bounded by the run's own budget), so a runtime that
   stops answering fails the read instead of holding the gate. The apply keeps

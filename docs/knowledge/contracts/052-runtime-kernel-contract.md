@@ -3500,15 +3500,24 @@ create — the Compose CLI that performs the environment's one apply.
 **The window.** Under the exclusive `Gate(Env)` the apply already holds, and
 under one absolute deadline, an environment run takes the project's
 exact-identity inventory — `ps -a --no-trunc` by Compose project label, then one
-`inspect` of those exact ids for full id, labels, image id and `Created` —
-immediately before the one Compose apply. It records the apply's own start and
-its successful exit. It takes the same inventory again immediately after. A
-container whose id is absent before and present after appeared inside that
-window; each such candidate must carry Effigy's `com.docker.compose.project`,
-`com.effigy.managed`, `com.effigy.project`, `com.effigy.scope` and
-`com.effigy.checkout` labels, exactly one Compose service identity for its
-service, an image id (and a `com.docker.compose.image` label that agrees when
-Compose wrote one) and a `Created` stamp no older than the apply start. An id
+`inspect` of those exact ids for full id, labels, image id, image reference and
+`Created` — immediately before the one Compose apply. It records the apply's own
+start and its successful exit. It takes the same inventory again immediately
+after. An inventory is exact or it is nothing: every listed id is a full 64-hex
+container id listed once, and the inspect must answer exactly those ids once
+each, before and after; a short, duplicated, missing or additional row makes the
+read `Unknown`.
+
+A container whose id is absent before and present after appeared inside that
+window; each such candidate must match the **admitted render's own declared
+values** for its service — `com.docker.compose.project`, Effigy's
+`com.docker.compose.service`, `com.effigy.managed`, `.project`, `.scope` and
+`.checkout` labels and image reference exactly as the render declares them (a
+short and a fully-qualified spelling of one reference agree; nothing else does),
+a service the render declares, an image id, and a `Created` stamp no older than
+the apply start. A render that declares one bound value twice with different
+values refuses, and an apply with no admitted render refuses too: the container's
+own labels are compared with the render and are never the expectation. An id
 present before is adopted and is never `created_by` this run.
 
 **Refusals.** The run publishes no receipt — and no weaker one — when a service
@@ -3532,13 +3541,23 @@ only reads.
 
 **Receipt rule.** `CreationReceipt` binds the environment, the run, the engine
 and context, the project, the apply's start and completion, the exact full ids
-it created with their service and image, the ids it adopted, and the inventory
-evidence it read. A caller may attribute a fresh target only when its own
-`EnvironmentBackend::created_by(project, container_id)` answer is `Verified` for
-the exact full id *and* names its own activation run; `Absent` (adopted, or not
-created in this window) and `Unknown` (no window, or a window that failed) both
-refuse. A timestamp, a before/after absence, matching labels or a
-caller-supplied run id alone is never a receipt.
+it created with their service, image id and image reference, the ids it adopted,
+and the inventory evidence it read. It has no public constructor and exposes
+read-only accessors; only the gated window builds one, so a caller cannot pair
+its own run id with someone else's container. A caller may attribute a fresh
+target only when the receipt's `created_by(project, container_id)` is
+`Verified` for the exact full id *and* names its own activation run; `Absent`
+(adopted, or not created in this window) and `Unknown` (no window, or a window
+that failed) both refuse. A timestamp, a before/after absence, matching labels,
+a container's self-reported labels or a caller-supplied run id alone is never a
+receipt.
+
+**Pending operator ruling.** This section's foreign-actor exclusion is not
+consistent with §8.11's "a foreign creation is never adopted as this
+activation's target" invariant, and the material decision is with the operator.
+This section states what the bounded window proves; it does not amend, weaken or
+discharge that invariant, no merge hold is released, and the fresh-target path
+stays refused until the ruling lands.
 
 ## 9. Authority map
 

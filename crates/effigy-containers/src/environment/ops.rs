@@ -126,6 +126,7 @@ pub(super) fn reconcile_in(
         return Ok(Applied::HeldByRuns(holders));
     }
     let Up {
+        render,
         backend,
         project,
         workdir,
@@ -134,9 +135,9 @@ pub(super) fn reconcile_in(
     } = request;
     match adapter {
         Some(backend_adapter) => {
-            run.apply_with_backend(backend, project, workdir, backend_adapter, apply)?
+            run.apply_with_backend(backend, project, workdir, render, backend_adapter, apply)?
         }
-        None => run.apply_with(backend, project, workdir, apply)?,
+        None => run.apply_with(backend, project, workdir, render, apply)?,
     }
     Ok(match unreadable {
         Some(reason) => Applied::ReconciledUnreadableHolders(reason),

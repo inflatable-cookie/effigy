@@ -286,10 +286,14 @@ pub struct Workload {
     /// Host sources of bind mounts: ownership evidence for pre-label stacks.
     #[serde(default)]
     pub binds: Vec<String>,
-    /// The image ID the container runs, as the engine reports it (`Image`).
-    /// A creation window binds the container to the image it was created from
+    /// The image the engine reports for the container (`Image`): the image id
+    /// on Docker, and the resolved reference on nerdctl. A creation window
+    /// records it beside the reference the container was created from
     /// (effigy#508).
     pub image: String,
+    /// The image reference Compose created the container from
+    /// (`Config.Image`), which is what the admitted render declares.
+    pub image_reference: String,
     /// The container's own creation time (`Created`, RFC 3339). A container
     /// the window did not exist before cannot carry a stamp older than the
     /// apply it appeared in.
@@ -441,6 +445,11 @@ fn inventory_until(
             .collect::<Vec<_>>(),
         Err(error) => return Observed::Unknown(read_reason("list project", error)),
     };
+    // An inventory is exact or it is nothing: every listed id is a full
+    // container id, listed once.
+    if let Err(reason) = exact_listing(&ids) {
+        return Observed::Unknown(UnknownReason::Inconsistent(reason));
+    }
     if ids.is_empty() {
         return Observed::Verified(
             Vec::new(),
@@ -452,7 +461,10 @@ fn inventory_until(
     inspect.extend(ids.iter().map(OsString::from));
     let (program, args) = runtime_invocation(selection, &inspect);
     match capture(workdir, &program, &args, "inspect project", deadline) {
-        Ok(output) => match parse_inspect(&output.stdout) {
+        Ok(output) => match parse_inspect(&output.stdout)
+            .map_err(|reason| reason.to_string())
+            .and_then(|rows| exact_inspect(&ids, rows))
+        {
             Ok(rows) => Observed::Verified(
                 rows,
                 effigy_kernel::observe::Evidence::new("backend inspect".into(), None)
@@ -462,6 +474,69 @@ fn inventory_until(
         },
         Err(error) => Observed::Unknown(read_reason("inspect project", error)),
     }
+}
+
+/// A full container id: sixty-four hexadecimal digits, which is what a
+/// `--no-trunc` listing prints.
+fn full_container_id(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The listing is exact, or the inventory is not one: every id is a full
+/// container id and none is listed twice.
+fn exact_listing(ids: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ids {
+        if !full_container_id(id) {
+            return Err(format!(
+                "the project listing reported `{id}`, which is not a full container id"
+            ));
+        }
+        if !seen.insert(id.to_ascii_lowercase()) {
+            return Err(format!(
+                "the project listing reported container `{id}` twice"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The inspect answered exactly the listed containers, uniquely and
+/// completely: anything else is a partial or broader inventory, never evidence.
+/// The rows keep the engine's own `Id` spelling.
+fn exact_inspect(ids: &[String], rows: Vec<Workload>) -> Result<Vec<Workload>, String> {
+    if rows.len() != ids.len() {
+        return Err(format!(
+            "the project inspect answered {} containers for {} listed ids",
+            rows.len(),
+            ids.len()
+        ));
+    }
+    let listed: std::collections::BTreeSet<String> =
+        ids.iter().map(|id| id.to_ascii_lowercase()).collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for row in &rows {
+        if !full_container_id(&row.id) {
+            return Err(format!(
+                "the project inspect reported `{}`, which is not a full container id",
+                row.id
+            ));
+        }
+        let id = row.id.to_ascii_lowercase();
+        if !listed.contains(&id) {
+            return Err(format!(
+                "the project inspect answered container `{}`, which the listing did not name",
+                row.id
+            ));
+        }
+        if !seen.insert(id) {
+            return Err(format!(
+                "the project inspect answered container `{}` twice",
+                row.id
+            ));
+        }
+    }
+    Ok(rows)
 }
 
 /// One backend read on the caller's deadline, or unbounded when the caller set
@@ -648,6 +723,9 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
     struct Config {
         #[serde(default)]
         labels: Option<std::collections::BTreeMap<String, String>>,
+        /// The image reference the container was created from.
+        #[serde(default)]
+        image: String,
     }
     let rows: Vec<Row> =
         serde_json::from_slice(bytes).map_err(|error| format!("unparsable inspect: {error}"))?;
@@ -659,6 +737,7 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
             running: row.state.running,
             labels: row.config.labels.unwrap_or_default(),
             image: row.image,
+            image_reference: row.config.image,
             created: row.created,
             binds: row
                 .mounts

@@ -201,25 +201,35 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
-- **The environment backend proves which run created a fresh container, inside
-  a stated threat boundary.** An environment run now keeps a creation window
+- **The environment backend proves which run created a fresh container, bound
+  to the admitted render, inside a stated threat boundary.** An environment run
+  now keeps a creation window
   around its one Compose apply, under the exclusive `Gate(Env)` it already
   holds and one absolute deadline: the project's exact-identity inventory
   immediately before the apply (full id, labels, image id, `Created`), the
   apply's own start and successful outcome, and the same inventory immediately
-  after. A container absent before and present after is created by that run,
-  and must carry Effigy's managed, project, scope and checkout labels, a single
-  Compose service identity, an image id (and an agreeing `com.docker.compose.
-  image` label when Compose wrote one) and a `Created` stamp no older than the
-  apply start; an id present before is adopted and never attributed. A missing
-  or duplicated service identity, a disagreeing label or image, an older
-  creation stamp, an incomplete or timed-out inventory, a failed or unproven
-  apply, and a partial window after a crash or retry all publish no receipt
-  rather than a weaker one. `EnvRun::creation()` (and
-  `WorkspaceActivation::creation()` for a reserved workspace activation)
+  after. An inventory is exact or it is nothing: every listed id is a full
+  64-hex container id listed once, and the inspect must answer exactly the
+  listed ids once each, before and after the apply — a short, duplicated,
+  missing or additional row makes the read unknown. A container absent before
+  and present after is created by that run, and must match the admitted
+  render's own declared values for its service: the render declares the
+  service, its `com.effigy.managed`, `.project`, `.scope` and `.checkout`
+  labels and the image reference the container was created from, the image the
+  engine reports is recorded, and the `Created` stamp is no older than the
+  apply start. A
+  container's self-reported labels are compared with the render and are never
+  the expectation; a render that declares one value twice, an apply with no
+  admitted render, a missing or duplicated service identity, a disagreeing
+  label or image, an older creation stamp, an incomplete or timed-out
+  inventory, a failed or unproven apply, and a partial window after a crash or
+  retry all publish no receipt rather than a weaker one. `EnvRun::creation()`
+  (and `WorkspaceActivation::creation()` for a reserved workspace activation)
   answers `Creation::Proven(CreationReceipt)`, `NothingCreated` or
   `Unproven(reason)`, and `CreationReceipt::created_by(project, container_id)`
-  returns `Verified(run)` only for an exact full id that window proved.
+  returns `Verified(run)` only for an exact full id that window proved. The
+  receipt has no public constructor and exposes read-only accessors, so no
+  caller can pair its own run id with another actor's container.
   **Excluded threat:** a foreign process that deliberately creates a container
   with Effigy's exact labels inside the one gated apply window; the canonical
   `Gate(Env)` excludes concurrent Effigy activations, and no protection against

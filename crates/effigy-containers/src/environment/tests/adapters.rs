@@ -8,6 +8,17 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 const ID: &str = "87c434af41df6f447bfb13218637f97b211098ffe97573a00c766c56f5008cdd";
+const OTHER_ID: &str = "5d0c7e9a2b1f4c6d8e0a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e";
+
+/// The container the fake backend reports, exactly as `docker inspect` writes
+/// it.
+fn fixture_inspect() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/environment/underlay-workspace.inspect.json"
+    );
+    std::fs::read_to_string(path).expect("inspect fixture")
+}
 
 struct FakeTools {
     _dir: effigy_test_support::Fixture,
@@ -20,6 +31,13 @@ struct FakeTools {
 
 impl FakeTools {
     fn install() -> Self {
+        Self::install_answering(&format!("{ID}\n"), &fixture_inspect())
+    }
+
+    /// The same fake tools, answering the listing and the inspect with exactly
+    /// these bytes: a proof can then hand the adapter a short, duplicate or
+    /// incomplete answer and see it refuse.
+    fn install_answering(listing: &str, inspect_json: &str) -> Self {
         let env = crate::test_env_lock();
         let dir = home();
         let bin = dir.path().join("bin");
@@ -27,21 +45,17 @@ impl FakeTools {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&logs).unwrap();
         let inspect = dir.path().join("inspect.json");
-        std::fs::copy(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/environment/underlay-workspace.inspect.json"
-            ),
-            &inspect,
-        )
-        .unwrap();
+        std::fs::write(&inspect, inspect_json).unwrap();
+        let listed = dir.path().join("listing.txt");
+        std::fs::write(&listed, listing).unwrap();
         for tool in ["colima", "docker"] {
             let script = bin.join(tool);
             std::fs::write(
                 &script,
                 format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n  *' ps '*) echo {ID} ;;\n  *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n  *' ps '*) cat '{}' ;;\n  *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
                     logs.display(),
+                    listed.display(),
                     inspect.display(),
                 ),
             )
@@ -285,4 +299,90 @@ fn a_bounded_inventory_reads_the_same_exact_identity() {
             format!("nerdctl --profile fixture -- inspect {ID}"),
         ]
     );
+}
+
+/// effigy#508: an inventory is exact or it is nothing. Nothing the listing
+/// says may disagree with what the inspect answers, in either direction.
+#[test]
+fn an_inventory_that_is_not_exactly_the_listing_refuses() {
+    // The fixture row, and a second real row this proof lifts from it.
+    let one: Vec<serde_json::Value> = serde_json::from_str(&fixture_inspect()).expect("fixture");
+    let mut other = one[0].clone();
+    other["Id"] = serde_json::Value::String(OTHER_ID.to_owned());
+    other["Name"] = serde_json::Value::String("/acme-stack-db-1".to_owned());
+    let rows = |rows: Vec<serde_json::Value>| serde_json::to_string(&rows).expect("json");
+    let single = rows(vec![one[0].clone()]);
+    let only_other = rows(vec![other.clone()]);
+    let doubled = rows(vec![one[0].clone(), one[0].clone()]);
+
+    let cases: [(&str, &str, &str, &str); 6] = [
+        (
+            "a listing that is not a full id",
+            "87c434af41df\n",
+            &single,
+            "not a full container id",
+        ),
+        (
+            "a listing that names one container twice",
+            &format!("{ID}\n{ID}\n"),
+            &single,
+            "twice",
+        ),
+        (
+            "an inspect that omits a listed container",
+            &format!("{ID}\n{OTHER_ID}\n"),
+            &single,
+            "answered 1 containers for 2 listed ids",
+        ),
+        (
+            "an inspect that answers a container the listing did not name",
+            &format!("{ID}\n"),
+            &only_other,
+            "which the listing did not name",
+        ),
+        (
+            "an inspect that answers one container twice",
+            &format!("{ID}\n{OTHER_ID}\n"),
+            &doubled,
+            "twice",
+        ),
+        (
+            "an inspect that reports a non-full id",
+            &format!("{ID}\n"),
+            r#"[{"Id":"87c434af41df","Name":"/acme-stack-workspace-1","Image":"sha256:aa","Created":"2999-01-01T00:00:00Z","State":{"Running":true},"Config":{"Image":"rust:1.97","Labels":{}}}]"#,
+            "not a full container id",
+        ),
+    ];
+    for (case, listing, inspect, expected) in cases {
+        let tools = FakeTools::install_answering(listing, inspect);
+        let workdir = tools.logs.parent().unwrap().to_path_buf();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut adapter = selection().adapter();
+        match adapter.inventory_until(&workdir, PROJECT, deadline) {
+            Observed::Unknown(UnknownReason::Inconsistent(detail)) => {
+                assert!(detail.contains(expected), "{case}: {detail}")
+            }
+            other => panic!("{case} was accepted as an inventory: {other:?}"),
+        }
+    }
+}
+
+/// The exact inventory still verifies when the listing and the inspect agree,
+/// and the rows carry the image reference and creation stamp the window binds.
+#[test]
+fn an_exact_inventory_carries_the_image_reference_and_stamp() {
+    let tools = FakeTools::install();
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut adapter = selection().adapter();
+    match adapter.inventory_until(&workdir, PROJECT, deadline) {
+        Observed::Verified(rows, _) => {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].id, ID);
+            assert_eq!(rows[0].image_reference, "rust:1.97");
+            assert_eq!(rows[0].created, "2026-10-30T22:14:03.216453829Z");
+            assert!(!rows[0].image.is_empty());
+        }
+        other => panic!("an exact inventory was refused: {other:?}"),
+    }
 }

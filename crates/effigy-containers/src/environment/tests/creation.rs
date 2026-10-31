@@ -3,20 +3,27 @@
 //!
 //! The window reads the project's exact-identity inventory immediately before
 //! and immediately after the one gated apply, under the exclusive `Gate(Env)`
-//! the apply already holds. These proofs drive it with a strict fake backend
-//! that replays scripted inventories, so every case is deterministic: a fresh
-//! create, an unchanged re-up, a partial recreate, a duplicate service, a
-//! missing or mismatched label, a failed apply, a timed-out window and a retry.
+//! the apply already holds, and binds every candidate to the **admitted
+//! render's own declared values**. These proofs drive it with a strict fake
+//! backend that replays scripted inventories, so every case is deterministic:
+//! a fresh create, an unchanged re-up, a partial recreate, a duplicate service,
+//! a label, service or image that disagrees with the render, a failed apply, a
+//! timed-out window and a retry.
 
 use super::*;
 use effigy_kernel::gate::Wait;
-use effigy_kernel::id::Generation;
+use effigy_kernel::objects::Closure;
 
 /// Ids the proofs use. They are exact full ids, never prefixes.
 const FRESH: &str = "3f6a1d0c7b9e4f2a8c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b";
 const DB: &str = "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b";
 const OLD: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const RETRY: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+/// The render's own declared values: the window binds to these, never to what
+/// a container reports about itself.
+const SCOPE: &str = "4677bfcb81da18054ef32e71aa3f3c29";
+const CHECKOUT: &str = "/fixtures/checkout";
+const IMAGE: &str = "postgres:16";
 /// A stamp no apply has reached yet: the window requires `Created` no older
 /// than its own start.
 const AFTER_APPLY: &str = "2999-01-01T00:00:00.000000000Z";
@@ -27,8 +34,24 @@ fn evidence() -> Evidence {
     Evidence::new("fake creation window".to_owned(), None).expect("fixed evidence")
 }
 
-/// One container the fake backend reports, with the labels a Compose-created
-/// Effigy container carries.
+/// The admitted render, declaring one service per entry with the ownership
+/// labels and image reference the window binds.
+fn render(services: &[&str]) -> Closure {
+    let mut compose = String::from("services:\n");
+    for service in services {
+        compose.push_str(&format!(
+            "  {service}:\n    image: {IMAGE}\n    labels:\n      com.effigy.managed: \"true\"\n      com.effigy.project: {PROJECT}\n      com.effigy.scope: {SCOPE}\n      com.effigy.checkout: {CHECKOUT}\n",
+        ));
+    }
+    Closure::new(BTreeMap::from([(
+        "compose.yml".to_owned(),
+        compose.into_bytes(),
+    )]))
+    .expect("render closure")
+}
+
+/// One container the fake backend reports, carrying the values the render
+/// declares.
 fn row(project: &str, id: &str, service: &str) -> Workload {
     Workload {
         id: id.to_owned(),
@@ -39,22 +62,17 @@ fn row(project: &str, id: &str, service: &str) -> Workload {
             ("com.docker.compose.service".to_owned(), service.to_owned()),
             ("com.effigy.managed".to_owned(), "true".to_owned()),
             ("com.effigy.project".to_owned(), project.to_owned()),
-            (
-                "com.effigy.scope".to_owned(),
-                "4677bfcb81da18054ef32e71aa3f3c29".to_owned(),
-            ),
-            (
-                "com.effigy.checkout".to_owned(),
-                "/fixtures/checkout".to_owned(),
-            ),
+            ("com.effigy.scope".to_owned(), SCOPE.to_owned()),
+            ("com.effigy.checkout".to_owned(), CHECKOUT.to_owned()),
         ]),
         binds: vec![],
         image: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+        image_reference: IMAGE.to_owned(),
         created: AFTER_APPLY.to_owned(),
     }
 }
 
-/// A container with one label replaced, or added when `value` is `Some`.
+/// A container with one label replaced, or removed when `value` is `None`.
 fn labelled(mut workload: Workload, label: &str, value: Option<&str>) -> Workload {
     match value {
         Some(value) => {
@@ -129,21 +147,32 @@ impl EnvironmentBackend for Inventories {
     }
 }
 
-/// Run one gated apply with the scripted inventories and return what its
-/// creation window proved.
+/// Run one gated apply with the scripted inventories and the admitted render,
+/// and return what its creation window proved.
 fn window(
     backend: &mut Inventories,
     apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> (Creation, RunId, EnvRef) {
-    let (result, creation, run, environment) = window_with(backend, apply);
+    let render = render(&["app", "db"]);
+    window_with(backend, Some(&render), apply)
+}
+
+/// [`window`] with the render the proof chooses, or none at all.
+fn window_with(
+    backend: &mut Inventories,
+    render: Option<&Closure>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
+) -> (Creation, RunId, EnvRef) {
+    let (result, creation, run, environment) = window_allowing_failure(backend, render, apply);
     assert!(result.is_ok(), "the apply itself: {result:?}");
     (creation, run, environment)
 }
 
-/// [`window`] for a proof that expects the apply to fail: the window's own
+/// [`window_with`] for a proof that expects the apply to fail: the window's own
 /// answer and the apply's error are both returned.
-fn window_with(
+fn window_allowing_failure(
     backend: &mut Inventories,
+    render: Option<&Closure>,
     apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> (Result<(), EnvError>, Creation, RunId, EnvRef) {
     let home = home();
@@ -152,7 +181,8 @@ fn window_with(
     let environment = env("stack");
     let mut run =
         EnvRun::begin(&ctx, &environment, Operation::Up, Wait::FailFast).expect("admitted");
-    let result = run.apply_with_backend(&selection(), PROJECT, up_workdir(), backend, apply);
+    let result =
+        run.apply_with_backend(&selection(), PROJECT, up_workdir(), render, backend, apply);
     let creation = run.creation();
     let run_id = run.id();
     run.finish(result.is_ok()).expect("finished");
@@ -170,28 +200,28 @@ fn a_fresh_create_names_the_exact_containers_this_apply_created() {
     let (creation, run, environment) = window(&mut backend, || Ok(()));
     assert_eq!(backend.reads(), [PROJECT, PROJECT]);
     let receipt = creation.receipt().expect("a completed window is a receipt");
-    assert_eq!(receipt.run, run);
-    assert_eq!(receipt.environment, environment.resource);
-    assert_eq!(receipt.project, PROJECT);
-    assert_eq!(receipt.engine, selection().engine.as_str());
-    assert_eq!(receipt.context, selection().context);
-    assert_eq!(receipt.evidence.before, 0);
-    assert_eq!(receipt.evidence.after, 2);
+    assert_eq!(receipt.run(), run);
+    assert_eq!(receipt.environment(), &environment.resource);
+    assert_eq!(receipt.project(), PROJECT);
+    assert_eq!(receipt.engine(), selection().engine.as_str());
+    assert_eq!(receipt.context(), selection().context);
+    assert_eq!(receipt.evidence().before(), 0);
+    assert_eq!(receipt.evidence().after(), 2);
+    assert!(!receipt.evidence().source().is_empty());
+    assert!(receipt.apply_started() < receipt.apply_completed());
     assert_eq!(
         receipt
-            .created
+            .created()
             .iter()
-            .map(|created| (created.service.as_str(), created.container_id.as_str()))
+            .map(|created| (created.service(), created.container_id()))
             .collect::<Vec<_>>(),
         [("app", FRESH), ("db", DB)]
     );
-    assert!(receipt.attached.is_empty());
-    assert_eq!(
-        receipt
-            .for_service("app")
-            .map(|row| row.container_id.as_str()),
-        Some(FRESH)
-    );
+    assert!(receipt.attached().is_empty());
+    let app = receipt.for_service("app").expect("app was created");
+    assert_eq!(app.image_reference(), IMAGE);
+    assert!(!app.image().is_empty());
+    assert_eq!(app.created(), AFTER_APPLY);
     // The receipt attributes exactly those ids, and only to this run.
     for id in [FRESH, DB] {
         assert_eq!(
@@ -212,8 +242,8 @@ fn an_unchanged_re_up_creates_nothing_and_adopts_what_it_found() {
         .then(vec![row(PROJECT, OLD, "app")]);
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
     let receipt = creation.receipt().expect("a completed window is a receipt");
-    assert!(receipt.created.is_empty(), "{:?}", receipt.created);
-    assert_eq!(receipt.attached, [OLD]);
+    assert!(receipt.created().is_empty(), "{:?}", receipt.created());
+    assert_eq!(receipt.attached(), [OLD]);
     assert_eq!(
         creation.created_by(PROJECT, OLD),
         Observed::Absent(AbsenceProof::NoCreator {
@@ -236,13 +266,13 @@ fn a_partial_recreate_names_only_the_replaced_container() {
     let receipt = creation.receipt().expect("a completed window is a receipt");
     assert_eq!(
         receipt
-            .created
+            .created()
             .iter()
-            .map(|created| created.container_id.as_str())
+            .map(|created| created.container_id())
             .collect::<Vec<_>>(),
         [FRESH]
     );
-    assert_eq!(receipt.attached, [DB]);
+    assert_eq!(receipt.attached(), [DB]);
     assert_eq!(
         creation.created_by(PROJECT, FRESH).verified().copied(),
         Some(run)
@@ -272,27 +302,37 @@ fn a_duplicate_service_refuses_the_window() {
     ));
 }
 
-/// A created container must carry Effigy's managed, project, scope and
-/// checkout labels and a single service identity; a missing or mismatched one
-/// refuses the window rather than attributing it.
+/// A container for a service the admitted render does not declare is not this
+/// window's target, however well it labels itself.
 #[test]
-fn a_missing_or_mismatched_label_refuses_the_window() {
-    let cases: [(&str, Option<&str>, &str); 5] = [
-        ("com.effigy.managed", None, "com.effigy.managed"),
-        (
-            "com.effigy.project",
-            Some("another-project"),
-            "com.effigy.project",
+fn a_service_the_render_does_not_declare_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "cache")]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            creation,
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("not a service the admitted render declares")
         ),
-        ("com.effigy.scope", None, "com.effigy.scope"),
-        ("com.effigy.checkout", Some("  "), "com.effigy.checkout"),
-        (
-            "com.docker.compose.service",
-            None,
-            "Compose service identity",
-        ),
-    ];
-    for (label, value, named) in cases {
+        "{creation:?}"
+    );
+}
+
+/// Every ownership label is bound to the render's declared value: a container
+/// whose own label differs, or that omits one, is never attributed — the
+/// container's self-report is not evidence.
+#[test]
+fn a_label_that_differs_from_the_admitted_render_refuses_the_window() {
+    for (label, value) in [
+        ("com.effigy.managed", Some("false")),
+        ("com.effigy.project", Some("another-project")),
+        ("com.effigy.scope", Some("another-scope")),
+        ("com.effigy.checkout", Some("/elsewhere")),
+        ("com.effigy.scope", None),
+        ("com.effigy.checkout", None),
+    ] {
         let mut backend = Inventories::new();
         backend
             .then(Vec::new())
@@ -300,34 +340,107 @@ fn a_missing_or_mismatched_label_refuses_the_window() {
         let (creation, _run, _environment) = window(&mut backend, || Ok(()));
         match &creation {
             Creation::Unproven(UnknownReason::Inconsistent(detail)) => {
-                assert!(detail.contains(named), "{label}: {detail}")
+                assert!(detail.contains(label), "{label}: {detail}")
             }
             other => panic!("{label} did not refuse the window: {other:?}"),
         }
     }
 }
 
-/// A container that reports another image in its Compose label, or was created
-/// before the apply started, is not something this window created.
+/// Two render files that declare different values for one bound label refuse:
+/// the window cannot know which one the apply used.
 #[test]
-fn an_image_or_creation_stamp_mismatch_refuses_the_window() {
-    // The Compose image label disagrees with the image the container runs.
+fn a_render_that_declares_one_label_twice_refuses_the_window() {
+    let files = BTreeMap::from([
+        (
+            "compose.yml".to_owned(),
+            format!(
+                "services:\n  app:\n    image: {IMAGE}\n    labels:\n      com.effigy.scope: {SCOPE}\n"
+            )
+            .into_bytes(),
+        ),
+        (
+            "override.yml".to_owned(),
+            b"services:\n  app:\n    labels:\n      com.effigy.scope: another-scope\n".to_vec(),
+        ),
+    ]);
+    let render = Closure::new(files).expect("render closure");
     let mut backend = Inventories::new();
-    backend.then(Vec::new()).then(vec![labelled(
-        row(PROJECT, FRESH, "app"),
-        "com.docker.compose.image",
-        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-    )]);
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
+    assert!(
+        matches!(
+            creation,
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("com.effigy.scope")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// The image reference comes from the render too: a container created from
+/// another image is not this window's target, and a render that declares no
+/// image cannot bind one at all.
+#[test]
+fn an_image_that_disagrees_with_the_admitted_render_refuses_the_window() {
+    let mut backend = Inventories::new();
+    let mut other_image = row(PROJECT, FRESH, "app");
+    other_image.image_reference = "postgres:17".to_owned();
+    backend.then(Vec::new()).then(vec![other_image]);
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
     assert!(
         matches!(
             creation,
-            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("Compose image label")
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("postgres:17")
         ),
         "{creation:?}"
     );
 
-    // A stamp older than the apply start: the container predates the window.
+    // A service the render declares without an image reference.
+    let no_image = Closure::new(BTreeMap::from([(
+        "compose.yml".to_owned(),
+        format!(
+            "services:\n  app:\n    build: .\n    labels:\n      com.effigy.managed: \"true\"\n      com.effigy.project: {PROJECT}\n      com.effigy.scope: {SCOPE}\n      com.effigy.checkout: {CHECKOUT}\n"
+        )
+        .into_bytes(),
+    )]))
+    .expect("render closure");
+    let mut backend = Inventories::new();
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let (creation, _run, _environment) = window_with(&mut backend, Some(&no_image), || Ok(()));
+    assert!(
+        matches!(
+            creation,
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("declares no image")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// Compose resolves a short reference before it creates the container, so the
+/// render's `postgres:16` and the engine's fully-qualified spelling are one
+/// image.
+#[test]
+fn a_fully_qualified_spelling_of_the_declared_image_is_accepted() {
+    let mut backend = Inventories::new();
+    let mut qualified = row(PROJECT, FRESH, "app");
+    qualified.image_reference = "docker.io/library/postgres:16".to_owned();
+    backend.then(Vec::new()).then(vec![qualified]);
+    let (creation, run, _environment) = window(&mut backend, || Ok(()));
+    assert_eq!(
+        creation.created_by(PROJECT, FRESH).verified().copied(),
+        Some(run),
+        "{creation:?}"
+    );
+}
+
+/// A container that appeared in this window but was created before the apply
+/// started is not something the apply created.
+#[test]
+fn a_creation_stamp_before_the_apply_refuses_the_window() {
     let mut backend = Inventories::new();
     backend
         .then(Vec::new())
@@ -342,16 +455,55 @@ fn an_image_or_creation_stamp_mismatch_refuses_the_window() {
     );
 }
 
+/// A one-off container is never a service target.
+#[test]
+fn a_one_off_container_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend.then(Vec::new()).then(vec![labelled(
+        row(PROJECT, FRESH, "app"),
+        "com.docker.compose.oneoff",
+        Some("True"),
+    )]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            creation,
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("one-off")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// An apply with no admitted render has no exact expected values to bind, so it
+/// publishes no receipt even when its inventory is exact.
+#[test]
+fn an_apply_without_an_admitted_render_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let (creation, _run, _environment) = window_with(&mut backend, None, || Ok(()));
+    assert!(
+        matches!(
+            creation,
+            Creation::Unproven(UnknownReason::Inconsistent(ref detail)) if detail.contains("no admitted render")
+        ),
+        "{creation:?}"
+    );
+}
+
 /// An apply that fails after it started proves nothing: the window is
 /// incomplete, so no receipt is minted. An apply the backend never received
 /// created nothing at all.
 #[test]
 fn a_failed_apply_mints_no_receipt() {
+    let render = render(&["app", "db"]);
     let mut backend = Inventories::new();
     backend.then(Vec::new());
-    let (failed, creation, _run, _environment) = window_with(&mut backend, || {
-        Err(BackendError::Uncertain("compose up exited with 1".into()))
-    });
+    let (failed, creation, _run, _environment) =
+        window_allowing_failure(&mut backend, Some(&render), || {
+            Err(BackendError::Uncertain("compose up exited with 1".into()))
+        });
     assert!(failed.is_err(), "the apply failure is reported");
     assert!(
         matches!(
@@ -365,9 +517,10 @@ fn a_failed_apply_mints_no_receipt() {
 
     let mut backend = Inventories::new();
     backend.then(Vec::new());
-    let (failed, creation, _run, _environment) = window_with(&mut backend, || {
-        Err(BackendError::NotStarted("runtime refused".into()))
-    });
+    let (failed, creation, _run, _environment) =
+        window_allowing_failure(&mut backend, Some(&render), || {
+            Err(BackendError::NotStarted("runtime refused".into()))
+        });
     assert!(failed.is_err(), "the apply failure is reported");
     assert_eq!(creation, Creation::NothingCreated);
     assert!(matches!(
@@ -467,5 +620,4 @@ fn a_receipt_scopes_absence_to_the_window_it_covers() {
         Some(run)
     );
     assert_eq!(receipt.created_by(PROJECT, OLD).verified().copied(), None);
-    let _unused = Generation::new(1);
 }

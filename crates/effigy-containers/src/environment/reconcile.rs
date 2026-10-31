@@ -912,10 +912,18 @@ impl<'r> EnvRun<'r> {
         selection: &BackendSelection,
         project: &str,
         workdir: &Path,
+        render: Option<&Closure>,
         effect: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
         let mut backend = selection.adapter();
-        self.apply_with_backend(selection, project, workdir, backend.as_mut(), effect)
+        self.apply_with_backend(
+            selection,
+            project,
+            workdir,
+            render,
+            backend.as_mut(),
+            effect,
+        )
     }
 
     /// [`Self::apply_with`] with the adapter supplied: a proof hands its own
@@ -925,6 +933,7 @@ impl<'r> EnvRun<'r> {
         selection: &BackendSelection,
         project: &str,
         workdir: &Path,
+        render: Option<&Closure>,
         backend: &mut dyn EnvironmentBackend,
         effect: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
@@ -956,6 +965,7 @@ impl<'r> EnvRun<'r> {
                     workdir,
                     selection,
                     project,
+                    render,
                     environment,
                     run,
                     deadline,
@@ -1999,6 +2009,7 @@ mod tests {
             &super::super::tests::selection(),
             "acme-stack",
             super::super::tests::up_workdir(),
+            None,
             || panic!("a refused transition never reaches the backend"),
         );
         assert!(
