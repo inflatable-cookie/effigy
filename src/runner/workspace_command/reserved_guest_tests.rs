@@ -541,7 +541,7 @@ home = "/home/vscode"
             Fault::RecoveryDead | Fault::RecoveryUnknown => {
                 recover_fixture(request, observe, shared.clone(), 0, fault)
             }
-            _ => up_prepared(request, || Ok(()), observe),
+            _ => up_prepared(request, |_| Ok(()), observe),
         };
         let mut guest = shared.borrow_mut();
         assert_eq!(guest.text("/predecessor").as_deref(), Some("old bytes"));
@@ -793,8 +793,10 @@ fn recover_fixture<'a>(
                 project: &request.policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &request.policy.repo_root,
+                primary_service: &request.policy.primary_service,
             },
-            || Ok(()),
+            |_| Ok(()),
         )
         .map_err(failure)?;
     let input = observe(&mut activation).map_err(failure)?;
@@ -828,6 +830,7 @@ fn recover_fixture<'a>(
         supervisor,
         session,
         channel: publication.channel,
+        creation: None,
         effect: std::sync::Arc::new(ctx.cx.clone()),
         observe: std::sync::Arc::new(ctx.observe()),
         root: ctx.root,

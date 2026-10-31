@@ -40,11 +40,12 @@ use serde_json::{json, Value};
 use super::backend::{BackendError, BackendSelection};
 use super::record::{EngineRecord, EnvRecord, EnvState};
 
-/// Journal kind of a backend apply. The stack outlives the run by design;
-/// the record's promotion, not settle, says whether it was applied.
-pub const APPLY_EFFECT: &str = "environment:apply";
 /// Journal kind of a backend stop. Reported, never replayed (D3).
 pub const STOP_EFFECT: &str = "environment:stop";
+
+/// The phase one apply (and the create it reports) runs in, in the operator's
+/// own words.
+const APPLY_PHASE: &str = "reconciling the backend";
 
 /// How long a transition waits for `Gate(Env)` held by another one.
 pub const GATE_WAIT: Duration = Duration::from_secs(600);
@@ -896,27 +897,183 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
-    /// The one backend apply: journals the intent under a permit, then runs
-    /// `effect` (K3, R4).
-    pub fn apply_with(
+    /// The one creating apply (effigy#510): journals the create intent under
+    /// the same permit and gate the ordinary apply takes, runs the caller's
+    /// effect with the report the runtime's create progress fills, reads back
+    /// exactly the containers that report named, and records the verified
+    /// [`CreationReceipt`](super::creation::CreationReceipt) as the effect's
+    /// applied result.
+    ///
+    /// Only this journal evidence attributes a container to this run. A retry
+    /// returns the receipt this run already journalled; an intended, unknown or
+    /// failed create has no authenticated result, so it refuses and the next
+    /// activation reconciles — it never mints attribution from a later
+    /// inventory.
+    pub fn create_with(
         &mut self,
+        backend: &mut dyn super::backend::EnvironmentBackend,
         selection: &BackendSelection,
-        project: &str,
-        effect: impl FnOnce() -> Result<(), BackendError>,
-    ) -> Result<(), EnvError> {
+        request: super::creation::CreationRequest<'_>,
+        effect: impl FnOnce(&mut super::creation::CreateReport) -> Result<(), BackendError>,
+    ) -> Result<super::creation::CreationReceipt, EnvError> {
+        use super::creation::{self, CreateReport};
+        let env = self.env.name.clone();
+        self.settle_interrupted_holders()?;
+        if let Some(receipt) = self.journalled_creation()? {
+            return Ok(receipt);
+        }
         let payload = json!({
             "engine": selection.engine.as_str(),
             "context": selection.context,
-            "project": project,
+            "project": request.project,
+            "primary_service": request.primary_service,
         });
-        self.transition(
-            APPLY_EFFECT,
-            "reconciling the backend",
+        let mut permit = permit(&mut self.run, None).map_err(|error| {
+            self.failed = true;
+            EnvError::from_run(&env, error)
+        })?;
+        let event = backend_event(&payload);
+        let spec = EffectSpec {
+            target: permit.fence().clone(),
+            kind: creation::CREATE_EFFECT.to_owned(),
             payload,
-            Settlement::Retain,
-            None,
-            effect,
-        )
+            settlement: Settlement::Retain,
+            required: true,
+        };
+        let ticket = match permit.intend(spec) {
+            Ok(ticket) => {
+                self.transitioned = true;
+                self.phase(APPLY_PHASE, None);
+                self.progress.event(event);
+                ticket
+            }
+            Err(error) => {
+                self.failed = true;
+                return Err(EnvError::from_run(&env, error));
+            }
+        };
+        let mut report = CreateReport::default();
+        let outcome = match fault("EnvBackendBefore") {
+            Err(error) => Err(BackendError::NotStarted(error.to_string())),
+            Ok(()) => {
+                let outcome = effect(&mut report);
+                match (outcome, fault("EnvBackendAfter")) {
+                    (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
+                    (outcome, _) => outcome,
+                }
+            }
+        };
+        self.phase(APPLY_PHASE, None);
+        if let Err(error) = outcome {
+            self.progress.event(match &error {
+                BackendError::NotStarted(message) => {
+                    format!("the backend was never contacted: {message}")
+                }
+                BackendError::Uncertain(message) => {
+                    format!("the backend's answer is unproven: {message}")
+                }
+            });
+            let recorded = match &error {
+                BackendError::NotStarted(message) => self.run.failed(
+                    &ticket,
+                    AbsenceProof::NoFile {
+                        name: message.clone(),
+                    },
+                ),
+                BackendError::Uncertain(message) => self
+                    .run
+                    .unknown(&ticket, UnknownReason::Inconsistent(message.clone())),
+            };
+            if let Err(error) = recorded {
+                self.failed = true;
+                return Err(EnvError::from_run(&env, error));
+            }
+            self.failed = true;
+            return Err(EnvError::Backend(error));
+        }
+        let created = match super::creation::resolve(backend, request, &report) {
+            Ok(created) => created,
+            Err(refusal) => {
+                self.progress.event(format!(
+                    "the apply's creation report is not an authenticated receipt: {refusal}"
+                ));
+                let recorded = self
+                    .run
+                    .unknown(&ticket, UnknownReason::Inconsistent(refusal.to_string()));
+                if let Err(error) = recorded {
+                    self.failed = true;
+                    return Err(EnvError::from_run(&env, error));
+                }
+                self.failed = true;
+                return Err(EnvError::Backend(BackendError::Uncertain(format!(
+                    "the apply created containers this activation cannot attribute: {refusal}"
+                ))));
+            }
+        };
+        let receipt = creation::seal(
+            &self.env.resource,
+            self.run.id(),
+            request.project,
+            selection.engine.as_str(),
+            &selection.context,
+            created,
+            report.attached_names().to_vec(),
+        );
+        let value = creation::stored(request.primary_service, &receipt)
+            .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        self.progress.event(match receipt.created().len() {
+            0 => "the backend reconciled without creating a container".to_owned(),
+            count => format!("the backend created {count} container(s)"),
+        });
+        let recorded = self
+            .run
+            .applied(&ticket, value)
+            .and_then(|()| self.run.completed(&ticket, RequiredObligation::Applied));
+        if let Err(error) = recorded {
+            self.failed = true;
+            return Err(EnvError::from_run(&env, error));
+        }
+        Ok(receipt)
+    }
+
+    /// The receipt this run already journalled, or nothing. A retry of one
+    /// activation never runs a second create, and a create without an applied
+    /// result stays unproven rather than being re-invented from the engine.
+    fn journalled_creation(
+        &mut self,
+    ) -> Result<Option<super::creation::CreationReceipt>, EnvError> {
+        use super::creation;
+        use effigy_kernel::run::EffectState;
+        let journalled = self.kernel(self.run.effects())?;
+        let Some(existing) = journalled
+            .into_iter()
+            .find(|effect| effect.spec.kind == creation::CREATE_EFFECT)
+        else {
+            return Ok(None);
+        };
+        match (existing.state, existing.receipt) {
+            // A retained effect is an applied one whose settlement only recorded
+            // that the stack outlives the run.
+            (EffectState::Applied | EffectState::Retained, Some(receipt)) => {
+                let stored = creation::decode_stored(&receipt).map_err(EnvError::Invalid)?;
+                let (engine, context) = stored.backend();
+                Ok(Some(creation::seal(
+                    &self.env.resource,
+                    self.run.id(),
+                    stored.project(),
+                    engine,
+                    context,
+                    stored.created().to_vec(),
+                    stored.attached().to_vec(),
+                )))
+            }
+            (state, _) => Err(EnvError::Backend(BackendError::Uncertain(format!(
+                "this activation's create effect is {} and has no authenticated result; the next \
+                 activation reconciles it instead of attributing a container this run never \
+                 recorded creating",
+                state.label()
+            )))),
+        }
     }
 
     /// The one backend stop: journalled under a permit, then published
@@ -1935,9 +2092,13 @@ mod tests {
             matches!(&holders, Observed::Verified(rows, _) if rows.len() == 1),
             "{holders:?}"
         );
-        let refused = run.apply_with(&super::super::tests::selection(), "acme-stack", || {
-            panic!("a refused transition never reaches the backend")
-        });
+        let mut backend = super::super::tests::Fake::new();
+        let refused = run.create_with(
+            &mut backend,
+            &super::super::tests::selection(),
+            super::super::tests::create_request(),
+            |_| panic!("a refused transition never reaches the backend"),
+        );
         assert!(
             matches!(refused, Err(EnvError::HeldBy { .. })),
             "{refused:?}"

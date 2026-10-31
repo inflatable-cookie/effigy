@@ -284,6 +284,14 @@ pub struct Workload {
     /// Host sources of bind mounts: ownership evidence for pre-label stacks.
     #[serde(default)]
     pub binds: Vec<String>,
+    /// The image field the engine reports for the container (`Image`): the
+    /// immutable image id on Docker, and the resolved reference where an
+    /// engine reports only that (effigy#510).
+    #[serde(default)]
+    pub image: String,
+    /// The image reference the container was created from (`Config.Image`).
+    #[serde(default)]
+    pub image_reference: String,
 }
 
 /// The seam every engine adapter implements. Applying and stopping run
@@ -292,6 +300,45 @@ pub trait EnvironmentBackend {
     fn selection(&self) -> &BackendSelection;
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
+
+    /// The exact containers an apply's own create report named, read back by
+    /// name (effigy#510).
+    ///
+    /// The names come from the create API's successful response, and a
+    /// container name is unique in one engine: a create that succeeded for
+    /// `<name>` owns the container `<name>` resolves to, and a competing create
+    /// for that name fails instead of appearing here. This read is therefore a
+    /// lookup of the created objects, never an inventory of the project: a
+    /// foreign container with other names or indistinguishable labels is not a
+    /// candidate at all. `Verified` carries one row per requested name, each
+    /// answering a full container id; a missing, duplicated or unexpected row
+    /// is `Unknown`, because a partial answer cannot name what was created.
+    fn containers_named(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        names: &[String],
+    ) -> Observed<Vec<Workload>> {
+        let _ = (workdir, project, names);
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "this backend adapter cannot read containers back by name".to_owned(),
+        ))
+    }
+
+    /// The exact image id `reference` resolves to in this backend's image
+    /// table (effigy#510).
+    ///
+    /// A render declares an image *reference*; the engine's image table is the
+    /// only authority that turns it into the exact image id a container created
+    /// from it carries. A container bound only to a mutable reference is never
+    /// immutable image identity, so `Absent`/`Unknown` refuse the receipt
+    /// instead of falling back to the reference.
+    fn image_id(&mut self, workdir: &Path, reference: &str) -> Observed<String> {
+        let _ = (workdir, reference);
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "this backend adapter cannot read its image table".to_owned(),
+        ))
+    }
 }
 
 /// Colima: `colima nerdctl --profile <profile> -- compose …`.
@@ -327,11 +374,191 @@ macro_rules! compose_adapter {
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
+            fn containers_named(
+                &mut self,
+                workdir: &Path,
+                project: &str,
+                names: &[String],
+            ) -> Observed<Vec<Workload>> {
+                containers_named(&self.selection, workdir, project, names)
+            }
+            fn image_id(&mut self, workdir: &Path, reference: &str) -> Observed<String> {
+                image_id(&self.selection, workdir, reference)
+            }
         }
     };
 }
 compose_adapter!(ColimaBackend);
 compose_adapter!(DockerBackend);
+
+/// The exact containers `names` resolve to in `project`, one row each.
+fn containers_named(
+    selection: &BackendSelection,
+    workdir: &Path,
+    project: &str,
+    names: &[String],
+) -> Observed<Vec<Workload>> {
+    if names.is_empty() {
+        return Verified::rows(Vec::new(), "backend named containers");
+    }
+    if let Err(reason) = unique_names(names) {
+        return Observed::Unknown(UnknownReason::Inconsistent(reason));
+    }
+    let mut inspect = vec![OsString::from("inspect")];
+    inspect.extend(names.iter().map(OsString::from));
+    let (program, args) = runtime_invocation(selection, &inspect);
+    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect created", &[]) {
+        Ok(output) => match parse_inspect(&output.stdout)
+            .and_then(|rows| exact_named_rows(project, names, rows))
+        {
+            Ok(rows) => Verified::rows(rows, "backend inspect by name"),
+            Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
+        },
+        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    }
+}
+
+/// The exact image id `reference` resolves to on `selection`.
+fn image_id(selection: &BackendSelection, workdir: &Path, reference: &str) -> Observed<String> {
+    let args = ["image", "inspect", reference].map(OsString::from);
+    let (program, args) = runtime_invocation(selection, &args);
+    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect image", &[]) {
+        Ok(output) => match parse_image_inspect(&output.stdout) {
+            Ok(id) => Verified::value(id, "backend image inspect"),
+            Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
+        },
+        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    }
+}
+
+/// A small constructor for the one evidence line every exact backend read
+/// carries, so a caller can tell which reads produced a value.
+struct Verified;
+
+impl Verified {
+    fn value<T>(value: T, source: &str) -> Observed<T> {
+        Observed::Verified(
+            value,
+            effigy_kernel::observe::Evidence::new(source.into(), None).expect("fixed evidence"),
+        )
+    }
+    fn rows(value: Vec<Workload>, source: &str) -> Observed<Vec<Workload>> {
+        Self::value(value, source)
+    }
+}
+
+/// The requested names are distinct: a create report that names one container
+/// twice cannot say how many containers were created.
+fn unique_names(names: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for name in names {
+        if name.trim().is_empty() {
+            return Err("the create report named an empty container name".to_owned());
+        }
+        if !seen.insert(name.as_str()) {
+            return Err(format!("the create report named container `{name}` twice"));
+        }
+    }
+    Ok(())
+}
+
+/// The inspect answered exactly the requested names, once each, in `project`.
+fn exact_named_rows(
+    project: &str,
+    names: &[String],
+    rows: Vec<Workload>,
+) -> Result<Vec<Workload>, String> {
+    if rows.len() != names.len() {
+        return Err(format!(
+            "the create report named {} containers and the engine answered {} for them",
+            names.len(),
+            rows.len()
+        ));
+    }
+    let requested: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for row in &rows {
+        if !full_container_id(&row.id) {
+            return Err(format!(
+                "the engine reported `{}`, which is not a full container id",
+                row.id
+            ));
+        }
+        if !requested.contains(row.name.as_str()) {
+            return Err(format!(
+                "the engine answered container `{}`, which the create report did not name",
+                row.name
+            ));
+        }
+        if !seen.insert(row.name.as_str()) {
+            return Err(format!(
+                "the engine answered container `{}` twice",
+                row.name
+            ));
+        }
+        match row.labels.get(COMPOSE_PROJECT_LABEL) {
+            Some(value) if value == project => {}
+            Some(value) => {
+                return Err(format!(
+                    "container `{}` belongs to project `{value}`, not `{project}`",
+                    row.name
+                ))
+            }
+            None => {
+                return Err(format!(
+                    "container `{}` names no project, so it cannot be the created one",
+                    row.name
+                ))
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// A full container id: sixty-four hexadecimal digits.
+pub(crate) fn full_container_id(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The exact image id a value spells, or `None` when it is not one.
+///
+/// An image id is the engine's own `sha256:` and sixty-four hexadecimal
+/// digits. A bare sixty-four-digit spelling is normalised to the `sha256:`
+/// form; a short id, a reference or an empty value is not an image id, and
+/// nothing here treats a mutable reference as one.
+pub(crate) fn exact_image_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    let digits = value.strip_prefix("sha256:").unwrap_or(value);
+    if digits.len() != 64 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("sha256:{}", digits.to_ascii_lowercase()))
+}
+
+/// Parses `docker image inspect` / `nerdctl image inspect` JSON into the one
+/// exact image id it answers for the inspected reference. Empty, multiple or
+/// non-id answers are refused: the receipt binds an id, never a guess.
+pub(crate) fn parse_image_inspect(bytes: &[u8]) -> Result<String, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Row {
+        id: String,
+    }
+    let rows: Vec<Row> = serde_json::from_slice(bytes)
+        .map_err(|error| format!("unparsable image inspect: {error}"))?;
+    let [row] = rows.as_slice() else {
+        return Err(format!(
+            "the image inspect answered {} images where one reference names exactly one",
+            rows.len()
+        ));
+    };
+    exact_image_id(&row.id).ok_or_else(|| {
+        format!(
+            "the image inspect reported `{}`, which is not an image id",
+            row.id
+        )
+    })
+}
 
 fn inventory(
     selection: &BackendSelection,
@@ -511,6 +738,10 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
     struct Row {
         id: String,
         name: String,
+        /// The image id (Docker) or resolved reference (nerdctl) the container
+        /// runs, and the reference it was created from.
+        #[serde(default)]
+        image: String,
         state: State,
         config: Config,
         #[serde(default)]
@@ -534,6 +765,9 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
     struct Config {
         #[serde(default)]
         labels: Option<std::collections::BTreeMap<String, String>>,
+        /// The image reference the container was created from.
+        #[serde(default)]
+        image: String,
     }
     let rows: Vec<Row> =
         serde_json::from_slice(bytes).map_err(|error| format!("unparsable inspect: {error}"))?;
@@ -544,6 +778,8 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
             name: row.name.trim_start_matches('/').to_owned(),
             running: row.state.running,
             labels: row.config.labels.unwrap_or_default(),
+            image: row.image,
+            image_reference: row.config.image,
             binds: row
                 .mounts
                 .into_iter()
@@ -556,7 +792,101 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_lines, ProjectResources};
+    use super::{
+        exact_image_id, exact_named_rows, non_empty_lines, parse_image_inspect, unique_names,
+        ProjectResources, Workload,
+    };
+
+    /// An image id is the engine's `sha256:` and sixty-four hex digits; a short
+    /// id, a reference or an empty value is not one, and the bare spelling is
+    /// normalised rather than refused.
+    #[test]
+    fn an_image_id_is_exactly_one_image_id() {
+        let digits = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            exact_image_id(&format!("sha256:{digits}")),
+            Some(format!("sha256:{digits}"))
+        );
+        assert_eq!(exact_image_id(digits), Some(format!("sha256:{digits}")));
+        assert_eq!(
+            exact_image_id(&format!("  sha256:{}  ", digits.to_uppercase())),
+            Some(format!("sha256:{digits}"))
+        );
+        for value in [
+            "",
+            "postgres:16",
+            "0123456789abcdef",
+            &format!("sha256:{digits}0"),
+            "sha256:zz",
+        ] {
+            assert_eq!(exact_image_id(value), None, "{value}");
+        }
+    }
+
+    /// An image inspect is exact or it is nothing: one image row carrying an
+    /// exact image id.
+    #[test]
+    fn an_image_inspect_must_answer_exactly_one_image_id() {
+        let digits = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            parse_image_inspect(format!(r#"[{{"Id": "sha256:{digits}"}}]"#).as_bytes()),
+            Ok(format!("sha256:{digits}"))
+        );
+        for malformed in [
+            "[]".to_owned(),
+            format!(r#"[{{"Id": "sha256:{digits}"}}, {{"Id": "sha256:{digits}"}}]"#),
+            r#"[{"Id": "alpine:3.19"}]"#.to_owned(),
+            r#"[{"Id": "0123456789abcdef"}]"#.to_owned(),
+            "not json".to_owned(),
+            String::new(),
+        ] {
+            assert!(
+                parse_image_inspect(malformed.as_bytes()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    fn row(name: &str, id: &str, project: &str) -> Workload {
+        Workload {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            running: true,
+            labels: [(super::COMPOSE_PROJECT_LABEL.to_owned(), project.to_owned())]
+                .into_iter()
+                .collect(),
+            binds: Vec::new(),
+            image: format!("sha256:{}", "a".repeat(64)),
+            image_reference: "fixture:latest".to_owned(),
+        }
+    }
+
+    /// The create report's names are distinct, and the engine answers exactly
+    /// them, once each, in the project: a missing, extra, repeated or foreign
+    /// row is never a partial success.
+    #[test]
+    fn a_named_read_is_exact_or_refused() {
+        let id = "a".repeat(64);
+        let other = "b".repeat(64);
+        let names = vec!["demo-app-1".to_owned()];
+        assert!(unique_names(&names).is_ok());
+        assert!(unique_names(&["demo-app-1".to_owned(), "demo-app-1".to_owned()]).is_err());
+        assert!(unique_names(&[" ".to_owned()]).is_err());
+
+        let rows = vec![row("demo-app-1", &id, "demo")];
+        assert!(exact_named_rows("demo", &names, rows).is_ok());
+        for (label, rows) in [
+            ("no row", Vec::new()),
+            ("another name", vec![row("demo-app-2", &other, "demo")]),
+            ("another project", vec![row("demo-app-1", &id, "elsewhere")]),
+            ("a short id", vec![row("demo-app-1", "abc", "demo")]),
+        ] {
+            assert!(
+                exact_named_rows("demo", &names, rows).is_err(),
+                "{label} was accepted"
+            );
+        }
+    }
 
     /// A listing that names nothing is an empty listing; a listing the backend
     /// could not answer is never counted as one (`project_resources` refuses

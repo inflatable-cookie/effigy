@@ -203,6 +203,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
+- **A fresh container is attributed to the activation that created it.** The
+  environment's one apply now journals `environment:engine-create`, and its
+  applied result is the exact containers that apply's own create report named,
+  read back by those exact names on the applying backend: full container id,
+  Compose project and declared service, Effigy's managed and scope labels, and
+  the immutable image id the container's own reference resolves to. Attached
+  containers are recorded apart and never become created ids, and a competing
+  actor's identically labelled container is never named by the report, so it is
+  never adopted. `effigy_containers::environment::created_by(project, full_id)`
+  answers the owning environment run from that journal alone, or the
+  `NoCreator` absence proof; a retry reconciles the run's own effect or stays
+  unknown, and never mints attribution from a later inventory. `container up
+  --json` reports the created ids as `environment.created_container_ids`. An
+  engine that reports a container's image only as a mutable reference — Colima's
+  `nerdctl`, for now — refuses the receipt instead of putting a tag in its place.
+
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
   `Attach` or reserves exactly the next environment generation from the frozen

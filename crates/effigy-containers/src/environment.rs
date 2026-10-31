@@ -6,6 +6,7 @@
 //! `Gate(Env)` through one `EnvRun`; holders attach through [`hold`].
 
 mod backend;
+mod creation;
 mod hold;
 mod ops;
 mod reconcile;
@@ -23,11 +24,15 @@ pub use backend::{
     BackendError, BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend,
     EnvironmentBackend, ProjectResources, Workload,
 };
+pub use creation::{
+    created_by, CreateReport, CreatedContainer, CreationReceipt, CreationRefusal, CreationRequest,
+    StoredCreation, CREATE_EFFECT, CREATION_SCHEMA,
+};
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
-pub use ops::{activate, activate_with, down, reconcile, reset, Applied, Up};
+pub use ops::{activate, activate_with, down, reconcile, reset, Applied, BringUp, Up};
 pub use reconcile::{
-    EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, CLEANUP_BUDGET,
-    GATE_WAIT, RUN_BUDGET, STOP_EFFECT,
+    EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, CLEANUP_BUDGET, GATE_WAIT,
+    RUN_BUDGET, STOP_EFFECT,
 };
 pub use record::{EngineRecord, EnvRecord, EnvState, Retention, RECORD_SCHEMA};
 pub use remote::{BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer};

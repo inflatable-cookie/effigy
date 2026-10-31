@@ -103,6 +103,18 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
+- **Creation effect.** A bring-up that applies journals `environment:engine-create`
+  instead, with the same permit, gate, retention and one deadline. The effect's
+  applied result is the exact containers that apply's own create report named,
+  read back by those exact names on the applying backend and verified against
+  the project, the declared service, the one-off marker, and the immutable image
+  id the container's own reference resolves to. A retry of that activation
+  returns the journalled receipt and never runs a second create; an intended,
+  unknown or failed create has no authenticated result and refuses, so no later
+  inventory mints attribution. `created_by(project, full_id)` reads that journal
+  and answers the owning run, or the absence proof when no receipt names it.
+  `Settlement::Retain` keeps the receipt across settle: the state becomes
+  `Retained` and the receipt stays readable (effigy#510, 052 §8.12).
 - **Settlement budget.** Settlement is bounded on its own clock: admission
   makes its window once `Gate(Env)` is held, after a wait that may take ten
   minutes, and each settling holder and the run's own settle make theirs when

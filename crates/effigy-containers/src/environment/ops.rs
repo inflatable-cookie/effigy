@@ -11,6 +11,7 @@ use effigy_kernel::run::AttachMode;
 use std::time::Instant;
 
 use super::backend::{BackendError, BackendSelection};
+use super::creation::{CreateReport, CreationReceipt, CreationRequest};
 use super::reconcile::{EnvContext, EnvError, EnvRef, EnvRun, Operation, GATE_WAIT};
 use super::record::{EngineRecord, Retention};
 use effigy_kernel::run::Holder;
@@ -24,9 +25,34 @@ pub struct Up<'a> {
     pub project: &'a str,
     pub backend: &'a BackendSelection,
     pub retention: Retention,
+    /// The checkout the backend reads created containers back from.
+    pub workdir: &'a std::path::Path,
+    /// The service the environment's declared workspace needs. When this apply
+    /// created containers, exactly one of them is this service (effigy#510).
+    pub primary_service: &'a str,
 }
 
-/// What a bring-up did to the backend.
+impl Up<'_> {
+    /// What one activation's create effect needs: the checkout, the project and
+    /// the primary service, which are the same facts the apply journals.
+    pub fn creation_request(&self) -> CreationRequest<'_> {
+        CreationRequest {
+            workdir: self.workdir,
+            project: self.project,
+            primary_service: self.primary_service,
+        }
+    }
+}
+
+/// What one bring-up did to the backend, and the creation receipt of the apply
+/// that ran (effigy#510).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BringUp {
+    pub applied: Applied,
+    /// `None` when the environment was held and no apply ran, so this
+    /// activation created nothing.
+    pub creation: Option<CreationReceipt>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// The backend converged on the render.
@@ -47,8 +73,8 @@ pub fn reconcile(
     ctx: &EnvContext<'_>,
     env: &EnvRef,
     request: Up<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
-) -> Result<Applied, EnvError> {
+    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
+) -> Result<BringUp, EnvError> {
     reconcile_observing(ctx, env, request, apply, |run| run.holders())
 }
 
@@ -58,9 +84,9 @@ pub fn reconcile_observing(
     ctx: &EnvContext<'_>,
     env: &EnvRef,
     request: Up<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
-) -> Result<Applied, EnvError> {
+) -> Result<BringUp, EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
@@ -76,9 +102,9 @@ pub fn reconcile_observing(
 pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
-) -> Result<Applied, EnvError> {
+) -> Result<BringUp, EnvError> {
     if let Some(closure) = request.render {
         run.publish_desired(closure)?;
     }
@@ -104,12 +130,24 @@ pub(super) fn reconcile_in(
     };
     let holders = live_holders(observed);
     if !holders.is_empty() {
-        return Ok(Applied::HeldByRuns(holders));
+        return Ok(BringUp {
+            applied: Applied::HeldByRuns(holders),
+            creation: None,
+        });
     }
-    run.apply_with(request.backend, request.project, apply)?;
-    Ok(match unreadable {
-        Some(reason) => Applied::ReconciledUnreadableHolders(reason),
-        None => Applied::Reconciled,
+    let mut adapter = request.backend.adapter();
+    let creation = run.create_with(
+        adapter.as_mut(),
+        request.backend,
+        request.creation_request(),
+        apply,
+    )?;
+    Ok(BringUp {
+        applied: match unreadable {
+            Some(reason) => Applied::ReconciledUnreadableHolders(reason),
+            None => Applied::Reconciled,
+        },
+        creation: Some(creation),
     })
 }
 

@@ -119,11 +119,13 @@ impl<'r> WorkspaceActivation<'r> {
 
     /// Apply under the same claimed Env owner used for target binding and
     /// publication. Existing live holders preserve the backend and selection.
+    /// The returned receipt names exactly the containers this activation
+    /// created, and nothing it attached (effigy#510).
     pub fn apply_with(
         &mut self,
         request: super::Up<'_>,
-        apply: impl FnOnce() -> Result<(), super::BackendError>,
-    ) -> Result<super::Applied, EnvError> {
+        apply: impl FnOnce(&mut super::CreateReport) -> Result<(), super::BackendError>,
+    ) -> Result<super::BringUp, EnvError> {
         super::ops::reconcile_in(&mut self.environment, request, apply, |run| run.holders())
     }
 

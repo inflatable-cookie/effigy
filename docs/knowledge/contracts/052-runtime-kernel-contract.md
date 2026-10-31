@@ -3471,6 +3471,56 @@ native identity/dial/observe/invoke/reconnect qualification. Proposed selectors 
 fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
 #452's stop conditions.
 
+### 8.12 Creation receipt for a fresh target (effigy#510)
+
+An activation that creates its own target must attribute it, and no engine
+answer taken after the fact can. The implemented seam is the environment's
+creating apply, not a generic Compose replacement:
+
+- **Effect.** The apply journals `environment:engine-create` under the same
+  `Gate(Env)`, permit and deadline as `environment:apply`, and the effect's
+  applied result is the activation's creation receipt. `Settlement::Retain`
+  keeps that result across settle: the effect settles `Retained` and the
+  receipt stays readable.
+- **Input.** The receipt's container set is exactly what the apply's own create
+  report named, by name (`Created`/`Recreated` progress lines). A container name
+  is unique in one engine, so a create that succeeded for `<name>` owns the
+  container that name resolves to; a competing create for that name fails
+  instead of appearing, and a competing create under another name is never
+  named by this report. Attached containers are recorded separately and never
+  become created ids.
+- **Read-back.** `EnvironmentBackend::containers_named` reads exactly those
+  names from the applying backend and must answer one row per name, each a full
+  container id, in the project; `EnvironmentBackend::image_id` resolves the
+  container's own image reference to the exact id, and the container's own
+  image field must be that id. `docker inspect`/`docker image inspect` provide
+  both; an engine that reports only a mutable reference gives no immutable
+  image identity and the receipt refuses.
+- **Verification.** A created container must name the project, name a Compose
+  service with a `<project>-<service>-<index>` container name, carry Effigy's
+  managed and scope labels, not be a one-off, and carry an immutable image id
+  equal to the one its reference resolves to. Duplicate services, a created set
+  without the environment's primary service, an unreadable or partial read-back,
+  a moved image and a failed/unknown/timeout/cancelled apply all refuse, and the
+  effect is journalled `Unknown` with no receipt.
+- **Answering.** `created_by(project, full_id) -> Observed<RunId>` reads the
+  environment's runs' journals: an applied (or retained) create receipt naming
+  that exact full id in that project answers `Verified(run)`; a readable journal
+  naming none answers `Absent(NoCreator)`; a store or receipt that cannot be read
+  answers `Unknown`. A retry of one activation returns its journalled receipt and
+  runs no second create; a create without an authenticated result refuses and is
+  never re-derived from a later inventory.
+- **Boundaries.** `CreatedContainer` and `CreationReceipt` have private fields and
+  crate-private construction: no caller can pair its own run with a container
+  another activation created. The environment crate verifies creation identity,
+  not the admitted render's full service set; that remains the caller's render
+  preflight (#506) and the kernel's target binding (`bind_target`).
+- **Open capability.** `nerdctl inspect` reports a container's image only as a
+  reference, so a Colima first-up gets no immutable image identity and refuses
+  until an engine reports one. No native Colima/Desktop/Engine creation window
+  has been recorded for this seam yet; the fake-backend proofs here are not
+  native qualification.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |

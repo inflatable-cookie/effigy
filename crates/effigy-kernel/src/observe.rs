@@ -67,14 +67,43 @@ pub enum AbsenceProof {
     GateFreeRunClosed,
     NoStateRoot,
     NoStore,
-    NoFile { name: String },
-    NoRow { table: String },
-    BootChanged { recorded: String, current: String },
-    NoSuchProcess { pid: u32 },
-    StartIdentityDiffers { pid: u32 },
-    GroupEmpty { pgid: u32 },
-    NotInInventory { inventory: InventoryRef },
-    ContainerGone { id: String },
+    NoFile {
+        name: String,
+    },
+    NoRow {
+        table: String,
+    },
+    BootChanged {
+        recorded: String,
+        current: String,
+    },
+    NoSuchProcess {
+        pid: u32,
+    },
+    StartIdentityDiffers {
+        pid: u32,
+    },
+    GroupEmpty {
+        pgid: u32,
+    },
+    NotInInventory {
+        inventory: InventoryRef,
+    },
+    ContainerGone {
+        id: String,
+    },
+    /// No creation record covers this exact container: no activation that
+    /// journalled its created ids named it. The proof is scoped to the record
+    /// that was asked, so it never becomes a creation receipt (effigy#510).
+    NoCreator {
+        creator: CreatorRef,
+    },
+}
+/// The exact container, in its project, one creation record was asked about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatorRef {
+    pub project: String,
+    pub container_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRef {
@@ -180,6 +209,11 @@ impl std::fmt::Display for AbsenceProof {
                 f.write_str("the process is not in the runtime inventory")
             }
             Self::ContainerGone { id } => write!(f, "container `{id}` no longer exists"),
+            Self::NoCreator { creator } => write!(
+                f,
+                "no creation record names container `{}` in project `{}`",
+                creator.container_id, creator.project
+            ),
         }
     }
 }
