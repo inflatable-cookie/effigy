@@ -3473,53 +3473,72 @@ fake tests are non-evidence for production identity, TLS or publication. Design-
 
 ### 8.12 Creation receipt for a fresh target (effigy#510)
 
-An activation that creates its own target must attribute it, and no engine
-answer taken after the fact can. The implemented seam is the environment's
-creating apply, not a generic Compose replacement:
+Attribution is required for one container: the environment's workspace service,
+the one the guest binary runs in. Other project services stay Compose-managed and
+merely observed. A receipt is minted from exactly one fact — an engine create
+operation whose successful response names the full container id it created — and
+nothing else: not an inventory, not a label match, not a creation stamp, and not
+Compose's progress output, which names containers rather than the ids Compose's
+own create received.
 
-- **Effect.** The apply journals `environment:engine-create` under the same
-  `Gate(Env)`, permit and deadline as `environment:apply`, and the effect's
-  applied result is the activation's creation receipt. `Settlement::Retain`
-  keeps that result across settle: the effect settles `Retained` and the
-  receipt stays readable.
-- **Input.** The receipt's container set is exactly what the apply's own create
-  report named, by name (`Created`/`Recreated` progress lines). A container name
-  is unique in one engine, so a create that succeeded for `<name>` owns the
-  container that name resolves to; a competing create for that name fails
-  instead of appearing, and a competing create under another name is never
-  named by this report. Attached containers are recorded separately and never
-  become created ids.
-- **Read-back.** `EnvironmentBackend::containers_named` reads exactly those
-  names from the applying backend and must answer one row per name, each a full
-  container id, in the project; `EnvironmentBackend::image_id` resolves the
-  container's own image reference to the exact id, and the container's own
-  image field must be that id. `docker inspect`/`docker image inspect` provide
-  both; an engine that reports only a mutable reference gives no immutable
-  image identity and the receipt refuses.
-- **Verification.** A created container must name the project, name a Compose
-  service with a `<project>-<service>-<index>` container name, carry Effigy's
-  managed and scope labels, not be a one-off, and carry an immutable image id
-  equal to the one its reference resolves to. Duplicate services, a created set
-  without the environment's primary service, an unreadable or partial read-back,
-  a moved image and a failed/unknown/timeout/cancelled apply all refuse, and the
-  effect is journalled `Unknown` with no receipt.
-- **Answering.** `created_by(project, full_id) -> Observed<RunId>` reads the
-  environment's runs' journals: an applied (or retained) create receipt naming
-  that exact full id in that project answers `Verified(run)`; a readable journal
-  naming none answers `Absent(NoCreator)`; a store or receipt that cannot be read
-  answers `Unknown`. A retry of one activation returns its journalled receipt and
-  runs no second create; a create without an authenticated result refuses and is
-  never re-derived from a later inventory.
-- **Boundaries.** `CreatedContainer` and `CreationReceipt` have private fields and
-  crate-private construction: no caller can pair its own run with a container
-  another activation created. The environment crate verifies creation identity,
-  not the admitted render's full service set; that remains the caller's render
-  preflight (#506) and the kernel's target binding (`bind_target`).
-- **Open capability.** `nerdctl inspect` reports a container's image only as a
-  reference, so a Colima first-up gets no immutable image identity and refuses
-  until an engine reports one. No native Colima/Desktop/Engine creation window
-  has been recorded for this seam yet; the fake-backend proofs here are not
-  native qualification.
+**Implemented seam.** The environment's one apply journals
+`environment:engine-create` under the same `Gate(Env)`, permit and deadline as
+the old apply effect. After the apply, the effect result is:
+
+- `RecordedCreation::Attributed { engine, context, project, primary_service,
+  created, attached }` when `EnvironmentBackend::create_workspace_container`
+  returned full ids. Each id is read back by that exact id
+  (`EnvironmentBackend::containers_by_id`) and must answer one container in the
+  project, for the declared workspace service, with a
+  `<project>-<service>-<index>` name, no `oneoff` marker, and an immutable image
+  id (`EnvironmentBackend::image_id`) its own reference resolves to. Duplicate
+  services, a set without the workspace service, a partial or unreadable
+  read-back, a reference-only image and a moved image refuse; the effect is
+  journalled `Unknown` and no weaker receipt is recorded. `CreationReceipt` and
+  `CreatedContainer` have private fields and crate-private construction.
+- `RecordedCreation::Unattributed { project, reason }` when the backend keeps no
+  create response. The reason names the missing API. This is an explicit absence
+  of attribution, never a claim that nothing was created.
+
+`Settlement::Retain` keeps the record across settle: the effect settles
+`Retained` and the record stays readable. `created_by(project, full_id) ->
+Observed<RunId>` answers from that journal alone: the owning run for an
+attributed receipt naming that exact id; `Absent(NoCreator)` when every recorded
+create is attributed and none names it; `Unknown(NoBackendRecord(reason))` when an
+apply recorded no attribution or its create has no authenticated result. A retry
+of one activation returns its journalled record and runs no second apply or
+create; a create without an authenticated result is never re-derived later.
+
+**Missing adapter.** No container adapter can issue that create today: Compose
+owns the project's one apply, so the engine's create response goes to Compose.
+`docker create`/`nerdctl create` do return the exact full id, and
+`docker compose config --hash <service>` exposes the config hash Compose compares
+(the installed Compose v5.5.1 has both flags), but reproducing a Compose
+container's create — name, the `com.docker.compose.*` label set including that
+hash, project network endpoints and aliases, named-volume naming and labels,
+health, restart policy and `depends_on` order — is a generic Compose replacement,
+and Compose may still decide the container is out of date and recreate it,
+leaving the receipt's id stale. The exact missing contract is therefore one of:
+
+1. an engine create/apply API from which Effigy receives the created ids while
+   Compose still performs the one apply (for example Compose surfacing its create
+   response, as `--format json` does for `ps`), or
+2. a deliberate split of the render: Compose creates the non-workspace services
+   and Effigy creates the workspace container itself from the frozen render,
+   with the project network existing first, Compose not declaring that service,
+   its labels and cleanup (`container down`/`retire`) owned by Effigy, and the
+   activation refusing if the container Compose would create for that service
+   already exists.
+
+Neither is inside this task's source boundary, so the production path records
+`Unattributed` and a fresh workspace target stays unpublished (#506's refusal).
+Deterministic fixture proofs cover the attributed path and every refusal; they are
+not native qualification, and no native Colima/Desktop/Engine create window has
+been recorded. `nerdctl inspect` additionally reports a container's image only as
+a reference (proved natively in #508's investigation), so a Colima receipt would
+refuse on image identity even once the create response is available. The
+attempted-before evidence for the rejected Compose-progress design lives in
+#508 PR #645 and is not creator authority.
 
 ## 9. Authority map
 

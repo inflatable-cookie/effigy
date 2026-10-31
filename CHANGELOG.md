@@ -203,22 +203,24 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
-- **A fresh container is attributed to the activation that created it.** The
-  environment's one apply now journals `environment:engine-create`, and its
-  applied result is the exact containers that apply's own create report named,
-  read back by those exact names on the applying backend: full container id,
-  Compose project and declared service, Effigy's managed and scope labels, and
-  the immutable image id the container's own reference resolves to. Attached
-  containers are recorded apart and never become created ids, and a competing
-  actor's identically labelled container is never named by the report, so it is
-  never adopted. `effigy_containers::environment::created_by(project, full_id)`
-  answers the owning environment run from that journal alone, or the
-  `NoCreator` absence proof; a retry reconciles the run's own effect or stays
-  unknown, and never mints attribution from a later inventory. `container up
-  --json` reports the created ids as `environment.created_container_ids`. An
-  engine that reports a container's image only as a mutable reference — Colima's
-  `nerdctl`, for now — refuses the receipt instead of putting a tag in its place.
-
+- **A fresh workspace container can only be attributed from an engine create
+  response.** The environment's one apply now journals
+  `environment:engine-create`, whose record is either the exact full container
+  ids an engine create returned for the workspace service — read back by those
+  ids and verified for project, declared service, one-off marker and immutable
+  image id — or an explicit absence of attribution naming the missing adapter.
+  `effigy_containers::environment::created_by(project, full_id)` answers the
+  owning environment run from that journal, the `NoCreator` proof when every
+  recorded create is attributed, or an unknown when an apply recorded no
+  attribution; a retry reconciles the run's own record and never re-derives
+  attribution later. No container adapter can supply the create response today,
+  because Compose performs the one intended apply and keeps the engine's create
+  response, so a first up records no attribution and a fresh workspace target
+  stays unpublished. `container up --json` reports the created ids as
+  `environment.created_container_ids` when the create is attributed, and
+  `environment.creation_unattributed` with its reason when it is not. Proven by deterministic
+  backend and journal fixtures; no native create window has been recorded, and
+  `nerdctl` still reports a container image only as a mutable reference.
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
   `Attach` or reserves exactly the next environment generation from the frozen

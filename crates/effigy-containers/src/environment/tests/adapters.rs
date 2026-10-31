@@ -328,7 +328,7 @@ fn a_created_container_is_read_back_by_name_on_both_backends() {
         let workdir = tools.logs.parent().unwrap().to_path_buf();
         let name = format!("{PROJECT}-app-1");
         let mut adapter = selection.adapter();
-        let rows = match adapter.containers_named(&workdir, PROJECT, std::slice::from_ref(&name)) {
+        let rows = match adapter.containers_by_id(&workdir, std::slice::from_ref(&ID.to_owned())) {
             Observed::Verified(rows, _) => rows,
             other => panic!("{label}: named read: {other:?}"),
         };
@@ -346,8 +346,8 @@ fn a_created_container_is_read_back_by_name_on_both_backends() {
         assert!(
             calls
                 .iter()
-                .any(|call| call.contains(&format!("inspect {name}"))),
-            "{label}: the read names the created container: {calls:?}"
+                .any(|call| call.contains(&format!("inspect {ID}"))),
+            "{label}: the read names the created id: {calls:?}"
         );
         assert!(
             calls
@@ -363,18 +363,17 @@ fn a_created_container_is_read_back_by_name_on_both_backends() {
     }
 }
 
-/// An inspect that answers a name the report never printed is not a partial
-/// success: the whole read-back refuses, so no id from it can be created.
+/// An inspect that answers an id no create response named is not a partial
+/// success: the whole read-back refuses.
 #[test]
-fn a_named_read_refuses_an_answer_for_another_container() {
+fn an_id_read_refuses_an_answer_for_another_container() {
     let tools = CreationTools::install();
     let workdir = tools.logs.parent().unwrap().to_path_buf();
     let mut adapter = selection().adapter();
-    match adapter.containers_named(&workdir, PROJECT, &[format!("{PROJECT}-cache-1")]) {
-        Observed::Unknown(UnknownReason::Inconsistent(reason)) => assert!(
-            reason.contains("did not name") || reason.contains("not `"),
-            "{reason}"
-        ),
+    match adapter.containers_by_id(&workdir, &["d".repeat(64)]) {
+        Observed::Unknown(UnknownReason::Inconsistent(reason)) => {
+            assert!(reason.contains("no create response named"), "{reason}")
+        }
         other => panic!("expected a refusal for a foreign answer, got {other:?}"),
     }
 }

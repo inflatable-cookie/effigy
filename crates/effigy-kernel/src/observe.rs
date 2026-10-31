@@ -133,6 +133,11 @@ pub enum UnknownReason {
     Untrusted(String),
     HostAuthorityRequired,
     StoreUnreadable(String),
+    /// The backend keeps no record that can answer this: the API that would
+    /// carry the fact does not exist, so a retry cannot change the answer. The
+    /// detail names the missing API. It never licenses substituting a weaker
+    /// fact for the one asked about (effigy#510).
+    NoBackendRecord(String),
 }
 
 /// What the kernel could not prove, what that means, and the next step.
@@ -180,6 +185,10 @@ impl std::fmt::Display for UnknownReason {
             Self::StoreUnreadable(detail) => write!(
                 f,
                 "could not tell: the store is unreadable ({detail}); run `effigy doctor` to inspect the state root"
+            ),
+            Self::NoBackendRecord(detail) => write!(
+                f,
+                "could not tell: the backend keeps no record that answers this ({detail}); the API it needs does not exist, so a retry cannot change it"
             ),
         }
     }

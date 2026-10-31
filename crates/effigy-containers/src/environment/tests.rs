@@ -322,8 +322,9 @@ pub(super) fn bring_up(
             retention,
             workdir: std::path::Path::new("."),
             primary_service: "app",
+            compose_files: &[],
         },
-        |_| fake.apply(),
+        || fake.apply(),
     )?;
     activate(ctx, env, holders)?;
     Ok(brought_up.applied)
@@ -335,6 +336,7 @@ pub(super) fn create_request() -> crate::environment::CreationRequest<'static> {
         workdir: std::path::Path::new("."),
         project: PROJECT,
         primary_service: "app",
+        compose_files: &[],
     }
 }
 
@@ -434,13 +436,14 @@ fn an_unreadable_holder_list_applies_and_says_so() {
         retention: Retention::Held,
         workdir: std::path::Path::new("."),
         primary_service: "app",
+        compose_files: &[],
     };
     let fake = Fake::new();
     let observer = |_: &EnvRun<'_>| {
         Observed::Unknown(UnknownReason::StoreUnreadable("fake observer".to_owned()))
     };
     let applied =
-        super::ops::reconcile_observing(&ctx, &stack, up(), |_| fake.apply(), observer).unwrap();
+        super::ops::reconcile_observing(&ctx, &stack, up(), || fake.apply(), observer).unwrap();
     assert_eq!(
         applied.applied,
         Applied::ReconciledUnreadableHolders(UnknownReason::StoreUnreadable(
@@ -457,7 +460,7 @@ fn an_unreadable_holder_list_applies_and_says_so() {
         Observed::Verified(Vec::new(), evidence)
     };
     assert_eq!(
-        super::ops::reconcile_observing(&ctx, &stack, up(), |_| quiet.apply(), empty)
+        super::ops::reconcile_observing(&ctx, &stack, up(), || quiet.apply(), empty)
             .unwrap()
             .applied,
         Applied::Reconciled
@@ -951,8 +954,9 @@ fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
                 retention: Retention::Persistent,
                 workdir: std::path::Path::new("."),
                 primary_service: "app",
+                compose_files: &[],
             },
-            |_| fake.apply(),
+            || fake.apply(),
         )
         .unwrap()
         .applied,
@@ -1128,8 +1132,9 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
             retention: Retention::Held,
             workdir: std::path::Path::new("."),
             primary_service: "app",
+            compose_files: &[],
         },
-        |_| {
+        || {
             // A cold stack's bring-up, longer than the settlement budget.
             std::thread::sleep(std::time::Duration::from_millis(900));
             fake.apply()
@@ -1177,8 +1182,9 @@ fn an_activation_past_the_sixty_second_budget_still_settles() {
                 retention: Retention::Held,
                 workdir: std::path::Path::new("."),
                 primary_service: "app",
+                compose_files: &[],
             },
-            |_| {
+            || {
                 std::thread::sleep(ACTIVATION);
                 fake.apply()
             },
@@ -1247,7 +1253,7 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
     run.publish_desired(&closure("one")).unwrap();
     let mut backend = fake.clone();
-    run.create_with(&mut backend, &selection(), create_request(), |_| {
+    run.create_with(&mut backend, &selection(), create_request(), || {
         fake.apply()
     })
     .unwrap();
@@ -1293,8 +1299,9 @@ fn a_failed_activation_settles_on_its_own_budget() {
             retention: Retention::Held,
             workdir: std::path::Path::new("."),
             primary_service: "app",
+            compose_files: &[],
         },
-        |_| {
+        || {
             std::thread::sleep(std::time::Duration::from_millis(900));
             fake.apply()
         },

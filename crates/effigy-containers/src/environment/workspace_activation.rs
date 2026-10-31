@@ -124,7 +124,7 @@ impl<'r> WorkspaceActivation<'r> {
     pub fn apply_with(
         &mut self,
         request: super::Up<'_>,
-        apply: impl FnOnce(&mut super::CreateReport) -> Result<(), super::BackendError>,
+        apply: impl FnOnce() -> Result<(), super::BackendError>,
     ) -> Result<super::BringUp, EnvError> {
         super::ops::reconcile_in(&mut self.environment, request, apply, |run| run.holders())
     }

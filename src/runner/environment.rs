@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{
-    self as engine, Applied, BackendError, BackendSelection, CreateReport, CreationReceipt,
-    EnvContext, EnvError, EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
+    self as engine, Applied, BackendError, BackendSelection, CreationOutcome, EnvContext, EnvError,
+    EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
@@ -191,10 +191,11 @@ fn evidence() -> effigy_kernel::observe::Evidence {
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
     repo_root: PathBuf,
-    /// Exactly the containers this bring-up's apply created, which is what
-    /// attributes a fresh workspace target to this activation (effigy#510).
-    /// `None` when the environment was held and no apply ran.
-    pub(in crate::runner) creation: Option<CreationReceipt>,
+    /// What this bring-up's create recorded: a receipt sealed to its own
+    /// environment run, or the explicit absence of attribution when the backend
+    /// keeps no engine create response (effigy#510). `None` when the environment
+    /// was held and no apply ran.
+    pub(in crate::runner) creation: Option<CreationOutcome>,
 }
 
 /// The retention a task's ensure gives a stack it starts.
@@ -216,7 +217,7 @@ pub(in crate::runner) fn reconcile(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     retention: Retention,
-    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> Result<BringUp, RunnerError> {
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
@@ -242,6 +243,7 @@ pub(in crate::runner) fn reconcile(
             retention,
             workdir: repo_root,
             primary_service: &policy.primary_service,
+            compose_files: &policy.compose_files,
         },
         apply,
     )
@@ -267,41 +269,6 @@ pub(in crate::runner) fn reconcile(
         repo_root: policy.repo_root.clone(),
         creation: outcome.creation,
     })
-}
-
-/// Record what one Compose activation reported creating, from the progress
-/// lines it printed (effigy#510).
-///
-/// `Created` and `Recreated` name containers this apply created; `Started` for a
-/// container it did not create names one it attached. Anything else is not a
-/// creation fact, so it is never recorded as one.
-pub(in crate::runner) fn observe_compose_creation(line: &str, report: &mut CreateReport) {
-    let Some(event) = effigy_containers::exec::parse_compose_step_event(line) else {
-        return;
-    };
-    match event {
-        effigy_containers::exec::ComposeStepEvent::Created { subject }
-        | effigy_containers::exec::ComposeStepEvent::Recreated { subject } => {
-            report.created(subject.trim())
-        }
-        effigy_containers::exec::ComposeStepEvent::Started { subject } => {
-            report.attached(subject.trim())
-        }
-        _ => {}
-    }
-}
-
-/// [`observe_compose_creation`] for one captured apply, whose whole output is
-/// already in hand.
-pub(in crate::runner) fn observe_compose_creation_output(
-    output: &std::process::Output,
-    report: &mut CreateReport,
-) {
-    for bytes in [&output.stdout, &output.stderr] {
-        for line in String::from_utf8_lossy(bytes).lines() {
-            observe_compose_creation(line, report);
-        }
-    }
 }
 
 /// The activation run: publishes the generation and attaches `holders`.

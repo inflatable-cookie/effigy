@@ -350,9 +350,8 @@ fn run_container_up_inner(
     let observation = std::cell::Cell::new(None);
     let compose_steps =
         std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
-    let reconciled = environment::reconcile(repo_root, &plan.policy, retention, |report| {
-        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation, report)
-        {
+    let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
+        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
             Ok(None) => {}
             Ok(Some(end)) => {
                 let message = match &end {
@@ -600,7 +599,6 @@ fn run_container_up_compose(
     plan: &ContainerUpPlan,
     compose_steps: &mut ComposeSteps,
     observation: &std::cell::Cell<Option<std::time::Instant>>,
-    report: &mut effigy_containers::environment::CreateReport,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
     // The stack's own step names the Compose call it waits on and the last
     // runtime line it read, so a runtime whose progress this parser does not
@@ -609,10 +607,6 @@ fn run_container_up_compose(
     let whole_stack = TimedStep::live(progress.clone());
     let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
-        // The same line drives the operator's step and this activation's
-        // creation report: what the runtime says it created is the only input
-        // to the receipt (effigy#510).
-        environment::observe_compose_creation(line, report);
         if let Some(event) = parse_compose_step_event(line) {
             progress.event(event.label(&project));
             compose_steps.observe(&event);
@@ -1021,7 +1015,7 @@ fn render_container_up_result(
     plan: &ContainerUpPlan,
     health: Option<&'static str>,
     integrations: ContainerUpRuntimeIntegrations,
-    creation: Option<&effigy_containers::environment::CreationReceipt>,
+    creation: Option<&effigy_containers::environment::CreationOutcome>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if plan.attach_mode == EffectiveAttachMode::Detached {
@@ -1077,7 +1071,7 @@ fn detached_container_up_report(
 fn annotate_environment_record(
     report: &mut ContainerCommandReport,
     policy: &EffectiveContainerPolicy,
-    creation: Option<&effigy_containers::environment::CreationReceipt>,
+    creation: Option<&effigy_containers::environment::CreationOutcome>,
 ) {
     let record = environment::record(policy);
     let retention = record
@@ -1085,23 +1079,41 @@ fn annotate_environment_record(
         .and_then(|record| record.engine().map(|engine| engine.retention));
     let backend = environment::backend(&policy.repo_root, policy);
     if let Some(json) = report.json.as_object_mut() {
-        json.insert(
-            "environment".to_owned(),
-            serde_json::json!({
-                "retention": retention.map(|retention| match retention {
-                    Retention::Persistent => "persistent",
-                    Retention::Held => "held",
-                }),
-                "backend": backend.label(),
-                "backend_reason": backend.reason.describe(),
-                // Exactly the containers this activation created: a re-up that
-                // created none reports an empty list, never the containers it
-                // attached (effigy#510).
-                "created_container_ids": creation
-                    .map(|receipt| receipt.created_ids().collect::<Vec<_>>())
-                    .unwrap_or_default(),
+        let mut environment = serde_json::json!({
+            "retention": retention.map(|retention| match retention {
+                Retention::Persistent => "persistent",
+                Retention::Held => "held",
             }),
-        );
+            "backend": backend.label(),
+            "backend_reason": backend.reason.describe(),
+        });
+        if let Some(creation) = creation {
+            let object = environment.as_object_mut().expect("object");
+            match creation.unattributed() {
+                // Exactly the ids this activation's own engine create named. An
+                // unattributed apply reports no ids and says why, because it
+                // proves nothing either way (effigy#510).
+                Some(reason) => {
+                    object.insert(
+                        "creation_unattributed".to_owned(),
+                        serde_json::Value::String(reason.to_owned()),
+                    );
+                }
+                None => {
+                    object.insert(
+                        "created_container_ids".to_owned(),
+                        serde_json::Value::Array(
+                            creation
+                                .created_ids()
+                                .into_iter()
+                                .map(serde_json::Value::String)
+                                .collect(),
+                        ),
+                    );
+                }
+            }
+        }
+        json.insert("environment".to_owned(), environment);
     }
 }
 
@@ -3269,8 +3281,9 @@ catalog = "postgres"
                     retention: effigy_containers::environment::Retention::Persistent,
                     workdir: &self.repo_root,
                     primary_service: &policy.primary_service,
+                    compose_files: &policy.compose_files,
                 },
-                |_| Ok(()),
+                || Ok(()),
             )
             .expect("the never-activated environment is recorded");
             assert_eq!(

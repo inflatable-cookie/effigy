@@ -386,7 +386,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
             // shared services are started first, the same secrets reach the
             // same Compose args, and Compose recreates only changed services
             // (effigy#371).
-            let apply = |report: &mut effigy_containers::environment::CreateReport| {
+            let apply = || {
                 run_task_apply(
                     repo_root,
                     policy,
@@ -394,16 +394,9 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                     crate::runner::container_command::support::ensure_shared_services_running,
                     crate::runner::container_command::secret_env::compose_secret_env_for_apply,
                     |repo_root, policy, args, label, env| {
-                        let output =
-                            run_compose_capture_with_env(repo_root, policy, args, label, env)
-                                .map_err(RunnerError::from)?;
-                        // The captured apply is still this activation's one
-                        // apply: its own progress lines say which containers it
-                        // created (effigy#510).
-                        crate::runner::environment::observe_compose_creation_output(
-                            &output, report,
-                        );
-                        Ok(())
+                        run_compose_capture_with_env(repo_root, policy, args, label, env)
+                            .map(|_| ())
+                            .map_err(RunnerError::from)
                     },
                 )
                 .map_err(|error| {

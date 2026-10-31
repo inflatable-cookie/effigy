@@ -274,6 +274,53 @@ impl std::fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
+/// What one engine create is asked to create: the environment's workspace
+/// service, described by the admitted render (effigy#510).
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceCreation<'a> {
+    /// The checkout the engine create runs from.
+    pub workdir: &'a Path,
+    /// The Compose project the workspace container belongs to.
+    pub project: &'a str,
+    /// The service the guest binary runs in.
+    pub service: &'a str,
+    /// The rendered Compose files the service specification is declared in.
+    pub compose_files: &'a [std::path::PathBuf],
+}
+
+/// One container an engine's create response named: the exact full id the
+/// operation returned and the name its request used.
+///
+/// Only an engine create builds one, so an inventory, a label match or a
+/// progress line can never stand in for a creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedContainerId {
+    container_id: String,
+    name: String,
+}
+
+impl CreatedContainerId {
+    /// The create response's own full container id.
+    pub fn container_id(&self) -> &str {
+        &self.container_id
+    }
+
+    /// The container name the create request used.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// A create response, for a fixture backend that must report one. No
+    /// production caller builds this: an adapter receives these fields from the
+    /// engine's own create response.
+    pub fn from_response(container_id: &str, name: &str) -> Self {
+        Self {
+            container_id: container_id.to_owned(),
+            name: name.to_owned(),
+        }
+    }
+}
+
 /// One workload the backend observes, with the labels that prove ownership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workload {
@@ -301,27 +348,38 @@ pub trait EnvironmentBackend {
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
 
-    /// The exact containers an apply's own create report named, read back by
-    /// name (effigy#510).
+    /// Create the environment's workspace container with the engine's own
+    /// create API, and return exactly the full ids that operation's successful
+    /// response named (effigy#510).
     ///
-    /// The names come from the create API's successful response, and a
-    /// container name is unique in one engine: a create that succeeded for
-    /// `<name>` owns the container `<name>` resolves to, and a competing create
-    /// for that name fails instead of appearing here. This read is therefore a
-    /// lookup of the created objects, never an inventory of the project: a
-    /// foreign container with other names or indistinguishable labels is not a
-    /// candidate at all. `Verified` carries one row per requested name, each
-    /// answering a full container id; a missing, duplicated or unexpected row
-    /// is `Unknown`, because a partial answer cannot name what was created.
-    fn containers_named(
+    /// This is the only creation fact that can become a receipt. Compose is a
+    /// client of the engine's create: its apply creates the container, but the
+    /// create response goes to Compose and never to Effigy, and Compose's
+    /// progress output names containers rather than the ids it received. A
+    /// backend that cannot issue the create itself therefore answers
+    /// `NoBackendRecord` naming the missing adapter; `Verified` carries exactly
+    /// the ids the create response returned, never an inventory, a name lookup,
+    /// a timestamp or a label match.
+    fn create_workspace_container(
         &mut self,
-        workdir: &Path,
-        project: &str,
-        names: &[String],
-    ) -> Observed<Vec<Workload>> {
-        let _ = (workdir, project, names);
+        request: &WorkspaceCreation<'_>,
+    ) -> Observed<Vec<CreatedContainerId>> {
+        let _ = request;
+        Observed::Unknown(UnknownReason::NoBackendRecord(
+            "this adapter issues no create of its own, so it never receives the engine's create \
+             response"
+                .to_owned(),
+        ))
+    }
+
+    /// The exact containers these full ids name, read back for verification
+    /// (effigy#510). Each requested id must answer exactly one row; a missing,
+    /// duplicated or unexpected row is `Unknown`, because a partial answer
+    /// cannot say what one create returned.
+    fn containers_by_id(&mut self, workdir: &Path, ids: &[String]) -> Observed<Vec<Workload>> {
+        let _ = (workdir, ids);
         Observed::Unknown(UnknownReason::ToolUnavailable(
-            "this backend adapter cannot read containers back by name".to_owned(),
+            "this backend adapter cannot read containers back by id".to_owned(),
         ))
     }
 
@@ -374,13 +432,12 @@ macro_rules! compose_adapter {
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
-            fn containers_named(
+            fn containers_by_id(
                 &mut self,
                 workdir: &Path,
-                project: &str,
-                names: &[String],
+                ids: &[String],
             ) -> Observed<Vec<Workload>> {
-                containers_named(&self.selection, workdir, project, names)
+                containers_by_id(&self.selection, workdir, ids)
             }
             fn image_id(&mut self, workdir: &Path, reference: &str) -> Observed<String> {
                 image_id(&self.selection, workdir, reference)
@@ -391,27 +448,25 @@ macro_rules! compose_adapter {
 compose_adapter!(ColimaBackend);
 compose_adapter!(DockerBackend);
 
-/// The exact containers `names` resolve to in `project`, one row each.
-fn containers_named(
+/// The exact containers `ids` name, one row each.
+fn containers_by_id(
     selection: &BackendSelection,
     workdir: &Path,
-    project: &str,
-    names: &[String],
+    ids: &[String],
 ) -> Observed<Vec<Workload>> {
-    if names.is_empty() {
-        return Verified::rows(Vec::new(), "backend named containers");
+    if ids.is_empty() {
+        return Verified::rows(Vec::new(), "backend created ids");
     }
-    if let Err(reason) = unique_names(names) {
+    if let Err(reason) = unique_ids(ids) {
         return Observed::Unknown(UnknownReason::Inconsistent(reason));
     }
     let mut inspect = vec![OsString::from("inspect")];
-    inspect.extend(names.iter().map(OsString::from));
+    inspect.extend(ids.iter().map(OsString::from));
     let (program, args) = runtime_invocation(selection, &inspect);
     match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect created", &[]) {
-        Ok(output) => match parse_inspect(&output.stdout)
-            .and_then(|rows| exact_named_rows(project, names, rows))
+        Ok(output) => match parse_inspect(&output.stdout).and_then(|rows| exact_id_rows(ids, rows))
         {
-            Ok(rows) => Verified::rows(rows, "backend inspect by name"),
+            Ok(rows) => Verified::rows(rows, "backend inspect by id"),
             Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
         },
         Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
@@ -447,35 +502,34 @@ impl Verified {
     }
 }
 
-/// The requested names are distinct: a create report that names one container
-/// twice cannot say how many containers were created.
-fn unique_names(names: &[String]) -> Result<(), String> {
+/// The created ids are distinct: a create response that names one id twice
+/// cannot say how many containers were created.
+fn unique_ids(ids: &[String]) -> Result<(), String> {
     let mut seen = std::collections::BTreeSet::new();
-    for name in names {
-        if name.trim().is_empty() {
-            return Err("the create report named an empty container name".to_owned());
+    for id in ids {
+        if !full_container_id(id) {
+            return Err(format!(
+                "the create response named `{id}`, which is not a full container id"
+            ));
         }
-        if !seen.insert(name.as_str()) {
-            return Err(format!("the create report named container `{name}` twice"));
+        if !seen.insert(id.to_ascii_lowercase()) {
+            return Err(format!("the create response named container `{id}` twice"));
         }
     }
     Ok(())
 }
 
-/// The inspect answered exactly the requested names, once each, in `project`.
-fn exact_named_rows(
-    project: &str,
-    names: &[String],
-    rows: Vec<Workload>,
-) -> Result<Vec<Workload>, String> {
-    if rows.len() != names.len() {
+/// The inspect answered exactly the created ids, once each.
+fn exact_id_rows(ids: &[String], rows: Vec<Workload>) -> Result<Vec<Workload>, String> {
+    if rows.len() != ids.len() {
         return Err(format!(
-            "the create report named {} containers and the engine answered {} for them",
-            names.len(),
+            "the create response named {} containers and the engine answered {} for them",
+            ids.len(),
             rows.len()
         ));
     }
-    let requested: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let requested: std::collections::BTreeSet<String> =
+        ids.iter().map(|id| id.to_ascii_lowercase()).collect();
     let mut seen = std::collections::BTreeSet::new();
     for row in &rows {
         if !full_container_id(&row.id) {
@@ -484,32 +538,15 @@ fn exact_named_rows(
                 row.id
             ));
         }
-        if !requested.contains(row.name.as_str()) {
+        let id = row.id.to_ascii_lowercase();
+        if !requested.contains(&id) {
             return Err(format!(
-                "the engine answered container `{}`, which the create report did not name",
-                row.name
+                "the engine answered container `{}`, which no create response named",
+                row.id
             ));
         }
-        if !seen.insert(row.name.as_str()) {
-            return Err(format!(
-                "the engine answered container `{}` twice",
-                row.name
-            ));
-        }
-        match row.labels.get(COMPOSE_PROJECT_LABEL) {
-            Some(value) if value == project => {}
-            Some(value) => {
-                return Err(format!(
-                    "container `{}` belongs to project `{value}`, not `{project}`",
-                    row.name
-                ))
-            }
-            None => {
-                return Err(format!(
-                    "container `{}` names no project, so it cannot be the created one",
-                    row.name
-                ))
-            }
+        if !seen.insert(id) {
+            return Err(format!("the engine answered container `{}` twice", row.id));
         }
     }
     Ok(rows)
@@ -793,7 +830,7 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        exact_image_id, exact_named_rows, non_empty_lines, parse_image_inspect, unique_names,
+        exact_id_rows, exact_image_id, non_empty_lines, parse_image_inspect, unique_ids,
         ProjectResources, Workload,
     };
 
@@ -861,30 +898,26 @@ mod tests {
         }
     }
 
-    /// The create report's names are distinct, and the engine answers exactly
-    /// them, once each, in the project: a missing, extra, repeated or foreign
-    /// row is never a partial success.
+    /// The create response's ids are distinct full ids, and the engine answers
+    /// exactly them, once each: a missing, extra, repeated or short answer is
+    /// never a partial success.
     #[test]
-    fn a_named_read_is_exact_or_refused() {
+    fn an_id_read_is_exact_or_refused() {
         let id = "a".repeat(64);
         let other = "b".repeat(64);
-        let names = vec!["demo-app-1".to_owned()];
-        assert!(unique_names(&names).is_ok());
-        assert!(unique_names(&["demo-app-1".to_owned(), "demo-app-1".to_owned()]).is_err());
-        assert!(unique_names(&[" ".to_owned()]).is_err());
+        let ids = vec![id.clone()];
+        assert!(unique_ids(&ids).is_ok());
+        assert!(unique_ids(&[id.clone(), id.clone()]).is_err());
+        assert!(unique_ids(&["abc".to_owned()]).is_err());
 
         let rows = vec![row("demo-app-1", &id, "demo")];
-        assert!(exact_named_rows("demo", &names, rows).is_ok());
+        assert!(exact_id_rows(&ids, rows).is_ok());
         for (label, rows) in [
             ("no row", Vec::new()),
-            ("another name", vec![row("demo-app-2", &other, "demo")]),
-            ("another project", vec![row("demo-app-1", &id, "elsewhere")]),
+            ("another id", vec![row("demo-app-1", &other, "demo")]),
             ("a short id", vec![row("demo-app-1", "abc", "demo")]),
         ] {
-            assert!(
-                exact_named_rows("demo", &names, rows).is_err(),
-                "{label} was accepted"
-            );
+            assert!(exact_id_rows(&ids, rows).is_err(), "{label} was accepted");
         }
     }
 

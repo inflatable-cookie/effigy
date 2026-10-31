@@ -1,32 +1,37 @@
-//! One activation's engine creation effect (effigy#510, contract 052 §8.12).
+//! One activation's engine creation receipt (effigy#510, contract 052 §8.12).
 //!
 //! A fresh workspace container belongs to the exact activation that created it.
 //! That attribution cannot be read back from the engine afterwards: labels,
 //! creation stamps and before/after inventories are all facts a competing
-//! Compose actor reproduces (Tom's 2026-10-31 creator ruling). So the fact is
-//! taken from the apply's own create report, inside the one gated apply, and
-//! journalled under the environment run that performed it:
+//! Compose actor reproduces (Tom's 2026-10-31 creator ruling). It also cannot
+//! come from Compose's apply, which is itself a client of the engine's create:
+//! the create response goes to Compose, and Compose's progress output names
+//! containers rather than the ids it received.
 //!
-//! * the apply's create report names each container it created, by name. A
-//!   container name is unique in one engine, so a create that succeeded for
-//!   that name owns the container the name resolves to — a competing create for
-//!   the same name fails instead of appearing, and a competing create under
-//!   another name is never named by this report at all;
-//! * each named container is read back by that exact name and must answer one
-//!   full container id, in this project, for a declared service, with an
-//!   immutable image id that the container's own reference resolves to on the
-//!   applying backend;
-//! * the resulting [`CreationReceipt`] is journalled as the applied result of
-//!   the run's `environment:engine-create` effect. Only that journal evidence
-//!   answers [`created_by`]: a container is attributed to a run exactly when a
-//!   receipt that run journalled names its exact full id.
+//! So a receipt is minted from exactly one thing — an engine create operation
+//! whose successful response names the full container id it created
+//! ([`EnvironmentBackend::create_workspace_container`]) — and it is journalled
+//! as the applied result of the environment run's
+//! `environment:engine-create` effect:
 //!
-//! There is no public constructor for a receipt: only [`seal`] builds one, from
-//! a create report this module read back and verified. A retry reconciles the
-//! run's own journalled effect or stays `Unknown`; it never mints attribution
-//! from a later inventory.
-
-use std::path::Path;
+//! * the create response's own id is read back (by that id) and must answer one
+//!   container in the project, for the declared workspace service, with a
+//!   `<project>-<service>-<index>` name, no one-off marker, and an immutable
+//!   image id that the container's own image reference resolves to;
+//! * the sealed [`CreationReceipt`] is the effect's result, and only that
+//!   journal evidence answers [`created_by`] — the owning run, the `NoCreator`
+//!   absence proof when every recorded create is attributed and none names the
+//!   container, or an explicit unknown when an apply recorded no attribution at
+//!   all;
+//! * a retry reconciles the run's own effect or stays unknown. It never mints
+//!   attribution from a later inventory, a name lookup or a progress line.
+//!
+//! No adapter issues such a create today: Compose owns the project's one apply
+//! and does not surface the engine's create response, so both container
+//! adapters answer `NoBackendRecord` and name the missing adapter. A first-up
+//! therefore records *no attribution* rather than a weaker one, and the
+//! attribution path below stays proven by deterministic fixtures until an
+//! adapter can supply the create response.
 
 use effigy_kernel::ctx::ObserveContext;
 use effigy_kernel::id::{ResourceId, RunId};
@@ -36,8 +41,8 @@ use effigy_kernel::run::{EffectState, RunSummary};
 use effigy_kernel::store::Store;
 use serde::{Deserialize, Serialize};
 
-use super::backend::{exact_image_id, EnvironmentBackend, Workload};
-use crate::runtime::scope::{COMPOSE_PROJECT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
+use super::backend::{exact_image_id, CreatedContainerId, EnvironmentBackend, Workload};
+use crate::runtime::scope::{COMPOSE_PROJECT_LABEL, PROJECT_LABEL};
 
 /// The journal effect kind of one activation's engine create.
 pub const CREATE_EFFECT: &str = "environment:engine-create";
@@ -49,65 +54,17 @@ const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
 
 /// How many of an owner's runs [`created_by`] reads before it stops looking.
 /// A creation is journalled by the activation that just applied, so the answer
-/// is among the newest runs of that environment; an older journal is never
-/// consulted to attribute a new container.
+/// is among the newest runs of that environment.
 pub const CREATION_LOOKBACK: usize = 64;
 
-/// What one apply's create report said it did, in container names.
+/// The schema tag of one stored creation record.
+pub const CREATION_SCHEMA: &str = "effigy.environment.creation.v1";
+
+/// One container an activation's engine create response named, verified against
+/// the applying backend.
 ///
-/// The apply feeds it as the runtime reports progress; the environment run
-/// reads it back once the effect returned. It is the only input to a receipt's
-/// container set, which is why it never carries an id an engine did not name.
-#[derive(Debug, Default, Clone)]
-pub struct CreateReport {
-    created: Vec<String>,
-    attached: Vec<String>,
-}
-
-impl CreateReport {
-    /// The runtime said it created this container. A create report names the
-    /// container, so the name is kept exactly as printed.
-    pub fn created(&mut self, name: &str) {
-        let name = name.trim();
-        if !name.is_empty() && !self.created.iter().any(|known| known == name) {
-            self.created.push(name.to_owned());
-        }
-    }
-
-    /// The runtime said this container already existed and was started: it is
-    /// attached to this apply, never created by it.
-    pub fn attached(&mut self, name: &str) {
-        let name = name.trim();
-        if name.is_empty()
-            || self.created.iter().any(|known| known == name)
-            || self.attached.iter().any(|known| known == name)
-        {
-            return;
-        }
-        self.attached.push(name.to_owned());
-    }
-
-    /// The containers the create report named as created, in report order.
-    pub fn created_names(&self) -> &[String] {
-        &self.created
-    }
-
-    /// The containers the apply attached rather than created.
-    pub fn attached_names(&self) -> &[String] {
-        &self.attached
-    }
-
-    /// Whether the apply reported creating nothing: an unchanged re-up.
-    pub fn created_nothing(&self) -> bool {
-        self.created.is_empty()
-    }
-}
-
-/// One container this activation's create report named, verified against the
-/// applying backend.
-///
-/// Its fields are private: only [`resolve`] builds one, from a name the create
-/// report printed and an engine answer for exactly that name.
+/// Its fields are private: only [`verify`] builds one, from the exact id the
+/// create response returned and the engine's answer for that id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatedContainer {
     container_id: String,
@@ -118,12 +75,12 @@ pub struct CreatedContainer {
 }
 
 impl CreatedContainer {
-    /// The exact full container id the engine answered for the created name.
+    /// The exact full container id the engine's create response named.
     pub fn container_id(&self) -> &str {
         &self.container_id
     }
 
-    /// The container name the create report printed.
+    /// The container name the create request used.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -145,12 +102,10 @@ impl CreatedContainer {
     }
 }
 
-/// What one activation created, sealed to the environment run that applied it.
+/// What one activation created, sealed to the environment run that created it.
 ///
-/// Only the journalled effect result (see [`StoredCreation`]) can answer which
-/// run created a container: [`CreationReceipt::created_by`] exists for the
-/// caller that already holds the receipt, and the durable answer is
-/// [`created_by`].
+/// There is no public constructor: only [`seal`] builds one, from ids an engine
+/// create response returned and the read-back of those ids.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreationReceipt {
     environment: ResourceId,
@@ -168,7 +123,7 @@ impl CreationReceipt {
         &self.environment
     }
 
-    /// The environment run that owned the create effect.
+    /// The environment run whose create effect produced this receipt.
     pub fn run(&self) -> RunId {
         self.run
     }
@@ -188,7 +143,7 @@ impl CreationReceipt {
         &self.context
     }
 
-    /// The containers this activation created, in report order.
+    /// The containers this activation created.
     pub fn created(&self) -> &[CreatedContainer] {
         &self.created
     }
@@ -200,14 +155,14 @@ impl CreationReceipt {
             .map(|container| container.container_id())
     }
 
-    /// The containers the apply attached instead of creating. They are named
-    /// so a caller can tell the two apart; no attached container ever carries
-    /// this run's creation receipt.
+    /// The containers the apply attached instead of creating. They are named so
+    /// a caller can tell the two apart; no attached container ever carries this
+    /// run's creation receipt.
     pub fn attached(&self) -> &[String] {
         &self.attached
     }
 
-    /// Whether this apply created nothing: an unchanged re-up.
+    /// Whether the engine create returned no container id at all.
     pub fn created_nothing(&self) -> bool {
         self.created.is_empty()
     }
@@ -226,27 +181,28 @@ impl CreationReceipt {
 /// What one create effect needs from the caller besides its backend selection.
 #[derive(Debug, Clone, Copy)]
 pub struct CreationRequest<'a> {
-    /// The checkout the backend commands run from.
-    pub workdir: &'a Path,
-    /// The Compose project the apply converges.
+    /// The checkout the engine create and its read-back run from.
+    pub workdir: &'a std::path::Path,
+    /// The Compose project the workspace container belongs to.
     pub project: &'a str,
-    /// The service the environment's declared workspace needs: when the apply
-    /// created containers, exactly one of them is this service.
+    /// The service the environment's declared workspace runs the guest binary
+    /// in: the one container attribution is required for.
     pub primary_service: &'a str,
+    /// The rendered Compose files the workspace service is declared in.
+    pub compose_files: &'a [std::path::PathBuf],
 }
 
-/// Why a create report cannot become a receipt. Every variant names a fact the
-/// activation could not prove, so the environment run records the effect as
-/// `Unknown` and publishes nothing.
+/// Why an engine create could not become a receipt. Every variant names a fact
+/// the activation could not prove, so the run records the effect as `Unknown`
+/// and publishes nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreationRefusal {
-    /// The create report named a container the engine answered with another
-    /// id, or answered no container at all.
+    /// The create response's own id answered no container, or another one.
     Missing(String),
-    /// Two created containers claim one service, so the created set is not
-    /// the one the render declares.
+    /// Two created containers claim one service, so the created set is not the
+    /// one the render declares.
     DuplicateService(String),
-    /// The created set does not carry the environment's primary service.
+    /// The created set does not carry the environment's workspace service.
     Partial(String),
     /// A created container's own image field is a mutable reference, so the
     /// engine cannot prove which image it runs.
@@ -255,10 +211,10 @@ pub enum CreationRefusal {
     ImageMismatch(String),
     /// A created container is marked a one-off (`compose run`) container.
     OneOff(String),
-    /// A created container names no service, or a service the name disagrees
-    /// with, so it cannot be the container the render declares.
+    /// A created container names no service, or a name or project that
+    /// disagrees with the labels it carries.
     Service(String),
-    /// The engine's answer for the named containers could not be read.
+    /// The engine's answer for the created ids could not be read.
     Unknown(String),
 }
 
@@ -267,17 +223,17 @@ impl std::fmt::Display for CreationRefusal {
         match self {
             Self::Missing(detail) => write!(
                 f,
-                "the apply reported creating a container the engine did not answer for: {detail}"
+                "the create response named a container the engine did not answer for: {detail}"
             ),
             Self::DuplicateService(service) => write!(
                 f,
-                "the apply reported creating two containers for service `{service}`, so the created \
-                 set is ambiguous"
+                "the create named two containers for service `{service}`, so the created set is \
+                 ambiguous"
             ),
             Self::Partial(detail) => write!(
                 f,
-                "the apply's created set is incomplete: {detail}; nothing is attributed from a \
-                 partial apply"
+                "the created set is incomplete: {detail}; nothing is attributed from a partial \
+                 create"
             ),
             Self::ReferenceOnlyImage(detail) => write!(
                 f,
@@ -297,15 +253,34 @@ impl std::fmt::Display for CreationRefusal {
                 f,
                 "the created container does not name the service the render declares: {detail}"
             ),
-            Self::Unknown(detail) => write!(
-                f,
-                "the created containers could not be read back: {detail}"
-            ),
+            Self::Unknown(detail) => {
+                write!(f, "the created containers could not be read back: {detail}")
+            }
         }
     }
 }
 
 impl std::error::Error for CreationRefusal {}
+
+/// What one activation's engine create recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RecordedCreation {
+    /// The engine create's response named these exact containers, verified
+    /// against the applying backend.
+    Attributed {
+        engine: String,
+        context: String,
+        project: String,
+        primary_service: String,
+        created: Vec<CreatedContainer>,
+        attached: Vec<String>,
+    },
+    /// The apply ran, but no engine create response named what it created: the
+    /// backend has no such API. This is an explicit absence of attribution, so
+    /// `created_by` answers unknown instead of claiming nothing was created.
+    Unattributed { project: String, reason: String },
+}
 
 /// The durable shape one run's create effect result carries. It is written as
 /// the effect's applied receipt, so a later read sees exactly what this
@@ -313,87 +288,138 @@ impl std::error::Error for CreationRefusal {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredCreation {
     schema: String,
-    engine: String,
-    context: String,
-    project: String,
-    primary_service: String,
-    created: Vec<CreatedContainer>,
-    attached: Vec<String>,
+    record: RecordedCreation,
 }
 
-/// The schema tag of one stored creation receipt.
-pub const CREATION_SCHEMA: &str = "effigy.environment.creation.v1";
-
 impl StoredCreation {
-    /// The containers this record says its run created.
+    /// The containers this record says its run created, if it attributed any.
     pub fn created(&self) -> &[CreatedContainer] {
-        &self.created
+        match &self.record {
+            RecordedCreation::Attributed { created, .. } => created,
+            RecordedCreation::Unattributed { .. } => &[],
+        }
     }
 
     /// The project this record is about.
     pub fn project(&self) -> &str {
-        &self.project
+        match &self.record {
+            RecordedCreation::Attributed { project, .. } => project,
+            RecordedCreation::Unattributed { project, .. } => project,
+        }
     }
 
-    /// The engine and context the create ran on.
-    pub fn backend(&self) -> (&str, &str) {
-        (&self.engine, &self.context)
+    /// The engine and context the create ran on, when it was attributed.
+    pub fn backend(&self) -> Option<(&str, &str)> {
+        match &self.record {
+            RecordedCreation::Attributed {
+                engine, context, ..
+            } => Some((engine, context)),
+            RecordedCreation::Unattributed { .. } => None,
+        }
     }
 
     /// The containers the apply attached instead of creating.
     pub fn attached(&self) -> &[String] {
-        &self.attached
+        match &self.record {
+            RecordedCreation::Attributed { attached, .. } => attached,
+            RecordedCreation::Unattributed { .. } => &[],
+        }
+    }
+
+    /// The recorded result itself.
+    pub fn record(&self) -> &RecordedCreation {
+        &self.record
     }
 }
 
-/// Read the exact containers `report` named, verify each against the applying
-/// backend, and keep them in report order.
+/// What one activation's create recorded, as the environment run returns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreationOutcome {
+    /// The engine create's response named exact containers, verified and sealed
+    /// to this run.
+    Attributed(CreationReceipt),
+    /// No engine create response named anything: the backend keeps no record
+    /// that answers this, and the detail names the missing API.
+    Unattributed { project: String, reason: String },
+}
+
+impl CreationOutcome {
+    /// The attributed receipt, if this activation has one.
+    pub fn receipt(&self) -> Option<&CreationReceipt> {
+        match self {
+            Self::Attributed(receipt) => Some(receipt),
+            Self::Unattributed { .. } => None,
+        }
+    }
+
+    /// Whether the activation's creation is unattributed, and why.
+    pub fn unattributed(&self) -> Option<&str> {
+        match self {
+            Self::Attributed(_) => None,
+            Self::Unattributed { reason, .. } => Some(reason),
+        }
+    }
+
+    /// The exact ids this activation created; empty when unattributed.
+    pub fn created_ids(&self) -> Vec<String> {
+        match self {
+            Self::Attributed(receipt) => receipt.created_ids().map(str::to_owned).collect(),
+            Self::Unattributed { .. } => Vec::new(),
+        }
+    }
+}
+
+/// Verify the containers one engine create's response named.
 ///
-/// The project, service, one-off marker, name shape and immutable image
-/// identity are all checked against the container's own engine record: the
-/// report says *which* containers this activation created, and this reads *what*
-/// they are. A container the report did not name is never read, so no
-/// inventory, label match, timestamp or image reference can stand in for a
-/// creation this activation did not perform.
-pub fn resolve(
+/// The ids come from the create response alone. Each is read back by that same
+/// id and must answer exactly one container in the project, for the declared
+/// workspace service, with an immutable image id its own reference resolves to.
+/// A container the create did not name is never read, so no inventory, label
+/// match or timestamp can stand in for a creation this activation did not
+/// perform.
+pub fn verify(
     backend: &mut dyn EnvironmentBackend,
     request: CreationRequest<'_>,
-    report: &CreateReport,
+    created: &[CreatedContainerId],
 ) -> Result<Vec<CreatedContainer>, CreationRefusal> {
-    if report.created_nothing() {
+    if created.is_empty() {
         return Ok(Vec::new());
     }
-    let names = report.created_names().to_vec();
-    let rows = match backend.containers_named(request.workdir, request.project, &names) {
+    let ids: Vec<String> = created
+        .iter()
+        .map(|created| created.container_id().to_owned())
+        .collect();
+    let rows = match backend.containers_by_id(request.workdir, &ids) {
         Observed::Verified(rows, _) => rows,
         Observed::Absent(proof) => return Err(CreationRefusal::Missing(proof.to_string())),
         Observed::Unknown(reason) => return Err(CreationRefusal::Unknown(reason.to_string())),
     };
-    let mut created: Vec<CreatedContainer> = Vec::with_capacity(rows.len());
+    let mut verified: Vec<CreatedContainer> = Vec::with_capacity(rows.len());
     let mut services: Vec<String> = Vec::with_capacity(rows.len());
     for row in &rows {
-        let container = verify(backend, request, row)?;
+        let container = verify_row(backend, request, row)?;
         if services.iter().any(|service| service == &container.service) {
             return Err(CreationRefusal::DuplicateService(container.service.clone()));
         }
         services.push(container.service.clone());
-        created.push(container);
+        verified.push(container);
     }
-    if !created
+    if !verified
         .iter()
         .any(|container| container.service == request.primary_service)
     {
         return Err(CreationRefusal::Partial(format!(
-            "it created {} container(s) and none of them is the declared primary service `{}`",
-            created.len(),
+            "it created {} container(s) and none of them is the declared workspace service `{}`",
+            verified.len(),
             request.primary_service
         )));
     }
-    Ok(created)
+    Ok(verified)
 }
 
-/// One created row, verified as the container the create report named.
-fn verify(
+/// One created row, verified as the container whose id the create response
+/// named.
+fn verify_row(
     backend: &mut dyn EnvironmentBackend,
     request: CreationRequest<'_>,
     row: &Workload,
@@ -414,9 +440,31 @@ fn verify(
     {
         return Err(CreationRefusal::OneOff(name.to_owned()));
     }
+    match row.labels.get(COMPOSE_PROJECT_LABEL) {
+        Some(project) if project == request.project => {}
+        Some(project) => {
+            return Err(CreationRefusal::Service(format!(
+                "container `{name}` belongs to project `{project}`, not `{}`",
+                request.project
+            )))
+        }
+        None => {
+            return Err(CreationRefusal::Service(format!(
+                "container `{name}` names no Compose project"
+            )))
+        }
+    }
+    if let Some(project) = row.labels.get(PROJECT_LABEL) {
+        if project != request.project {
+            return Err(CreationRefusal::Service(format!(
+                "container `{name}` carries Effigy project `{project}`, not `{}`",
+                request.project
+            )));
+        }
+    }
     // The name Compose gave this container is derived from the project, the
     // service and the replica index: a name that does not carry both cannot be
-    // the container the report and the labels claim.
+    // the container the labels claim.
     let Some(index) = name
         .strip_prefix(&format!("{}-{service}-", request.project))
         .and_then(|index| index.parse::<u32>().ok())
@@ -429,29 +477,6 @@ fn verify(
     if index == 0 {
         return Err(CreationRefusal::Service(format!(
             "container `{name}` has no replica index"
-        )));
-    }
-    if let Some(project) = row.labels.get(PROJECT_LABEL) {
-        if project != request.project {
-            return Err(CreationRefusal::Service(format!(
-                "container `{name}` names project `{project}`, not `{project_expected}`",
-                project_expected = request.project
-            )));
-        }
-    }
-    // Effigy's own ownership labels are the render's: a managed container it
-    // started carries them, and a container without them was not started by
-    // this render.
-    for label in [MANAGED_LABEL, SCOPE_LABEL] {
-        if !row.labels.contains_key(label) {
-            return Err(CreationRefusal::Service(format!(
-                "container `{name}` carries no `{label}` label, so it is not this render's container"
-            )));
-        }
-    }
-    if !row.labels.contains_key(COMPOSE_PROJECT_LABEL) {
-        return Err(CreationRefusal::Service(format!(
-            "container `{name}` names no Compose project"
         )));
     }
     let image_id = exact_image_id(&row.image).ok_or_else(|| {
@@ -491,14 +516,14 @@ fn verify(
     })
 }
 
-/// Seal a verified created set to the exact environment run that applied it.
+/// Seal a verified created set to the exact environment run that created it.
 ///
 /// Crate-private construction is the whole point: no caller can pair its own
 /// run with a container another activation created.
 pub(super) fn seal(
     environment: &ResourceId,
     run: RunId,
-    project: &str,
+    request: CreationRequest<'_>,
     engine: &str,
     context: &str,
     created: Vec<CreatedContainer>,
@@ -507,7 +532,7 @@ pub(super) fn seal(
     CreationReceipt {
         environment: environment.clone(),
         run,
-        project: project.to_owned(),
+        project: request.project.to_owned(),
         engine: engine.to_owned(),
         context: context.to_owned(),
         created,
@@ -515,19 +540,40 @@ pub(super) fn seal(
     }
 }
 
+/// The outcome one journalled record names for the run that wrote it.
+pub(super) fn outcome(
+    environment: &ResourceId,
+    run: RunId,
+    record: RecordedCreation,
+) -> CreationOutcome {
+    match record {
+        RecordedCreation::Attributed {
+            engine,
+            context,
+            project,
+            created,
+            attached,
+            ..
+        } => CreationOutcome::Attributed(CreationReceipt {
+            environment: environment.clone(),
+            run,
+            project,
+            engine,
+            context,
+            created,
+            attached,
+        }),
+        RecordedCreation::Unattributed { project, reason } => {
+            CreationOutcome::Unattributed { project, reason }
+        }
+    }
+}
+
 /// The effect result one run's create journals.
-pub(super) fn stored(
-    primary_service: &str,
-    receipt: &CreationReceipt,
-) -> Result<serde_json::Value, serde_json::Error> {
+pub(super) fn stored(record: RecordedCreation) -> Result<serde_json::Value, serde_json::Error> {
     serde_json::to_value(StoredCreation {
         schema: CREATION_SCHEMA.to_owned(),
-        engine: receipt.engine().to_owned(),
-        context: receipt.context().to_owned(),
-        project: receipt.project().to_owned(),
-        primary_service: primary_service.to_owned(),
-        created: receipt.created.clone(),
-        attached: receipt.attached.clone(),
+        record,
     })
 }
 
@@ -546,14 +592,17 @@ pub(super) fn decode_stored(value: &serde_json::Value) -> Result<StoredCreation,
 }
 
 /// `created_by(project, full_id) -> Observed<RunId>`: the environment run whose
-/// own create effect journalled this exact container as created.
+/// own engine create response named this exact container.
 ///
-/// The answer is durable journal evidence and nothing else: an applied
-/// `environment:engine-create` receipt that names this exact full id in this
-/// project. A readable journal that names no such creation is
-/// `Absent(NoCreator)`, which also covers a replacement container (a new id this
-/// environment never created) and a container another actor made. An unreadable
-/// store is `Unknown`.
+/// The answer is durable journal evidence and nothing else. An attributed
+/// create receipt naming this exact full id in this project answers
+/// `Verified(run)`; a readable journal whose every create is attributed and
+/// names no such container answers `Absent(NoCreator)`, which also covers a
+/// replacement container (a new id this environment never created) and a
+/// container another actor made. An apply that recorded no attribution leaves
+/// the answer `Unknown(NoBackendRecord)`, because nothing proves that
+/// activation did not create this container. A store or a receipt that cannot be
+/// read is `Unknown`.
 pub fn created_by(
     observe: &ObserveContext,
     root: &StateRoot,
@@ -563,7 +612,7 @@ pub fn created_by(
 ) -> Observed<RunId> {
     if !super::backend::full_container_id(container_id) {
         return Observed::Unknown(UnknownReason::Inconsistent(format!(
-            "`{container_id}` is not a full container id, so no creation can name it"
+            "`{container_id}` is not a full container id, so no create can name it"
         )));
     }
     let reader = match Store::read(observe, root) {
@@ -578,6 +627,7 @@ pub fn created_by(
             Observed::Unknown(reason) => return Observed::Unknown(reason),
         };
     let mut found: Option<RunId> = None;
+    let mut unattributed: Option<String> = None;
     for run in runs {
         let effects = match effigy_kernel::run::effects(&reader, run.id) {
             Observed::Verified(effects, _) => effects,
@@ -586,11 +636,24 @@ pub fn created_by(
         };
         // `Settlement::Retain` keeps an applied effect's receipt at settle and
         // only rewrites its state, so both states name a create this run
-        // actually performed.
+        // actually performed. An `Unknown` create recorded no authenticated
+        // result, so its reason is kept: an unverified creation must never read
+        // as the absence of one.
         for effect in effects.iter().filter(|effect| {
             effect.spec.kind == CREATE_EFFECT
-                && matches!(effect.state, EffectState::Applied | EffectState::Retained)
+                && matches!(
+                    effect.state,
+                    EffectState::Applied | EffectState::Retained | EffectState::Unknown
+                )
         }) {
+            if effect.state == EffectState::Unknown {
+                unattributed.get_or_insert_with(|| {
+                    effect.reason.clone().unwrap_or_else(|| {
+                        "the create effect has no authenticated result".to_owned()
+                    })
+                });
+                continue;
+            }
             let Some(receipt) = &effect.receipt else {
                 continue;
             };
@@ -598,33 +661,42 @@ pub fn created_by(
                 Ok(stored) => stored,
                 Err(reason) => return Observed::Unknown(UnknownReason::Inconsistent(reason)),
             };
-            if stored.project != project {
+            if stored.project() != project {
                 continue;
             }
-            if !stored
-                .created
-                .iter()
-                .any(|container| container.container_id() == container_id)
-            {
-                continue;
-            }
-            match found {
-                Some(existing) if existing != run.id => {
-                    return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                        "container `{container_id}` in project `{project}` is named by two \
-                         activations' creation receipts"
-                    )))
+            match stored.record() {
+                RecordedCreation::Attributed { created, .. } => {
+                    if !created
+                        .iter()
+                        .any(|container| container.container_id() == container_id)
+                    {
+                        continue;
+                    }
+                    match found {
+                        Some(existing) if existing != run.id => {
+                            return Observed::Unknown(UnknownReason::Inconsistent(format!(
+                                "container `{container_id}` in project `{project}` is named by two \
+                                 activations' creation receipts"
+                            )))
+                        }
+                        _ => found = Some(run.id),
+                    }
                 }
-                _ => found = Some(run.id),
+                RecordedCreation::Unattributed { reason, .. } => {
+                    unattributed.get_or_insert_with(|| reason.clone());
+                }
             }
         }
     }
-    match found {
-        Some(run) => Observed::Verified(
+    if let Some(run) = found {
+        return Observed::Verified(
             run,
             Evidence::new("environment create effect journal".into(), None)
                 .expect("fixed evidence"),
-        ),
+        );
+    }
+    match unattributed {
+        Some(reason) => Observed::Unknown(UnknownReason::NoBackendRecord(reason)),
         None => Observed::Absent(AbsenceProof::NoCreator {
             creator: CreatorRef {
                 project: project.to_owned(),

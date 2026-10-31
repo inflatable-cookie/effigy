@@ -5,8 +5,8 @@
 #![allow(dead_code)] // The workspace-client owner installs the serialized consuming caller.
 
 use effigy_containers::environment::{
-    BackendError, CreateReport, CreationReceipt, EnvError, EnvRun, Retention, Up,
-    WorkspaceActivation, WorkspaceBegin,
+    BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
+    WorkspaceBegin,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::id::ResolvedInvocation;
@@ -56,9 +56,9 @@ pub(in crate::runner) struct WorkspaceOwner {
     pub(in crate::runner) supervisor: SessionSupervisor<'static>,
     pub(in crate::runner) session: SessionRef,
     pub(in crate::runner) channel: PreparedHostChannel,
-    /// Exactly the containers this activation's apply created, which is the
-    /// only creation evidence a fresh target can carry (effigy#510).
-    pub(in crate::runner) creation: Option<CreationReceipt>,
+    /// What this activation's create recorded: a receipt sealed to its own
+    /// environment run, or the explicit absence of attribution (effigy#510).
+    pub(in crate::runner) creation: Option<CreationOutcome>,
     pub(in crate::runner) effect: Arc<effigy_kernel::ctx::EffectContext>,
     pub(in crate::runner) observe: Arc<effigy_kernel::ctx::ObserveContext>,
     pub(in crate::runner) root: &'static effigy_kernel::root::StateRoot,
@@ -95,7 +95,7 @@ pub(in crate::runner) enum WorkspaceUpError {
 /// kernel receipt/lease or claim production channel qualification.
 pub(in crate::runner) fn up<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
     publish: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
@@ -152,6 +152,7 @@ pub(in crate::runner) fn up<'a>(
                 retention: request.retention,
                 workdir: &policy.repo_root,
                 primary_service: &policy.primary_service,
+                compose_files: &policy.compose_files,
             },
             apply,
         )?;
@@ -214,7 +215,7 @@ pub(in crate::runner) fn up<'a>(
 /// it does not supply a publication receipt or perform selector writes.
 pub(in crate::runner) fn up_prepared<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce(&mut CreateReport) -> Result<(), BackendError>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
     observe: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<
