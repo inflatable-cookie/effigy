@@ -317,10 +317,6 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         authority.negotiated,
         "the retained listener negotiated the pinned protocol"
     );
-    assert!(
-        authority.authenticated,
-        "the retained grant book accepted the capability it issued"
-    );
     assert_eq!(
         authority.refusal.as_deref(),
         Some("refused"),

@@ -591,6 +591,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             Ok(true) => {}
             Ok(false) => std::thread::sleep(TURN),
             Err(error) if error.is_terminal() => break RetirementCause::ListenerFailed,
+            // One connection failed its own turn; the session keeps serving.
             Err(_) => {}
         }
     };

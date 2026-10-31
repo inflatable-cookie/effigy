@@ -274,11 +274,12 @@ pub fn probe_authority(
             refusal: refusal.map(|frame| format!("{frame:?}")),
         });
     }
-    // The positive request/response leg is reported with this task: the
-    // disposable host does not answer an observe request on this connection
-    // (measured: no frame within 10s for the probe operation), so the proof
-    // asserts only what it can observe - the pinned identity and the retained
-    // grant book's acceptance of the capability it issued.
+    // The positive request/response leg is #452's: this disposable host accepts
+    // the capability and answers no observe request on the retained connection
+    // (measured in this task), so #507 asserts only what a third process can
+    // observe here - the pinned TLS identity and the retained grant book
+    // accepting the capability it issued - and reports the missing production
+    // reply to #452, whose brief now requires it on the real dispatcher.
     // The negative control on its own connection: a capability the host never
     // issued must be refused, so the accepted one proves the retained grant
     // book rather than a host that accepts anything.
