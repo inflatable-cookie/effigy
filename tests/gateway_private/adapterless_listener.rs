@@ -10,6 +10,12 @@
 //! holds. Disposable loopback fixtures, a private gateway and a fake Docker
 //! backend only; every child is stopped by the fixture that started it.
 use super::*;
+use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
+
+/// The interrupted-parent proof's owner helper, and the file it writes its
+/// fixture root to once its listener is ready.
+const OWNER_HELPER: &str = "adapterless_listener::managed_host_adapterless_cleanup_owner_helper";
+const OWNER_OUT_ENV: &str = "EFFIGY_ADAPTERLESS_OWNER_OUT";
 
 const LISTENER_NAME: &str = "web";
 
@@ -105,6 +111,8 @@ struct AdapterlessSetup {
     https_address: SocketAddr,
     ca_path: PathBuf,
     docker_log: PathBuf,
+    /// Stops the fixture's recorded generations if this process is killed.
+    watchdog: std::process::Child,
 }
 
 impl AdapterlessSetup {
@@ -122,6 +130,7 @@ impl AdapterlessSetup {
         let (private_gateway, https_address) =
             start_managed_listener_gateway(fixture.path(), effects, foreign_ca, gateway_cleanup);
         let ca_path = private_gateway.join("ca/rootCA.pem");
+        let watchdog = fixture_sweep::spawn_watchdog(fixture.path());
         Self {
             fixture,
             foreign_ca: foreign_ca.to_path_buf(),
@@ -129,6 +138,7 @@ impl AdapterlessSetup {
             https_address,
             ca_path,
             docker_log,
+            watchdog,
         }
     }
 
@@ -153,8 +163,12 @@ impl AdapterlessSetup {
 /// which is after this `Drop`. Stopping the daemon while its private root still
 /// exists is what keeps a suite sweep from finding an orphaned gateway; the
 /// caller's `GatewayCleanup` covers the panic path and stops the same daemon.
+/// Recorded generations are signalled first, by identity, so a failed or
+/// unwinding proof cannot leave its plain server running. The watchdog covers
+/// the case where this `Drop` never runs at all.
 impl Drop for AdapterlessSetup {
     fn drop(&mut self) {
+        fixture_sweep::terminate_root(self.fixture.path());
         let status = Command::new(EFFIGY)
             .args([
                 "gateway",
@@ -173,6 +187,12 @@ impl Drop for AdapterlessSetup {
         if let Err(error) = status {
             eprintln!("adapterless fixture could not stop its private gateway: {error}");
         }
+        // `down` can leave a daemon behind when its PID record is damaged, so
+        // the recorded daemon identity gets the same owned-identity sweep.
+        fixture_sweep::terminate_root(self.fixture.path());
+        // Nothing is left for the watchdog to guard once the sweeps have run.
+        let _ = self.watchdog.kill();
+        let _ = self.watchdog.wait();
     }
 }
 
@@ -348,7 +368,9 @@ fn managed_host_adapterless_listener_bound_elsewhere_waits_until_the_child_exits
         .split(" at ")
         .nth(1)
         .and_then(|rest| rest.split(' ').next())
-        .expect("the reserved address is named")
+        .unwrap_or_else(|| {
+            panic!("the reserved address is named; diagnostic: {diagnostic:?}; state: {state}")
+        })
         .parse::<SocketAddr>()
         .expect("reserved address");
     assert!(reserved.ip().is_loopback(), "{reserved}");
@@ -598,7 +620,7 @@ fn managed_host_listener_double_forked_server_is_ready() {
     fs::write(
         checkout.join("server.py"),
         format!(
-            "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
+            "{}\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        open('server.pid', 'w').write(str(os.getpid()))\n        http.server.HTTPServer((host, int(port)), Handler).serve_forever()\n    os._exit(0)\nos._exit(0)\n",
             plain_server("double-forked")
         ),
     )
@@ -619,6 +641,16 @@ fn managed_host_listener_double_forked_server_is_ready() {
     assert_eq!(state["status"], "ready", "{state}");
     let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
     assert!(body.contains("double-forked"), "{body}");
+
+    // The server left the listener's process group on purpose, so `down` cannot
+    // settle while it still holds the reserved port (it waits out the shutdown
+    // grace, about 35s). The proof ends that server by the PID it recorded.
+    let server = wait_for_pid(&checkout.join("server.pid"));
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(server as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .expect("stop the double-forked server this proof started");
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
@@ -1033,4 +1065,507 @@ fn managed_host_listener_adapter_env_is_supplied_and_the_report_is_never_read() 
         !report_path.exists(),
         "a stopped generation leaves no adapter report behind: {report_path:?}"
     );
+}
+
+/// A plain sleeper in its own process group, standing in for a listener
+/// generation the proof started. The test keeps its `Child`, so the exit status
+/// is reaped here and no zombie hides a survivor.
+fn spawn_owned_sleeper() -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    Command::new("sleep")
+        .arg("300")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn owned sleeper")
+}
+
+/// Record `child` in the listener state layout the fixture reads, with the
+/// identity the live process reports unless `start` overrides it.
+fn record_listener_child(
+    checkout: &Path,
+    child: &std::process::Child,
+    start: Option<GatewayStartIdentity>,
+) {
+    let live = read_live_process_identity(child.id()).expect("live identity of the sleeper");
+    let start = start.unwrap_or(live.start_identity);
+    let state = serde_json::json!({
+        "child_pid": child.id(),
+        "child_boot_identity": live.boot_identity,
+        "child_start_identity": start,
+    });
+    let dir = checkout.join(".effigy/runtime/host-processes/web/cleanup");
+    fs::create_dir_all(&dir).expect("listener state directory");
+    fs::write(dir.join("web.listener.json"), state.to_string()).expect("listener state");
+}
+
+/// Runs the same sweeps `AdapterlessSetup::drop` runs, so a panicking proof
+/// reaches the same cleanup on unwind.
+struct SurvivorSweep<'a>(&'a Path);
+
+impl Drop for SurvivorSweep<'_> {
+    fn drop(&mut self) {
+        fixture_sweep::terminate_root(self.0);
+    }
+}
+
+/// Failure path: a proof that panics after its generation is recorded must
+/// leave no descendant. The sleeper's PID, PGID and identity are logged so the
+/// evidence names the exact process that was stopped.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_recorded_survivor_when_the_proof_panics() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-cleanup");
+    fs::create_dir(&checkout).expect("cleanup checkout");
+    let mut child = spawn_owned_sleeper();
+    record_listener_child(&checkout, &child, None);
+    let mut daemon = spawn_owned_sleeper();
+    record_gateway_daemon(fixture.path(), &daemon);
+    for (role, proc) in [("listener child", &child), ("gateway daemon", &daemon)] {
+        let pid = proc.id();
+        let pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid as i32)))
+            .expect("sleeper process group");
+        eprintln!("cleanup proof: {role} pid {pid} pgid {pgid}");
+        assert_eq!(pgid.as_raw() as u32, pid, "the {role} leads its own group");
+    }
+
+    let root = fixture.path().to_path_buf();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _sweep = SurvivorSweep(&root);
+        panic!("deliberate proof failure after the generation was recorded");
+    }));
+    assert!(unwound.is_err(), "the deliberate failure must unwind");
+
+    // SIGKILL is delivered before the sweep returns, but the kernel may take a
+    // moment to finish the exit, so poll for the reaped status briefly.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    for proc in [&mut child, &mut daemon] {
+        let status = loop {
+            if let Some(status) = proc.try_wait().expect("reap the sleeper") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the unwinding sweep must stop every recorded sleeper"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&status),
+            Some(9),
+            "the sleeper ended by the sweep's SIGKILL: {status:?}"
+        );
+    }
+}
+
+/// Record `child` as a gateway daemon in the `gateway.identity` layout the
+/// private gateway writes.
+fn record_gateway_daemon(root: &Path, child: &std::process::Child) {
+    let live = read_live_process_identity(child.id()).expect("live identity of the daemon");
+    let record = serde_json::json!({
+        "format_version": 1,
+        "pid": child.id(),
+        "boot_identity": live.boot_identity,
+        "start_identity": live.start_identity,
+    });
+    let dir = root.join("private-gateway");
+    fs::create_dir_all(&dir).expect("private gateway state directory");
+    fs::write(dir.join("gateway.identity"), record.to_string()).expect("gateway identity");
+}
+
+/// Owned identity: a recorded PID whose live start identity no longer matches
+/// is someone else's process. The sweep must leave it running.
+#[test]
+fn managed_host_adapterless_cleanup_leaves_a_reused_pid_alone() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-reused");
+    fs::create_dir(&checkout).expect("reused checkout");
+    let mut child = spawn_owned_sleeper();
+    let live = read_live_process_identity(child.id()).expect("live identity of the sleeper");
+    let stale = match live.start_identity {
+        GatewayStartIdentity::Linux { .. } => GatewayStartIdentity::Linux { start_ticks: 0 },
+        GatewayStartIdentity::Macos { .. } => GatewayStartIdentity::Macos {
+            start_seconds: 0,
+            start_microseconds: 0,
+        },
+    };
+    record_listener_child(&checkout, &child, Some(stale));
+
+    fixture_sweep::terminate_root(fixture.path());
+
+    assert!(
+        child.try_wait().expect("poll the sleeper").is_none(),
+        "a PID with a different start identity is not this fixture's process"
+    );
+    child.kill().expect("stop our own sleeper");
+    child.wait().expect("reap our own sleeper");
+}
+
+/// A group leader that runs `script` under `sh -c`, so a backgrounded job stays
+/// in the leader's group after the leader exits.
+fn spawn_shell_group(script: &str) -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    Command::new("sh")
+        .args(["-c", script])
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn owned shell group")
+}
+
+/// Waits for a PID that a fixture wrote into `path`.
+fn wait_for_pid(path: &Path) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(pid) = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no pid written to {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Waits until the watchdog's ledger under `root` captures `pid` as a member.
+fn wait_for_ledger_member(root: &Path, pid: u32) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !fixture_sweep::ledger_has_member(root, pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the watchdog never captured {pid} in its ledger"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Whether `pid` still names a process that the kernel has not reaped.
+fn pid_alive(pid: u32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+}
+
+/// A recorded leader exits while its background job keeps running in the same
+/// group. The job is captured while the leader still lives, so the sweep stops
+/// it by its own identity after the leader is gone.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_captured_descendant_after_its_leader_exits() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-descendant");
+    fs::create_dir(&checkout).expect("descendant checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let leader_pid = leader.id();
+    let descendant = wait_for_pid(&pidfile);
+    // Captured while the leader lives: the only moment its group proves who
+    // belongs to it.
+    let records = fixture_sweep::snapshot_root(fixture.path());
+    assert!(
+        records
+            .iter()
+            .any(|record| record.members.iter().any(|member| member.pid == descendant)),
+        "the descendant must be captured while its leader lives: {records:?}"
+    );
+    leader.kill().expect("end the recorded leader");
+    leader.wait().expect("reap the recorded leader");
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives its leader before the sweep"
+    );
+
+    fixture_sweep::terminate_records(&records);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !pid_alive(descendant),
+        "the sweep must stop a captured descendant after its leader exited"
+    );
+    eprintln!(
+        "descendant proof: leader {leader_pid} exited; captured descendant {descendant} was stopped"
+    );
+}
+
+/// A descendant the sweep never captured survives its leader's exit. Once the
+/// leader has gone there is no group window left to prove the descendant is this
+/// record's, so the sweep must leave it alone. The test stops it itself.
+#[test]
+fn managed_host_adapterless_cleanup_leaves_an_uncaptured_descendant_after_its_leader_exits() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-uncaptured");
+    fs::create_dir(&checkout).expect("uncaptured checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 1",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let leader_pid = leader.id();
+    let descendant = wait_for_pid(&pidfile);
+    leader.wait().expect("the recorded leader exits");
+    assert!(
+        fixture_sweep::process_group_members(leader_pid).contains(&descendant),
+        "the descendant stays in the leader's group"
+    );
+
+    // Nothing was captured while the leader lived, so this sweep has no identity
+    // window for the descendant.
+    fixture_sweep::terminate_root(fixture.path());
+
+    assert!(
+        pid_alive(descendant),
+        "an uncaptured descendant is not this record's to stop once its leader exited"
+    );
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(descendant as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .expect("stop the descendant this test started");
+}
+
+/// The owner an interrupted-parent proof starts. It runs the real adapterless
+/// path: a plain server whose command leaves a background job in its group, a
+/// private gateway, and the watchdog `AdapterlessSetup::start` starts. Once the
+/// listener is ready it writes its fixture root to `EFFIGY_ADAPTERLESS_OWNER_OUT`
+/// and waits to be killed. Only the interrupted-parent proof runs it.
+#[test]
+#[ignore = "started by the interrupted-parent cleanup proof"]
+fn managed_host_adapterless_cleanup_owner_helper() {
+    let out = PathBuf::from(std::env::var_os(OWNER_OUT_ENV).expect("owner output path"));
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let profile = "adapterless-owner";
+    let domain = "adapterless-owner.host.test";
+    let pidfile = setup.fixture.path().join("owner-descendant.pid");
+    let run = format!(
+        "sleep 300 & echo $! > '{}'; exec python3 -m http.server \"$PORT\" --bind \"$HOST\"",
+        pidfile.display()
+    );
+    let manifest = format!(
+        "[[containers.web.host_processes]]\nname = {}\nrun = {}\nrestart = \"never\"\n\n{}",
+        toml_quote(LISTENER_NAME),
+        toml_quote(&run),
+        listener_declaration(domain, "127.0.0.1:0", 30)
+    );
+    let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    let cleanup = setup.cleanup(&effects, &checkout, profile);
+
+    let report = parse_json_success(run_container_cli(
+        &checkout,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    assert_eq!(
+        report["managed_host_listeners"][0]["status"], "ready",
+        "{report}"
+    );
+    wait_for_pid(&pidfile);
+    fs::write(&out, setup.fixture.path().display().to_string()).expect("owner fixture root");
+    // No `Drop` runs in a killed process, so this owner just waits to be killed.
+    thread::sleep(Duration::from_secs(300));
+}
+
+/// Backstop for the interrupted-parent proof: kills the owner it started and
+/// stops every generation the owner recorded, if the proof fails before its own
+/// cleanup runs.
+struct InterruptedOwner {
+    child: std::process::Child,
+    root: Option<PathBuf>,
+}
+
+impl Drop for InterruptedOwner {
+    fn drop(&mut self) {
+        // A child already reaped is not signalled again, so no stale PID is hit.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(root) = &self.root {
+            fixture_sweep::terminate_root(root);
+        }
+    }
+}
+
+/// Interrupted parent: the owner runs the real adapterless path and is SIGKILLed,
+/// so its `Drop` never runs. The watchdog it started must stop every generation
+/// it recorded: the listener child, its background job and the gateway daemon.
+#[test]
+fn managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent() {
+    let scratch = managed_host_fixture();
+    let out = scratch.path().join("owner-root.txt");
+    let log = fs::File::create(scratch.path().join("owner.log")).expect("owner log");
+    let child = Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", OWNER_HELPER, "--ignored", "--nocapture"])
+        .env(OWNER_OUT_ENV, &out)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().expect("owner log handle")))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .expect("start the owner helper");
+    let mut owner = InterruptedOwner { child, root: None };
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let root = loop {
+        if let Some(text) = fs::read_to_string(&out)
+            .ok()
+            .filter(|text| !text.is_empty())
+        {
+            break PathBuf::from(text);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the owner helper never reached a ready listener"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    owner.root = Some(root.clone());
+
+    // The background job must be in the watchdog's ledger before the owner dies,
+    // so the proof measures the watchdog and not a race with its first tick.
+    let descendant = wait_for_pid(&root.join("owner-descendant.pid"));
+    wait_for_ledger_member(&root, descendant);
+    let recorded = fixture_sweep::snapshot_root(&root);
+    assert!(
+        recorded.len() >= 2 && recorded.iter().any(|record| !record.members.is_empty()),
+        "the owner must record its listener, gateway and background job before it is interrupted: {recorded:?}"
+    );
+
+    owner.child.kill().expect("interrupt the owner");
+    owner.child.wait().expect("reap the interrupted owner");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while fixture_sweep::any_alive(&recorded) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !fixture_sweep::any_alive(&recorded),
+        "the watchdog must stop every recorded generation after its owner was interrupted: {recorded:?}"
+    );
+    eprintln!(
+        "interrupted-parent proof: owner interrupted; watchdog stopped {} recorded generations",
+        recorded.len()
+    );
+    // The owner's fixture never dropped, so its tree is removed here, after the
+    // watchdog has stopped everything it recorded.
+    fs::remove_dir_all(&root).expect("remove the interrupted owner's fixture root");
+}
+
+/// Normal cleanup after a settled `down`: the listener's record is gone and its
+/// leader is stopped, yet the background job the watchdog captured while the
+/// leader lived is still stopped, by its identity, from the ledger.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_descendant_captured_before_its_leader_stopped() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-ledger");
+    fs::create_dir(&checkout).expect("ledger checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let descendant = wait_for_pid(&pidfile);
+    let mut watchdog = fixture_sweep::spawn_watchdog(fixture.path());
+    wait_for_ledger_member(fixture.path(), descendant);
+
+    // A settled `down` stops the leader and clears its listener record.
+    leader.kill().expect("end the recorded leader");
+    leader.wait().expect("reap the recorded leader");
+    fs::remove_file(listener_record_path(&checkout)).expect("clear the settled record");
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives the stopped leader"
+    );
+
+    fixture_sweep::terminate_root(fixture.path());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stopped = !pid_alive(descendant);
+    if !stopped {
+        // Backstop for a failing proof: the test started this descendant.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(descendant as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    watchdog.kill().expect("stop the fixture watchdog");
+    watchdog.wait().expect("reap the fixture watchdog");
+    assert!(
+        stopped,
+        "normal cleanup must stop a descendant the watchdog captured before its leader stopped"
+    );
+}
+
+/// The actual fixture's normal `Drop`: `AdapterlessSetup` is dropped, not a
+/// sweep called by hand. A descendant the watchdog captured while its leader
+/// lived must still be stopped after the leader is gone and its record cleared.
+#[test]
+fn managed_host_adapterless_cleanup_drop_stops_a_descendant_captured_before_its_leader_stopped() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let checkout = setup.fixture.path().join("checkout-drop");
+    fs::create_dir(&checkout).expect("drop checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let descendant = wait_for_pid(&pidfile);
+    wait_for_ledger_member(setup.fixture.path(), descendant);
+
+    // A settled `down` stops the leader and clears its listener record.
+    leader.kill().expect("end the recorded leader");
+    leader.wait().expect("reap the recorded leader");
+    fs::remove_file(listener_record_path(&checkout)).expect("clear the settled record");
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives the stopped leader"
+    );
+
+    drop(setup);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stopped = !pid_alive(descendant);
+    if !stopped {
+        // Backstop for a failing proof: the test started this descendant.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(descendant as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(
+        stopped,
+        "AdapterlessSetup::drop must stop a descendant the watchdog captured before its leader stopped"
+    );
+}
+
+fn listener_record_path(checkout: &Path) -> PathBuf {
+    checkout.join(".effigy/runtime/host-processes/web/cleanup/web.listener.json")
 }

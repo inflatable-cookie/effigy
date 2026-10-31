@@ -1144,6 +1144,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
 
+- A managed host listener whose supervisor exits right after writing its final `failed` state reports that listener's own diagnostic, such as a reserved port that was already bound, instead of the generic "its supervisor exited before publishing readiness" error.
+
 - The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
 
 - A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.

@@ -11,6 +11,9 @@ mod managed_matrix;
 #[path = "gateway_private/adapterless_listener.rs"]
 mod adapterless_listener;
 
+#[path = "gateway_private/fixture_sweep.rs"]
+mod fixture_sweep;
+
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
@@ -3873,6 +3876,9 @@ impl Drop for ManagedContainerCleanup {
                 fs::read_to_string(&self.docker_log).unwrap_or_default()
             );
         }
+        // A settled generation clears its own record during `down`, so the
+        // recorded groups are captured first and swept after the stop.
+        let recorded = fixture_sweep::snapshot(&self.checkouts, &self.private_gateway);
         for checkout in &self.checkouts {
             // Best-effort: down every declared environment, so manifests with
             // several environments still leave nothing running behind.
@@ -3898,6 +3904,7 @@ impl Drop for ManagedContainerCleanup {
                 }
             }
         }
+        fixture_sweep::terminate_records(&recorded);
     }
 }
 
@@ -3987,6 +3994,19 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
         .env("CAROOT", &cleanup.foreign_ca)
         .env("FOREIGN_CAROOT", &cleanup.foreign_ca)
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
+    // `oxide` injects its own `CARGO_PROFILE_OXIDE_*` profile settings, and
+    // nextest injects `NEXTEST_*` runner settings (such as the thread count),
+    // into the test process. Effigy's argv classifier reads a short inherited
+    // value as a secret when it appears in an argument (the watch-mode respawn
+    // proof refuses its own listener, and the bound-elsewhere proof refuses its
+    // listener on `NEXTEST_TEST_THREADS`), so a fixture never passes them to Effigy.
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|name| {
+            name.starts_with("CARGO_PROFILE_OXIDE_") || name.starts_with("NEXTEST_")
+        }) {
+            command.env_remove(key);
+        }
+    }
     command
 }
 
