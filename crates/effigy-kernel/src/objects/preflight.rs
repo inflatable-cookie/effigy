@@ -103,9 +103,9 @@ impl Objects {
     /// The tree is written `O_EXCL`/0600, its content and directories are
     /// synced, and the kernel's one closure verifier reads it back inside the
     /// deadline. Nothing canonical is created or replaced: this never publishes,
-    /// and it takes no `Gate(Env)`. Recovery of dead seal trees runs first, under
-    /// the objects gate; the seal's own staging runs outside it because it only
-    /// ever writes its own leased, private tree.
+    /// takes no gate and no `Gate(Env)`, and this thread only waits for its
+    /// helper. Recovery of dead seal trees belongs to the fenced publisher, which
+    /// already holds the objects gate.
     pub fn seal_for_preflight(
         cx: &EffectContext,
         root: &StateRoot,
@@ -140,11 +140,8 @@ impl Objects {
         seal.operation()
             .check("preflight seal")
             .map_err(RunError::Interrupted)?;
-        // Recovery owns the objects gate: it removes only seal trees whose lease
-        // proves them dead, and only while it holds that gate. The seal's own
-        // private tree needs no gate and never blocks publishing behind it.
-        recover_gated(&seal, root, deadline)?;
-        let token = token()?;
+        // Everything below is the helper's: the token, the lease, the tree and
+        // the verification read. This thread only waits, bounded by the deadline.
         let (sender, receiver) = mpsc::channel();
         std::thread::Builder::new()
             .name("effigy-object-preflight".into())
@@ -152,11 +149,11 @@ impl Objects {
                 let cx = seal.clone();
                 let root = root.clone();
                 let closure = closure.clone();
-                let token = token.clone();
                 move || {
                     // The helper's whole authority is its own private tree: it
-                    // never removes anything and cannot reach `objects/`.
-                    let _ = sender.send(stage_object(&cx, &root, &closure, &token));
+                    // cannot reach `objects/`, and a tree it abandons is dead
+                    // residue for the fenced publisher's recovery.
+                    let _ = sender.send(stage_object(&cx, &root, &closure));
                 }
             })
             .map_err(|error| {
@@ -185,7 +182,7 @@ impl Objects {
             .map_err(RunError::Interrupted)?;
         Ok(SealedPreflight {
             digest: closure.digest().to_owned(),
-            token,
+            token: staged.token,
             verified_at: staged.verified_at,
             inventory: staged.inventory,
             _lease: staged.lease,
@@ -193,56 +190,71 @@ impl Objects {
     }
 }
 
-/// What the helper hands back: the verified inventory, when it finished, and
-/// the owner lease it keeps open so recovery cannot reclaim a live tree.
+/// What the helper hands back: the token it minted, the verified inventory, when
+/// it finished, and the owner lease it keeps open so recovery cannot reclaim a
+/// live tree.
 struct Staged {
+    token: String,
     verified_at: SystemTime,
     inventory: Vec<SealedEntry>,
     lease: std::fs::File,
 }
 
-/// The helper's whole authority: create its own leased token tree, write it,
-/// sync it and verify it. It never removes anything and never touches
-/// `objects/`.
+/// The helper's whole authority: mint its token, create and lock its own lease,
+/// create, write, sync and verify its tree. It never removes anything and never
+/// touches `objects/`.
 fn stage_object(
     cx: &EffectContext,
     root: &StateRoot,
     closure: &Closure,
-    token: &str,
 ) -> Result<Staged, RunError> {
     let name = validate_digest(closure.digest())?;
+    let token = token()?;
     let staging = root
         .family(Family::Staging)
         .map_err(StoreError::from)?
         .expect("created family");
-    // The lease exists before the directory, so any tree a recovery can see is
-    // either leased by a live owner or provably dead.
-    let lease_name = lease_name(token)?;
+    // The lease is created and locked before the tree, so no tree can exist
+    // before its owner holds the lease and recovery can never see a tree whose
+    // ownership it cannot decide.
+    let lease_path = lease_name(&token)?;
     let (lease, _) = staging
         .open_file(
-            &lease_name,
+            &lease_path,
             libc::O_RDWR | libc::O_EXCL,
             Some(crate::fs::FILE_MODE),
             Trust::Private,
         )
         .map_err(StoreError::from)?
         .expect("created lease");
+    #[cfg(test)]
+    test_hooks::lease_point();
     if !fs::try_flock(&lease, libc::LOCK_EX).map_err(|error| {
         StoreError::from(FsError::io(
             "flock",
-            &staging.join(lease_name.as_str()),
+            &staging.join(lease_path.as_str()),
             &error,
         ))
     })? {
+        // Nobody else can hold a fresh, treeless lease, but a lease this helper
+        // cannot own must not be left behind as if it were live.
+        let _ = staging.remove(&lease_path, false);
         return Err(RunError::unavailable(
             "a preflight seal lease could not be taken",
         ));
     }
-    let tree = tree_name(token)?;
-    let stage = staging
+    let tree = tree_name(&token)?;
+    let stage = match staging
         .child(tree.as_str(), Trust::Private, true)
         .map_err(StoreError::from)?
-        .expect("created staging");
+    {
+        Some(stage) => stage,
+        None => {
+            // Nothing of this seal exists yet: only its own lease is removed.
+            let _ = staging.remove(&lease_path, false);
+            return Err(RunError::broken("the preflight stage was not created"));
+        }
+    };
     let dir = stage
         .child(name.as_str(), Trust::Private, true)
         .map_err(StoreError::from)?
@@ -269,78 +281,59 @@ fn stage_object(
         .check("preflight seal")
         .map_err(RunError::Interrupted)?;
     Ok(Staged {
+        token,
         verified_at: SystemTime::now(),
         inventory: verified.inventory,
         lease,
     })
 }
 
-/// Recovery of dead seal trees, on the caller and under the objects gate: a tree
-/// is removed only when its lease proves no helper and no returned receipt owns
-/// it. A live lease is left exactly as it is, so a helper still writing after
-/// its caller timed out is never raced.
-fn recover_gated(cx: &EffectContext, root: &StateRoot, deadline: Instant) -> Result<(), RunError> {
-    let _guard = lock(cx, root)?;
-    let Some(staging) = root
-        .read_family(Family::Staging)
-        .map_err(StoreError::from)?
-    else {
-        return Ok(());
-    };
+/// Recovers dead seal trees. Only the fenced publisher calls this, while it holds
+/// the objects gate, so it is one bounded gate-held critical section (§5.5) that
+/// removes at most one provably dead tree per publication.
+///
+/// A tree is dead exactly when its lease is acquirable: the lease is created and
+/// locked before the tree exists, and only a publisher that already holds this
+/// gate ever unlinks a lease, so a live helper's tree always carries a held lease
+/// and is never touched. Recovery never inspects a lease that has no tree, so it
+/// cannot unlink one a helper is about to lock.
+pub(crate) fn recover(staging: &DirFd) -> Result<(), StoreError> {
     let entries = staging.list(MAX_FILES).map_err(StoreError::from)?;
     for entry in entries {
-        if Instant::now() >= deadline {
-            // The rest is a later seal's recovery; this seal keeps its budget.
-            return Ok(());
-        }
         let Some(name) = entry
             .to_str()
             .filter(|name| name.starts_with(STAGING_PREFIX))
+            .and_then(|name| FileName::new(name).ok())
         else {
             continue;
         };
-        let Ok(name) = FileName::new(name) else {
-            continue;
-        };
-        if let Some(token) = token_of_lease(name.as_str()) {
-            // A lease with no tree is residue of a completed consumption — but
-            // only a *free* one: an owner creates its lease before its tree, so
-            // a held lease with no tree yet is a live helper mid-create.
-            if staging
-                .entry(&tree_name(token)?)
-                .map_err(StoreError::from)?
-                .is_none()
-            {
-                if let Some((lease, free)) = lease_state(&staging, token)? {
-                    if free {
-                        let _ = staging.remove(&name, false);
-                        let _ = staging.sync();
-                    }
-                    drop(lease);
-                }
-            }
+        // A lease on its own proves nothing about liveness: a helper may be one
+        // syscall away from taking it, so it is never inspected or unlinked.
+        if token_of_lease(name.as_str()).is_some() {
             continue;
         }
         let Some(token) = token_of_tree(name.as_str()) else {
             continue;
         };
-        let Some((lease, free)) = lease_state(&staging, token)? else {
-            // No lease can exist for this tree in this layout, so it is dead
-            // residue from an interrupted create or an older build.
+        let Some((lease, free)) = lease_state(staging, token)? else {
+            // No lease at all: nothing in this layout creates a tree without one
+            // first, so it is dead residue from an older build or a consumed
+            // tree whose lease was already removed. Removal is guarded by the
+            // objects gate this caller holds.
             let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
             let _ = staging.sync();
-            continue;
+            return Ok(());
         };
         if !free {
-            // A live helper or a live receipt owns this tree: never touch it.
+            // A live helper or a live returned receipt owns this tree.
             continue;
         }
         let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
         let _ = staging.remove(&lease_name(token)?, false);
         let _ = staging.sync();
-        // The lease is held until the tree is gone, so no second recovery and
-        // no late helper can interleave.
+        // The lease stays held until the tree is gone.
         drop(lease);
+        return Ok(());
     }
     Ok(())
 }
@@ -355,8 +348,9 @@ fn lease_state(staging: &DirFd, token: &str) -> Result<Option<(std::fs::File, bo
     else {
         return Ok(None);
     };
-    let free = fs::try_flock(&lease, libc::LOCK_EX)
-        .map_err(|error| FsError::io("flock", &staging.join(name.as_str()), &error))?;
+    let free = fs::try_flock(&lease, libc::LOCK_EX).map_err(|error| {
+        StoreError::from(FsError::io("flock", &staging.join(name.as_str()), &error))
+    })?;
     Ok(Some((lease, free)))
 }
 
@@ -458,13 +452,28 @@ fn token_of_lease(name: &str) -> Option<&str> {
 pub(crate) mod test_hooks {
     use std::sync::Mutex;
 
+    /// The helper, between creating its lease and locking it.
+    static LEASE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
     /// The helper, after durable staging and before its verification read.
     static STAGED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
     /// The helper, after verification and before it hands the receipt back.
     static VERIFIED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+    /// The publisher, inside the objects gate, immediately before its
+    /// exclusive no-replace move.
+    static PROMOTE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
     /// The publisher, inside the objects gate, before it consumes a receipt.
     static CONSUME: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
+    pub(crate) fn lease(hook: impl FnOnce() + Send + 'static) {
+        *LEASE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    }
+    pub(crate) fn promote(hook: impl FnOnce() + Send + 'static) {
+        *PROMOTE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    }
     pub(crate) fn staged(hook: impl FnOnce() + Send + 'static) {
         *STAGED
             .lock()
@@ -479,6 +488,12 @@ pub(crate) mod test_hooks {
         *CONSUME
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    }
+    pub(super) fn lease_point() {
+        run(&LEASE);
+    }
+    pub(crate) fn promote_point() {
+        run(&PROMOTE);
     }
     pub(super) fn staged_point() {
         run(&STAGED);

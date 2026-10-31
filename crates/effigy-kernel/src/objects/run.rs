@@ -95,6 +95,8 @@ impl Objects {
                         return Err(RunError::broken("the sealed preflight is not this closure"));
                     }
                     crate::fault_point!(ObjectRenameBefore)?;
+                    #[cfg(test)]
+                    crate::objects::preflight::test_hooks::promote_point();
                     if !tree
                         .move_to_exclusive(&name, &objects, &name)
                         .map_err(StoreError::from)?
@@ -161,6 +163,11 @@ impl Objects {
             })?;
             crate::fault_point!(ObjectRefAfter)?;
             crate::fault_point!(ObjectPublishAfter)?;
+            // Dead seal trees are reclaimed here, under this publication's
+            // objects gate and after its fenced commit: one provably dead tree
+            // per publication keeps the gate-held critical section bounded, and
+            // a stalled removal can never delay or alter the committed result.
+            crate::objects::preflight::recover(&staging)?;
             Ok(closure.digest().to_owned())
         })();
         if result.is_err() {

@@ -495,23 +495,24 @@ During v0.x, MINOR bumps may include breaking changes.
   unchanged.
 - **A container render can be sealed and verified before it is applied, then
   published by the one fenced publisher.** `effigy_kernel::objects::
-  Objects::seal_for_preflight` writes the frozen closure into one private,
-  uniquely tokened `state/staging/preflight-<token>/` tree (`O_EXCL`/0600, synced
-  content and directories), verifies it with the kernel's closure verifier
-  inside the caller's deadline, and returns a typed `SealedPreflight` receipt
-  (digest, token, verified-at and the byte/mode inventory). It publishes nothing:
-  a helper that outlives its caller may write only its own private tree and has
-  no promotion path, and its owner lease keeps recovery from touching a live
-  tree, so a stalled write or sync can finish late only there. `Objects::
-  publish_sealed_desired` is the existing fenced publisher consuming that
-  receipt: it re-verifies the tree under the objects gate, moves it with one
+  Objects::seal_for_preflight` hands the frozen closure to one helper that mints
+  a random token, locks an owner lease (`preflight-<token>.lock`) *before*
+  creating `state/staging/preflight-<token>/` (`O_EXCL`/0600, synced content and
+  directories), verifies the tree with the kernel's closure verifier inside the
+  caller's deadline, and returns a typed `SealedPreflight` receipt (digest, token,
+  verified-at, byte/mode inventory). The calling thread performs no filesystem
+  work, takes no gate and publishes nothing: a helper that outlives its caller
+  can only write its own leased private tree, and a later call cannot race or
+  remove a live lease. `Objects::publish_sealed_desired` is the existing fenced
+  publisher consuming that receipt — same intent, objects gate and reference
+  transaction — re-verifying the tree under the gate, moving it with one
   exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
-  than replacing), verifies any concurrent winner, and records the object row
-  and desired reference in the same transaction. Replay is idempotent, and a
-  private tree altered after sealing never becomes canonical. The kernel's
-  object verifier also refuses an entry the closure digest cannot name, such as
-  an extra empty directory.
+  than replacing), verifying any concurrent winner in full, and reclaiming one
+  provably dead seal tree per publication after its own fenced commit. Replay is
+  idempotent, and a private tree altered after sealing never becomes canonical.
+  The kernel's object verifier also refuses an entry the closure digest cannot
+  name, such as an extra empty directory.
 
 ### Changed
 

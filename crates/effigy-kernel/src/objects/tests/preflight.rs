@@ -1,8 +1,9 @@
 //! Preflight seal proofs for the private-receipt design: the seal never writes
-//! canonical objects, its tree is uniquely tokened, leased, private and
-//! verified, recovery touches only trees whose lease proves them dead, replay is
-//! idempotent, altered trees refuse, a late helper cannot promote, and the
-//! fenced publisher consumes exactly one receipt into the exact closure.
+//! canonical objects and never takes a gate, its tree is uniquely tokened,
+//! leased, private and verified, the fenced publisher recovers only provably
+//! dead trees and consumes exactly one receipt into the exact closure, a live
+//! owner's lease is never raced, replay is idempotent, altered trees refuse, and
+//! a late helper cannot promote.
 use super::*;
 use crate::fs;
 use crate::gate::{Gate, GateState};
@@ -70,22 +71,12 @@ fn seal_entries(home: &Path) -> Vec<PathBuf> {
     paths.sort();
     paths
 }
-/// Whether a lease file is free: the owning helper or receipt is gone.
+/// Whether a lease is free: its owning helper or receipt is gone.
 fn lease_free(lease: &Path) -> bool {
     let Ok(file) = std::fs::File::open(lease) else {
         return true;
     };
     fs::try_flock(&file, libc::LOCK_EX).expect("flock")
-}
-/// Waits until every helper has let go of its lease, so recovery can act.
-fn settled(home: &Path) -> Vec<PathBuf> {
-    let give_up = soon(10_000);
-    loop {
-        if seal_leases(home).iter().all(|lease| lease_free(lease)) || Instant::now() >= give_up {
-            return seal_entries(home);
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
 }
 fn private_dir(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
@@ -123,6 +114,11 @@ fn expected_inventory(closure: &Closure) -> Vec<(String, SealedKind, u32, u64)> 
         }
     }
     entries
+}
+/// The kernel verifier applied to a private tree outside the objects family.
+fn verifies(tree: &Path, closure: &Closure) -> Result<crate::objects::Object, StoreError> {
+    let dir = DirFd::open(tree).unwrap();
+    crate::objects::open(&dir, closure.digest(), &observe())
 }
 /// A run that tolerates a poisoned settlement, for refusal proofs.
 fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -> T) -> T {
@@ -170,6 +166,15 @@ fn attempt_run<T>(home: &Path, name: &str, n: u8, f: impl FnOnce(&mut Run<'_>) -
     let _ = run.settle(&cleanup, &mut NoEffects);
     value
 }
+/// Publishes one receipt through the fenced publisher, as #506's activation
+/// does under Gate(Env).
+fn publish(home: &Path, name: &str, n: u8, receipt: &SealedPreflight, value: &Closure) -> String {
+    with_run(home, name, n, |run| {
+        let digest = Objects::publish_sealed_desired(run, receipt, value).unwrap();
+        Objects::promote(run, value.digest()).unwrap();
+        digest
+    })
+}
 
 #[test]
 fn preflight_seal_returns_a_verified_private_receipt_and_no_canonical_object() {
@@ -213,14 +218,12 @@ fn preflight_seal_returns_a_verified_private_receipt_and_no_canonical_object() {
     assert_eq!(count(&store, "SELECT count(*) FROM objects"), 0);
     assert_eq!(count(&store, "SELECT count(*) FROM object_refs"), 0);
     drop(store);
-    // Dropping the receipt releases the lease; recovery may then reclaim it.
     drop(receipt);
-    assert!(lease_free(&lease));
+    assert!(lease_free(&lease), "dropping the receipt frees its lease");
 }
 
 /// A deadline that expires mid-seal leaves only the helper's own private token
-/// tree, never a canonical path, and the helper cannot promote after the caller
-/// returns.
+/// tree, never a canonical path, and the late helper cannot promote.
 #[test]
 fn preflight_seal_timeout_leaves_only_the_helpers_private_tree() {
     let home = tempfile::tempdir().unwrap();
@@ -247,8 +250,6 @@ fn preflight_seal_timeout_leaves_only_the_helpers_private_tree() {
         matches!(result, Err(RunError::Unavailable(_))),
         "{result:?}"
     );
-    // The helper is still parked with its lease held, and it is the only thing
-    // on disk: one private token dir, one lease, and no canonical path.
     assert!(!objects_dir(home.path()).exists());
     let dirs = seal_dirs(home.path());
     assert_eq!(dirs.len(), 1, "only the helper's own token tree");
@@ -269,25 +270,89 @@ fn preflight_seal_timeout_leaves_only_the_helpers_private_tree() {
         );
     }
     // Release the late helper. It has no promotion path, so the object still
-    // cannot appear, and its dead tree waits for recovery.
+    // cannot appear, and its dead tree waits for the publisher's recovery.
     let _ = release_tx.send(());
-    assert_eq!(
-        settled(home.path()).len(),
-        2,
-        "the tree and its lease remain"
-    );
+    let give_up = soon(10_000);
+    while !lease_free(&leases[0]) && Instant::now() < give_up {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(lease_free(&leases[0]), "the late helper is gone");
     assert!(
         !objects_dir(home.path()).exists(),
         "a late helper promoted nothing"
     );
-    // The next seal's recovery reclaims it under the objects gate.
+    // The next publication recovers the dead tree and consumes its own receipt.
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let receipt = seal(&cx, &root, &value).unwrap();
-    assert_eq!(receipt.digest(), value.digest());
-    assert_eq!(seal_dirs(home.path()).len(), 1, "only the new seal remains");
-    assert_eq!(seal_leases(home.path()).len(), 1);
+    assert_eq!(
+        publish(home.path(), "dev", 1, &receipt, &value),
+        value.digest()
+    );
+    assert!(
+        seal_entries(home.path()).is_empty(),
+        "the dead tree was recovered and the live receipt consumed"
+    );
+}
+
+/// The lease is created before it is locked, but a concurrent recovery never
+/// inspects a lease that has no tree: a helper parked at that boundary keeps its
+/// lease and completes normally afterwards.
+#[test]
+fn preflight_recovery_never_races_an_owner_at_the_lease_boundary() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("lease");
+    // A first receipt to publish, so recovery runs while helper #2 is parked.
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let other = closure("other");
+    let publishable = seal(&cx, &root, &other).unwrap();
+    // Park a second helper between creating its lease and locking it.
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    test_hooks::lease(move || {
+        let _ = entered_tx.send(());
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+    let sealed_home = home.path().to_path_buf();
+    let sealed_value = value.clone();
+    let parked = std::thread::spawn(move || {
+        let cx = context(EffectClass::Mutate);
+        let root = StateRoot::effects(&cx, &sealed_home).unwrap();
+        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(30_000))
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the helper parked at its lease boundary");
+    let parked_leases: Vec<_> = seal_leases(home.path())
+        .into_iter()
+        .filter(|lease| !lease_free(lease))
+        .collect();
+    let unlocked_leases: Vec<_> = seal_leases(home.path())
+        .into_iter()
+        .filter(|lease| lease_free(lease))
+        .collect();
+    assert_eq!(parked_leases.len(), 1, "the publishable receipt's lease");
+    assert_eq!(unlocked_leases.len(), 1, "the parked helper's fresh lease");
+    // A full publication runs recovery while that lease is unlocked and tree-less.
+    assert_eq!(
+        publish(home.path(), "dev", 1, &publishable, &other),
+        other.digest()
+    );
+    assert!(
+        unlocked_leases[0].exists(),
+        "recovery never unlinks a lease that has no tree"
+    );
+    // The parked helper now locks its own lease and finishes normally.
+    let _ = release_tx.send(());
+    let receipt = parked.join().unwrap().unwrap();
+    assert!(receipt.matches(&value));
     assert!(tree_dir(home.path(), &receipt).exists());
+    assert!(!lease_free(&lease_dir(home.path(), &receipt)));
+    assert_eq!(
+        publish(home.path(), "dev", 2, &receipt, &value),
+        value.digest()
+    );
 }
 
 /// Recovery never touches a tree whose lease is held, so a helper still working
@@ -307,40 +372,44 @@ fn preflight_recovery_leaves_a_live_helpers_tree_alone() {
     let late = std::thread::spawn(move || {
         let cx = context(EffectClass::Mutate);
         let root = StateRoot::effects(&cx, &sealed_home).unwrap();
-        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(120))
+        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(120_000))
     });
     entered_rx
         .recv_timeout(Duration::from_secs(20))
         .expect("the first helper reached its durable stage");
     let live_dir = seal_dirs(home.path())[0].clone();
     let live_lease = seal_leases(home.path())[0].clone();
-    // A second seal runs its recovery while the first helper still lives.
+    // A publication runs recovery while the first helper still lives.
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let second = seal(&cx, &root, &value).unwrap();
-    assert_eq!(seal_dirs(home.path()).len(), 2);
+    assert_eq!(
+        publish(home.path(), "dev", 1, &second, &value),
+        value.digest()
+    );
     assert!(live_dir.exists(), "the live helper's tree is untouched");
     assert!(
         std::fs::read(live_dir.join(value.digest()).join("compose.yaml")).is_ok(),
         "the live helper's bytes are untouched"
     );
     assert!(!lease_free(&live_lease), "its lease is still held");
-    // The live helper now finishes its own seal; its receipt stays valid.
+    // It now finishes its own seal; its receipt stays valid and publishable.
     let _ = release_tx.send(());
     let first = late.join().unwrap().unwrap();
     assert!(first.matches(&value));
+    assert_eq!(first.inventory(), second.inventory());
     assert_eq!(
-        first.inventory(),
-        second.inventory(),
-        "two seals of one closure verify the same inventory"
+        publish(home.path(), "dev", 2, &first, &value),
+        value.digest()
     );
-    assert_eq!(first.digest(), second.digest());
+    assert!(seal_entries(home.path()).is_empty());
 }
 
-/// A crash leaves a dead leased tree; recovery removes exactly that tree under
-/// the objects gate and never a run's own staging tree.
+/// A crash leaves a dead leased tree that a restarted process can still verify;
+/// recovery then removes exactly that tree under the objects gate, keeps a
+/// run-owned staging tree, and the publisher makes the exact closure canonical.
 #[test]
-fn preflight_recovery_removes_exactly_the_dead_token_tree_after_a_crash() {
+fn preflight_restart_verifies_a_crash_durable_tree_and_recovery_removes_it() {
     let home = tempfile::tempdir().unwrap();
     let value = closure("crash");
     let cx = context(EffectClass::Mutate);
@@ -385,34 +454,51 @@ fn preflight_recovery_removes_exactly_the_dead_token_tree_after_a_crash() {
     let leases = seal_leases(home.path());
     assert_eq!(leases.len(), 1);
     assert!(lease_free(&leases[0]), "a dead helper's lease is free");
+    // This process is a restart: it never saw that tree, and the kernel verifier
+    // still reads back exactly the closure it sealed.
+    let verified = verifies(&dirs[0], &value).expect("a crash-durable tree verifies");
+    assert_eq!(verified.closure, value);
+    assert_eq!(verified.inventory.len(), expected_inventory(&value).len());
+    // Trust after the restart is re-verified, not assumed: a widened mode and an
+    // extra entry each refuse against the same restarted verifier.
     let digest_dir = dirs[0].join(value.digest());
-    assert_eq!(mode(&dirs[0]), 0o700);
-    assert_eq!(mode(&digest_dir), 0o700);
-    for (path, bytes) in value.files() {
-        let file = digest_dir.join(path);
-        assert_eq!(mode(&file), 0o600);
-        assert_eq!(std::fs::read(&file).unwrap(), *bytes);
-    }
+    let compose = digest_dir.join("compose.yaml");
+    std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o640)).unwrap();
+    assert!(
+        verifies(&dirs[0], &value).is_err(),
+        "widened mode after restart"
+    );
+    std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let stray = digest_dir.join("stray");
+    std::fs::write(&stray, b"unexpected").unwrap();
+    std::fs::set_permissions(&stray, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(
+        verifies(&dirs[0], &value).is_err(),
+        "extra entry after restart"
+    );
+    std::fs::remove_file(&stray).unwrap();
+    private_dir(&digest_dir.join("empty"));
+    assert!(
+        verifies(&dirs[0], &value).is_err(),
+        "extra empty dir after restart"
+    );
+    std::fs::remove_dir(digest_dir.join("empty")).unwrap();
+    assert!(verifies(&dirs[0], &value).is_ok());
     assert!(!objects_dir(home.path()).exists());
-    // A fresh seal recovers exactly the dead tree, leaves the run tree alone and
-    // publishes nothing itself.
+    // A publication recovers exactly the dead tree, leaves the run tree alone,
+    // and makes the exact closure canonical.
     let receipt = seal(&cx, &root, &value).unwrap();
-    assert_eq!(seal_dirs(home.path()).len(), 1);
-    assert_eq!(seal_leases(home.path()).len(), 1);
-    assert!(tree_dir(home.path(), &receipt).exists());
+    assert_eq!(
+        publish(home.path(), "dev", 2, &receipt, &value),
+        value.digest()
+    );
+    assert!(!dirs[0].exists(), "the dead tree was removed");
+    assert!(!leases[0].exists(), "its lease went with it");
     assert!(
         owned.is_dir(),
         "a run's own staging tree is never recovered"
     );
-    assert!(!objects_dir(home.path()).exists());
-    // The fenced publisher then makes exactly that closure canonical.
-    with_run(home.path(), "dev", 2, |run| {
-        assert_eq!(
-            Objects::publish_sealed_desired(run, &receipt, &value).unwrap(),
-            value.digest()
-        );
-        Objects::promote(run, value.digest()).unwrap();
-    });
+    assert!(seal_entries(home.path()).is_empty());
     assert_eq!(
         read(home.path(), "dev", Role::Desired)
             .verified()
@@ -438,22 +524,20 @@ fn preflight_replay_is_idempotent_and_the_publisher_consumes_one_receipt() {
     assert_ne!(first.token(), second.token());
     assert_eq!(seal_dirs(home.path()).len(), 2);
     assert!(!objects_dir(home.path()).exists());
-    with_run(home.path(), "dev", 1, |run| {
-        assert_eq!(
-            Objects::publish_sealed_desired(run, &second, &value).unwrap(),
-            value.digest()
-        );
-        Objects::promote(run, value.digest()).unwrap();
-    });
+    assert_eq!(
+        publish(home.path(), "dev", 1, &second, &value),
+        value.digest()
+    );
     let observed = read(home.path(), "dev", Role::Desired);
     let canonical = observed.verified().unwrap();
     assert_eq!(canonical.closure, value);
     assert_eq!(canonical.inventory, second.inventory());
-    // The consumed receipt's tree and lease are gone; the other receipt still
-    // owns its own private tree.
     assert!(!tree_dir(home.path(), &second).exists());
     assert!(!lease_dir(home.path(), &second).exists());
-    assert!(tree_dir(home.path(), &first).exists());
+    assert!(
+        tree_dir(home.path(), &first).exists(),
+        "a live receipt's tree is not recovered"
+    );
     // A further seal of the same closure still yields the same digest, and its
     // publication is a no-op that keeps the canonical object.
     use std::os::unix::fs::MetadataExt;
@@ -462,18 +546,31 @@ fn preflight_replay_is_idempotent_and_the_publisher_consumes_one_receipt() {
         .ino();
     let third = seal(&cx, &root, &value).unwrap();
     assert_eq!(third.digest(), value.digest());
-    with_run(home.path(), "dev", 2, |run| {
-        assert_eq!(
-            Objects::publish_sealed_desired(run, &third, &value).unwrap(),
-            value.digest()
-        );
-    });
+    assert_eq!(
+        publish(home.path(), "dev", 2, &third, &value),
+        value.digest()
+    );
     assert_eq!(
         std::fs::metadata(objects_dir(home.path()).join(value.digest()))
             .unwrap()
             .ino(),
         inode,
         "an already canonical object is never rewritten"
+    );
+    // The first receipt is still alive, so its tree is not recovery's to remove.
+    assert!(tree_dir(home.path(), &first).exists());
+    assert_eq!(seal_dirs(home.path()).len(), 1);
+    assert!(!tree_dir(home.path(), &third).exists());
+    // Dropping it makes the tree dead, and the next publication reclaims it.
+    drop(first);
+    let fourth = seal(&cx, &root, &value).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 3, &fourth, &value),
+        value.digest()
+    );
+    assert!(
+        seal_entries(home.path()).is_empty(),
+        "every dead seal tree is recovered"
     );
 }
 
@@ -489,14 +586,11 @@ fn preflight_seal_refuses_altered_bytes_modes_and_extra_entries() {
     let tree = tree_dir(home.path(), &receipt);
     let digest_dir = tree.join(value.digest());
     let compose = digest_dir.join("compose.yaml");
-    let observe = cx.operation().observe().unwrap();
-    let verifies = || crate::objects::open(&DirFd::open(&tree).unwrap(), value.digest(), &observe);
 
-    // A changed byte.
     let original = std::fs::read(&compose).unwrap();
     std::fs::write(&compose, b"FROM elsewhere\n").unwrap();
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(verifies().is_err(), "altered bytes refuse");
+    assert!(verifies(&tree, &value).is_err(), "altered bytes refuse");
     assert!(
         attempt_run(home.path(), "dev", 1, |run| {
             Objects::publish_sealed_desired(run, &receipt, &value).is_err()
@@ -509,31 +603,29 @@ fn preflight_seal_refuses_altered_bytes_modes_and_extra_entries() {
     );
     std::fs::write(&compose, &original).unwrap();
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(verifies().is_ok());
+    assert!(verifies(&tree, &value).is_ok());
 
-    // A widened mode.
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(verifies().is_err(), "a widened mode refuses");
+    assert!(verifies(&tree, &value).is_err(), "a widened mode refuses");
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(verifies().is_ok());
+    assert!(verifies(&tree, &value).is_ok());
 
-    // An extra file, then an extra empty directory: neither is nameable.
     let stray = digest_dir.join("stray");
     std::fs::write(&stray, b"unexpected").unwrap();
     std::fs::set_permissions(&stray, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(verifies().is_err(), "an extra file refuses");
+    assert!(verifies(&tree, &value).is_err(), "an extra file refuses");
     std::fs::remove_file(&stray).unwrap();
     private_dir(&digest_dir.join("empty"));
-    assert!(verifies().is_err(), "an extra empty directory refuses");
+    assert!(
+        verifies(&tree, &value).is_err(),
+        "an extra empty directory refuses"
+    );
     std::fs::remove_dir(digest_dir.join("empty")).unwrap();
-    assert!(verifies().is_ok());
-    // A restored tree is consumed into the exact closure.
-    with_run(home.path(), "dev", 3, |run| {
-        assert_eq!(
-            Objects::publish_sealed_desired(run, &receipt, &value).unwrap(),
-            value.digest()
-        );
-    });
+    assert!(verifies(&tree, &value).is_ok());
+    assert_eq!(
+        publish(home.path(), "dev", 3, &receipt, &value),
+        value.digest()
+    );
     assert_eq!(
         read(home.path(), "dev", Role::Desired)
             .verified()
@@ -617,7 +709,7 @@ fn preflight_publisher_waits_for_the_objects_gate() {
     let holder_cx = context(EffectClass::Mutate);
     let holder_root = StateRoot::effects(&holder_cx, home.path()).unwrap();
     let (held_tx, held_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
     let holder = std::thread::spawn(move || {
         let _guard = crate::objects::lock(&holder_cx, &holder_root).unwrap();
         held_tx.send(()).unwrap();
@@ -655,15 +747,16 @@ fn preflight_publisher_waits_for_the_objects_gate() {
     );
 }
 
-/// The seal's own gate wait, for recovery, is bounded by its deadline.
+/// The seal takes no gate at all: it stages and verifies while publishing is
+/// locked elsewhere, and only the publisher ever needs that gate.
 #[test]
-fn preflight_seal_gate_wait_is_bounded_by_the_deadline() {
+fn preflight_seal_needs_no_objects_gate() {
     let home = tempfile::tempdir().unwrap();
-    let value = closure("busy");
+    let value = closure("ungated");
     let holder_cx = context(EffectClass::Mutate);
     let holder_root = StateRoot::effects(&holder_cx, home.path()).unwrap();
     let (held_tx, held_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
     let holder = std::thread::spawn(move || {
         let _guard = crate::objects::lock(&holder_cx, &holder_root).unwrap();
         held_tx.send(()).unwrap();
@@ -675,25 +768,21 @@ fn preflight_seal_gate_wait_is_bounded_by_the_deadline() {
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let started = Instant::now();
-    let result = Objects::seal_for_preflight(&cx, &root, &value, soon(80));
-    let waited = started.elapsed();
+    let receipt = seal(&cx, &root, &value).expect("the seal is gate-free");
     assert!(
-        matches!(
-            result,
-            Err(RunError::Store(StoreError::Gate(ref error)))
-                if matches!(**error, crate::gate::GateError::TimedOut { .. })
-        ),
-        "a busy gate refuses at the deadline"
+        started.elapsed() < Duration::from_millis(1_000),
+        "the seal never waits for the objects gate"
     );
-    assert!(waited < Duration::from_millis(1_000), "{waited:?}");
+    assert!(receipt.matches(&value));
+    assert!(!objects_dir(home.path()).exists());
     let _ = release_tx.send(());
     holder.join().unwrap();
-    assert!(seal_dirs(home.path()).is_empty());
-    assert!(!objects_dir(home.path()).exists());
+    assert_eq!(
+        publish(home.path(), "dev", 1, &receipt, &value),
+        value.digest()
+    );
 }
 
-/// The seal keeps its class and capability contract even though it publishes
-/// nothing: only a Prepare/Mutate operation with SourceStore may seal.
 #[test]
 fn preflight_seal_refuses_read_only_and_cancelled_operations() {
     let home = tempfile::tempdir().unwrap();
@@ -745,8 +834,112 @@ fn exclusive_move_never_replaces_an_existing_entry() {
     );
 }
 
-/// Two claims on one closure: concurrent publications of two receipts make one
-/// canonical object with the exact bytes.
+/// The exclusive move's losing branch: when a concurrent winner already holds
+/// the digest, the publisher fully verifies it and accepts only the exact
+/// closure, never replacing the winner.
+#[test]
+fn preflight_publisher_verifies_a_concurrent_winner() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("winner");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    let (path, planted) = (home.path().to_path_buf(), value.clone());
+    test_hooks::promote(move || {
+        // A competing publisher won the digest while this one held the gate.
+        plant_object(&objects_dir(&path), &planted);
+    });
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(
+        publish(home.path(), "dev", 1, &receipt, &value),
+        value.digest()
+    );
+    let dir = objects_dir(home.path()).join(value.digest());
+    assert_eq!(
+        std::fs::read(dir.join("compose.yaml")).unwrap(),
+        *value.files()["compose.yaml"],
+        "the winner's bytes were verified, never replaced"
+    );
+    assert_eq!(mode(&dir.join("compose.yaml")), 0o600);
+    let planted_inode = std::fs::metadata(dir.join("compose.yaml")).unwrap().ino();
+    assert!(planted_inode != 0);
+    assert!(
+        !tree_dir(home.path(), &receipt).exists(),
+        "the receipt is consumed"
+    );
+    assert_eq!(
+        read(home.path(), "dev", Role::Desired)
+            .verified()
+            .unwrap()
+            .closure,
+        value
+    );
+}
+
+/// The losing branch never trusts an unsafe winner: a widened mode refuses, and
+/// the private receipt is not published.
+#[test]
+fn preflight_publisher_refuses_an_unsafe_concurrent_winner() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("unsafe");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    let (path, planted) = (home.path().to_path_buf(), value.clone());
+    test_hooks::promote(move || {
+        plant_object_with_mode(&objects_dir(&path), &planted, 0o644);
+    });
+    let result = attempt_run(home.path(), "dev", 1, |run| {
+        Objects::publish_sealed_desired(run, &receipt, &value)
+    });
+    assert!(
+        result.is_err(),
+        "an unsafe winner is not trusted: {result:?}"
+    );
+    assert!(
+        !objects_dir(home.path())
+            .join(value.digest())
+            .join("compose.yaml")
+            .exists()
+            || mode(
+                &objects_dir(home.path())
+                    .join(value.digest())
+                    .join("compose.yaml")
+            ) == 0o644,
+        "the unsafe winner was neither trusted nor replaced"
+    );
+    let store = store(&cx, &root);
+    assert_eq!(count(&store, "SELECT count(*) FROM object_refs"), 0);
+}
+
+/// A winner whose bytes are not this closure's digest is refused too.
+#[test]
+fn preflight_publisher_refuses_a_corrupt_concurrent_winner() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("corrupt");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    let path = home.path().to_path_buf();
+    let digest = value.digest().to_owned();
+    test_hooks::promote(move || {
+        let dir = objects_dir(&path).join(&digest);
+        private_dir(&dir);
+        std::fs::write(dir.join("compose.yaml"), b"FROM foreign\n").unwrap();
+        std::fs::set_permissions(
+            dir.join("compose.yaml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    });
+    let result = attempt_run(home.path(), "dev", 1, |run| {
+        Objects::publish_sealed_desired(run, &receipt, &value)
+    });
+    assert!(result.is_err(), "a corrupt winner is refused: {result:?}");
+}
+
+/// Two publications of one closure from two receipts make one canonical object
+/// with the exact bytes and consume both trees.
 #[test]
 fn preflight_publication_race_makes_one_canonical_object() {
     let home = tempfile::tempdir().unwrap();
@@ -787,11 +980,36 @@ fn preflight_publication_race_makes_one_canonical_object() {
         1,
         "one object for one digest"
     );
-    assert_eq!(
-        std::fs::read_dir(staging_dir(home.path())).unwrap().count(),
-        0,
-        "both receipts were consumed under the gate"
-    );
+    assert!(seal_entries(home.path()).is_empty());
+}
+
+fn plant_object(objects: &Path, closure: &Closure) -> PathBuf {
+    plant_object_with_mode(objects, closure, crate::fs::FILE_MODE)
+}
+
+fn plant_object_with_mode(objects: &Path, closure: &Closure, file_mode: u32) -> PathBuf {
+    let dir = objects.join(closure.digest());
+    private_dir(&dir);
+    for (path, bytes) in closure.files() {
+        let target = dir.join(path);
+        if let Some(parent) = target.parent() {
+            private_dir(parent);
+        }
+        std::fs::write(&target, bytes).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(file_mode)).unwrap();
+    }
+    settle_modes(&dir);
+    dir
+}
+
+fn settle_modes(dir: &Path) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            settle_modes(&path);
+        }
+    }
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 // --- A helper process killed after verification, before its receipt returns. ---

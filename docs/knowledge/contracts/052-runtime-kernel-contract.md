@@ -2432,34 +2432,36 @@ nor holder records are added to the machine database.
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
 
 Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
-preflight seal (§7.1–§7.4, effigy#509) **never publishes**: it writes one
-private, uniquely tokened tree (`preflight-<token>/`, `O_EXCL`/0600, content and
-directories synced) beside its owner lease (`preflight-<token>.lock`, held by
-`flock`), verifies the tree with the kernel closure verifier inside the caller's
-deadline, and returns a typed `SealedPreflight` receipt carrying the digest, the
-token, when verification finished and the byte/mode inventory of every entry. The
-lease is created before the tree, so recovery — which runs under the objects gate
-and stops at its own caller's deadline — removes only trees whose lease proves
-them dead; a live helper's or a live receipt's tree is never removed or raced. A
-helper that outlives its caller may write only its own private tree, holds no
-gate and has no promotion path at all.
+preflight seal (§7.1–§7.4, effigy#509) **never publishes**: one helper thread
+mints a random token, creates and locks the owner lease
+(`preflight-<token>.lock`, `flock`) **before** creating the tree, writes
+`preflight-<token>/` (`O_EXCL`/0600, content and directories synced), verifies it
+with the kernel closure verifier inside the caller's deadline, and hands back
+`SealedPreflight { digest, token, verified_at, inventory }`. The sealing thread
+performs no filesystem work at all — it only spawns that helper and waits with a
+bounded receive — so the deadline bounds every wait and decision it takes, and a
+stalled syscall can finish late only inside that private tree. The seal takes no
+gate and no `Gate(Env)`.
+
+Because the lease is created and locked before the tree exists, and only a
+publisher that already holds the objects gate ever unlinks a lease, a tree is
+dead exactly when its lease is acquirable; a live helper's or a live returned
+receipt's tree always carries a held lease and is never removed or raced.
+Recovery never inspects a lease that has no tree, so it cannot unlink one a
+helper is about to lock.
 
 Canonical promotion stays exactly where it was: the fenced publisher.
 `publish_sealed_desired` is that same publisher — one journalled intent, one
 objects gate, one reference transaction — consuming a receipt as its source: it
 re-verifies the private tree under the gate, moves it with one exclusive
-no-replace rename, verifies any concurrent winner, and records the object row and
-desired reference exactly as `publish_desired` does. There is no second
-publisher, no direct preflight promotion and no revocable-rename primitive. Seal
-trees never name a run and a run's own staging tree is still removed only by its
-durable settle.
-
-The seal's deadline bounds every wait and decision it takes — the objects gate
-wait for recovery, the helper's staging and verification, and the hand-off of the
-receipt — so a stalled single filesystem syscall can finish late only inside that
-private tree, never in canonical objects (K8's no detached canonical writer).
-The publisher's own deadline is §5.5's record semantics, the same limit
-`atomic_replace` already has.
+no-replace rename, verifies any concurrent winner in full, and records the object
+row and desired reference exactly as `publish_desired` does. There is no second
+publisher, no direct preflight promotion and no revocable-rename primitive. That
+publisher also reclaims **one** provably dead seal tree per publication, under
+the same gate and after its own fenced commit, so recovery is one bounded
+gate-held critical section (§5.5) that can never delay or alter a committed
+publication result. Seal trees never name a run and a run's own staging tree is
+still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
