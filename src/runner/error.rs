@@ -413,7 +413,10 @@ impl RunnerError {
                         human
                     }
                 }
-                None => human_error_from_display(&self.to_string()),
+                None => match self {
+                    RunnerError::CommandJsonFailure { rendered } => text_payload_human(rendered),
+                    _ => human_error_from_display(&self.to_string()),
+                },
             },
         }
     }
@@ -697,6 +700,28 @@ fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effi
         error = error.next_action(action);
     }
     error
+}
+
+/// A command payload that is text, not a JSON object. The text prints as
+/// written, so the first line says what failed and the last `next:` line is
+/// the action. The `--json` form carries that same action, not `null`.
+fn text_payload_human(rendered: &str) -> effigy_ui::HumanError {
+    let what_failed = rendered
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("the command failed");
+    let human = effigy_ui::HumanError::new(what_failed);
+    let next = rendered
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("next:"))
+        .map(str::trim)
+        .filter(|action| !action.is_empty());
+    match next {
+        Some(action) => human.next_action(action),
+        None => human,
+    }
 }
 
 /// Lift a rendered refusal into the three facts, without inventing any: the

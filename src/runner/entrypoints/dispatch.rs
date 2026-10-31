@@ -29,15 +29,6 @@ use super::super::run_workspace;
 use super::super::{run_changelog, run_fmt};
 use crate::runner::error::RunnerError;
 
-pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
-    let context = EffigyRuntimeContext::capture_lossy(
-        None,
-        crate::runner::command_context::command_repo_override_for_context(&cmd),
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    run_command_with_context(cmd, &context)
-}
-
 pub(super) fn run_command_with_context(
     cmd: Command,
     context: &EffigyRuntimeContext,

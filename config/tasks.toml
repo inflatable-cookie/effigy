@@ -337,6 +337,16 @@
 "test:doctor:inventory" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file .config/nextest.toml --user-config-file none -p effigy-scan --lib -E 'test(execution::doctor_inventory::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "fmt:kernel:write-churn" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-kernel/src/supervise.rs crates/effigy-kernel/src/supervise/tests.rs crates/effigy-kernel/src/fault.rs crates/effigy-scan/src/execution/doctor_inventory.rs" }
 "test:kernel:custody:linux" = { durable = true, visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-custody", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh", timeout_ms = 1800000 }] }
+# The real post-capability custody shape (effigy#476), natively on Linux: a
+# single-link `effigy` image carrying cap_net_bind_service, an unprivileged
+# owner, and two fresh bind probes through the custody Run. This selector is the
+# only supported entry point, so the proof runs under Effigy's own admission;
+# the only privileged step is `sudo -n setcap` on the disposable copy inside the
+# run's fresh fixture. It refuses cleanly on a host without setcap/sudo.
+"proof:kernel:custody:capability" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
+  { id = "build", run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 },
+  { id = "capability-anchor", run = "sh crates/effigy-kernel/tests/scripts/custody-capability.sh target/debug/effigy", timeout_ms = 900000 },
+] }
 "test:kernel:custody:signals" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody -E 'test(custody_signal_and_owner_kill_matrix_settles_without_survivors)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },

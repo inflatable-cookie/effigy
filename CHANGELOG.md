@@ -87,6 +87,12 @@ During v0.x, MINOR bumps may include breaking changes.
   captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+- Bump `rustls-webpki` 0.103.15 → 0.103.16 and `webpki-root-certs` 1.0.9 →
+  1.0.10, clearing RUSTSEC-2026-0382 and RUSTSEC-2026-0383 in every TLS path
+  Effigy ships (the workspace host channel and the gateway). Lockfile-only:
+  no API, behaviour or configuration change. These were the versions the
+  `check:supply-chain` (`cargo deny`) gate refused on `main`, which is what
+  bounced unrelated work until the bump landed.
 
 ### Breaking
 
@@ -705,6 +711,18 @@ During v0.x, MINOR bumps may include breaking changes.
   thing it awaits instead of a runtime report that never comes. Each site's
   disposition is recorded in
   [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed pane keeps the colour its captured child would have drawn, and its
+  captured byte stream stays plain.** A nested Cargo or Oxide producer whose
+  output Effigy captures through its custody writer receives the initiating
+  pane's ANSI capability and keeps its colour in the pane, while that captured
+  log and every `--json`, doctor, status and error reader keep sanitized plain
+  text and never interpret terminal controls. `NO_COLOR`, CI and an explicit
+  colour preference still win, and a pane without ANSI support, or one whose
+  style window expired, renders plain text. This is a statement about the
+  captured stream only: output a child writes through a descriptor it inherited,
+  instead of through that writer, is outside it, and securing that direct log
+  path is open lead `a52a71e5`, not a v0.15 claim. See
+  [guide 012](docs/guides/012-dev-process-manager-tui.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while
@@ -875,6 +893,11 @@ During v0.x, MINOR bumps may include breaking changes.
   first publishes, and the second adopts that checkout when it matches the pin.
   A published checkout at another revision fails the second run and is left
   untouched. Where the checkout lands does not change.
+- **A text-only command failure carries its next action in `--json`.** A
+  failure whose payload is text, not a JSON object, now puts its `next:` line in
+  `error.human.next_action`, the same action the text form prints. Its
+  `what_failed` is the payload's first line, not a generic `json output
+  available` sentence. A failure with no action keeps `next_action: null`.
 - **Bundle source steps name what they do, and warnings stay off `--json`.** A
   local `path` source reads `snapshotting local bundle <name>` and
   `snapshotted local bundle <name>`, not a fetch. Each source's step ends once,
@@ -1222,6 +1245,30 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
   before handoff and authenticates the bytes launched through that entry.
+
+- `effigy gateway setup` settles on Linux after it installs the low-port
+  capability. The installed `effigy` then carries
+  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
+  exec: the kernel clears the process's dumpable attribute, and
+  `/proc/<pid>/environ` refuses the operator's own reads. Two kernel rules did
+  it: the secure exec cleared the anchor's dumpable attribute, and the ptrace
+  access check grants a read only when the reader's permitted capabilities
+  cover the target's, which an unprivileged operator never does. The group
+  anchor re-execs that same image, so custody could no longer read the anchor's
+  nonce, refused to signal it, and the setup run timed out in settle with the
+  process group still held by an anchor nobody could verify. The anchor now
+  drops every capability it inherited and restores the ordinary dumpable state
+  at entry, then verifies both — it runs no workload code, needs no capability
+  and holds no secret beyond the nonce the contract asks it to expose — so the
+  recorded generation, group and nonce still prove identity before any signal,
+  while the work it belongs to keeps its own capabilities and low-port bind.
+  A settle that still cannot finish now names the effect's own sequence, the
+  redacted label its intent recorded and the recorded custody reason instead of
+  only the elapsed wait, and `gateway setup` reports those entries when cleanup
+  is incomplete — including when the last open effect is the one that stayed
+  unresolved and no later effect can carry its reason. Every setup adapter
+  child also records which program it runs, so two identically labelled setup
+  commands stay attributable.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy
