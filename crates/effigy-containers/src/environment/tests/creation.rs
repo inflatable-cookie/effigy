@@ -11,7 +11,6 @@
 //! timed-out window and a retry.
 
 use super::*;
-use crate::environment::creation::ImageIdSource;
 use effigy_kernel::gate::Wait;
 use effigy_kernel::objects::Closure;
 
@@ -41,6 +40,22 @@ const BEFORE_APPLY: &str = "2000-01-01T00:00:00.000000000Z";
 
 fn evidence() -> Evidence {
     Evidence::new("fake creation window".to_owned(), None).expect("fixed evidence")
+}
+
+/// The admitted render with one image per service, so a proof can move one
+/// service's tag without moving another's.
+fn render_images(services: &[(&str, &str)]) -> Closure {
+    let mut compose = String::from("services:\n");
+    for (service, image) in services {
+        compose.push_str(&format!(
+            "  {service}:\n    image: {image}\n    labels:\n      com.effigy.managed: \"true\"\n      com.effigy.project: {PROJECT}\n      com.effigy.scope: {SCOPE}\n      com.effigy.checkout: {CHECKOUT}\n",
+        ));
+    }
+    Closure::new(BTreeMap::from([(
+        "compose.yml".to_owned(),
+        compose.into_bytes(),
+    )]))
+    .expect("render closure")
 }
 
 /// The admitted render, declaring one service per entry with the ownership
@@ -112,6 +127,10 @@ struct Inventories {
     /// keeps answering `IMAGE_ID`, which is the ordinary stable case.
     image_answers: VecDeque<Observed<String>>,
     image_reads: Rc<RefCell<Vec<String>>>,
+    /// The tag every reference answers when nothing is scripted. A proof that
+    /// moves a tag *inside* the window holds a clone and changes it between the
+    /// two endpoint readings.
+    tag: Rc<RefCell<Observed<String>>>,
 }
 
 impl Inventories {
@@ -122,7 +141,17 @@ impl Inventories {
             reads: Rc::new(RefCell::new(Vec::new())),
             image_answers: VecDeque::new(),
             image_reads: Rc::new(RefCell::new(Vec::new())),
+            tag: Rc::new(RefCell::new(Observed::Verified(
+                IMAGE_ID.to_owned(),
+                evidence(),
+            ))),
         }
+    }
+
+    /// The mutable tag this backend's image table answers with, so a proof can
+    /// retag it between the window's two endpoint readings.
+    fn tag(&self) -> Rc<RefCell<Observed<String>>> {
+        Rc::clone(&self.tag)
     }
 
     /// One inventory read: the window takes the before read first, then the
@@ -190,7 +219,7 @@ impl EnvironmentBackend for Inventories {
                 self.image_answers.push_back(answer.clone());
                 answer
             }
-            None => Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+            None => self.tag.borrow().clone(),
         }
     }
 }
@@ -575,83 +604,32 @@ fn a_render_image_missing_before_the_apply_refuses_the_window() {
     );
 }
 
-/// nerdctl reports only a reference (the engine exposes no container image id),
-/// so the bind is the render's declared reference resolved on this backend
-/// immediately before and after the apply, stable across the window, with the
-/// container reporting that same reference. The receipt records that reading as
-/// `ResolvedByReference`, never as an engine-returned container image id.
+/// nerdctl exposes no immutable image id for a container, so a container that
+/// reports only a reference is never attributed — not even when its reference is
+/// the render's own and the tag's endpoint readings agree. The refusal names the
+/// missing capability.
 #[test]
-fn a_reference_resolved_stably_across_the_apply_binds_as_resolved_by_reference() {
+fn a_container_that_reports_only_a_reference_refuses_the_window() {
     let mut backend = Inventories::new();
     let mut reference_only = row(PROJECT, FRESH, "app");
     reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
     reference_only.image = QUALIFIED_IMAGE.to_owned();
     backend.then(Vec::new()).then(vec![reference_only]);
-    let (creation, run, _environment) = window(&mut backend, || Ok(()));
-    let receipt = creation.receipt().expect("a completed window is a receipt");
-    let created = receipt.for_service("app").expect("app was created");
-    assert_eq!(
-        created.image_id(),
-        IMAGE_ID,
-        "the bound id is the reference resolved across the window"
-    );
-    assert_eq!(
-        created.image_id_source(),
-        ImageIdSource::ResolvedByReference,
-        "recorded as resolved by reference, not as an engine-returned container id"
-    );
-    assert_eq!(
-        creation.created_by(PROJECT, FRESH).verified().copied(),
-        Some(run)
-    );
-    assert_eq!(
-        backend.image_reads(),
-        [IMAGE, IMAGE, QUALIFIED_IMAGE],
-        "the declared reference is read before and after the apply, then the container's reference"
-    );
-}
-
-/// A container that reports another image reference than the render declares
-/// was not created from the render's image, even when the id it resolves to
-/// happens to match.
-#[test]
-fn a_container_reporting_another_image_reference_refuses_the_window() {
-    let mut backend = Inventories::new();
-    let mut switched = row(PROJECT, FRESH, "app");
-    switched.image = "docker.io/library/postgres:17".to_owned();
-    backend.then(Vec::new()).then(vec![switched]);
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    let missing = format!(
+        "reports image `{QUALIFIED_IMAGE}` and colima-nerdctl exposes no immutable image id for the container"
+    );
     assert!(
         matches!(
             &creation,
             Creation::Unproven(UnknownReason::Inconsistent(detail))
-                if detail.contains("docker.io/library/postgres:17")
-                    && detail.contains("was not created from the render's image")
+                if detail.contains(&missing) && detail.contains("A -> B -> A")
         ),
         "{creation:?}"
     );
-}
-
-/// The created set is exact or the window proves nothing: after the apply the
-/// project must hold one container for every service the render declares. A
-/// declared service with no container means the apply did not converge on the
-/// render, so no receipt is minted — even when every container that *is* there
-/// looks right.
-#[test]
-fn a_declared_service_with_no_container_after_the_apply_refuses_the_window() {
-    let mut backend = Inventories::new();
-    backend
-        .then(Vec::new())
-        .then(vec![row(PROJECT, FRESH, "app")]);
-    let render = render(&["app", "db"]);
-    let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
     assert!(
-        matches!(
-            &creation,
-            Creation::Unproven(UnknownReason::Inconsistent(detail))
-                if detail.contains("service `db` has no container after the apply")
-        ),
-        "{creation:?}"
+        creation.receipt().is_none(),
+        "no receipt for a reference-only container"
     );
     assert!(matches!(
         creation.created_by(PROJECT, FRESH),
@@ -659,44 +637,102 @@ fn a_declared_service_with_no_container_after_the_apply_refuses_the_window() {
     ));
 }
 
-/// A container for a service the render does not declare is a target the apply
-/// did not converge on, whether or not it appeared in this window, so the
-/// project no longer holds exactly the render's services and the window refuses.
+/// The counterexample that rules the reference-only bind out: a tag retagged
+/// A -> B -> A inside the window. The container is created while the tag names
+/// B, and both endpoint readings still answer A, so equal `image inspect`
+/// readings plus the container's own reference cannot prove the image it ran.
+/// The window refuses, and it refuses for the missing capability rather than
+/// because the endpoints happened to disagree.
 #[test]
-fn an_extra_container_the_render_does_not_declare_refuses_the_window() {
+fn a_tag_retagged_and_restored_inside_the_window_cannot_bind_a_reference_only_container() {
     let mut backend = Inventories::new();
-    backend
-        .then(vec![row(PROJECT, OLD, "app")])
-        .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")]);
-    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    let tag = backend.tag();
+    let mut reference_only = row(PROJECT, FRESH, "app");
+    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
+    reference_only.image = QUALIFIED_IMAGE.to_owned();
+    backend.then(Vec::new()).then(vec![reference_only]);
+    // The apply is the middle of the window: the tag names B while Compose
+    // creates the container, and names A again before the after-reading.
+    let (creation, _run, _environment) = window(&mut backend, move || {
+        *tag.borrow_mut() = Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence());
+        *tag.borrow_mut() = Observed::Verified(IMAGE_ID.to_owned(), evidence());
+        Ok(())
+    });
+    assert_eq!(
+        backend.image_reads(),
+        [IMAGE, IMAGE],
+        "both endpoint readings are the same id, so endpoint equality would have accepted"
+    );
     assert!(
         matches!(
             &creation,
             Creation::Unproven(UnknownReason::Inconsistent(detail))
-                if detail.contains("service `db` of container")
-                    && detail.contains("is not a service the admitted render declares")
+                if detail.contains("exposes no immutable image id")
         ),
         "{creation:?}"
     );
+    assert!(creation.receipt().is_none());
 }
 
-/// An unchanged re-up that attaches every declared service proves no creation
-/// and names every pre-existing id as attached.
+/// A full re-up attaches every container and creates none. Every declared
+/// service's image must still be stable across the window: if an **attached**
+/// service's tag moved, the window refuses rather than name the attached ids
+/// under an image identity it cannot vouch for.
 #[test]
-fn an_attached_set_that_covers_the_render_names_no_created_id() {
+fn an_attached_service_whose_tag_moved_across_the_apply_refuses_the_window() {
     let mut backend = Inventories::new();
+    let render = render_images(&[("app", "app:1"), ("db", "db:1")]);
     backend
         .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")])
         .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")]);
-    let render = render(&["app", "db"]);
+    // app:1 is stable; db:1 moves inside the window.
+    backend.images([
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence()),
+    ]);
     let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
-    let receipt = creation.receipt().expect("a completed window is a receipt");
-    assert!(receipt.created().is_empty(), "{:?}", receipt.created());
-    assert_eq!(
-        receipt.attached(),
-        [OLD.to_owned(), DB.to_owned()],
-        "attached ids come back sorted"
+    let moved = format!(
+        "the tag `db:1` of service `db` moved inside this window: it resolved to image id `{IMAGE_ID}` before the apply and `{OTHER_IMAGE_ID}` after it"
     );
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail)) if detail.contains(&moved)
+        ),
+        "{creation:?}"
+    );
+    assert!(creation.receipt().is_none());
+}
+
+/// A partial recreate names the re-created container and attaches the rest, but
+/// the attached service's image is compared too: if only the attached service's
+/// tag moved, the whole window still refuses.
+#[test]
+fn a_partial_recreate_with_a_moved_attached_service_refuses_the_window() {
+    let mut backend = Inventories::new();
+    let render = render_images(&[("app", "app:1"), ("db", "db:1")]);
+    backend
+        .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")])
+        .then(vec![row(PROJECT, FRESH, "app"), row(PROJECT, DB, "db")]);
+    // app:1 is stable across the window; db:1, which stays attached, moves.
+    backend.images([
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence()),
+    ]);
+    let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("the tag `db:1` of service `db` moved inside this window")
+        ),
+        "{creation:?}"
+    );
+    assert!(creation.receipt().is_none());
 }
 
 /// An image table that cannot answer for the render's own reference refuses the

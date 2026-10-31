@@ -28,27 +28,27 @@
 //!   names on the applying backend, and a `Created` stamp no older than the
 //!   apply start. Anything else refuses, and the run publishes no receipt.
 //!
-//! **The image id.** The render declares a reference (`postgres:16`); the
-//! backend's image table is the only authority that turns it into an image id,
-//! so the window resolves every declared reference inside its own deadline,
-//! **immediately before and immediately after** the one apply, and requires the
-//! two readings to be the same id. A tag that moved inside the window, an image
-//! that is missing on either side, or an incomplete or timed-out read refuses.
+//! **The image identity, for every declared service.** The render declares
+//! references (`postgres:16`). The window resolves every one of them on the
+//! applying backend inside its own deadline, **immediately before and
+//! immediately after** the one apply — created and attached services alike, so a
+//! re-up that attaches a container whose tag moved refuses too — and requires the
+//! two readings to be the same id. A moved tag, an image missing on either side,
+//! or an incomplete or timed-out read refuses the whole window.
 //!
-//! The container's own identity is then compared with that id. Docker reports
-//! the container's `Image` as an exact image id, and that id — immutable, and
-//! the container's own — must equal it (`ImageIdSource::Reported`). nerdctl
-//! reports `Image`/`Config.Image` as a reference and exposes the image id
-//! nowhere in the container record (`inspect`, `inspect --mode=native` and
-//! `ps --format json` all carry only the reference, traced in the fixtures), so
-//! there the bind is the render's reference resolved on the same backend on
-//! both sides of the apply, with the container's reported reference required to
-//! be that same reference (`ImageIdSource::ResolvedByReference`). That second
-//! reading is recorded as *resolved by reference, stable across the window* and
-//! is never described as an engine-returned container image id: a tag that moves
-//! and moves back inside the window is beyond what either engine reports, which
-//! is the bounded limit this provisional ruling accepts (supervisor, 2026-10-31,
-//! pending Tom's confirmation).
+//! A container is then bound to that id in exactly one way: the engine reports
+//! **the container's own immutable image id**, as Docker does in `Image`, and it
+//! must equal the id the render's reference names. nerdctl exposes no such fact:
+//! `inspect`, `inspect --mode=native` and `ps --format json` report only the
+//! mutable reference, and no field of the container record carries a digest, so
+//! a reference-only container **refuses** with the missing capability named.
+//! Equal `image inspect` readings on both endpoints do not help: a tag can be
+//! retagged A → B → A inside the window, the container can be created from B, and
+//! both endpoint reads still answer A (proved natively and in
+//! `a_tag_retagged_and_restored_inside_the_window_cannot_bind_a_reference_only_container`).
+//! Until an engine reports a container's immutable image identity, a nerdctl
+//! fresh target gets no receipt — an honest absence, and no claim of a Colima
+//! first-up.
 //!
 //! **Threat boundary** (contract 052 §8.12): this excludes a foreign process
 //! that deliberately creates a container carrying Effigy's own managed,
@@ -94,21 +94,6 @@ const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, 
 /// stays bounded by the run's own budget (K8).
 pub const CREATION_WINDOW: Duration = Duration::from_secs(30 * 60);
 
-/// How the window bound a created container to an image id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageIdSource {
-    /// The engine reported the container's own image id (Docker's `Image`).
-    /// The id belongs to that container and is immutable.
-    Reported,
-    /// The engine reports only a reference for the container (nerdctl), so the
-    /// id is the render's declared reference resolved on this same backend
-    /// immediately before and after the apply, stable across the window, with
-    /// the container reporting that same reference. It is **not** an
-    /// engine-returned container image id: a tag that moves and moves back
-    /// inside the window is beyond what the engine reports.
-    ResolvedByReference,
-}
-
 /// One container the window proved this run's apply created.
 ///
 /// It is read-only outside this module: only the gated window that took the
@@ -119,7 +104,6 @@ pub struct CreatedContainer {
     service: String,
     image: String,
     image_id: String,
-    image_id_source: ImageIdSource,
     image_reference: String,
     created: String,
 }
@@ -142,16 +126,12 @@ impl CreatedContainer {
         &self.image
     }
 
-    /// The exact image id this container was bound to: the id the admitted
-    /// render's declared reference names on the applying backend, stable across
-    /// the window (see [`ImageIdSource`] for how it was learned).
+    /// The exact image id the engine reported **for this container**. It is the
+    /// container's own immutable fact, and the window accepted it only because it
+    /// equals the id the admitted render's declared reference names on this
+    /// backend, stable across the window.
     pub fn image_id(&self) -> &str {
         &self.image_id
-    }
-
-    /// How the window learned the container's image id (see [`ImageIdSource`]).
-    pub fn image_id_source(&self) -> ImageIdSource {
-        self.image_id_source
     }
 
     /// The image reference Compose created the container from
@@ -723,6 +703,21 @@ fn receipt(
         }
     }
 
+    // Every declared service's image identity is checked across the window, not
+    // only the services this apply created: a re-up that attaches a container
+    // whose tag moved is not a converged window either, and an attached service
+    // must not be attributed under a moved tag.
+    let mut stable_images: BTreeMap<&str, String> = BTreeMap::new();
+    for (service, expected) in declared {
+        let Some(image) = &expected.image else {
+            continue;
+        };
+        stable_images.insert(
+            service.as_str(),
+            stable_image_id(service, image, before_images, after_images)?,
+        );
+    }
+
     let mut attached: Vec<String> = after
         .iter()
         .filter(|row| before_ids.contains(row.id.as_str()))
@@ -779,8 +774,12 @@ fn receipt(
         }
         // The exact image id the render's reference names on this backend,
         // required to be the same immediately before and after the apply.
-        let expected_image_id =
-            stable_image_id(service, expected_image, before_images, after_images)?;
+        let expected_image_id = stable_images.get(service).ok_or_else(|| {
+            inconsistent(format!(
+                "the admitted render declares no image for service `{service}`, so container `{}` cannot be bound to an intended image",
+                row.id
+            ))
+        })?;
         let reported_image = row.image.trim();
         if reported_image.is_empty() {
             return Err(inconsistent(format!(
@@ -788,25 +787,18 @@ fn receipt(
                 row.id
             )));
         }
-        let (actual_image_id, image_id_source) = match exact_image_id(reported_image) {
-            // Docker: the engine reports the container's own immutable id.
-            Some(id) => (id, ImageIdSource::Reported),
-            // nerdctl: the engine reports only a reference, so the bind is the
-            // render's reference resolved on this same backend across the
-            // window, with the container required to report that reference.
-            None => {
-                if !reference_matches(expected_image, reported_image) {
-                    return Err(inconsistent(format!(
-                        "container `{}` reports image `{reported_image}` while the admitted render declares `{expected_image}` for service `{service}`, so it was not created from the render's image",
-                        row.id
-                    )));
-                }
-                let id =
-                    resolved_image_id(backend, workdir, deadline, after_images, reported_image)?;
-                (id, ImageIdSource::ResolvedByReference)
-            }
-        };
-        if actual_image_id != expected_image_id {
+        // Only the engine's own id for this exact container binds. A reference
+        // is mutable: a tag retagged A -> B -> A inside the window leaves both
+        // endpoint readings equal while the container was created from B, so a
+        // reference-only container is never attributed to an image id.
+        let actual_image_id = exact_image_id(reported_image).ok_or_else(|| {
+            inconsistent(format!(
+                "container `{}` reports image `{reported_image}` and {} exposes no immutable image id for the container: `inspect`, `inspect --mode=native` and `ps --format json` carry only the mutable reference, and an `image inspect` endpoint reading cannot distinguish a tag retagged A -> B -> A inside the window, so the container cannot be bound to the render's image id `{expected_image_id}`",
+                row.id,
+                selection.engine.as_str()
+            ))
+        })?;
+        if &actual_image_id != expected_image_id {
             return Err(inconsistent(format!(
                 "container `{}` was created from image id `{actual_image_id}` while the admitted render declares `{expected_image}` for service `{service}`, which resolved to image id `{expected_image_id}` inside this window",
                 row.id
@@ -830,7 +822,6 @@ fn receipt(
             service: service.to_owned(),
             image: row.image.clone(),
             image_id: actual_image_id,
-            image_id_source,
             image_reference: row.image_reference.clone(),
             created: row.created.clone(),
         });
@@ -1099,20 +1090,12 @@ mod tests {
     /// `colima nerdctl --profile effigy -- compose -p … -f - up -d` on the
     /// machine this task ran on (project `effigy-508-v4-8292789880`, image
     /// `alpine:3.19`), captured with `nerdctl inspect` and `nerdctl image
-    /// inspect`, then removed.
-    ///
-    /// The engine's own bytes are the finding: nerdctl reports the container's
-    /// image as a reference in `Image`/`Config.Image` and exposes no image id
-    /// for the container at all (no `ImageID`, and no field of the container
-    /// record carries a digest), while `nerdctl image inspect` on that same
-    /// reference answers one exact id both immediately before and immediately
-    /// after the apply. So the bind a nerdctl container can honestly support is
-    /// the render's declared reference resolved on this backend and stable
-    /// across the window, with the container reporting that reference — which
-    /// this proof takes from the real bytes and records as
-    /// `ResolvedByReference`, never as an engine-returned container image id.
+    /// inspect`, then removed. nerdctl reports the container's image only as a
+    /// reference (`Image`/`Config.Image`) and exposes no image id for the
+    /// container in any mode, so the window refuses it and names the missing
+    /// capability instead of binding the reference.
     #[test]
-    fn a_native_nerdctl_container_binds_to_its_reference_resolved_stably_across_the_apply() {
+    fn a_native_nerdctl_container_cannot_bind_an_image_id_from_a_reference() {
         let rows = parse_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-compose.inspect.json"
@@ -1124,24 +1107,15 @@ mod tests {
             row.image, "docker.io/library/alpine:3.19",
             "nerdctl reports the container's image as a reference, not an id"
         );
-        assert_eq!(
-            row.image_reference, "docker.io/library/alpine:3.19",
-            "`Config.Image` is the same reference"
-        );
         assert!(
             super::exact_image_id(&row.image).is_none(),
             "the reference is not an image id, so the container carries none"
         );
-        // The image table answered the same exact id before and after the apply.
         let image_id = parse_image_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-alpine-3.19.image.inspect.json"
         )))
         .expect("the native image inspect parses");
-        assert_eq!(
-            image_id, "sha256:6cf065f724d522cbb3e1898559cd88f015db8a1a4210d2d048a0853b69b57ba9",
-            "the engine's own image id for alpine:3.19"
-        );
         let images = BTreeMap::from([("alpine:3.19".to_owned(), image_id.clone())]);
         let project = row.labels[PROJECT_LABEL].clone();
         let declared = BTreeMap::from([(
@@ -1170,7 +1144,7 @@ mod tests {
             selection: selection(),
             image_id: image_id.clone(),
         };
-        let receipt = super::receipt(
+        let refused = super::receipt(
             &mut backend,
             Path::new("/fixtures/checkout"),
             Instant::now() + CREATION_WINDOW,
@@ -1187,31 +1161,120 @@ mod tests {
             started,
             completed,
         )
-        .expect("the native container binds to its reference resolved across the window");
-        assert_eq!(receipt.created().len(), 1);
-        let created = &receipt.created()[0];
-        assert_eq!(created.container_id(), row.id);
-        assert_eq!(created.service(), "app");
+        .expect_err("a reference is never an image identity");
+        match refused {
+            effigy_kernel::observe::UnknownReason::Inconsistent(detail) => {
+                assert!(
+                    detail.contains("docker.io/library/alpine:3.19")
+                        && detail.contains("exposes no immutable image id"),
+                    "{detail}"
+                );
+            }
+            other => panic!("the window published `{other}` instead of refusing"),
+        }
+    }
+
+    /// The native A → B → A counterexample. On this host a private tag was
+    /// pointed at `alpine:3.19` (A), moved to `alpine:3.20` (B), a container was
+    /// created from it while it named B, and the tag was moved back to A. The
+    /// committed bytes are that container's `nerdctl inspect` and the image
+    /// inspect of each state: the two endpoint readings are the same id while the
+    /// container ran B, and the container record carries only the reference. So
+    /// endpoint equality plus a reference cannot prove the image a container ran,
+    /// the window refuses, and no receipt is minted from it.
+    #[test]
+    fn a_native_retag_a_b_a_inside_the_window_leaves_the_reference_unbindable() {
+        let rows = parse_inspect(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/environment/colima-nerdctl-retag.inspect.json"
+        )))
+        .expect("the native retag inspect parses");
+        assert_eq!(rows.len(), 1, "one container in the trace");
+        let row = &rows[0];
         assert_eq!(
-            created.image_reference(),
-            "docker.io/library/alpine:3.19",
-            "Compose records the resolved reference"
+            row.image, "docker.io/library/effigy-508-retag-6410620988:1",
+            "the container reports the private tag, never an id"
         );
         assert_eq!(
-            created.image(),
-            "docker.io/library/alpine:3.19",
-            "nerdctl reports the reference in `Image`"
+            row.image_reference, row.image,
+            "`Config.Image` is the same mutable reference"
         );
-        assert_eq!(
-            created.image_id(),
-            image_id,
-            "the bound id is the reference resolved stably across the apply"
+        assert!(
+            super::exact_image_id(&row.image).is_none(),
+            "the reference is not an image id"
         );
-        assert_eq!(
-            created.image_id_source(),
-            super::ImageIdSource::ResolvedByReference,
-            "recorded as resolved by reference, never as an engine-returned container id"
+        // The two endpoint readings, and the id the tag named while the
+        // container was created.
+        let endpoint_id = parse_image_inspect(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/environment/colima-nerdctl-alpine-3.19.image.inspect.json"
+        )))
+        .expect("the before/after image inspect parses");
+        let middle_id = parse_image_inspect(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/environment/colima-nerdctl-alpine-3.20.image.inspect.json"
+        )))
+        .expect("the middle image inspect parses");
+        assert_ne!(
+            endpoint_id, middle_id,
+            "the tag named a different image while the container was created"
         );
-        assert_eq!(created.created(), "2026-10-31T05:04:10.522659842Z");
+        let reference = row.image.clone();
+        let images = BTreeMap::from([(reference.clone(), endpoint_id)]);
+        let project = row.labels[PROJECT_LABEL].clone();
+        let declared = BTreeMap::from([(
+            "app".to_owned(),
+            super::DeclaredService {
+                labels: BTreeMap::from([
+                    (MANAGED_LABEL.to_owned(), "true".to_owned()),
+                    (PROJECT_LABEL.to_owned(), project.clone()),
+                    (SCOPE_LABEL.to_owned(), "508v5".to_owned()),
+                    (
+                        CHECKOUT_LABEL.to_owned(),
+                        row.labels[CHECKOUT_LABEL].clone(),
+                    ),
+                ]),
+                image: Some(reference),
+            },
+        )]);
+        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T06:02:00Z")
+            .expect("start")
+            .with_timezone(&chrono::Utc);
+        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T06:03:00Z")
+            .expect("completion")
+            .with_timezone(&chrono::Utc);
+        let mut after_images = images.clone();
+        let mut backend = NativeImages {
+            selection: selection(),
+            image_id: middle_id,
+        };
+        let refused = super::receipt(
+            &mut backend,
+            Path::new("/fixtures/checkout"),
+            Instant::now() + CREATION_WINDOW,
+            &selection(),
+            test_env("stack").resource,
+            effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
+            &project,
+            &declared,
+            &images,
+            &mut after_images,
+            &[],
+            &rows,
+            "2026-10-31T06:02:00.000000000Z",
+            started,
+            completed,
+        )
+        .expect_err("equal endpoint readings do not identify the container's image");
+        match refused {
+            effigy_kernel::observe::UnknownReason::Inconsistent(detail) => {
+                assert!(
+                    detail.contains("A -> B -> A")
+                        && detail.contains("exposes no immutable image id"),
+                    "the refusal names the retag window and the missing capability: {detail}"
+                );
+            }
+            other => panic!("the window published `{other}` instead of refusing"),
+        }
     }
 }

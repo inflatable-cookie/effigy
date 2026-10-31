@@ -3529,23 +3529,27 @@ apply with no admitted render refuses too: the container's own labels are
 compared with the render and are never the expectation. An id present before is
 adopted and is never `created_by` this run.
 
-**The image id, bounded.** The window resolves every declared reference to an
-exact image id with `image inspect` under the same deadline — once immediately
-before the one apply and once immediately after it — and requires the two
-readings to be the same id. A tag that moved inside the window, an image missing
-on either side, or an incomplete or timed-out read refuses. A Docker container
-reports its own `Image` as an exact id, and that immutable container id must
-equal it (`Reported`). nerdctl reports `Image`/`Config.Image` as a reference and
-exposes no image id for a container at all (`inspect`, `inspect --mode=native`
-and `ps --format json` carry only the reference, verified against a native
-disposable trace), so there the bind is the render's reference resolved on the
-same backend on both sides of the apply, with the container required to report
-that same reference (`ResolvedByReference`). That reading is recorded as
-*resolved by reference, stable across the window* and is **never** presented as
-an engine-returned container image id: a tag that moves and moves back inside the
-window is beyond what either engine reports. Closing that needs an engine that
-reports a container's immutable image identity — the Effigy-owned engine-create
-path, not this window. An `image inspect` that answers nothing, more than one
+**The image identity.** The window resolves **every declared reference** — for
+created and attached services alike, so a re-up that attaches a container whose
+tag moved refuses too — to an exact image id with `image inspect` under the same
+deadline, once immediately before the one apply and once immediately after it,
+and requires the two readings to be the same id. A tag that moved inside the
+window, an image missing on either side, and an incomplete or timed-out read each
+refuse the whole window. The container is then bound only by an id the engine
+reports **for that container**: Docker reports its own immutable `Image` id, and
+it must equal the id the render's reference names.
+
+nerdctl reports the container's image only as a reference (`Image` and
+`Config.Image`); `inspect`, `inspect --mode=native` and `ps --format json` expose
+no image id or digest for a container at all. A reference-only container
+therefore **refuses**, with the missing capability named, and no receipt is
+minted for it: equal `image inspect` readings on both endpoints do not help,
+because a tag can be retagged A → B → A inside the window while the container is
+created from B, leaving both endpoint readings equal (proved on this host with a
+native disposable trace and a deterministic fake test). Until an engine reports a
+container's immutable image identity — the Effigy-owned engine-create path, not
+this window — a nerdctl fresh target gets no creation receipt, and nothing here
+claims a Colima first-up. An `image inspect` that answers nothing, more than one
 image, or anything that is not an exact image id refuses the whole window.
 
 **Refusals.** The run publishes no receipt — and no weaker one — when the
@@ -3571,9 +3575,9 @@ only reads.
 
 **Receipt rule.** `CreationReceipt` binds the environment, the run, the engine
 and context, the project, the apply's start and completion, the exact full ids
-it created with their service, exact image id and how that id was learned
-(`ImageIdSource`: `Reported` or `ResolvedByReference`) and image reference, the
-ids it adopted, and the inventory and image evidence it read. It has no public constructor and exposes
+it created with their service, the container's own engine-reported exact image id
+and image reference, the ids it adopted, and the inventory and image evidence it
+read. It has no public constructor and exposes
 read-only accessors; only the gated window builds one, so a caller cannot pair
 its own run id with someone else's container. A caller may attribute a fresh
 target only when the receipt's `created_by(project, container_id)` is
@@ -3588,10 +3592,10 @@ section is proposed wording pending confirmation, not a policy change:
 
 1. This section's foreign-actor exclusion is not consistent with §8.11's "a
    foreign creation is never adopted as this activation's target" invariant.
-2. The `ResolvedByReference` image bind above was authorised provisionally by
-   the supervisor on 2026-10-31 (bounded Option C, owner image-observation
-   ruling): it is the strongest reading nerdctl supports, not an engine-returned
-   container image id.
+2. The bounded image observation: no engine Effigy targets reports an
+   immutable image id for a container on every backend, so the nerdctl path
+   (reference-only) refuses. That is a missing backend capability, recorded here
+   for the operator, not a decision this window may take.
 
 This section states what the bounded window proves; it does not amend, weaken or
 discharge that invariant, no merge hold is released, and the fresh-target path

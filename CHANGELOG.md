@@ -216,13 +216,14 @@ During v0.x, MINOR bumps may include breaking changes.
   render's own declared values for its service: the render declares the
   service, its `com.effigy.managed`, `.project`, `.scope` and `.checkout`
   labels and the image reference the container was created from, and the
-  window binds the exact image id the render's reference names on the backend,
-  resolved immediately before and after the one apply and required to be the
-  same id across the window — a moved tag, a missing image or a disagreeing
-  container refuses. A Docker container reports its own immutable image id and
-  binds on it; nerdctl reports only a reference and exposes no container image
-  id at all, so there the bind is recorded as *resolved by reference, stable
-  across the window* and never as an engine-returned container image id. The
+  window resolves every declared reference (attached services included) to an
+  exact image id immediately before and after the one apply and requires the two
+  readings to be the same id — a moved tag, a missing image or a disagreeing
+  container refuses. A container is bound only by an image id the engine reports
+  for that container: Docker reports its own immutable image id, while nerdctl
+  exposes no container image id at all, so a reference-only nerdctl container
+  refuses with the missing capability named rather than be attributed through a
+  tag that could be retagged A -> B -> A inside the window. The
   project after the apply must also hold exactly the services the render
   declares, one container each: an extra container, a missing service or two
   containers for one service refuses, so the created ids are the complete set
