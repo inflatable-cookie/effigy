@@ -46,6 +46,7 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, RunError, SettlementAdapter};
+use effigy_kernel::store::Store;
 use effigy_kernel::supervise::{
     ClientMode, EngineLaunch, EngineSession, Event, Executable, LifecyclePlan, SupervisorClient,
 };
@@ -62,6 +63,11 @@ const TURN: Duration = Duration::from_millis(20);
 
 /// What the supervisor's own run records as its own identity.
 const SERVING_TASK: &str = "workspace-serving";
+
+/// The effect kind a session's run records when its selection switched. The host
+/// reads it back and refuses to serve without it; the container-up producer
+/// records the same fact through its own commit (#452).
+pub(crate) const SELECTION_KIND: &str = "workspace-selection";
 
 /// One serving host's request: where its state lives, which workspace it
 /// serves, and which activation it performs.
@@ -117,6 +123,10 @@ pub(crate) struct DisposableActivation {
     /// with an earlier one, so each host activates its own generation.
     #[serde(default)]
     pub(crate) environment_suffix: String,
+    /// Fault injection: announce a session whose switch was never recorded, so
+    /// the host must refuse to serve it.
+    #[serde(default)]
+    pub(crate) omit_selection_record: bool,
 }
 
 /// What one serving host announced to its front end: the committed session it
@@ -502,6 +512,28 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
         }
     };
 
+    // The switch must be a durable fact of the session's own run: the host reads
+    // it back from the journal and refuses to serve anything else, so no
+    // activation can announce a session it never switched.
+    match durable_selection(&observe, &root, service.session()) {
+        Ok(state) => {
+            if let Err(refusal) = super::supervisor::committed_state(state) {
+                let error = refuse(&session, Category::Refused, refusal.to_string());
+                let _ = service.abandon();
+                let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
+                let _ = run.settle(&cleanup_budget(), &mut adapter);
+                return Err(error);
+            }
+        }
+        Err(error) => {
+            let reported = refuse(&session, error.category(), error.to_string());
+            let _ = service.abandon();
+            let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
+            let _ = run.settle(&cleanup_budget(), &mut adapter);
+            return Err(reported);
+        }
+    }
+
     // Announce only the committed session, after the activation committed.
     let published = ServingPublished::of(service.session(), service.lease());
     let event = serde_json::to_vec(&HostEvent::Serving(published.clone()))
@@ -570,6 +602,65 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     let settled = run.settle(&cleanup, &mut adapter)?;
     session.closed(&settled);
     Ok(())
+}
+
+/// The selection state a session's own run durably recorded, read back from the
+/// journal. Absent means the activation never recorded a switch, which is never
+/// servable.
+fn durable_selection(
+    observe: &effigy_kernel::ctx::ObserveContext,
+    root: &StateRoot,
+    session: &effigy_kernel::workspace_session::SessionRef,
+) -> Result<effigy_kernel::workspace_session::SelectionState, RunError> {
+    use effigy_kernel::workspace_session::SelectionState;
+    let reader = match Store::read(observe, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "the session's selection record is unreadable: {reason}"
+            )))
+        }
+        Observed::Absent(absent) => {
+            return Err(RunError::unavailable(format!(
+                "the session's journal is absent: {absent:?}"
+            )))
+        }
+    };
+    let effects = match effigy_kernel::run::effects(&reader, session.run()) {
+        Observed::Verified(effects, _) => effects,
+        Observed::Unknown(reason) => {
+            return Err(RunError::unavailable(format!(
+                "the session's selection record is unreadable: {reason}"
+            )))
+        }
+        Observed::Absent(absent) => {
+            return Err(RunError::unavailable(format!(
+                "the session's selection record is absent: {absent:?}"
+            )))
+        }
+    };
+    for effect in effects.iter().rev() {
+        if effect.spec.kind != SELECTION_KIND {
+            continue;
+        }
+        let recorded = effect
+            .receipt
+            .as_ref()
+            .or(Some(&effect.spec.payload))
+            .and_then(|value| value.get("state"))
+            .and_then(|state| state.as_str());
+        return match recorded {
+            Some("switched") => Ok(SelectionState::Switched),
+            Some("pending") => Ok(SelectionState::Pending),
+            Some("abandoned") => Ok(SelectionState::Abandoned),
+            _ => Err(RunError::unavailable(
+                "the session's selection record names no state",
+            )),
+        };
+    }
+    Err(RunError::refused(
+        "the session's run recorded no committed selection; nothing is served",
+    ))
 }
 
 /// One serving turn over the retained custody.

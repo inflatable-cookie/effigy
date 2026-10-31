@@ -979,7 +979,8 @@ impl<T: Transport> WorkspaceClient<T> {
                             "the workspace context's environment generation is not a number",
                         )
                     })?;
-                let minted = fresh_capability();
+                let minted =
+                    fresh_capability().map_err(|error| ChannelError::local(error.to_string()))?;
                 // Held until the host answers: a refused enrolment stores
                 // nothing, so a terminal never keeps a capability it was not
                 // granted.
@@ -1239,15 +1240,35 @@ fn parse_digest(text: &str) -> Result<Digest, ChannelError> {
 
 /// A capability secret a direct terminal mints for itself when it enrols; the
 /// host binds its scope, so the bytes grant nothing on their own (§8.11).
-fn fresh_capability() -> [u8; 32] {
+/// A capability secret a direct terminal mints for itself when it enrols; the
+/// host binds its scope, so the bytes grant nothing on their own (§8.11).
+///
+/// The bytes are authority-bearing the moment the host issues them, so they come
+/// from the operating system's entropy source or not at all: a fallback built
+/// from the clock and the process id would be guessable, and enrolling a weak
+/// secret would hand out a guessable capability.
+fn fresh_capability() -> Result<[u8; 32], RunnerError> {
+    capability_entropy(|bytes| {
+        std::fs::File::open("/dev/urandom").and_then(|mut file| file.read_exact(bytes))
+    })
+}
+
+/// Mint one capability secret from `source`, or refuse. A source that cannot fill
+/// the buffer is an unavailable host authority, never a weaker secret.
+fn capability_entropy(
+    source: impl FnOnce(&mut [u8]) -> std::io::Result<()>,
+) -> Result<[u8; 32], RunnerError> {
     let mut bytes = [0u8; 32];
-    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-        if file.read_exact(&mut bytes).is_ok() {
-            return bytes;
+    match source(&mut bytes) {
+        Ok(()) => Ok(bytes),
+        Err(error) => {
+            bytes.fill(0);
+            Err(RunnerError::task_invocation(format!(
+                "the workspace capability needs the system entropy source and it could not be \
+                 read ({error}); no capability was issued"
+            )))
         }
     }
-    bytes[..16].copy_from_slice(&fresh_bytes());
-    bytes
 }
 
 /// 128 bits of entropy for one request id, which the host records per session

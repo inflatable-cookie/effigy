@@ -608,12 +608,25 @@ fn a_down_is_answered_by_the_kernel_coordination() {
 
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint = prepared.launch.endpoint().expect("bound");
         let service = serving(supervisor, &session, prepared, cx, observe, root);
         match service.down(observe, root) {
             Observed::Verified(DownStart::Ready(children), _) => {
                 assert!(
                     children.children().is_empty(),
                     "the fixture session started no child run of its own"
+                );
+                // The typed down path: the driver retires the service with the
+                // down's own cause, and the release closes the listener once.
+                let cleanup = cleanup(cx);
+                let retired = service
+                    .retire_for(RetirementCause::Down, &cleanup, &mut NoEffects)
+                    .expect("a down settles the session once");
+                assert_eq!(retired.cause, RetirementCause::Down);
+                assert_eq!(retired.cause.as_str(), "down");
+                assert!(
+                    TcpStream::connect(endpoint).is_err(),
+                    "a down's retirement closes the session's listener"
                 );
             }
             Observed::Verified(DownStart::Refused { .. }, _) => {

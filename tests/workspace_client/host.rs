@@ -136,6 +136,14 @@ fn successor(request: &serde_json::Value) -> serde_json::Value {
     request
 }
 
+/// The same request whose activation never records its switch: the host must
+/// refuse to serve the session it would otherwise announce.
+fn unrecorded_switch(request: &serde_json::Value) -> serde_json::Value {
+    let mut request = request.clone();
+    request["activation"]["omit_selection_record"] = serde_json::json!(true);
+    request
+}
+
 /// Run one initiating front end to completion, in its own process, and read the
 /// result it printed. `entry` selects the acknowledging or the abandoning mode.
 fn initiate(entry: &str, request: &serde_json::Value) -> serde_json::Value {
@@ -551,4 +559,45 @@ fn a_settled_crash_is_recovered_by_a_fresh_host() {
         assert!(Instant::now() < until, "the successor did not settle");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A session whose switch the activation never recorded is never served: the
+/// host reads the durable selection back and refuses, and the front end reads a
+/// refusal instead of a committed session.
+#[test]
+fn an_unrecorded_switch_is_refused_not_served() {
+    let fixture =
+        effigy_test_support::Fixture::new("workspace-serving-unswitched").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = unrecorded_switch(&request(&fixture, &project));
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the initiating process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("the request is written");
+    let output = child
+        .wait_with_output()
+        .expect("the initiating process exits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an unrecorded switch is not a committed session"
+    );
+    assert!(
+        stderr.contains("recorded no committed selection")
+            || stderr.contains("has not switched and been read back"),
+        "the refusal names the missing switch: {stderr}"
+    );
 }

@@ -2500,3 +2500,23 @@ fn a_stale_capability_is_not_presented() {
         load_auth(&mut guest, &context, TEST_CLIENT).expect_err("an unreadable record refuses");
     assert!(error.to_string().contains("is not a capability"), "{error}");
 }
+
+/// A capability is authority-bearing from the moment the host issues it, so it
+/// comes from the system entropy source or not at all: no clock or pid fallback.
+#[test]
+fn a_capability_is_never_minted_from_a_weaker_secret() {
+    let refused = super::capability_entropy(|_| Err(std::io::Error::other("no entropy device")))
+        .expect_err("an unavailable entropy source issues no capability");
+    assert!(
+        refused.to_string().contains("entropy"),
+        "the refusal names the missing source: {refused}"
+    );
+
+    // A source that fills the buffer is used as-is, and no bytes are invented.
+    let minted = super::capability_entropy(|bytes| {
+        bytes.fill(0x5c);
+        Ok(())
+    })
+    .expect("a full read mints the capability");
+    assert_eq!(minted, [0x5c; 32]);
+}

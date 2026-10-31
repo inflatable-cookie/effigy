@@ -226,6 +226,41 @@ fn serving_server(
     ))
 }
 
+fn record_selection(
+    supervisor: &mut SessionSupervisor<'_>,
+    lease: &effigy_kernel::workspace_session::ServingLease,
+    disposable: &DisposableActivation,
+    _target: &Fence,
+) -> Result<(), RunError> {
+    let payload = serde_json::json!({
+        "state": "switched",
+        "session_run": lease.session().run.to_string(),
+        "generation": lease.session().generation.get(),
+        "endpoint": lease.endpoint(),
+        "pin": lease.pin().hex(),
+        "supervisor_id": lease.supervisor_id(),
+        "omitted": disposable.omit_selection_record,
+    });
+    if disposable.omit_selection_record {
+        // Fault injection: the activation announced a session whose switch it
+        // never recorded, so the host must refuse to serve it.
+        return Ok(());
+    }
+    let own = supervisor.fence().clone();
+    let ticket = supervisor.intend(effigy_kernel::run::EffectSpec {
+        // The session's own run records its switch: this is the run's own
+        // owner, not the environment's (which needs a transition permit).
+        target: own,
+        kind: super::serving_host::SELECTION_KIND.to_owned(),
+        payload: payload.clone(),
+        // Retained evidence, not a resource: the record survives the settle and
+        // needs no adapter round trip.
+        settlement: effigy_kernel::run::Settlement::Retain,
+        required: false,
+    })?;
+    supervisor.applied(&ticket, payload)
+}
+
 /// Perform the disposable activation and return the serving owner that keeps its
 /// session custody.
 pub(crate) fn activate<'r>(
@@ -313,17 +348,11 @@ pub(crate) fn activate<'r>(
         .map_err(|error| RunError::refused(format!("the fixture publication: {error}")))?;
     let lease = bound.lease().clone();
     let _ = endpoint;
-    // The same switched-selection fence the production handoff applies. A
-    // disposable activation has no durable obligation by construction (that is
-    // why this variant exists only in a fixture build); the switchable fact it
-    // can have is the one the kernel requires before anything serves — a bound,
-    // qualified launch that published exactly this session's lease, which
-    // `ServiceOwner::retained` re-checks.
-    if let Err(refusal) = super::supervisor::committed_state(
-        effigy_kernel::workspace_session::SelectionState::Switched,
-    ) {
-        return Err(RunError::refused(refusal.to_string()));
-    }
+    // Record the switch durably, on the session's own run, exactly as an
+    // activation commit records the generation it switched to. The host reads
+    // this record back from the journal and fences on it, so the switch it
+    // serves is a durable fact and not a value this function asserts.
+    record_selection(&mut supervisor, &lease, disposable, &fence)?;
     let server = serving_server(request, disposable, &session, pin, root)?;
     let owner = ServingOwner::new(
         supervisor,
