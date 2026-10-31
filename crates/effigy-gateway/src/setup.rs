@@ -298,10 +298,27 @@ pub fn session<T>(
     .map_err(error)?;
     let settled = run.settle(&cleanup, &mut adapter).map_err(error)?;
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
-        return Err(error("gateway setup has unresolved cleanup"));
+        return Err(unresolved_cleanup(&settled));
     }
     drop(staged);
     result
+}
+
+/// What setup could not release, by effect and custody reason. The settle can
+/// stop on its last open effect, where no later effect carries the reason, so
+/// this reads the settled outcome instead of reporting a bare "unresolved
+/// cleanup" the operator cannot act on (effigy#476).
+fn unresolved_cleanup(
+    settled: &effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>,
+) -> io::Error {
+    let unresolved = settled.unresolved();
+    if unresolved.is_empty() {
+        return error("gateway setup has unresolved cleanup");
+    }
+    error(format!(
+        "gateway setup left cleanup unresolved: {}",
+        unresolved.join("; ")
+    ))
 }
 pub fn command(
     run: &mut Run<'_>,
@@ -318,6 +335,23 @@ pub fn command(
     }
     Ok(output)
 }
+
+/// The command an adapter child runs, as a safe attributable identity: the
+/// program's own file name. Every setup command shares the same generic label,
+/// so a residue that named only the label could not tell two setup process
+/// effects apart; the journal already redacts this label (effigy#476).
+fn adapter_label(argv: &[OsString]) -> String {
+    let program = argv
+        .first()
+        .and_then(|program| Path::new(program).file_name())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty());
+    match program {
+        Some(program) => format!("gateway setup adapter: {program}"),
+        None => "gateway setup adapter".to_owned(),
+    }
+}
+
 /// Run one setup child and keep its exit code with its output. A caller that
 /// reads a structured report from a child which exits non-zero on refusal (the
 /// low-port bind probe) needs both; [`command`] keeps only the success bytes.
@@ -395,6 +429,7 @@ fn spawn_setup_child(
     let env: BTreeMap<_, _> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
+    let label = adapter_label(&argv);
     Custody::spawn(
         run,
         ProcessSpec {
@@ -408,7 +443,7 @@ fn spawn_setup_child(
             } else {
                 Terminal::None
             },
-            label: "gateway setup adapter".into(),
+            label,
         },
         cx,
     )
@@ -1327,6 +1362,87 @@ pub(crate) mod tests {
         run.settle(&op.cleanup(Duration::from_secs(5)).unwrap(), &mut adapter)
             .unwrap();
     }
+    #[test]
+    fn unresolved_cleanup_names_the_effect_and_the_custody_reason() {
+        // The settle can stop on its last open effect (effigy#476), so setup
+        // reports the settled outcome itself instead of a bare unresolved
+        // cleanup: the effect kind, the label its intent recorded and the
+        // kernel's own custody reason. The recorded reason is already a
+        // rendered observation, so it must not be wrapped a second time.
+        let recorded = "could not tell: the evidence contradicts itself (group anchor unavailable); retry, and if it persists run `effigy doctor`";
+        let mut settled = effigy_kernel::outcome::Outcome::new(
+            Err(effigy_kernel::outcome::ErrorInfo {
+                code: effigy_kernel::outcome::ErrorCode::Incomplete,
+                message: "cleanup has unresolved effects".into(),
+                details: serde_json::Value::Null,
+            }),
+            WorkloadOutcome::Succeeded,
+            effigy_kernel::outcome::CleanupOutcome::Incomplete,
+            &[],
+        )
+        .unwrap();
+        let id = || ResourceId::store(Scope::Machine, "gateway-setup").unwrap();
+        for sequence in [5, 7] {
+            settled.add_residue(effigy_kernel::outcome::Residue::unresolved(
+                sequence,
+                "kernel:process",
+                id(),
+                Some("gateway setup adapter: sudo"),
+                recorded,
+                operator::next(),
+            ));
+        }
+        let message = unresolved_cleanup(&settled).to_string();
+        assert!(message.contains("`kernel:process`"), "{message}");
+        assert!(message.contains("gateway setup adapter: sudo"), "{message}");
+        assert!(message.contains("group anchor unavailable"), "{message}");
+        // Otherwise identical effects are told apart by their own sequence.
+        assert!(message.contains("effect 5"), "{message}");
+        assert!(message.contains("effect 7"), "{message}");
+        assert_eq!(
+            message.matches("the evidence contradicts itself").count(),
+            2,
+            "a recorded reason is not wrapped twice: {message}"
+        );
+    }
+
+    /// Every gateway setup command shares the adapter label, so the label names
+    /// the program it runs: an unresolved effect is then attributable without
+    /// journaling argv (effigy#476).
+    #[test]
+    fn adapter_labels_name_the_command_and_stay_distinct() {
+        let labels: Vec<String> = [
+            "/opt/homebrew/bin/mkcert",
+            "/usr/bin/sudo",
+            "/home/operator/.local/bin/effigy",
+        ]
+        .into_iter()
+        .map(|program| {
+            adapter_label(&[
+                program.into(),
+                "--".into(),
+                "gateway".into(),
+                "setup".into(),
+            ])
+        })
+        .collect();
+        assert_eq!(
+            labels,
+            [
+                "gateway setup adapter: mkcert",
+                "gateway setup adapter: sudo",
+                "gateway setup adapter: effigy"
+            ]
+        );
+        // No path, no argv and no environment value reaches the label.
+        assert!(labels.iter().all(|label| !label.contains('/')));
+        assert_eq!(
+            adapter_label(&[]),
+            "gateway setup adapter",
+            "an argv-less spec keeps the generic label instead of inventing one"
+        );
+    }
+
     #[test]
     #[ignore = "proof: needs the kernel custody fixture (EFFIGY_KERNEL_CUSTODY_FIXTURE)"]
     fn setup_sequence_runs_two_foreground_commands_in_one_run() {

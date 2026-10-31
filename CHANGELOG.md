@@ -1210,6 +1210,30 @@ During v0.x, MINOR bumps may include breaking changes.
 - Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
   before handoff and authenticates the bytes launched through that entry.
 
+- `effigy gateway setup` settles on Linux after it installs the low-port
+  capability. The installed `effigy` then carries
+  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
+  exec: the kernel clears the process's dumpable attribute, and
+  `/proc/<pid>/environ` refuses the operator's own reads. Two kernel rules did
+  it: the secure exec cleared the anchor's dumpable attribute, and the ptrace
+  access check grants a read only when the reader's permitted capabilities
+  cover the target's, which an unprivileged operator never does. The group
+  anchor re-execs that same image, so custody could no longer read the anchor's
+  nonce, refused to signal it, and the setup run timed out in settle with the
+  process group still held by an anchor nobody could verify. The anchor now
+  drops every capability it inherited and restores the ordinary dumpable state
+  at entry, then verifies both — it runs no workload code, needs no capability
+  and holds no secret beyond the nonce the contract asks it to expose — so the
+  recorded generation, group and nonce still prove identity before any signal,
+  while the work it belongs to keeps its own capabilities and low-port bind.
+  A settle that still cannot finish now names the effect's own sequence, the
+  redacted label its intent recorded and the recorded custody reason instead of
+  only the elapsed wait, and `gateway setup` reports those entries when cleanup
+  is incomplete — including when the last open effect is the one that stayed
+  unresolved and no later effect can carry its reason. Every setup adapter
+  child also records which program it runs, so two identically labelled setup
+  commands stay attributable.
+
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy
   state to migrate, so first-ever setup reaches the platform step instead of

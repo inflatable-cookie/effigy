@@ -925,6 +925,112 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
     }
 }
 
+/// The verifier's cells (effigy#476): only the recorded generation, the
+/// recorded group membership and the readable nonce prove an anchor. A changed
+/// generation (a reused pid), a changed group, a changed nonce and an exited or
+/// reaped anchor all refuse, and a refusal never signals the recorded process.
+/// The inaccessible-nonce cell is the capability-secure-exec shape, proved by
+/// `custody_settles_two_setup_probes_from_a_capability_bearing_image` and the
+/// native packet rather than by a fixture this host can stage.
+#[test]
+fn anchor_verifier_cells_refuse_unproven_state_and_never_signal() {
+    use crate::ident::{ProcessStartIdentity, ProcessState};
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "trap '' TERM; /bin/sleep 30".into(),
+        ],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "verifier cells".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "verifier-cells", cx.operation(), &image, None, None).unwrap();
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let r = ProcessReceipt {
+        identity: fixture_identity(child.pid),
+        pgid: child.pid,
+        nonce: "verifier-cells".into(),
+        grace_millis: 10,
+    };
+    let _fixture = AnchorFixture(vec![r.identity.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+
+    // Present: the recorded anchor is proven.
+    assert!(
+        anchor::verified(&r, &anchor),
+        "the live recorded anchor is proven"
+    );
+    // Changed generation: the same pid with another start identity is a reused
+    // pid, never the process the receipt recorded.
+    let mut reused = anchor.clone();
+    reused.start = match &anchor.start {
+        ProcessStartIdentity::LinuxTicks(ticks) => ProcessStartIdentity::LinuxTicks(ticks + 1),
+        ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds,
+        } => ProcessStartIdentity::MacOs {
+            seconds: *seconds,
+            microseconds: microseconds + 1,
+        },
+    };
+    assert!(
+        !anchor::verified(&r, &reused),
+        "a reused pid is not the recorded anchor"
+    );
+    // Changed group: the anchor's kernel group must be the recorded one.
+    let mut wrong_group = r.clone();
+    wrong_group.pgid = anchor.pid;
+    assert!(
+        !anchor::verified(&wrong_group, &anchor),
+        "a changed recorded group is not proof"
+    );
+    // Changed nonce: a different (or unreadable) nonce is not proof, and the
+    // refusal must not signal the process it could not prove.
+    let mut wrong_nonce = r.clone();
+    wrong_nonce.nonce = "another-run:9".into();
+    assert!(!anchor::verified(&wrong_nonce, &anchor));
+    assert!(matches!(
+        anchor::signal(&wrong_nonce, &anchor, libc::SIGKILL),
+        Observed::Unknown(_)
+    ));
+    assert!(
+        matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+        ),
+        "a refused signal left the anchor alone"
+    );
+    // Exited, then reaped: neither state is proof of anything.
+    assert!(matches!(
+        platform::numeric(anchor.pid, false, libc::SIGTERM),
+        Observed::Verified(..)
+    ));
+    wait(|| {
+        !matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+        )
+    });
+    assert!(
+        !anchor::verified(&r, &anchor),
+        "an exited anchor is not proof"
+    );
+    wait(|| matches!(crate::ident::process_state(anchor.pid), Observed::Absent(_)));
+    assert!(
+        !anchor::verified(&r, &anchor),
+        "a reaped anchor is not proof"
+    );
+}
+
 /// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite
 /// lease. SIGTERM retires an idle anchor within a bounded grace, so a harness
 /// that stops its own tree never needs SIGKILL for custody evidence.

@@ -295,7 +295,15 @@ terminal close, or losing verifiable custody evidence is **residue**. It is
 reported to the invoking stream while a custodian remains; subsequent doctor
 and runs observations report only survivors whose checkout/run tags or fresh
 identity evidence can actually be read. They never recover authority from a
-PID, PGID, session number or old lock body. If owner and guard both die, there
+PID, PGID, session number or old lock body. Every residue entry names its
+effect kind, the effect's own journal sequence, the redacted label that
+effect's own intent recorded and the kernel's reason; the sequence is what
+keeps two otherwise identical effects apart, and the gateway setup adapter
+label names the program its child runs without journaling argv. A settle that
+stops on its last open effect has no later effect to carry that reason, and a
+caller that requires complete cleanup (the gateway setup session) reports the
+settled outcome's entries rather than a bare "unresolved cleanup"
+(effigy#476). If owner and guard both die, there
 is no replay, durable completion or durable residue acknowledgement. A process
 that also discarded its tags may be unidentifiable; views state that limit and
 never claim a complete inventory or successful cleanup. Discovered residue
@@ -1112,6 +1120,30 @@ recovery; the native helper keeps the full nonce verification requirement.
 `PR_SET_CHILD_SUBREAPER` helps reap Linux orphans but does not pin a group;
 cgroups add Linux-only infrastructure and delegation policy. Neither replaces the
 portable anchor needed on macOS.
+
+An anchor must be able to show its evidence, so it removes what hides it. Its
+image is the run's own executable, and an image that carries a file capability —
+the installed `effigy` carries `cap_net_bind_service` for the low-port gateway —
+leaves two kernel rules hiding `/proc/<pid>/environ` from the unprivileged run
+owner: the exec is a secure exec, so the dumpable attribute is cleared, and the
+ptrace access check grants a read only when the reader's permitted capabilities
+cover the target's. On Linux the entry therefore drops its effective, permitted
+and inheritable sets — which empties the ambient set too, since an ambient
+capability must be in both the permitted and inheritable sets — and restores the
+ordinary dumpable state before it acknowledges its pid, then verifies both and
+refuses to be an anchor if either fails (effigy#476). The anchor needs no
+capability of its own, and the workload keeps its own capabilities and low-port
+bind. The recorded `{pid, start, boot}` generation, the recorded group
+membership and the nonce all stay readable and the identity proof is exactly as
+strict as above. The anchor runs no workload
+code and its environment holds only the nonce, which is already evidence rather
+than a credential, so nothing else is exposed. A refused restore leaves the
+anchor as it was and settlement fail-closed; it never widens authority. A
+secure-exec *workload* whose environment is unreadable for the same reason is
+still fail-closed: recovery cannot prove its nonce, so it is never signalled.
+The probe guard helper (`__kernel-probe-guard`) is verified through the same
+environment evidence and has the same Linux limit; it is not custody and keeps
+its current behaviour until its own proof covers it.
 
 A fork-only anchor in the blocked leader cannot obtain the new effect's nonce
 through macOS `KERN_PROCARGS2`: it exposes the exec-time environment, even when

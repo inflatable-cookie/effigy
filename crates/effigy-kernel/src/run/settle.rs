@@ -42,6 +42,25 @@ pub(super) fn cleanup_effects(cleanup: &CleanupContext) -> Result<EffectContext,
         .map_err(|_| RunError::broken("cleanup needs effects"))
 }
 
+/// What an open effect is, in the words an operator acts on: its sequence, its
+/// kind and the label its own intent recorded, never a process-table guess.
+fn unresolved_effect(effect: &Effect) -> String {
+    let label = effect_label(effect)
+        .map(|label| format!(" `{label}`"))
+        .unwrap_or_default();
+    format!("effect {} `{}`{label}", effect.sequence, effect.spec.kind)
+}
+
+/// The redacted label the effect's own intent recorded, when it recorded one.
+fn effect_label(effect: &Effect) -> Option<&str> {
+    effect
+        .spec
+        .payload
+        .get("label")
+        .and_then(Value::as_str)
+        .filter(|label| !label.is_empty())
+}
+
 /// Reclaim completed machine rows left between the close commit and sentinel
 /// exit. The owner gate excludes a live owner; the row remains visible until
 /// the exact sentinel is positively gone, including while it is stopped.
@@ -180,8 +199,19 @@ impl Run<'_> {
                 !effect.state.terminal() && (effect.spec.kind == attachments::KIND) == attachment
             })
         };
+        let mut unresolved: Vec<String> = Vec::new();
         for effect in open(false).chain(open(true)) {
-            cleanup.operation().check("settle effect")?;
+            // A settle that runs out of budget names the effect it could not
+            // finish, and any effect that already recorded why it is residue,
+            // so the operator acts on that effect instead of only the clock
+            // (effigy#476).
+            let pending = unresolved_effect(effect);
+            let phase = if unresolved.is_empty() {
+                format!("settle {pending}")
+            } else {
+                format!("settle {pending}, after {}", unresolved.join("; "))
+            };
+            cleanup.operation().check(&phase)?;
             crate::fault_point!(SettleEffectBefore)?;
             if effect.spec.kind == children::KIND {
                 self.settle_child(effect, cleanup, adapter)?;
@@ -212,6 +242,9 @@ impl Run<'_> {
                 if let Some(core) = diagnostic {
                     stderr_tail = crate::custody::diagnostic_tail(&core);
                 }
+                if let Some(reason) = reason.as_deref().filter(|_| !state.terminal()) {
+                    unresolved.push(format!("{pending}: {reason}"));
+                }
                 if batch {
                     dispositions.insert(effect.sequence, (state, reason));
                 } else {
@@ -233,6 +266,9 @@ impl Run<'_> {
             } else if effect.spec.kind == crate::remote::KIND {
                 let (state, reason) =
                     crate::remote::settle_effect(effect, cleanup, adapter.remote());
+                if let Some(reason) = reason.as_deref().filter(|_| !state.terminal()) {
+                    unresolved.push(format!("{pending}: {reason}"));
+                }
                 self.store
                     .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
                         journal::write_effect(
@@ -272,6 +308,9 @@ impl Run<'_> {
                 } else {
                     resolve(adapter, effect, cleanup)
                 };
+                if let Some(reason) = reason.as_deref().filter(|_| !state.terminal()) {
+                    unresolved.push(format!("{pending}: {reason}"));
+                }
                 self.store
                     .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
                         journal::write_effect(
@@ -377,7 +416,7 @@ impl Run<'_> {
     }
 }
 
-pub(super) fn outcome(
+pub(crate) fn outcome(
     id: RunId,
     next: &Invocation,
     workload: WorkloadOutcome,
@@ -413,14 +452,19 @@ pub(super) fn outcome(
             },
         });
         if !effect.state.terminal() {
-            outcome.add_residue(Residue {
-                kind: effect.spec.kind,
-                id: effect.spec.target.resource,
-                observation: Observed::Unknown(UnknownReason::Inconsistent(
-                    effect.reason.unwrap_or_else(|| "unresolved effect".into()),
-                )),
-                next: next.clone(),
-            });
+            // The effect's own intent recorded its redacted label. A settle that
+            // stops on this effect has no later one to carry the reason, so the
+            // residue has to name both here (effigy#476).
+            let label = effect_label(&effect).map(str::to_owned);
+            let reason = effect.reason.unwrap_or_else(|| "unresolved effect".into());
+            outcome.add_residue(Residue::unresolved(
+                effect.sequence,
+                &effect.spec.kind,
+                effect.spec.target.resource,
+                label.as_deref(),
+                &reason,
+                next.clone(),
+            ));
         }
     }
     if !complete {
