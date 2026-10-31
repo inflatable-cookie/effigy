@@ -57,6 +57,12 @@ pub(crate) mod host_dispatch;
 pub(crate) mod identity;
 pub(crate) mod serving;
 pub(crate) mod serving_facts;
+// #485's workspace terminal owner: the session/run-bound `Terminal` the merged
+// #507 serving loop hands each validated input and resize to, and the
+// `RetainedStreams` adapter that publishes the run's captured output. #452's
+// container-up caller opens one entry per run it admits; the live child-PTY
+// binding is effigy#519.
+pub(crate) mod terminal;
 // #507's durable servicing supervision: the owner that keeps a committed
 // session's listener, key, grants and admitted clients after the call that
 // selected it returns.
