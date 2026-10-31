@@ -409,6 +409,17 @@ pub fn compete_detached(request_json: &str) -> Result<CompetingOwner, String> {
     }
 }
 
+/// The client identity this process resolves for capability storage. Two commands
+/// in one terminal share it; another terminal does not.
+pub fn client_identity() -> Result<String, String> {
+    crate::runner::workspace_client::client_id().map_err(|error| error.to_string())
+}
+
+/// Print this process's client identity.
+pub fn client_identity_stdin() -> Result<String, String> {
+    client_identity()
+}
+
 /// Read one request from stdin and start a competing detached host for it.
 pub fn compete_detached_stdin() -> Result<String, String> {
     use std::io::Read;

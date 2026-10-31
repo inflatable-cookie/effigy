@@ -120,7 +120,7 @@ fn client_capability_path(client: &str) -> String {
 /// The client this process acts for: the id the entry that opened its terminal
 /// exported, or this process's own id when it exported none. Anything that is
 /// not a plain name is refused before it can name a path.
-fn client_id() -> Result<String, RunnerError> {
+pub(crate) fn client_id() -> Result<String, RunnerError> {
     if let Some(declared) = std::env::var_os(CLIENT_ID_ENV) {
         let declared = declared.to_string_lossy();
         let valid = !declared.is_empty()
@@ -138,9 +138,22 @@ fn client_id() -> Result<String, RunnerError> {
         return Ok(declared.into_owned());
     }
     // A terminal that was not opened by an entry still gets its own file rather
-    // than a shared one: its commands reuse one capability, and no other client
-    // can present or replace it.
-    Ok(format!("pid-{}", std::process::id()))
+    // than a shared one. The identity is the terminal's own *session*, not the
+    // command's process id: every command in that terminal shares one session, so
+    // a capability issued to the first command is reused by the next one, while a
+    // different terminal (its own session) is a different client and can neither
+    // present nor replace it.
+    // SAFETY: getsid(0) reads the calling process's session id and nothing else.
+    let session = unsafe { libc::getsid(0) };
+    if session < 0 {
+        return Err(RunnerError::task_invocation(format!(
+            "this terminal's session identity is unavailable ({}); a capability is stored per \
+             terminal, so none is stored here - open the terminal with `effigy workspace` or run \
+             the command on the host",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(format!("terminal-{session}"))
 }
 
 /// What one terminal's file records: the capability the host issued it and the

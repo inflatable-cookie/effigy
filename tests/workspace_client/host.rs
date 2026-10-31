@@ -1073,3 +1073,46 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// Two command processes in one terminal resolve ONE client identity, so the
+/// capability the first was issued is reused by the second; another terminal's
+/// client is a different identity and never shares its store.
+#[test]
+fn two_commands_in_one_terminal_share_one_client_identity() {
+    // Both commands are children of this test, so they share its session: the
+    // terminal identity two real commands in one shell would share.
+    let first = client_identity_of(&[]);
+    let second = client_identity_of(&[]);
+    assert_eq!(first, second, "a terminal's commands share one identity");
+    assert!(
+        first.starts_with("terminal-"),
+        "the identity is the terminal's session, not the command's pid: {first}"
+    );
+
+    // Isolation: an entry-declared client is a different client, so its store is
+    // a different file and no command of one can present the other's authority.
+    let declared = client_identity_of(&[("EFFIGY_WORKSPACE_CLIENT_ID", "terminal-a")]);
+    let other = client_identity_of(&[("EFFIGY_WORKSPACE_CLIENT_ID", "terminal-b")]);
+    assert_eq!(declared, "terminal-a");
+    assert_eq!(other, "terminal-b");
+    assert_ne!(declared, first, "a declared client is not the ambient one");
+}
+
+fn client_identity_of(env: &[(&str, &str)]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .arg("__workspace-serving-fixture-client")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("the command process runs");
+    assert!(
+        output.status.success(),
+        "the command reported its client identity: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}

@@ -632,6 +632,21 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
         );
     }
     #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-client" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::client_identity_stdin() {
+                Ok(identity) => {
+                    println!("{identity}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
     if entry == "__workspace-serving-fixture-compete" {
         return Some(
             match crate::runner::workspace_serving_fixture::compete_detached_stdin() {
