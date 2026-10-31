@@ -948,3 +948,89 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// An interrupted handoff: the front end starts the host and dies before it reads
+/// any startup result. No session is ever claimed, the host settles on owner
+/// loss, and the next launch on the same checkout is admitted — recoverable, not
+/// broken, and never a claimed success from a dropped owner.
+#[test]
+fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving-handoff").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = request(&fixture, &project);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture-drop")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the initiating process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("the request is written");
+    let output = child
+        .wait_with_output()
+        .expect("the initiating process ends");
+    assert!(
+        !output.status.success(),
+        "the interrupted front end did not complete its handoff"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "an interrupted handoff claims no committed session"
+    );
+
+    // The dropped owner's host settles, then the same checkout admits a fresh
+    // host: the interrupted handoff left nothing that blocks recovery.
+    std::thread::sleep(Duration::from_secs(2));
+    let recovered = initiate("__workspace-serving-fixture", &successor(&request));
+    let endpoint = endpoint_of(
+        recovered["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+    assert!(
+        TcpStream::connect_timeout(&endpoint, Duration::from_secs(5)).is_ok(),
+        "a successor serves after an interrupted handoff"
+    );
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let supervisor_run = run_of(&recovered, "supervisor_run");
+    let supervisor = read_summary(&observe, &root, supervisor_run).expect("the successor run");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let stop = Request {
+        id: RunId::new(millis, [0x88; 10]).expect("a request id"),
+        run: supervisor_run,
+        expected: Fence {
+            resource: supervisor
+                .invocation
+                .as_ref()
+                .expect("the successor records its invocation")
+                .spec()
+                .owner
+                .clone(),
+            generation: supervisor.generation,
+        },
+        action: RequestAction::Stop,
+    };
+    run::request(&cx, &root, &stop).expect("the successor's stop is recorded");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, supervisor_run).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(Instant::now() < until, "the successor did not settle");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

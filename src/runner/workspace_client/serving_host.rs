@@ -618,11 +618,20 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
         RetirementCause::Stopped | RetirementCause::Down | RetirementCause::Settled => {
             run.finish(WorkloadOutcome::Succeeded)?
         }
-        RetirementCause::OwnerLost | RetirementCause::ListenerFailed => {
+        RetirementCause::OwnerLost => {
             run.interrupt(
                 &cleanup,
                 WorkloadOutcome::Cancelled {
                     cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                    signal: None,
+                },
+            )?;
+        }
+        RetirementCause::ListenerFailed => {
+            run.interrupt(
+                &cleanup,
+                WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::ListenerFailed,
                     signal: None,
                 },
             )?;

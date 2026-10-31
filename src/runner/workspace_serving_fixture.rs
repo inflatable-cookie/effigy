@@ -67,6 +67,26 @@ fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<Stri
         .map_err(|error| format!("the result: {error}"))
 }
 
+/// The same launch, but the front end crashes *before* it reads any startup
+/// result: an interrupted handoff, where the owner never learns a session and the
+/// host must settle without claiming one.
+pub fn initiate_and_drop_before_result(request_json: &str) -> Result<String, String> {
+    let request: ServingHostRequest =
+        serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
+    let cx = task_engine::effect_context(OpenReason::DevServer);
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&request.project_path),
+    };
+    let root = StateRoot::checkout_effects(&cx, &request.state_home, &location)
+        .map_err(|error| format!("the state root: {error}"))?;
+    let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
+    let host = serving_host::start(&cx, &root, &request, &executable)
+        .map_err(|error| format!("the launch: {error}"))?;
+    // No awaiting, no detach: the owner goes away with the handoff in flight.
+    drop(host);
+    std::process::abort();
+}
+
 /// The same launch, but the front end crashes *after* acknowledging the detach:
 /// the acknowledgement is durable, so the host must keep serving a crashed
 /// client's session.
@@ -141,6 +161,16 @@ pub fn initiate_deadline_from_stdin() -> Result<String, String> {
         .get("request")
         .ok_or_else(|| "the request names no serving request".to_owned())?;
     initiate_with_budget(&request.to_string(), budget)
+}
+
+/// Read one request from stdin and drop the handoff before reading its result.
+pub fn initiate_and_drop_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|error| format!("the request could not be read: {error}"))?;
+    initiate_and_drop_before_result(body.trim())
 }
 
 /// Read one request from stdin, initiate it and crash after the detach.
