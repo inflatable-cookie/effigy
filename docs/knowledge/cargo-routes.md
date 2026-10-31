@@ -104,12 +104,35 @@ routes and never need a row.
 
 ## Vault-backed Linux proof build
 
-The Parallels Ubuntu arm64 proof VM builds an exact Effigy candidate with plain
-Cargo inside the guest. This is a deliberate proof-build exception, not a Mac
-selector route: the guest VM and its build output live on Vault, Oxide is not
-available there, and the build does not write to the Mac's internal SSD. Record
-the source commit and built binary checksum with each Linux proof. The release
-workflow is separate and is not invoked for this build.
+A native Linux proof packet never assumes the guest toolchain: it records the
+guest's actual tools before any source transfer or privileged step. This is a
+deliberate proof-build exception, not a Mac selector route: the guest VM and
+its build output live on Vault, and the build does not write to the Mac's
+internal SSD. The host Oxide rule is unchanged.
+
+Each packet records, from inside the disposable guest and before moving any
+source:
+
+- the VM and snapshot identity (the Parallels Ubuntu arm64 VM and its
+  `clean-base` snapshot);
+- the actual toolchain: `cargo --version`, `rustc --version`, and
+  `oxide --version` or its recorded absence;
+- a non-mutating entry rehearsal: version probes only, which transfer no
+  source, install nothing and change no guest state.
+
+Routing follows the record, not the assumption. Require `oxide --version`
+only when the pinned guest image actually contains Oxide; then normal
+selector routing through Oxide applies. When the guest has no Oxide — as both
+named snapshots showed in the #476 r2/r3 windows, which stopped before source
+transfer — the packet names the repository-sanctioned
+`EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` for that disposable guest and
+that exact selector, with the recorded need (guest without Oxide). A guest
+whose toolchain record contradicts the packet stops before source transfer.
+Never install Oxide in the guest to satisfy the check, never add a blanket
+Cargo fallback, and never add a host plain-Cargo route.
+
+Record the source commit and built binary checksum with each Linux proof. The
+release workflow is separate and is not invoked for this build.
 
 ## Host note: permanent-drive outputs and multi-step runs
 
