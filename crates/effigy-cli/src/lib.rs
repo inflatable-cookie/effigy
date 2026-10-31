@@ -56,11 +56,29 @@ pub enum Command {
     #[doc(hidden)]
     InternalGatewayIdentity(InternalGatewayIdentityArgs),
     #[doc(hidden)]
+    InternalGuestProbe(GuestProbeArgs),
+    #[doc(hidden)]
     InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
     Help(HelpTopic),
     /// Discovery-only help for one operator-job group. Grouping never adds an
     /// execution route: see contract `043`.
     HelpGroup(HelpGroup),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuestProbeArgs {
+    Identity,
+    Resolve,
+    ContextDial {
+        context: String,
+        digest: String,
+        timeout_ms: u64,
+    },
+    Dial {
+        endpoint: String,
+        pin: String,
+        timeout_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

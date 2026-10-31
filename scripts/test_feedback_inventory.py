@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Contract tests for the feedback compiler-diagnostic ratchet."""
+"""Contract tests for the feedback compiler-diagnostic gate."""
 import importlib.util
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -20,16 +21,27 @@ def diagnostic(file, line, text):
 
 
 class InventoryTests(unittest.TestCase):
-    def test_new_literal_and_renamed_helper_are_reported(self):
+    def test_every_legacy_entry_point_is_reported_with_its_migration(self):
         observed = lint.entries([
             diagnostic('src/new.rs', 4, 'step("working...")'),
-            diagnostic('src/new.rs', 8, 'renamed_static_helper("working...")'),
+            diagnostic('src/new.rs', 8, 'let child = parent.step("working...");'),
+            diagnostic('src/new.rs', 12, 'let step = TimedStep::new("working...");'),
+            diagnostic('src/new.rs', 16, 'effigy_containers::exec::phase("working...")'),
         ])
-        errors = lint.check(observed, [], [])
-        self.assertEqual(len(errors), 2)
+        errors = lint.check(observed)
+        self.assertEqual(len(errors), 4)
         self.assertIn('src/new.rs:4', errors[0])
+        self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
+        self.assertIn('parent.live_step', errors[1])
+        self.assertIn('TimedStep::live', errors[2])
+        self.assertIn('runtime_wait', errors[3])
+
+    def test_there_is_no_allowlist_so_a_renamed_helper_still_fails(self):
+        observed = lint.entries([diagnostic('src/wrapped.rs', 21, 'renamed_static_helper("working...")')])
+        errors = lint.check(observed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('src/wrapped.rs:21', errors[0])
         self.assertIn('migrate to a live progress source', errors[0])
-        self.assertIn('src/new.rs:8', errors[1])
 
     def test_only_one_live_sink_is_exempt_after_a_line_shift(self):
         text = 'let bar = self.multi().add(ProgressBar::new_spinner());'
@@ -40,26 +52,243 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(lint.entries([moved]), [])
         self.assertEqual(len(lint.entries([moved, duplicate])), 2)
 
-    def test_relocated_site_passes_but_an_additional_site_fails(self):
-        relocated = [['src/a.rs', 6, 'step(label)', 1]]
-        observed = [('src/a.rs', 'step(label)', 6, 1)]
-        self.assertEqual(lint.check(observed, relocated, relocated), [])
-        errors = lint.check(observed + [('src/a.rs', 'step(label)', 7, 1)], relocated, relocated)
-        self.assertTrue(any('src/a.rs:7' in error for error in errors), errors)
+    def test_a_clean_tree_reports_nothing(self):
+        self.assertEqual(lint.check(lint.entries([{'reason': 'compiler-artifact'}])), [])
 
-    def test_event_source_emits_no_legacy_diagnostic(self):
-        observed = lint.entries([{'reason': 'compiler-artifact'}])
-        self.assertEqual(lint.check(observed, [], []), [])
+    def test_the_inventory_builds_every_workspace_package(self):
+        # A `-p` list omits a crate that is only another package's dependency,
+        # and an omitted crate is never linted as a package (finding: a
+        # fixed-label wrapper there would escape the inventory).
+        command = lint.clippy_command()
+        self.assertIn('--workspace', command)
+        self.assertIn('--all-targets', command)
+        self.assertNotIn('-p', command)
+
+    def test_an_alternative_spinner_constructor_is_reported(self):
+        # The finding's fixture: a fixed-label spinner built without any
+        # deprecated entry point, through indicatif's other constructors.
+        wrapper = """use indicatif::{ProgressBar, ProgressStyle};
+
+pub fn show(label: &str) -> ProgressBar {
+    let bar = ProgressBar::no_length();
+    bar.set_style(ProgressStyle::default_spinner());
+    bar.set_message(label.to_owned());
+    bar.enable_steady_tick(std::time::Duration::from_millis(80));
+    bar
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'wrapper.rs').write_text(wrapper)
+            errors = lint.indicatif_errors(root)
+        self.assertTrue(errors, 'an alternative constructor must not pass')
+        for fragment in ('src/wrapper.rs:1:', 'src/wrapper.rs:4:',
+                         'src/wrapper.rs:5:', 'src/wrapper.rs:7:'):
+            self.assertTrue(any(fragment in error for error in errors), (fragment, errors))
+        self.assertTrue(any('ProgressBar::no_length' in error for error in errors), errors)
+        self.assertTrue(
+            any('ProgressStyle::default_spinner' in error for error in errors), errors
+        )
+        self.assertTrue(
+            any('live_step(ProgressSource::waiting_for' in error for error in errors), errors
+        )
+
+    def test_the_sink_holds_only_the_reviewed_construction(self):
+        reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+struct Sink;
+
+impl Sink {
+    fn start_bar(&self, label: &str) -> ProgressBar {
+        let bar = self.multi().add(ProgressBar::new_spinner());
+        if let Ok(style) = ProgressStyle::with_template(SPINNER_TEMPLATE) {
+            bar.set_style(style);
+        }
+        bar.set_message(label.to_owned());
+        bar.enable_steady_tick(TICK);
+        bar
+    }
+}
+"""
+        extra = """fn a_second_spinner() -> ProgressBar {
+    let bar = ProgressBar::no_length();
+    bar.enable_steady_tick(TICK);
+    bar
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink.parent.mkdir(parents=True)
+            sink.write_text(reviewed)
+            self.assertEqual(lint.sink_errors(root), [])
+            self.assertEqual(lint.indicatif_errors(root), [])
+            sink.write_text(reviewed + extra)
+            errors = lint.sink_errors(root)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn('crates/effigy-ui/src/steps.rs:17:', errors[0])
+        self.assertIn('ProgressBar::no_length', errors[0])
+        self.assertIn('crates/effigy-ui/src/steps.rs:18:', errors[1])
+        self.assertIn('enable_steady_tick', errors[1])
+
+    def test_a_multiline_comment_does_not_shift_the_reported_line(self):
+        # A block comment used to be deleted outright, moving every later line
+        # up and reporting the wrong source line.
+        source = """/* a comment
+   that spans
+   several lines */
+let unrelated = 1;
+
+fn show() {
+    let bar = ProgressBar::no_length();
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'wrapped.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        lines = source.splitlines()
+        expected = next(number for number, line in enumerate(lines, 1) if 'no_length' in line)
+        self.assertEqual(expected, 7)
+        self.assertTrue(any(f'src/wrapped.rs:{expected}:' in error for error in errors), errors)
+
+    def test_comment_delimiters_in_strings_do_not_hide_source(self):
+        source = """fn show() {
+    let opener = "/*";
+    let closer = "*/";
+    let slashes = "//";
+    let bar = ProgressBar::no_length();
+    let _ = (opener, closer, slashes, bar);
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'strings.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        self.assertTrue(any('src/strings.rs:5:' in error for error in errors), errors)
+
+    def test_a_string_literal_that_names_a_constructor_is_not_a_use(self):
+        # A required gate must not fail on a message, fixture or doc string.
+        source = """pub const HELP: &str = "Use indicatif to draw a ProgressBar";
+
+pub fn message() -> &'static str {
+    "call ProgressBar::no_length() and enable_steady_tick"
+}
+
+pub fn raw() -> &'static str {
+    r#"indicatif ProgressStyle "quoted" /* not a comment */"#
+}
+
+fn show() {
+    let bar = ProgressBar::no_length();
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'messages.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('src/messages.rs:12:', errors[0])
+        self.assertIn('let bar = ProgressBar::no_length();', errors[0])
+        self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
+
+    def test_commented_code_is_not_a_use(self):
+        source = """fn show() {
+    // let bar = ProgressBar::no_length();
+    /* let other = ProgressBar::no_length();
+       let third = ProgressStyle::with_template("{spinner}"); */
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'commented.rs').write_text(source)
+            self.assertEqual(lint.indicatif_errors(root), [])
+
+    def test_a_suppression_in_a_comment_or_literal_is_not_a_suppression(self):
+        # The suppression scan used to read raw text, so a doc or message
+        # string mentioning the attribute failed an unrelated change.
+        source = """// #[allow(deprecated)] would hide a real use
+/* #![allow(warnings)] is not written here */
+pub const NOTE: &str = "#[allow(deprecated)] is forbidden";
+pub fn message() -> &'static str {
+    r#"use #[allow(disallowed_methods)] never"#
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'notes.rs').write_text(source)
+            self.assertEqual(lint.suppression_errors(root), [])
+
+    def test_a_real_suppression_attribute_is_reported_at_its_line(self):
+        source = """fn unrelated() {}
+
+#[allow(deprecated)]
+fn hidden() {}
+
+#[expect(clippy::disallowed_methods)]
+fn also_hidden() {}
+
+#![allow(warnings)]
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'hidden.rs').write_text(source)
+            errors = lint.suppression_errors(root)
+        self.assertEqual(len(errors), 3, errors)
+        self.assertIn('src/hidden.rs:3:', errors[0])
+        self.assertIn('#[allow(deprecated)]', errors[0])
+        self.assertIn('src/hidden.rs:6:', errors[1])
+        self.assertIn('src/hidden.rs:9:', errors[2])
+        for error in errors:
+            self.assertIn('migrate to a live progress source', error)
+
+    def test_a_suppression_of_an_unrelated_lint_is_not_reported(self):
+        source = """#[allow(dead_code)]
+fn kept_for_later() {}
+
+#[expect(unused_variables)]
+fn unused(value: u8) { let _ = value; }
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'ordinary.rs').write_text(source)
+            self.assertEqual(lint.suppression_errors(root), [])
+
+    def test_the_sink_cannot_re_export_the_spinner_crate(self):
+        reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+pub use indicatif::ProgressBar;
+
+struct Sink;
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink.parent.mkdir(parents=True)
+            sink.write_text(reviewed)
+            errors = lint.sink_errors(root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('crates/effigy-ui/src/steps.rs:3:', errors[0])
+        self.assertIn('re-export', errors[0])
 
     def test_compiler_resolves_a_renamed_static_helper(self):
         # Build a standalone fixture in an isolated directory through Oxide.
         # Its API carries the same deprecation marker as the checked API.
         fixture = r"""
 #[deprecated(note = "feedback legacy spinner: migrate to a live progress source")]
-fn step(_: &str) {}
+pub fn step(_: &str) {}
 use step as renamed_static_helper;
-struct Source;
-fn live_step(_: Source) {}
+pub struct Source;
+pub fn live_step(_: Source) {}
+mod wrapper;
 fn fixture() {
     step("working...");
     let fixed = "fixed wait";
@@ -68,9 +297,17 @@ fn fixture() {
     live_step(Source);
 }
 """
+        # A wrapper in another module, standing in for another crate's helper:
+        # the diagnostic must name that file and line, not this one.
+        wrapper = r"""
+pub fn show(label: &str) {
+    crate::step(label);
+}
+"""
         with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
             source = pathlib.Path(directory) / 'fixture.rs'
             source.write_text(fixture)
+            (pathlib.Path(directory) / 'wrapper.rs').write_text(wrapper)
             result = subprocess.run(
                 ['oxide', 'exec', '--', 'rustc', '--crate-type', 'lib', '--error-format=json',
                  '--emit=metadata', '-o', str(pathlib.Path(directory) / 'fixture.rmeta'), str(source)],
@@ -79,7 +316,7 @@ fn fixture() {
             messages = []
             for line in result.stderr.splitlines():
                 try:
-                    message = __import__('json').loads(line)
+                    message = json.loads(line)
                 except ValueError:
                     continue
                 if isinstance(message, dict):
@@ -90,13 +327,12 @@ fn fixture() {
             self.assertTrue(any('step(fixed)' in text for text in texts), texts)
             self.assertTrue(any('renamed_static_helper("waiting...")' in text for text in texts), texts)
             self.assertFalse(any('live_step(Source)' in text for text in texts), texts)
-
-    def test_baseline_cannot_grow_and_removed_sites_must_leave_it(self):
-        baseline = [['src/a.rs', 5, 'step(label)', 1]]
-        self.assertIn('grew', lint.check([], baseline, [])[0])
-        self.assertIn('removed sites', lint.check([], baseline, baseline)[0])
-        self.assertEqual(lint.check([('src/a.rs', 'step(label)', 5, 1)], baseline, baseline), [])
-        self.assertTrue(lint.check([('src/a.rs', 'step(label)', 6, 1)], baseline, baseline))
+            wrapped = [item for item in found if item[0].endswith('wrapper.rs')]
+            self.assertEqual(len(wrapped), 1, found)
+            self.assertIn('step(label)', wrapped[0][1])
+            errors = lint.check(wrapped)
+            self.assertIn('wrapper.rs:', errors[0])
+            self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
 
 
 if __name__ == '__main__':

@@ -204,8 +204,7 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
         .keys()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
-    let cwd =
-        std::env::current_dir().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let cwd = crate::runner::command_context::current_working_dir()?;
     let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
         .map(|resolved| resolved.resolved_root)
         .unwrap_or(cwd);

@@ -1342,6 +1342,17 @@ fn git_remote_revision(
     Ok(parse_ls_remote(&raw, reference))
 }
 
+/// One `ls-remote` line: the object id, then the ref name. Captured output
+/// passes the terminal sanitizer, which drops the TAB between them, so the id
+/// is taken by its length and the name starts at `refs/`.
+fn split_ls_remote_line(line: &str) -> Option<(&str, &str)> {
+    [64, 40].into_iter().find_map(|len| {
+        let sha = line.get(..len)?;
+        let name = line.get(len..)?.trim();
+        (is_full_revision(sha) && name.starts_with("refs/")).then_some((sha, name))
+    })
+}
+
 fn parse_ls_remote(raw: &[u8], reference: &str) -> Option<String> {
     let output = String::from_utf8_lossy(raw);
     let branch = format!("refs/heads/{reference}");
@@ -1349,13 +1360,9 @@ fn parse_ls_remote(raw: &[u8], reference: &str) -> Option<String> {
     let peeled = format!("{tag}^{{}}");
     let (mut head, mut tag_object, mut commit, mut first) = (None, None, None, None);
     for line in output.lines() {
-        let mut fields = line.split_whitespace();
-        let (Some(sha), Some(name)) = (fields.next(), fields.next()) else {
+        let Some((sha, name)) = split_ls_remote_line(line) else {
             continue;
         };
-        if !is_full_revision(sha) {
-            continue;
-        }
         first.get_or_insert_with(|| sha.to_owned());
         if name == branch {
             head = Some(sha.to_owned());
@@ -2075,5 +2082,30 @@ mod tests {
         assert!(sync_bundle_source(&manifest, &prep).is_err());
         assert_eq!(lock_bytes(tmp.path()), previous);
         assert!(selected(&manifest).contains("echo old"));
+    }
+
+    #[test]
+    fn ls_remote_reads_the_head_whether_or_not_the_tab_survives_capture() {
+        const HEAD: &str = "c331abd41b70aa6cc467cbc2d57e62e671a175a0";
+        const TAG: &str = "4be12e4088b8712d9e279e0a7b81b6c70ec882b0";
+        // The terminal sanitizer drops TAB, so captured output is `<id>refs/...`.
+        let captured = format!("{HEAD}refs/heads/main\n");
+        let tabbed = format!("{HEAD}\trefs/heads/main\n");
+        assert_eq!(
+            parse_ls_remote(captured.as_bytes(), "main").as_deref(),
+            Some(HEAD)
+        );
+        assert_eq!(
+            parse_ls_remote(tabbed.as_bytes(), "main").as_deref(),
+            Some(HEAD)
+        );
+        // An annotated tag resolves to its peeled commit, not the tag object.
+        let peeled = format!("{TAG}refs/tags/v1\n{HEAD}refs/tags/v1^{{}}\n");
+        assert_eq!(
+            parse_ls_remote(peeled.as_bytes(), "v1").as_deref(),
+            Some(HEAD)
+        );
+        assert_eq!(parse_ls_remote(b"", "main"), None);
+        assert_eq!(parse_ls_remote(b"not a ref line\n", "main"), None);
     }
 }

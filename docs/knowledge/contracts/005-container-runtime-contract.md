@@ -160,9 +160,74 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. A service that
+Each shared service a bring-up ensures is its own wait: entering the next
+service replaces the awaited subject and drops the previous service's event, so
+a stalled gate, inventory read, render or Compose call never displays a
+finished service's wait.
+
+The route-registration stage polls the runtime for the declared gateway service
+ports for up to 60s; its frame names the read in flight (`reading the runtime's
+containers for the declared gateway service ports (attempt 2)`) and then the
+blocker that read reported, with the service and domain when the detail knows
+them, instead of holding the stage label. The work after a ready poll is
+reported as its own stages too — confirming the primary container's binding,
+resolving the declared routes against the published ports, writing the route
+table, and, on timeout, reading the exited containers for the diagnostic — and
+entering a stage clears the previous stage's blocker so a resolved one is never
+shown against later work.
+
+Readiness is Running plus the service's own health check. Its progress names
+which of the probe's two runtime reads is running — the project's container
+list, or the inspect of the container names that list returned, with those
+names in the frame — because a stalled `ps` and a stalled `inspect` are
+different waits. A read that fails keeps that identity: the retry frame and the
+timeout diagnostic name the read, its probe number and, for an inspect, the
+containers it was reading, and the `waiting_on` probe entry carries the same
+facts as `probe` (`container_list` or `containers_inspect`), `probe_number` and
+`containers`. A service whose health regresses after reporting healthy opens
+a fresh step with its own attempt and last check output. The timeout diagnostic
+reads each exited service's own last log line under a live step that names the
+runtime container the read is issued against — an explicit Compose
+`container_name` may differ from the service name — with its position in the
+set, and reports a read the runtime does not answer instead of leaving the
+finished probe on screen. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
-one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
+a definite status line outside `2xx`/`3xx` is refused at once, naming the status
+it observed and the primary container's own last output, instead of spending
+the declared budget on an answer waiting cannot change (effigy#455). Only a
+complete, well-formed status line is evidence: the probe reads one bounded
+status line across partial reads, so a check that does not answer, that splits
+its response, or that closes after a prefix keeps the budgeted wait instead of
+reporting readiness or a mismatch it never observed. The container named in
+that evidence — in the human diagnostic as well as `waiting_on` — is the one the
+runtime's own row reports for the primary service, so a declared Compose
+`container_name` is read and reported as it is rather than assumed from the
+project and service names; when the runtime cannot name one, the diagnostic
+describes the environment and its primary service instead of calling the
+environment a container. The identity is carried from the readiness probe that
+already observed that service, so naming it costs no second runtime read; only
+when the readiness wait observed no services is one inventory read made, under
+its own live step naming that row and its elapsed wait. The failed container's
+log tail is the same kind of bounded runtime read, so it too runs under its own
+live step, naming the container it reads and reporting when the runtime does
+not answer it; the refusal then carries no tail rather than an unread one. The restart-policy apply after Compose names its own
+stages as they start: the Compose declaration read, the runtime inventory read,
+then the update, which may not be sent at all when no service qualifies. Each
+listed container is updated only after its full ID, project, declared service,
+canonical checkout and scope verify against the current policy, and a strict
+inspection re-verifies it immediately before the update; the update names the
+verified full ID, never the listed name. A foreign, replaced or unknown listed
+container, including a sibling of another owner, receives no update and is named
+in a warning; the selected service's own owned-binding check still refuses it
+separately. A shared service's stack belongs to no checkout, so its listed
+containers are proven by their own identity instead: the full ID, the shared
+project, the declared service, the running state, and the
+`com.effigy.shared-render` label equal to the render `up` just published. The
+same strict re-inspection runs before the update. A missing, foreign,
+stale-render, changed or ambiguous (more than one listed container of the
+service) identity receives no update and is named in a warning; no path falls
+back to a container name. A service's declared
 `restart:` always wins, `"no"` included; a service whose stack declares none
 keeps running because `up` asks the runtime for `restart: unless-stopped` with
 its own `update` once the stack is started (effigy#383), so a one-shot job stays
@@ -1170,6 +1235,55 @@ alias. A Docker engine backend supplies `host-gateway` for the same name, which
 Docker Desktop and Linux Docker both resolve. A service that receives no shared
 environment gets no entry.
 
+## Shared data targets (`data seed`, `data dump`)
+
+A declared data target whose manifest service is `shared = true` runs in that
+shared service's own machine-wide Compose project and render. The environment's
+generated Compose removes the service, so the checkout-local route could only
+ever reach a local service of the same name; the seed reset, staged-file import
+and logical dump instead use the shared render's Compose input and project
+name. `stack` and `hybrid` declarations of one shared identity therefore seed
+and dump the same project and named volume, and `data_from` does not redirect
+them, because `data_from` is a checkout-local volume feature (see below).
+
+Before the first statement Effigy proves the declared shared service: every
+file of the expected render (its Compose input and every configuration it
+binds) must be present, readable and unchanged, and the runtime must report
+exactly one running container of the declared service in the declared project,
+created from the declared render digest. A missing, unreadable or altered
+render file, a stopped or absent container, a container created from another
+render, more than one running container for the service, an unreadable
+inventory, or environments that declare the same service name with different
+shared identities all refuse and name the project and recovery command. The
+data step never publishes a render, starts or replaces a shared service — its
+own or an unrelated one — and never falls back to a checkout-local service of
+the same name. A seed that selects a shared target therefore skips its
+environment activation, and every activation a data seed performs (including an
+app-defined `data:seed` task's routed activation, through the data-seed runtime
+session) leaves shared services alone. Because bringing a stopped environment
+up would reconcile them, such a seed refuses and names `effigy container up
+<env>` instead of starting anything; an environment with no shared services keeps
+its ordinary activation, so a stopped local stack is still brought up before the
+seed. The decision is made per activated environment from that environment's own
+policy, so a sequence or catalog-routed step into another catalog's container
+also leaves that catalog's shared services alone. `data dump` starts nothing.
+
+A credential travels by name only. The exec forwards the client variable
+(`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a
+per-operation private file under the Effigy home that the Compose client sources
+before it runs — on the host for a host backend, and through `colima ssh` inside
+the VM for the VM-hosted backend, the same transport managed task secrets use.
+The file is 0600 inside a 0700 directory, created exclusively, never rewritten
+and removed when the call returns, so concurrent data commands never share a
+credential path. The checkout-local route uses the same transport, so an
+unshared target does not regress to an `env NAME=value` prefix in argv. No value
+reaches a command line, the Compose invocation, a report or a diagnostic.
+
+Every shared Compose call carries one absolute deadline: 15 minutes for a
+control call and one hour for a data exec. Expiry terminates the owned process
+group, and the call's complete output stays captured so a dump is never
+truncated. An unshared target keeps the checkout-local route unchanged.
+
 ## Shared service data volumes (`data_from`)
 
 A container environment may declare `data_from = "<other-env>"`. Every service
@@ -1908,7 +2022,7 @@ before children launch:
 - routed and deferred container tasks
 
 Plain primary-service `effigy exec` requires that the primary service is
-already running. If it is down, Effigy reports `effigy container up <NAME>`
+already running. If it is down, Effigy reports `effigy container <NAME> up`
 and returns before workspace repair or the requested child. `effigy dev` is
 also a project start path. Plain exec does not start the VM, service, or
 gateway. Explicit `container up` and the existing routed-task activation path
@@ -2139,7 +2253,7 @@ deadline. A record left behind by a stopped stack is stale, not published. The p
 as the rewrite, so text that merely mentions an effective alias proves nothing
 and refuses nothing. A missing route, a route another checkout owns, or a route with no
 published port refuses the run with the declared alias, the backing service and
-`effigy container up <NAME>`, and the task's command never runs. A primary
+`effigy container <NAME> up`, and the task's command never runs. A primary
 checkout keeps its declared name and resolves nothing, and a container-bound
 run is untouched: its target's own network already answers both names.
 

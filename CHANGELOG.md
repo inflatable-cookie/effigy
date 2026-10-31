@@ -38,6 +38,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
   explicit colour preferences, NO_COLOR and CI.
 
+- Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
+
+- Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
+
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
   PM, APC and the other non-printing bytes) *before* redaction, over merged
   stdout/stderr arrival order, so a value a child split with a control
@@ -197,6 +201,42 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
+
+- **A workspace activation is decided, selected and served by one owner.**
+  `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
+  `Attach` or reserves exactly the next environment generation from the frozen
+  publish inputs, so two callers cannot revoke a matching live session or create
+  two activations; a changed policy, profile, backend or artifact supersedes with
+  a fenced successor, while a target that disagrees with the published container
+  or boot, or a generation whose selection is unfinished, refuses by name. The
+  workspace commit now records the guest selection it published — binary,
+  context and credential objects, the three expected→next selector values and
+  the serving lease — in the same transaction as `active(E)`, the session
+  mapping and the session's `Borrow` attachment. That is the only commit: the
+  generic one refuses rather than publishing a generation with no durable
+  selection, a generation never *decided* refuses as unfrozen, the artifact,
+  target and context selection must be the ones the decision froze (a fresh
+  project's unselected artifact is frozen by its first publication), the
+  context document is parsed and checked field by field, and the commit requires
+  the session's own live launch — bound, qualified and rooted in the run that
+  owns it. `unfinished_selection`,
+  `Attachments::selection_switched`, `selection_recovered` (three proven
+  liveness facts *and* every selector and object read back through a
+  `SelectorReader` under `Gate(Env)` at its committed value) and
+  `selection_abandoned` (only once the exact successor is settled) complete,
+  complete-from-recovery or revoke it without ever publishing an unserved
+  generation or restoring the predecessor. Concurrent decision callers are
+  proven to reserve one generation or attach one session. One
+  session owns its listener and memory-only serving key
+  (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
+  lifetime, and refuses to publish an unbound, unqualified or stopped listener.
+  Cached locators are revalidated, and a selection stays Pending if its
+  successor loses owner or listener custody before live or recovery completion.
+  Selector reads are bound to the committed container/boot, prior values are
+  observed before receipt construction, and deserialized receipts cannot publish.
+  Transport, TLS qualification and the runner/container adapters remain with
+  #482/#483/#452.
 - **A container-mode workspace is prepared for the workspace client.** Host
   Prepare publishes an immutable guest context and a version-locked Linux
   Effigy into the container, outside the bind-mounted checkout. Activation
@@ -456,6 +496,99 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **No command plane shows a canned progress label.** The Q-017 live-state
+  rule is now a required lint gate rather than a migration list. A task-run
+  step names its ordinal, the exact child step it waits on and the elapsed
+  wait; every frame keeps the awaited object next to the last event, so
+  publishing a Compose progress line no longer hides the `docker compose up`
+  still running (a state capture's push frame likewise keeps its destination
+  while the finished capture task stays as its last event), and a Colima
+  profile command waits on the command now in flight — the list probe, then
+  `colima stop`, the pidfile termination, `colima status`, the managed
+  configuration or `colima start` as the recovery reports each phase,
+  with configuration preparation its own phase before the start — rather than a
+  generic recovery or a probe that already answered; a heavy admission wait names
+  the hook's decision probe and the hook's own progress line, and its immediate
+  refusals are one plain line; a teardown
+  the runtime never narrates names its phase, the runtime report it awaits and
+  the elapsed wait; and a managed TUI pane's generic start state shows its
+  elapsed wait, with the shutdown footer naming the completion's real counts.
+  `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
+  on every compiler-resolved use of a fixed-label constructor in any workspace
+  crate, including through an alias or wrapper, naming the file, the line and
+  the migration. The gate also owns the spinner crate: `indicatif` may be
+  named in one production file (the reviewed sink) and that file may build one
+  bar, so a fixed-label spinner built through `ProgressBar::no_length`,
+  `ProgressStyle::default_spinner` and `enable_steady_tick` fails at its own
+  file and line, and `clippy::disallowed_methods` rejects every bar
+  constructor as a second gate. The gate is part of `effigy validate`,
+  `effigy qa` and `effigy qa:gates`, so the normal validation path and the
+  milestone QA path both refuse a bare spinner instead of depending on someone
+  running the selector. A managed pane's start
+  clock now belongs to the process's current attempt, so an entry that queued
+  behind its prerequisite starts its own count at zero rather than showing the
+  time it spent waiting, and a silent teardown names the command's exit as the
+  thing it awaits instead of a runtime report that never comes. Each site's
+  disposition is recorded in
+  [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed session names what each entry waits for.** Every tab, the
+  `--headless` text and `status` show the entry's own dependency-derived state
+  instead of a generic waiting spinner: `front [waiting: api starting]` while
+  the resolved start order or a host process's `depends_on` blocks it,
+  `waiting for environment (containers 3/4 healthy)` during the environment
+  phase, `waiting for GET / -> 200 (12s)` for a listener's declared readiness
+  request, and `scheduled delay: 1.2s remaining` for the accepted legacy
+  `start_after_ms` — which names no dependency. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts. `effigy <task> status --json` keeps every existing field
+  and adds `waiting_on` to a waiting process plus a `waits` list of entries that
+  have not started, each with the `scope` that published it (`workload`, `host`
+  or `environment`) so the run's own phase, its workloads and its environment's
+  host processes appear in one projection. The run publishes its host graph and
+  environment identity before its phase can block, so a host tab says it waits
+  for the environment (and its healthy container count) during bring-up and is
+  announced as started only once it actually is. Each publisher of the
+  environment's entries — the run before readiness, the host planner after —
+  stages a complete snapshot and commits it with one atomic record, so readers
+  always resolve a whole snapshot: a write that races the handoff never
+  replaces the other's state, and the window before the commit still shows the
+  run's environment waits instead of announcing a host as started. The
+  environment phase keeps its own reserved record, so a host an operator names
+  `environment` keeps its own wait, and the run's owner reads its container
+  counts from that record — the one the container readiness publisher writes. A
+  read accepts a snapshot only while it is still the visible one, re-resolving
+  one a commit retires mid-read, so an in-flight tab or status never observes a
+  missing or partial snapshot across the handoff. A host process that declares
+  no dependency of its own still names its real wait while the plan launches
+  entries one at a time in its resolved order — the launch being performed now
+  and that entry's actual phase, `jobs [waiting: api starting]` — reported as
+  its own `launch` identity in JSON and never attributed as a dependency. A
+  launch that aborts the plan marks every entry it never started terminal
+  (`not started — plan stopped after api failed: …500…`), so no wait outlives
+  the plan, a restart names the reader readiness it re-confirms
+  (`waiting for api (running)`) while publishing only the entries it replaces,
+  and a host nothing has observed yet reports no status at all, so neither the
+  headless text nor a tab claims it is starting before the bring-up launched
+  it. A non-listener's launch stops holding the scheduler as soon as it
+  returns, so a queued entry never names an entry that already finished.
+  Only a dependent that needs a failed entry's readiness loses it: a workload
+  that only needed its predecessor to start keeps going after that predecessor
+  exits non-zero, even inside its own scheduled delay. The environment phase's
+  record is terminal on every exit (settled on success, stop or
+  nothing-to-await, attributed on failure or timeout), and a new session resets
+  it at its own boundary — for every named environment, with or without host
+  processes, before the run starts polling it, and before a bring-up composes —
+  so an interrupted prior run's counts are never projected into the new run; the
+  reset never touches the staged host snapshot. A host
+  failure the planner published
+  survives the run's generic `up` exit: the run's error names the failing entry
+  and its observed status. A wait is recorded as
+  settled when it ends, and only a changed meaning or a live wait's refresh
+  writes a record, so a settled entry is never rewritten on an owner-loop tick
+  and a tab or a status never keeps a wait the entry has left behind. Record
+  paths encode an accepted entry or scope name injectively, so two distinct
+  names (`api-v1` and `api v1`, or the task/profile pairs `a-b`/`c` and
+  `a`/`b-c`) never share a record and `status` reports each one.
 - Doctor scan checks and vault lock, unlock and generate-hook waits now draw
   through the live progress source: the current sub-step, known count, elapsed
   wait and last event or exact probe, instead of a label fixed for the whole
@@ -574,6 +707,26 @@ During v0.x, MINOR bumps may include breaking changes.
   with ✓ or ✗ naming the failure. On a terminal, a warning or note from source
   acquisition prints above the spinner, and `--json` writes nothing to stderr
   for it.
+- **Gateway setup and operator steps show the phase they are in.** `gateway up`
+  and `gateway down` show the supervisor admitting the run, then the daemon's
+  own reported status and the blocker that status carries while it self-tests
+  or winds down. `gateway up` and `gateway setup` name each route already in the
+  route table as they read it, with its position and certificate state; they
+  read the published table and never publish a route, and a table that cannot
+  be read ends that step with the read error while the command itself still
+  succeeds. That step performs only the reads it names — the table snapshot and
+  each certificate file — so mkcert and trust-store state stay in `gateway
+  status` instead of blocking an already-started gateway. `gateway setup` probes
+  each low-port address in turn and names it as
+  its outcome lands (bound, already in use, denied); a refusal stops at that
+  address with the probe's own sentence. The platform setup action names each
+  operation as it runs too — the resolver files, the loopback launch job, the
+  privileged bind broker, the loopback addresses, or the DNS unit and low-port
+  capability on Linux — including after the administrator prompt, when the
+  elevated child reports each phase back through its own captured stdout. Each
+  step names the exact port, record, route or suffix list it awaits, with
+  elapsed time, and still ends with one line. `--json` and piped output are
+  unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations
@@ -714,8 +867,79 @@ During v0.x, MINOR bumps may include breaking changes.
   command or source they wait on, in place of one fixed label. JSON, piped and
   quiet output are unchanged.
 
+- `container up` progress now follows the bring-up's actual state. Readiness
+  counts the healthy services (`2/3`) and names the first one still failing
+  with its own problem; each waiting service shows its attempt and last check
+  output. A runtime that does not answer the health read names that exact read
+  with its error. Activation shows the Compose call it waits on and the last
+  runtime line it read, and each Compose child step moves with the runtime's
+  reports instead of holding one fixed label. Integration stages count the
+  stages finished (`3/8`) and name the one now running; the gateway-route stage
+  names the runtime read polling the declared service ports and the blocker it
+  last reported, with the service and domain that blocker knows; the work after
+  that poll — confirming the primary container's binding, resolving the declared
+  routes, writing the route table, and the timeout diagnostic's read of exited
+  containers — is reported as its own stages, and entering a new stage clears
+  the previous stage's blocker; shared services name the service they are
+  awaiting, and entering the next service replaces the previous one's subject
+  and event. Every frame carries elapsed time. JSON, piped and
+  quiet output stay silent. Rendering is a single finished line, not a spinner.
+  A readiness refusal carries its machine-readable `waiting_on` list in
+  `--json`: one entry per service still unready, with its problem, and one for
+  a health read the runtime did not answer, naming that read (`container_list`
+  or `containers_inspect`), its probe number and, for an inspect, the container
+  names it covered. A failed read keeps that identity in the retry frame and in
+  the timeout diagnostic too. Shared-service waits name the
+  machine gate, the runtime container read, the render publication, or the
+  `docker compose up` they are in. A readiness frame names which of the probe's
+  two runtime reads is in flight — the project's container list, then the
+  inspect of the names that list returned, with those names shown — alongside
+  its probe number, budget and the last known counts and event. A service whose
+  health regresses after reporting healthy opens a fresh step with its own
+  attempt and last check output. When an exited service's own last log line is
+  read for the timeout diagnostic, each read runs under a live step naming the
+  runtime container it is issued against (which can differ from the service
+  name when Compose declares `container_name`), and a read the runtime does not
+  answer is reported rather than shown as the finished probe. A declared health check names its probe and
+  attempt. A
+  failed shared-service step, and a declared health check that times out, carry
+  the same `waiting_on` list in `--json` and keep their text unchanged.
+- `container up` activation and preparation report their own state instead of a
+  fixed label. Compose's whole-stack step moves to the restart-policy read once
+  Compose returns, and a shared service's step does the same, so a stalled
+  `restart: unless-stopped` read never shows a finished Compose call. The
+  creation-time policy load names the preparation stage now running (checkout
+  identity, declaration with ports and loopback, render inputs, the second
+  declaration resolution that follows them, render, mount sources), and
+  environment activation draws only the transition's own live step instead of a
+  second fixed one. A declared
+  `[containers.<NAME>.health]` check that answers a definite status outside
+  `2xx`/`3xx` is refused at once with the status it observed and the primary
+  container's last output, instead of spending the whole health budget on an
+  answer waiting cannot change (effigy#455). Only a complete status line counts
+  as that answer: the probe reads one bounded line across partial reads, so a
+  split response or a peer that closes after a prefix keeps the budgeted wait
+  instead of reporting readiness or a mismatch it never observed. That
+  container is the identity the
+  runtime's own row reports for the service, so an explicit Compose
+  `container_name` reads its own logs and is the one the diagnostic and
+  `waiting_on` name. That identity is carried from the readiness probe's own
+  observation, so naming it costs no extra runtime read; a wait that observed
+  no services reads it once, under a live step naming the runtime row it waits
+  on; the failed container's log tail is read under its own named step too, and
+  a log read the runtime does not answer is reported as unavailable. When the runtime cannot name a container, the diagnostic describes the
+  environment and its primary service instead of calling the environment a
+  container. The restart-policy apply that follows Compose names
+  its own stages — the Compose declaration read, the runtime inventory read,
+  then the update — for the whole stack and for each shared service, so a
+  stalled read never claims an update was sent.
+
 ### Removed
 
+- The fixed-label spinner API: `Renderer::spinner` and `SpinnerHandle`. A step
+  is driven by a `ProgressSource` (`steps::live_step`) or is one
+  `steps::finish_line`, so a bare spinner with a canned label cannot be
+  constructed.
 - The gateway's dead-route sweep, certificate deletion on `down`, the
   route-table lock and the route's scope token.
 - The exec-ready probe and its recovery restart, restart recovery of exited
@@ -748,6 +972,76 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
+
+- A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
+
+- Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
+
+- The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
+
+- A shared service's restart-policy update reaches only a container whose full ID, shared project, declared service, running state and render label equal the render `up` just published. It is re-verified right before it is sent, and a missing, foreign, stale, changed or ambiguous container gets no update.
+
+- A direct foreground task stays in memory custody and records no `latest` or
+  `history` entry, even when the user config declares a `[programs]` block.
+  Only a block that puts a shim on the run's `PATH` (program absent, or
+  `force = true`) moves the run to durable custody, since foreground runs
+  carry no shims. `effigy tasks status` for such a task now reports
+  `not-recorded` again.
+- `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
+- A floating Git bundle source updates on `dev` again. The remote check read
+  `git ls-remote` output that the terminal sanitizer had stripped of its TAB,
+  so every check kept the old pin without a warning. The check now reads the
+  object id and ref name with or without that TAB.
+
+- Database seed and dump keep the database password out of every spawned
+  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
+  variable name and never the value, and each exec sources it from a private
+  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
+  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
+  receipt or a diagnostic on either the checkout-local or the shared Compose
+  route. Target resolution, the selected Compose project, seed/dump results,
+  reports and cleanup are unchanged.
+
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
+
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
   libraries or linkers refuse the build before it can attest an artifact.
@@ -1015,6 +1309,15 @@ During v0.x, MINOR bumps may include breaking changes.
   unmounted volume or a permission refusal never prunes routes.
 - A repository task named `fmt` runs again for `effigy fmt`, and `effigy
   changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
+- Shared-service and alias refusals suggest the environment's up command in the
+  order the grammar accepts (`effigy container <NAME> up`); the previous
+  `effigy container up <NAME>` form never parsed.
 
 ## [0.14.1] - 2026-10-08
 

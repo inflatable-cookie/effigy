@@ -7,34 +7,38 @@
 //! Feedback").
 //!
 //! ```no_run
-//! let status = crate::runner::feedback::live("reading gateway state", |step| {
-//!     step.set_label("checking whether the gateway is running");
-//!     resolve_status()
-//! })?;
+//! let status = crate::runner::feedback::live_progress(
+//!     "reading the gateway state",
+//!     "the gateway identity record",
+//!     |progress| {
+//!         progress.update("checking whether the gateway is running", None, None);
+//!         resolve_status()
+//!     },
+//! )?;
 //! ```
 //!
-//! The closure may move the label as the work moves on. When it returns, the
-//! step ends with the label it last set, unless the closure already finished
-//! it with a summary naming what now holds.
+//! The closure moves the action and the awaited object as the work moves on.
+//! When it returns, the step ends with the action it last set.
 
-use effigy_ui::steps::{step, Step};
+use effigy_ui::steps::{live_step, ProgressSource};
 
 use super::error::RunnerError;
 
-/// Run one labelled step. A refusal ends the step with the sentence a person
-/// reads for that failure, not an error variant or a `Debug` tree.
-#[cfg_attr(
-    effigy_feedback_lint,
-    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-)]
-pub(in crate::runner) fn live<T>(
-    label: &str,
-    work: impl FnOnce(&Step) -> Result<T, RunnerError>,
+/// Run one step driven by an operation's live state. `action` names what is
+/// happening now and `awaiting` the exact object or probe the wait is on. The
+/// closure moves them as events arrive; the step ends with the action it last
+/// set, or with the refusal's sentence.
+pub(in crate::runner) fn live_progress<T>(
+    action: &str,
+    awaiting: &str,
+    work: impl FnOnce(&ProgressSource) -> Result<T, RunnerError>,
 ) -> Result<T, RunnerError> {
-    let step = step(label);
-    match work(&step) {
+    let progress = ProgressSource::waiting_for(awaiting);
+    progress.update(action, None, None);
+    let step = live_step(progress.clone());
+    match work(&progress) {
         Ok(value) => {
-            step.succeed("");
+            step.succeed(&progress.summary());
             Ok(value)
         }
         Err(error) => {
@@ -49,25 +53,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_step_that_succeeds_ends_with_the_label_it_last_set() {
+    fn a_live_progress_step_ends_with_the_action_it_last_set() {
         let (value, lines) = effigy_ui::steps::capture_lines(|| {
-            live("reading gateway state", |step| {
-                step.set_label("the gateway is running on pid 42");
-                Ok(42)
-            })
+            live_progress(
+                "reading the gateway state",
+                "the gateway identity record",
+                |progress| {
+                    progress.update("the gateway is running on pid 42", None, None);
+                    Ok(42)
+                },
+            )
         });
         assert_eq!(value.expect("a read"), 42);
         assert_eq!(lines, vec!["✓ the gateway is running on pid 42"]);
     }
 
     #[test]
-    fn a_refusal_ends_the_step_with_the_sentence_a_person_reads() {
+    fn a_live_progress_refusal_ends_with_the_sentence_a_person_reads() {
         let (refused, lines) = effigy_ui::steps::capture_lines(|| {
-            live::<()>("starting the gateway", |_| {
-                Err(RunnerError::task_invocation(
-                    "gateway port 443 is already in use by pid 77; stop that process, then run `effigy gateway up`",
-                ))
-            })
+            live_progress::<()>(
+                "starting the gateway daemon",
+                "the gateway daemon process to start",
+                |_| {
+                    Err(RunnerError::task_invocation(
+                        "gateway port 443 is already in use by pid 77; stop that process, then run `effigy gateway up`",
+                    ))
+                },
+            )
         });
         assert!(refused.is_err());
         assert_eq!(

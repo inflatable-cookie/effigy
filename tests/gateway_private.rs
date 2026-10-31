@@ -706,27 +706,23 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
     save_localhost_route(&first_root, first_upstream.address);
     save_localhost_route(&second_root, second_upstream.address);
 
-    let untrusted_route_path = second_root.join("routes.json");
-    let trusted_route_bytes = fs::read(&untrusted_route_path).expect("trusted route table");
-    let untrusted_route_bytes = String::from_utf8(trusted_route_bytes.clone())
-        .expect("route table UTF-8")
-        .replace(
-            "effigy-gateway-route-table-v1",
-            "foreign-route-table-sentinel",
-        )
-        .into_bytes();
-    fs::write(&untrusted_route_path, &untrusted_route_bytes).expect("tamper only fixture route");
-    let untrusted = run_gateway(&second_root, "up", &effects, Some(&foreign_ca_root), &[]);
-    assert!(
-        !untrusted.status.success(),
-        "untrusted private routes must refuse startup"
-    );
-    assert_eq!(
-        fs::read(&untrusted_route_path).expect("preserved untrusted route table"),
-        untrusted_route_bytes
-    );
-    assert!(!second_root.join("gateway.pid").exists());
-    save_localhost_route(&second_root, second_upstream.address);
+    // Each path selects its private endpoint store; routes are no longer a
+    // standalone JSON file.
+    let first_routes =
+        RouteTable::load(&first_root.join("routes.json")).expect("first private route table");
+    let second_routes =
+        RouteTable::load(&second_root.join("routes.json")).expect("second private route table");
+    let first_route = first_routes
+        .lookup("localhost")
+        .expect("first private route");
+    let second_route = second_routes
+        .lookup("localhost")
+        .expect("second private route");
+    let first_target = first_upstream.address.to_string();
+    let second_target = second_upstream.address.to_string();
+    assert_eq!(first_route.target.as_deref(), Some(first_target.as_str()));
+    assert_eq!(second_route.target.as_deref(), Some(second_target.as_str()));
+    assert_ne!(first_route.project.as_str(), second_route.project.as_str());
 
     let missing_cert_root = private_root(fixture.path(), "missing-cert");
     make_private_subdirectory(&missing_cert_root, "ca");
@@ -2974,7 +2970,9 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
     }
     let manifest = linked.join("effigy.toml");
     let mut source = fs::read_to_string(&manifest).unwrap();
-    source.push_str("\n[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"sleep 60\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n");
+    source.push_str(
+        "\n[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"sleep 60\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\nuser = \"dev\"\nhome = \"/home/dev\"\n",
+    );
     fs::write(&manifest, source).unwrap();
     let mut cleanup = ManagedContainerCleanup {
         checkouts: vec![primary.clone(), linked.clone()],
@@ -2987,21 +2985,27 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log,
     };
-    let plan = fixture_environment_command(linked, &cleanup)
-        .args(["--plan", "dev"])
-        .output_owned()
-        .unwrap();
-    assert_success(plan);
-    assert!(effigy_core::worktree_scope::load_scoped(linked)
-        .unwrap()
-        .is_none());
+    assert!(
+        effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none(),
+        "fresh linked checkout starts without a runtime scope"
+    );
     assert_success(run_container_cli(
         &primary,
         &cleanup,
         &["up", "--detach", "--json"],
     ));
+    assert!(
+        effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none(),
+        "primary startup must not allocate the linked scope"
+    );
     let output_path = fixture.path().join("dev.log");
     let mut dev = fresh_container_command(linked, &cleanup)
+        .env("FAKE_WORKSPACE_PERMISSION_PROOF", "1")
+        .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
         .args(["dev", "--headless"])
         .stdout(Stdio::from(fs::File::create(&output_path).unwrap()))
         .stderr(Stdio::from(
@@ -3632,6 +3636,40 @@ PYDYNAMIC
       : > "$FAKE_OWNED_ACTIVE" ;;
     down) rm -f "$FAKE_OWNED_ACTIVE" ;;
     ps) printf '[]\n' ;;
+    exec)
+      if [ "${FAKE_WORKSPACE_PERMISSION_PROOF-}" = 1 ]; then
+        shift
+        args="$*"
+        case "$args" in
+          *effigy-perm-inspect-batch*)
+            record=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then printf "dir 501 20 755\n"; fi
+            done
+            ;;
+          *effigy-perm-find-batch*)
+            record=0; skip=2
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf "clean\n"; fi
+              fi
+            done
+            ;;
+          *effigy-perm-access-batch*)
+            record=0; directory=0
+            for arg in "$@"; do
+              if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+              if [ "$record" -eq 1 ]; then
+                if [ "$directory" -eq 0 ]; then directory=1; else printf "ready\n"; directory=0; fi
+              fi
+            done
+            ;;
+          *effigy-workspace-identity*|*"id -u"*) printf "501\n20\n" ;;
+        esac
+      fi
+      ;;
   esac
 fi
 exit 0
@@ -5227,7 +5265,7 @@ impl PlainEnvironmentFixture {
 
     /// The headless session, logged where the test reads what it showed.
     fn session(&self, cleanup: &ManagedContainerCleanup, log: &Path) -> Command {
-        let mut command = fixture_task_command(&self.checkout, cleanup, &["dev", "--headless"]);
+        let mut command = self.command(cleanup, &["dev", "--headless"]);
         command
             .env("FAKE_HEALTHY", &self.healthy)
             .stdout(Stdio::from(
@@ -5237,6 +5275,31 @@ impl PlainEnvironmentFixture {
                 fs::File::create(log.with_extension("err")).expect("headless session errors"),
             ));
         command
+    }
+
+    /// This environment's lifecycle CLI. The Linux workspace artifact is not
+    /// this fixture's subject: readiness probes exercise the exec path, and
+    /// the environment stays plain because its declared workspace publishes
+    /// no guest here.
+    fn command(&self, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Command {
+        let mut command = fixture_task_command(&self.checkout, cleanup, args);
+        command.env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1");
+        command
+    }
+
+    /// The environment's CLI with this fixture's own inputs, so its status and
+    /// teardown resolve the same plain environment the session did.
+    fn container_cli(
+        &self,
+        cleanup: &ManagedContainerCleanup,
+        scope: &str,
+        args: &[&str],
+    ) -> Output {
+        let mut command = container_command_for_env(&self.checkout, cleanup, "web");
+        command
+            .args(args)
+            .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1");
+        run_fixture_cli(scope, &mut command)
     }
 }
 
@@ -5255,6 +5318,162 @@ fn assert_host_process_stopped(pid_file: &Path, report: &dyn Fn() -> String) {
         "host process {pid} outlived its session: {}",
         report()
     );
+    println!(
+        "[fixture] host process {pid} (from {}) exited",
+        pid_file.display()
+    );
+}
+
+/// Run one fixture CLI child, reporting its exact pid and exit: every process a
+/// fixture starts leaves a receipt naming the pid and what became of it
+/// (effigy#493).
+fn run_fixture_cli(scope: &str, command: &mut Command) -> Output {
+    // Capture the child's own output exactly as `output_owned` does, while
+    // keeping the retained leader so its pid can be reported.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn_owned().expect("spawn fixture CLI");
+    let pid = child.id();
+    let output = child.wait_with_output().expect("wait for fixture CLI");
+    println!(
+        "[fixture] {scope}: pid {pid} exited ({}, code {:?})",
+        output.status,
+        output.status.code()
+    );
+    output
+}
+
+/// Start one private gateway for a plain-environment case, reporting the exact
+/// pid and exit of the control command that prepares and starts it. Those cases
+/// do not use the shared starter because their receipt names every child they
+/// start (effigy#493).
+fn start_plain_environment_gateway(
+    fixture: &Path,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+    scope: &str,
+) -> PathBuf {
+    let private_gateway = private_root(fixture, &format!("{}-gateway", scope.replace(' ', "-")));
+    let tls = run_fixture_cli(
+        &format!("{scope}: private gateway setup-tls"),
+        &mut gateway_command(
+            &private_gateway,
+            "setup-tls",
+            effects,
+            Some(foreign_ca),
+            &[],
+        ),
+    );
+    assert!(
+        tls.status.success(),
+        "{scope}: private gateway setup-tls: {tls:?}"
+    );
+    let up = run_fixture_cli(
+        &format!("{scope}: private gateway up"),
+        &mut gateway_command(
+            &private_gateway,
+            "up",
+            effects,
+            Some(foreign_ca),
+            &[
+                "--dns-addr",
+                "127.0.0.1:0",
+                "--proxy-addr",
+                "127.0.0.1:0",
+                "--https-addr",
+                "127.0.0.1:0",
+            ],
+        ),
+    );
+    assert!(up.status.success(), "{scope}: private gateway up: {up:?}");
+    gateway_cleanup.track(&private_gateway);
+    private_gateway
+}
+
+/// The pid a fixture private gateway recorded for its own daemon.
+fn private_gateway_daemon_pid(root: &Path) -> u32 {
+    let path = root.join("gateway.pid");
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()));
+    raw.trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()))
+}
+
+/// Stop one fixture private gateway through its own control path and prove the
+/// exact daemon it recorded exited. The gateway is untracked afterwards so the
+/// shared cleanup does not race a second `down` (effigy#493).
+fn stop_private_gateway(
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    root: &Path,
+    scope: &str,
+) {
+    let pid = private_gateway_daemon_pid(root);
+    let down = run_fixture_cli(
+        &format!("{scope}: private gateway down"),
+        &mut gateway_command(root, "down", effects, Some(foreign_ca), &[]),
+    );
+    assert!(
+        down.status.success(),
+        "{scope}: private gateway down failed: {}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        !effigy_process::process_is_running(pid),
+        "{scope}: private gateway daemon {pid} outlived its down"
+    );
+    gateway_cleanup.untrack(root);
+    println!("[fixture] {scope}: private gateway daemon {pid} exited");
+}
+
+/// Report the exact fixture PIDs the session's own log recorded — its
+/// supervisor and every workload start — and prove each exited once the session
+/// settled (effigy#493). Host processes are covered by their own pid files, so a
+/// borrowed environment's still-running processes are never asserted stopped.
+fn report_session_processes_absent(log: &Path, scope: &str) {
+    let shown = fs::read_to_string(log).unwrap_or_default();
+    let mut pids = Vec::new();
+    for line in shown.lines() {
+        let recorded = line
+            .split_once("supervised by pid ")
+            .map(|(_, rest)| rest.split_whitespace().next().unwrap_or_default())
+            .or_else(|| {
+                line.contains("[managed] started `")
+                    .then(|| line.split_once("(pid ").map(|(_, rest)| rest))
+                    .flatten()
+                    .map(|rest| rest.split(')').next().unwrap_or_default())
+            });
+        if let Some(pid) = recorded
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .filter(|pid| !pids.contains(pid))
+        {
+            pids.push(pid);
+        }
+    }
+    assert!(
+        !pids.is_empty(),
+        "{scope}: the session recorded no pid, so its cleanup cannot be proved"
+    );
+    for pid in pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(pid),
+            "{scope}: fixture pid {pid} outlived its session"
+        );
+        println!("[fixture] {scope}: pid {pid} exited");
+    }
 }
 
 /// effigy#322 acceptance, through the real binary: a plain `[tasks.dev]`
@@ -5269,8 +5488,13 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (private_gateway, _https_address) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let private_gateway = start_plain_environment_gateway(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        "plain environment",
+    );
     let plain =
         PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
     let mut cleanup = plain.cleanup();
@@ -5288,6 +5512,7 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         .session(&cleanup, &output_path)
         .spawn_owned()
         .expect("spawn managed session");
+    let dev_pid = dev.id();
 
     // The session shows the environment's host processes, with their status
     // and their live output, and its own workload starts beside them. The
@@ -5313,9 +5538,10 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         thread::sleep(Duration::from_millis(50));
     }
 
-    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
-        .output_owned()
-        .expect("stop the managed session");
+    let stop = run_fixture_cli(
+        "plain environment dev stop",
+        &mut plain.command(&cleanup, &["dev", "stop"]),
+    );
     assert_success(stop);
     let status = dev.wait_with_output().expect("wait for the session client");
     assert!(
@@ -5323,11 +5549,17 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         "the stopped session did not exit cleanly: {}",
         report()
     );
+    println!(
+        "[fixture] plain environment session client: pid {dev_pid} exited ({})",
+        status.status
+    );
+    report_session_processes_absent(&output_path, "plain environment");
 
     for pid_file in [&plain.api_pid, &plain.worker_pid] {
         assert_host_process_stopped(pid_file, &report);
     }
-    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    let status_json =
+        plain.container_cli(&cleanup, "plain environment status", &["status", "--json"]);
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5351,6 +5583,13 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         );
     }
     cleanup.checkouts.clear();
+    stop_private_gateway(
+        &mut gateway_cleanup,
+        &effects,
+        &foreign_ca,
+        &private_gateway,
+        "plain environment",
+    );
 }
 
 /// The same session over an environment an explicit `container up` already
@@ -5364,8 +5603,13 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (private_gateway, _https_address) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let private_gateway = start_plain_environment_gateway(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        "borrowed plain environment",
+    );
     let plain =
         PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
     let cleanup = plain.cleanup();
@@ -5377,10 +5621,12 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         )
     };
 
-    let up = fixture_task_command(&plain.checkout, &cleanup, &["container", "up", "--detach"])
-        .env("FAKE_HEALTHY", &plain.healthy)
-        .output_owned()
-        .expect("explicit container up");
+    let up = run_fixture_cli(
+        "borrowed plain environment container up",
+        plain
+            .command(&cleanup, &["container", "up", "--detach"])
+            .env("FAKE_HEALTHY", &plain.healthy),
+    );
     assert_success(up);
     wait_for_path_exists(&plain.api_pid, Duration::from_secs(60), "the host process");
 
@@ -5389,6 +5635,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         .session(&cleanup, &output_path)
         .spawn_owned()
         .expect("spawn managed session");
+    let dev_pid = dev.id();
     let deadline = Instant::now() + Duration::from_secs(120);
     while !fs::read_to_string(&output_path)
         .unwrap_or_default()
@@ -5401,9 +5648,10 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         );
         thread::sleep(Duration::from_millis(50));
     }
-    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
-        .output_owned()
-        .expect("stop the managed session");
+    let stop = run_fixture_cli(
+        "borrowed plain environment dev stop",
+        &mut plain.command(&cleanup, &["dev", "stop"]),
+    );
     assert_success(stop);
     let status = dev.wait_with_output().expect("wait for the session client");
     assert!(
@@ -5411,6 +5659,11 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "the stopped session did not exit cleanly: {}",
         fs::read_to_string(&output_path).unwrap_or_default()
     );
+    println!(
+        "[fixture] borrowed plain environment session client: pid {dev_pid} exited ({})",
+        status.status
+    );
+    report_session_processes_absent(&output_path, "borrowed plain environment");
 
     let api: u32 = fs::read_to_string(&plain.api_pid)
         .expect("recorded host process pid")
@@ -5422,7 +5675,14 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "a borrowed environment's host process survived the session's stop: {}",
         report()
     );
-    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    println!(
+        "[fixture] borrowed plain environment host process {api} keeps running after the session's stop"
+    );
+    let status_json = plain.container_cli(
+        &cleanup,
+        "borrowed plain environment status",
+        &["status", "--json"],
+    );
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5450,8 +5710,22 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
             "a borrowed environment's host process keeps running: {process}"
         );
     }
-    let down = run_container_cli(&plain.checkout, &cleanup, &["down", "--json"]);
+    let down = plain.container_cli(
+        &cleanup,
+        "borrowed plain environment down",
+        &["down", "--json"],
+    );
     assert_success(down);
+    for pid_file in [&plain.api_pid, &plain.worker_pid] {
+        assert_host_process_stopped(pid_file, &report);
+    }
+    stop_private_gateway(
+        &mut gateway_cleanup,
+        &effects,
+        &foreign_ca,
+        &private_gateway,
+        "borrowed plain environment",
+    );
 }
 
 /// A foreign route owner still refuses before any effect.

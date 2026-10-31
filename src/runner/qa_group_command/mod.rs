@@ -203,7 +203,7 @@ fn run_qa_group_status(
                 "no qa-group run named `{run_id}` in this repository; the run id is printed when a group starts"
             ))
         })?;
-    reconcile_live_snapshot(&mut snapshot);
+    reconcile_live_snapshot(&root, &mut snapshot);
     if output_json {
         render_status_json(&snapshot)
     } else {
@@ -215,7 +215,7 @@ fn run_qa_group_status(
 /// journal's and the owner gate's to say (contract 052 §10.1), never a PID
 /// or a heartbeat age. A run that ended without its final record is
 /// `unknown`, never a pass.
-fn reconcile_live_snapshot(snapshot: &mut effigy_execution::QaGroupStatusSnapshot) {
+fn reconcile_live_snapshot(root: &Path, snapshot: &mut effigy_execution::QaGroupStatusSnapshot) {
     if !snapshot.live {
         return;
     }
@@ -226,7 +226,7 @@ fn reconcile_live_snapshot(snapshot: &mut effigy_execution::QaGroupStatusSnapsho
         "status",
         snapshot.run_id.as_str(),
     ];
-    let gone = match crate::runner::task_engine::run_liveness(&snapshot.run_id, &next) {
+    let gone = match crate::runner::task_engine::run_liveness(root, &snapshot.run_id, &next) {
         crate::runner::task_engine::RunLiveness::Live => return,
         crate::runner::task_engine::RunLiveness::Interrupted => {
             "its owner exited without a final record".to_owned()

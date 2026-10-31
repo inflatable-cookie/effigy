@@ -92,7 +92,7 @@ mod tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(5)),
-                "removing cache volume `web-target` (1/3); last: listed 3 cache volumes; 5s elapsed"
+                "removing cache volume `web-target` (1/3); waiting for runtime volume remove; last: listed 3 cache volumes; 5s elapsed"
             );
             progress.update(
                 "removing volume `orphaned-data`",
@@ -101,7 +101,7 @@ mod tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(8)),
-                "removing volume `orphaned-data` (2/3); last: removed `web-target`; 8s elapsed"
+                "removing volume `orphaned-data` (2/3); waiting for runtime volume remove; last: removed `web-target`; 8s elapsed"
             );
             progress.step.finish_clear();
         });

@@ -15,24 +15,21 @@ use effigy_containers::ContainerDataOperation;
 use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
     select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,
-    DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseService,
-    DatabaseServiceSelectionError, ResolvedDataTarget,
+    DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseCommandPlan,
+    DatabaseService, DatabaseServiceSelectionError, ResolvedDataTarget,
 };
 use effigy_manifest::TASK_MANIFEST_FILE;
 
 use super::gateway_registration::register_gateway_routes_for_container;
-use super::lifecycle::run_container_exec_capture;
+use super::lifecycle::run_container_exec_capture_with_credentials;
+use super::shared_data::{resolve_shared_data_binding, run_shared_data_command};
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use super::{runtime_error_from_runner, runtime_volume_capture};
 use crate::runner::command_context::resolve_active_command_context;
-use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest,
-};
 use crate::runner::db_seed::{
-    data_seed_runtime_session_context, db_seed_env, logical_database_targets,
-    maybe_prompt_db_seed_inputs, resolve_db_seed_input_paths, run_db_seed_task,
-    stage_db_seed_files,
+    db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs,
+    resolve_db_seed_input_paths, run_db_seed_task_for_policy, stage_db_seed_files,
 };
 use crate::runner::db_services::collect_manifest_database_services;
 use crate::runner::manifest::load_task_manifest;
@@ -255,8 +252,10 @@ pub(super) fn run_container_data_seed(
 
     let staged = stage_db_seed_files(repo_root, &effective_db_seeds)?;
     maybe_confirm_container_data_seed(&policy.name, &staged, output_json, yes)?;
-    ensure_container_data_seed_runtime(repo_root, &policy)?;
-    run_db_seed_task(repo_root, &db_seed_env(&staged))?;
+    // The selected environment's policy travels into the seed: the task
+    // resolves the declared targets against it and proves any shared target
+    // before anything reconciles the environment (effigy#477).
+    run_db_seed_task_for_policy(repo_root, &db_seed_env(&staged), &policy)?;
 
     if output_json {
         Ok(serde_json::json!({
@@ -298,24 +297,6 @@ pub(super) fn run_container_data_seed(
     }
 }
 
-fn ensure_container_data_seed_runtime(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    let session_context = data_seed_runtime_session_context();
-    activate_container_runtime_for_task(
-        repo_root,
-        policy,
-        ActivationRequest {
-            container_name: Some(policy.name.as_str()),
-            repo_override: Some(repo_root.to_path_buf()),
-            route: effigy_runtime_plan::RuntimeActivationRoute::DataSeed,
-            session_context,
-        },
-    )?;
-    Ok(())
-}
-
 pub(super) fn resolve_db_dump_output_paths(
     cwd: &Path,
     db_dumps: &[ContainerDbDumpInput],
@@ -343,8 +324,18 @@ pub(super) fn run_container_data_dump(
         db_dumps,
         push,
         output_json,
-        |repo_root, container_name, service, argv| {
-            run_container_exec_capture(repo_root, container_name, service, argv)
+        |repo_root, container_name, plan| {
+            run_container_exec_capture_with_credentials(
+                repo_root,
+                container_name,
+                Some(&plan.service),
+                &plan.argv,
+                &plan.credential_env,
+                None,
+            )
+        },
+        |policy, binding, plan, stdin_file| {
+            run_shared_data_command(policy, binding, plan, stdin_file)
         },
         |source, destination, repo_root, push| {
             capture_artifact_report(
@@ -363,21 +354,28 @@ pub(super) fn run_container_data_dump(
     )
 }
 
-fn run_container_data_dump_with_hooks<ExecFn, CaptureFn>(
+// Three injected seams (local exec, shared exec, artifact capture) keep both
+// routes provable without a live runtime; grouping them into a struct would
+// only move the same arguments.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_container_data_dump_with_hooks<ExecFn, SharedExecFn, CaptureFn>(
     repo_root: &Path,
     name: Option<&str>,
     db_dumps: &[ContainerDbDumpInput],
     push: bool,
     output_json: bool,
     exec_capture: ExecFn,
+    shared_exec_capture: SharedExecFn,
     capture_artifact: CaptureFn,
 ) -> Result<String, RunnerError>
 where
-    ExecFn: Fn(
-        &Path,
-        Option<&str>,
-        Option<&str>,
-        &[String],
+    ExecFn:
+        Fn(&Path, Option<&str>, &DatabaseCommandPlan) -> Result<std::process::Output, RunnerError>,
+    SharedExecFn: Fn(
+        &effigy_containers::EffectiveContainerPolicy,
+        &effigy_containers::SharedServiceBinding,
+        &DatabaseCommandPlan,
+        Option<&Path>,
     ) -> Result<std::process::Output, RunnerError>,
     CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
 {
@@ -420,12 +418,21 @@ where
             })?;
         }
 
-        let output = exec_capture(
-            repo_root,
-            Some(&policy.name),
-            Some(&plan.command.service),
-            &plan.command.argv,
-        )?;
+        // A declared `shared = true` service is removed from the
+        // environment's own generated Compose, so the logical dump runs in the
+        // shared project's render. An unshared service keeps the
+        // checkout-local route and read-only behaviour it had.
+        let shared_binding =
+            resolve_shared_data_binding(&policy, &manifest, &plan.command.service)?;
+        let output = match shared_binding.as_ref() {
+            Some(binding) => shared_exec_capture(
+                &policy,
+                binding,
+                &plan.command,
+                plan.command.stdin.as_deref(),
+            )?,
+            None => exec_capture(repo_root, Some(&policy.name), &plan.command)?,
+        };
         fs::write(&write_path, &output.stdout).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to write SQL dump {}: {error}",
@@ -899,13 +906,14 @@ databases = ["app"]
             }],
             false,
             true,
-            |_, _, _, _| {
+            |_, _, _| {
                 Ok(Output {
                     status: std::os::unix::process::ExitStatusExt::from_raw(0),
                     stdout: b"select 1;".to_vec(),
                     stderr: Vec::new(),
                 })
             },
+            |_, _, _, _| unreachable!("this environment declares no shared service"),
             |source, destination, _, push| {
                 Ok(serde_json::json!({
                     "schema": "effigy.artifact.capture.v1",
@@ -960,13 +968,14 @@ databases = ["app"]
             }],
             true,
             true,
-            |_, _, _, _| {
+            |_, _, _| {
                 Ok(Output {
                     status: std::os::unix::process::ExitStatusExt::from_raw(0),
                     stdout: b"select 1;".to_vec(),
                     stderr: Vec::new(),
                 })
             },
+            |_, _, _, _| unreachable!("this environment declares no shared service"),
             |source, destination, _, push| {
                 Ok(serde_json::json!({
                     "schema": "effigy.artifact.capture.v1",
@@ -991,6 +1000,81 @@ databases = ["app"]
             dump["artifact_capture"]["destination"]["digest"],
             "sha256:pushdigest"
         );
+    }
+
+    /// effigy#487: the database password travels by variable name, never in a
+    /// spawned argv, and never in the JSON or text report.
+    #[test]
+    fn run_container_data_dump_keeps_the_password_out_of_argv_and_reports() {
+        const PASSWORD: &str = "synthetic-487-dump-password";
+        let root = temp_repo("data-dump-credential");
+        let home = temp_repo("data-dump-credential-home");
+        let _home = GatewayHomeGuard::set(&home);
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "db"
+project_name = "data-dump-credential-dev"
+
+[containers.stack.services.db]
+catalog = "mariadb"
+version = "10.11"
+database = "acowtancy"
+password = "synthetic-487-dump-password"
+
+[data.targets.acowtancy]
+service = "db"
+database = "acowtancy"
+"#,
+        )
+        .expect("write manifest");
+
+        for output_json in [true, false] {
+            let rendered = run_container_data_dump_with_hooks(
+                &root,
+                None,
+                &[ContainerDbDumpInput {
+                    target: Some("acowtancy".to_owned()),
+                    path: root.join("acowtancy.sql"),
+                }],
+                false,
+                output_json,
+                |_, _, plan| {
+                    assert_eq!(
+                        plan.credential_env.get("MYSQL_PWD").map(String::as_str),
+                        Some(PASSWORD),
+                        "the credential must travel by name: {:?}",
+                        plan.credential_env_names()
+                    );
+                    assert!(
+                        !plan.argv.iter().any(|arg| arg.contains(PASSWORD)),
+                        "a spawned argument carried the password: {:?}",
+                        plan.argv
+                    );
+                    assert!(
+                        !plan.argv.iter().any(|arg| arg.starts_with("MYSQL_PWD=")),
+                        "the value must never be an argv assignment: {:?}",
+                        plan.argv
+                    );
+                    Ok(Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                        stdout: b"select 1;".to_vec(),
+                        stderr: Vec::new(),
+                    })
+                },
+                |_, _, _, _| unreachable!("this environment declares no shared service"),
+                |_, _, _, _| Ok(serde_json::Value::Null),
+            )
+            .expect("dump");
+            assert!(
+                !rendered.contains(PASSWORD),
+                "the report carried the password: {rendered}"
+            );
+        }
     }
 
     #[test]

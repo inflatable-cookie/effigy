@@ -59,13 +59,25 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
 pub(in crate::runner) fn ensure_gateway_running_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    ensure_gateway_running_for_container_with(
+        policy,
+        crate::runner::gateway_command::gateway_up_for_managed_task,
+    )
+}
+
+/// The start `container up` runs before any route registers, with the managed
+/// start injected so the gateway's own proof can drive it (effigy#480).
+fn ensure_gateway_running_for_container_with(
+    policy: &EffectiveContainerPolicy,
+    start: impl FnOnce(&str) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
     if !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(policy) {
         return Ok(());
     }
     let executable =
         effigy_containers::session::resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let command = effigy_containers::session::managed_gateway_command(&executable);
-    crate::runner::gateway_command::gateway_up_for_managed_task(&command)
+    start(&command)
 }
 
 pub(in crate::runner) fn register_gateway_routes_for_container(
@@ -224,23 +236,72 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     policy: &EffectiveContainerPolicy,
     binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
+    register_gateway_routes_for_verified_container_observed(repo_root, policy, binding, &mut |_| {})
+}
+
+/// One poll of the declared gateway service ports, as the wait observes it: the
+/// runtime read now in flight, or that read's answer and what still blocks the
+/// ports. A caller that shows progress names the wait it is in rather than the
+/// whole stage (effigy#460, Q-017).
+pub(in crate::runner) enum GatewayPortWait<'a> {
+    /// The runtime container read now in flight.
+    Reading { attempt: u64 },
+    /// The read answered and the ports are still missing: what blocks them,
+    /// naming the service and domain where the detail knows them.
+    Blocked { attempt: u64, detail: &'a str },
+    /// The ports are published and the primary container's binding is being
+    /// re-verified.
+    ConfirmingOwnership,
+    /// Resolving and validating the declared routes against the published
+    /// ports, aliases included.
+    ResolvingRoutes,
+    /// Writing the reconciled route table.
+    ReconcilingRoutes,
+    /// The poll timed out and the exited containers are being read for the
+    /// timeout diagnostic.
+    ReadingExitedContainers,
+}
+
+/// The same registration, reporting each poll of the declared service ports.
+pub(in crate::runner) fn register_gateway_routes_for_verified_container_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let rows = wait_for_gateway_service_ports_ready(repo_root, policy, on_wait)?;
+    finish_gateway_route_registration(repo_root, policy, binding, &rows, on_wait)
+}
+
+/// The work after the declared service ports are published: prove the primary
+/// container still owns its binding, resolve every declared route against the
+/// published ports and write the table. Each step is reported as it starts, so
+/// the last poll frame is never shown for this work (effigy#460, Q-017).
+fn finish_gateway_route_registration(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+    rows: &[RunningComposeContainer],
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     if let Some(binding) = binding {
+        on_wait(GatewayPortWait::ConfirmingOwnership);
         binding.reverify(
             repo_root,
             policy,
             Instant::now() + crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT,
         )?;
     }
+    on_wait(GatewayPortWait::ResolvingRoutes);
     let mut routes =
-        resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+        resolve_gateway_routes_against_rows(repo_root, policy, rows)?.ok_or_else(|| {
             gateway_runtime_target_error(format!(
                 "container `{}` published no host port for a declared gateway route",
                 policy.name
             ))
         })?;
     let project_alias_routes =
-        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
+        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
         repo_root,
         policy,
@@ -249,8 +310,9 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     )?;
     routes.extend(project_alias_routes);
     routes.extend(shared_alias_routes);
-    validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
+    validate_gateway_routes_against_rows(repo_root, policy, &routes, rows)?;
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
+    on_wait(GatewayPortWait::ReconcilingRoutes);
     let route_table_path = gateway_route_table_path()?;
     reconcile_gateway_routes_guarded(&route_table_path, repo_root, &routes)?;
     Ok(routes)
@@ -259,32 +321,40 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
 fn wait_for_gateway_service_ports_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     let deadline = Instant::now() + GATEWAY_SERVICE_PORT_READY_TIMEOUT;
-    wait_for_gateway_service_ports_ready_with(
+    let mut running_rows = |timeout| {
+        list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+            .and_then(|rows| {
+                effigy_containers::exec::verify_owned_running_compose_rows(
+                    repo_root, policy, &rows, deadline,
+                )
+            })
+            .map_err(|error| error.to_string())
+    };
+    let mut all_rows = |timeout| {
+        list_compose_containers_for_policy_including_stopped_with_timeout(
+            repo_root, policy, timeout,
+        )
+        .map_err(|error| error.to_string())
+    };
+    let mut pause = thread::sleep;
+    wait_for_gateway_service_ports_ready_observed(
         repo_root,
         policy,
         GATEWAY_SERVICE_PORT_READY_TIMEOUT,
         GATEWAY_SERVICE_PORT_POLL_INTERVAL,
-        |timeout| {
-            list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
-                .and_then(|rows| {
-                    effigy_containers::exec::verify_owned_running_compose_rows(
-                        repo_root, policy, &rows, deadline,
-                    )
-                })
-                .map_err(|error| error.to_string())
+        on_wait,
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
         },
-        |timeout| {
-            list_compose_containers_for_policy_including_stopped_with_timeout(
-                repo_root, policy, timeout,
-            )
-            .map_err(|error| error.to_string())
-        },
-        thread::sleep,
     )
 }
 
+#[cfg(test)]
 fn wait_for_gateway_service_ports_ready_with(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -294,40 +364,88 @@ fn wait_for_gateway_service_ports_ready_with(
     mut all_rows: impl FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
     mut pause: impl FnMut(Duration),
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    wait_for_gateway_service_ports_ready_observed(
+        repo_root,
+        policy,
+        timeout,
+        poll_interval,
+        &mut |_| {},
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
+        },
+    )
+}
+
+/// The runtime reads one port poll makes, grouped so the observed wait keeps a
+/// readable signature and a test can inject each read.
+struct PortPollReads<'a> {
+    running_rows: &'a mut dyn FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    all_rows: &'a mut dyn FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    pause: &'a mut dyn FnMut(Duration),
+}
+
+fn wait_for_gateway_service_ports_ready_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    timeout: Duration,
+    poll_interval: Duration,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+    reads: PortPollReads<'_>,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     let deadline = Instant::now() + timeout;
     let mut last_detail = None;
+    let mut attempts = 0_u64;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        let rows = match running_rows(remaining) {
+        attempts += 1;
+        // The frame names the runtime read now in flight, then the blocker that
+        // read reported, so a stalled or repeatedly blocked poll is visible
+        // (effigy#460, Q-017).
+        on_wait(GatewayPortWait::Reading { attempt: attempts });
+        let rows = match (reads.running_rows)(remaining) {
             Ok(rows) => rows,
             Err(error) => {
-                last_detail = Some(format!(
-                    "could not inspect running Compose services: {error}"
-                ));
+                let detail = format!("could not inspect running Compose services: {error}");
+                on_wait(GatewayPortWait::Blocked {
+                    attempt: attempts,
+                    detail: &detail,
+                });
+                last_detail = Some(detail);
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     break;
                 }
-                pause(poll_interval.min(remaining));
+                (reads.pause)(poll_interval.min(remaining));
                 continue;
             }
         };
         match gateway_routes_readiness_detail(repo_root, policy, &rows) {
             Ok(None) => return Ok(rows),
-            Ok(Some(detail)) => last_detail = Some(detail),
+            Ok(Some(detail)) => {
+                on_wait(GatewayPortWait::Blocked {
+                    attempt: attempts,
+                    detail: &detail,
+                });
+                last_detail = Some(detail);
+            }
             Err(error) => return Err(error),
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        pause(poll_interval.min(remaining));
+        (reads.pause)(poll_interval.min(remaining));
     }
 
-    let exited = all_rows(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
+    // The poll has ended without the ports; the diagnostic read of the exited
+    // containers is its own wait and names itself (effigy#460, Q-017).
+    on_wait(GatewayPortWait::ReadingExitedContainers);
+    let exited = (reads.all_rows)(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
         .ok()
         .and_then(|rows| exited_gateway_service_detail(policy, &rows));
     let detail = exited.or(last_detail).unwrap_or_else(|| {

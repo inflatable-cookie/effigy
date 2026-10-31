@@ -14,14 +14,32 @@ use super::provenance::{self, OperatorAction};
 /// shape for `up`, `down` and `setup`: the invoking pid, redacted argv, cwd,
 /// cause and the bounded caller provenance behind them.
 pub fn record_gateway_operator(directory: &std::path::Path, action: OperatorAction, cause: &str) {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    // The event appends to the log the gateway already keeps. Recording never
-    // creates the directory, so an `up` or `setup` before any gateway state
-    // exists stays read-only and a diagnostic adds no state tree of its own.
+    // Recording never creates the directory, so an `up` or `setup` before any
+    // gateway state exists stays read-only and a diagnostic adds no state tree
+    // of its own.
     if !directory.is_dir() {
         return;
     }
+    let line = operator_event_line(action, cause);
+    // A failed write keeps the whole event on stderr, caller provenance included.
+    if let Err(error) = append_operator_line(directory, &line) {
+        eprintln!("[gateway] operator event log unavailable ({error}): {line}");
+    }
+}
+
+/// Append one operator event and report a failed write. A caller that must not
+/// act unrecorded uses this form: the gateway's idle stop refuses to stop when
+/// its event cannot be written (effigy#480).
+pub fn try_record_gateway_operator(
+    directory: &std::path::Path,
+    action: OperatorAction,
+    cause: &str,
+) -> std::io::Result<()> {
+    append_operator_line(directory, &operator_event_line(action, cause))
+}
+
+/// The one event line: pid, redacted argv, cwd, cause and the caller chain.
+fn operator_event_line(action: OperatorAction, cause: &str) -> String {
     let pid = std::process::id();
     let caller = provenance::caller(
         &provenance::Platform,
@@ -33,21 +51,20 @@ pub fn record_gateway_operator(directory: &std::path::Path, action: OperatorActi
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     let cwd = std::env::current_dir().ok();
-    let line = provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller);
-    if let Ok(mut log) = std::fs::OpenOptions::new()
+    provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller).to_string()
+}
+
+fn append_operator_line(directory: &std::path::Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         // An operator log is private to its owner, in the shared gateway state
         // directory and in a private root the fixture policy validates.
         .mode(0o600)
-        .open(directory.join("gateway.stderr.log"))
-    {
-        if let Err(error) = writeln!(log, "{line}") {
-            eprintln!("[gateway] cannot log operator event: {error}");
-        }
-    } else {
-        eprintln!("[gateway] operator event log unavailable: {line}");
-    }
+        .open(directory.join("gateway.stderr.log"))?;
+    writeln!(log, "{line}")
 }
 
 /// The stop event keeps its name and fields; it additionally names its caller.
@@ -151,6 +168,7 @@ impl<'a> Run<'a> {
             adapter,
             None,
             Some(planned),
+            None,
             None,
         )
     }

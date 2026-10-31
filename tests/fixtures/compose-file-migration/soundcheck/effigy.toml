@@ -1,4 +1,5 @@
-# Read-only copy of soundcheck's linux-arm declaration (audit consumer census).
+# Adapted copy of soundcheck's linux-arm declaration (audit consumer census).
+# The fixture aligns working directories with the masked checkout mount.
 # Card 138: Linux ARM proof container on the colima/containerd `effigy`
 # profile. Docker Desktop is not the authority. Tasks opt in through
 # `container_lifecycle`; everything else stays on the host.
@@ -12,7 +13,7 @@ profile = "effigy"
 compose_file = "infra/linux-arm/docker-compose.yml"
 project_name = "soundcheck-linux-arm"
 primary_service = "builder"
-working_dir = "/workspace"
+working_dir = "/workspace/soundcheck"
 
 [containers."linux-arm".lifecycle]
 on_task_exit = "stop"
@@ -26,5 +27,5 @@ default = "linux-arm"
 
 [systems.linux-arm]
 container = "linux-arm"
-working_dir = "/workspace"
+working_dir = "/workspace/soundcheck"
 

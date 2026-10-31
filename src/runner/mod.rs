@@ -31,6 +31,7 @@ mod managed_listener_readiness;
 mod managed_run;
 mod managed_secrets;
 mod managed_shell;
+mod managed_wait;
 mod manifest;
 mod owned_children;
 mod program_fallback;
@@ -60,6 +61,7 @@ mod uninstall_command;
 mod util;
 mod workspace_client;
 mod workspace_command;
+mod workspace_transport;
 
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;

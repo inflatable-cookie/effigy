@@ -459,7 +459,7 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_host_task() {
         let error = run_task(&checkout, "inherited", &[]).expect_err("the run must refuse");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!checkout.join("inherited-url.txt").exists());
 
@@ -492,7 +492,7 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
             .expect_err("the session refuses before its workload starts");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!checkout.join("session-database-url.txt").exists());
 
@@ -533,7 +533,7 @@ fn a_configured_host_suite_resolves_and_proves_an_inherited_url() {
         let error = run_task(&checkout, "test", &["unit"]).expect_err("the suite must refuse");
         assert_task_invocation_error_contains(
             error,
-            &["DATABASE_URL", &alias, "effigy container up web"],
+            &["DATABASE_URL", &alias, "effigy container web up"],
         );
         assert!(!out.exists(), "the refused suite never ran its command");
 
@@ -607,7 +607,7 @@ fn a_container_bound_session_proves_its_host_entry() {
             .expect_err("the session refuses before its container work starts");
         assert_task_invocation_error_contains(
             error,
-            &["postgres.acme.test", &alias, "effigy container up web"],
+            &["postgres.acme.test", &alias, "effigy container web up"],
         );
         assert!(
             !checkout.join("session-database-url.txt").exists(),
@@ -884,6 +884,92 @@ fn a_scoped_checkout_with_an_unreadable_policy_refuses() {
         assert!(
             !checkout.join("database-url.txt").exists(),
             "nothing ran, so no canonical alias was delivered"
+        );
+    });
+}
+
+/// The checkout's own manifest declares no container registry; its one member
+/// declares a registry and owns the host task. The scope root has no registry
+/// to resolve aliases from, so the member's host run must not refuse.
+const NO_REGISTRY_ROOT: &str = r#"[catalog]
+alias = "root"
+
+[catalog.members]
+pen = "pen"
+"#;
+
+const PEN_WITH_REGISTRY: &str = r#"[catalog]
+alias = "pen"
+
+[containers]
+default = "sty"
+
+[containers.sty]
+project_name = "pen-sty"
+primary_service = "sty"
+
+[tasks.check]
+run_in = "host"
+run = "sh -lc 'printf member > \"$OUT\"'"
+env = { OUT = "OUT_PATH" }
+"#;
+
+/// A linked worktree whose root declares no `[containers]` registry, with one
+/// member that declares its own registry and a host task.
+fn member_registry_checkout(name: &str) -> (PathBuf, PathBuf) {
+    let primary = primary_checkout(name);
+    let checkout = linked_worktree(&primary, "worktree-one");
+    let out = checkout.join("member-ran.txt");
+    fs::write(checkout.join("effigy.toml"), NO_REGISTRY_ROOT).expect("root manifest");
+    fs::create_dir_all(checkout.join("pen")).expect("member directory");
+    fs::write(
+        checkout.join("pen/effigy.toml"),
+        PEN_WITH_REGISTRY.replace("OUT_PATH", &out.display().to_string()),
+    )
+    .expect("member manifest");
+    (checkout, out)
+}
+
+/// A checkout whose manifest declares no container registry runs a host task
+/// its member owns: absence of the registry is not a runtime-scope failure
+/// (effigy#431 follow-up, v0.15 P1).
+#[test]
+fn a_member_host_task_runs_when_the_checkout_declares_no_registry() {
+    with_private_gateway("scoped-host-alias-member-registry", || {
+        let (checkout, out) = member_registry_checkout("scoped-host-alias-member-registry");
+
+        run_task(&checkout, "pen/check", &[])
+            .expect("the member's host task runs without a registry at the scope root");
+        assert_eq!(
+            fs::read_to_string(&out).expect("the member task recorded its output"),
+            "member"
+        );
+    });
+}
+
+/// A declared registry with no environments, services or aliases has nothing
+/// to resolve, so its host task runs as well.
+#[test]
+fn a_checkout_with_an_empty_registry_runs_its_host_task() {
+    with_private_gateway("scoped-host-alias-empty-registry", || {
+        let primary = primary_checkout("scoped-host-alias-empty-registry");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let out = checkout.join("empty-registry.txt");
+        fs::write(
+            checkout.join("effigy.toml"),
+            format!(
+                "[containers]\ndefault = \"web\"\n\n\
+                 [tasks.check]\nrun_in = \"host\"\nrun = \"sh -lc 'printf empty > \\\"$OUT\\\"'\"\n\
+                 env = {{ OUT = \"{}\" }}\n",
+                out.display()
+            ),
+        )
+        .expect("manifest with an empty registry");
+
+        run_task(&checkout, "check", &[]).expect("an empty registry resolves no alias and runs");
+        assert_eq!(
+            fs::read_to_string(&out).expect("the task recorded its output"),
+            "empty"
         );
     });
 }
@@ -1254,7 +1340,7 @@ fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service
                 "postgres.acme.test",
                 &alias,
                 "no route for it is recorded",
-                "effigy container up web",
+                "effigy container web up",
             ],
         );
         assert!(
@@ -1405,7 +1491,7 @@ fn a_managed_session_refuses_without_a_published_backing_service() {
             .expect_err("the session refuses before its workload starts");
         assert_task_invocation_error_contains(
             error,
-            &["postgres.acme.test", &alias, "effigy container up web"],
+            &["postgres.acme.test", &alias, "effigy container web up"],
         );
         assert!(
             !checkout.join("session-database-url.txt").exists(),
@@ -1618,7 +1704,7 @@ env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
                 "test.suites.unit",
                 "postgres.acme.test",
                 &alias,
-                "effigy container up web",
+                "effigy container web up",
             ],
         );
         for path in [&suite, &setup, &teardown, &unselected] {

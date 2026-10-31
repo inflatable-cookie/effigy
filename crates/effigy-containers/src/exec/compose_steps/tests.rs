@@ -1,5 +1,6 @@
 use super::{ComposeSteps, TimedStep};
 use crate::exec::ComposeStepEvent;
+use effigy_ui::steps::ProgressSource;
 
 #[test]
 fn a_duration_is_named_the_way_a_person_reads_it() {
@@ -148,7 +149,7 @@ fn a_finished_step_is_never_rewritten_by_a_repeated_runtime_line() {
         };
         steps.observe(&removed);
         steps.observe(&removed);
-        let step = TimedStep::new("checking the stack");
+        let step = TimedStep::live(ProgressSource::waiting_for("the stack check"));
         step.succeed("the stack is checked");
         step.fail("a second ending would be wrong");
         step.finish_clear();
@@ -174,4 +175,25 @@ fn image_build_and_container_steps_stay_distinct() {
         subject: "demo-web-1".to_owned(),
     });
     assert_eq!(steps.touched(), 3);
+}
+
+#[test]
+fn a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait() {
+    let step = super::runtime_wait("pulling postgres:16", "the runtime's next report");
+    let frame = step.frame_at(std::time::Duration::from_secs(2));
+    assert_eq!(
+        frame,
+        "pulling postgres:16; waiting for the runtime's next report; 2s elapsed"
+    );
+    // The clock moves the frame without any new runtime line.
+    assert_eq!(
+        step.frame_at(std::time::Duration::from_secs(45)),
+        "pulling postgres:16; waiting for the runtime's next report; 45s elapsed"
+    );
+    // A new runtime line replaces the label; nothing waits on a fixed one.
+    step.set_label("starting web");
+    assert_eq!(
+        step.frame_at(std::time::Duration::from_secs(46)),
+        "starting web; waiting for the runtime's next report; 46s elapsed"
+    );
 }

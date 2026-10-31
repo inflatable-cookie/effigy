@@ -378,6 +378,51 @@ v0.14 is refused with its own stop command and never adopted.
 Headless runs never allocate an interactive TTY and never start shell-role
 tabs: shells belong to a terminal.
 
+Every tab says what its own entry waits for, from the resolved ordering graph
+rather than the tab bar: `front [waiting: api starting]` while the start order
+or a host process's `depends_on` blocks it, `waiting for environment
+(containers 3/4 healthy)` while the environment phase runs, `waiting for GET /
+-> 200 (12s)` for a listener's declared readiness request, and `scheduled
+delay: 1.2s remaining` for the accepted legacy `start_after_ms`, which orders
+nothing and therefore names no dependency.
+
+The environment's host processes are managed entries from the moment the run
+starts: the run publishes their graph and the environment identity before its
+phase can block, so during a slow bring-up `api`, `front` and `admin` all name
+the environment and its healthy container count, and a tab is announced as
+started only once its published wait is over. The host planner then takes the
+scope over before it starts any listener and names each process's `depends_on`
+reader. A host that declares no dependency of its own still has a real wait: the plan
+launches entries one at a time, in the resolved dependency order, so its tab
+names the launch the plan is performing now and that entry's actual phase
+(`jobs [waiting: api starting]`) instead of leaving it blank, naming a queued
+neighbour or inventing a dependency. If a launch aborts the plan, every entry it
+never started is terminal and says so (`not started — plan stopped after api
+failed: …500…`), so no tab waits after the plan has ended. A restart re-confirms
+the reader it declares even when another call started it, and names that wait
+while it blocks (`front [waiting: api running]`); it publishes only the entries
+it starts, never claiming another call's running processes ready. Each publisher stages a complete snapshot and commits it with one atomic
+record, so a reader always sees a whole snapshot: a write that races the handoff
+— the run's phase still ticking while the planner publishes — never replaces the
+planner's state, and the window before the commit still shows the run's
+environment waits rather than announcing a host as started. If the planner
+published a failure, that entry and its report stay: the run's generic `up`
+exit never replaces them, and the run's own error names the failing entry and
+what it observed. A prerequisite failure is terminal
+and attributed — `front [not started: api failed]`, and the pane reads
+`not started — api failed (status 500)` — and no dependent starts. Only a
+dependent that needs the failed entry's *readiness* loses it: a workload that
+only needed its predecessor to start keeps going after that predecessor exits
+non-zero (`fail_on_non_zero = false`), even inside its own scheduled delay. The
+environment phase's own record is terminal on every exit — settled on a
+success, a stop or a nothing-to-await fallback, and attributed with its headline
+and first evidence on a failure or timeout — and a new session resets it at its
+own boundary — for every named environment, with or without host processes —
+before polling and before composing, so the previous run's counts never appear
+in the new one; the reset never touches the staged host snapshot. The same
+state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,
+`[api] [host] waiting for GET / -> 200 (12s)`) and `status`.
+
 The environment phase runs before any workload: `container up` as a child of
 the run, then the service's own readiness, polled with backoff until the
 workspace service answers or the readiness budget runs out
@@ -427,8 +472,18 @@ effigy dev stop admin
 ```
 
 `status` reports the run, its environment and each started process with PID,
-state and exit code. `--json` prints `effigy.managed.status.v1`. `logs <name>`
-reads a workload's log; `logs lifecycle` reads the run's own output (setup,
+state and exit code, then every entry that has not started with the prerequisite
+or probe it waits for. `--json` prints `effigy.managed.status.v1`: each process
+carries `waiting_on` when it is starting against a named wait, and the additive
+`waits` list carries `scope` (`workload`, `host` or `environment`), `phase`,
+`waiting_on` (`kind`, and `name`/`phase`, `healthy`/`total`, `probe` or
+`remaining_ms`) and `not_started_because` for an entry that never started. The
+environment's host processes and phase publish their waits in the environment's
+own scope, so a `depends_on` wait and a listener's readiness probe are part of
+the same projection; a wait that settled is recorded as settled and never
+reported. The run publishes its environment identity before its phase can
+block, so `status` reports those host waits throughout bring-up rather than
+only once the environment effect is recorded. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
 environment, readiness, starts and exits). A failed run names the failing
 process, its log command and the log's tail in the task error. `stop` is
 idempotent: on a closed run it reports the run's outcome. If the supervisor

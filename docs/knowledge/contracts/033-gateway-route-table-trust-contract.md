@@ -43,6 +43,31 @@ State what a route claim is and why there is no separate trust verdict.
    answering. This data never authorizes the daemon to launch or signal a
    process, and a static `target_host` route stays external route intent.
 
+## Gateway lifetime
+
+1. **The machine gateway outlives its routes.** Withdrawing the last route
+   (`container down`, retire, handover) does not stop the machine gateway. It
+   stays up until `effigy gateway down` or a host restart stops it, so the next
+   `container up` finds a running gateway. Its route reload arms no idle stop.
+2. **A private gateway idles out.** A private state root's gateway stops once
+   its route table has stayed empty for five minutes. A route that returns in
+   that window cancels the pending stop.
+3. **Every idle stop is recorded.** The stop writes one `gateway_stop` event to
+   the gateway's operator log before the clean exit, with the cause
+   `route table empty for 300 s`. If that event cannot be written, the stop does
+   not happen: the gateway stays up, the failure is logged, and nothing stops
+   unrecorded.
+4. **The stop decision is atomic.** The idle timer checks its generation and
+   the empty table under the table's read lock. A reload that returns a route
+   takes the write lock and moves the generation, so it either cancels the stop
+   or lands after the gateway has begun stopping.
+5. **A managed start never claims an unverified gateway.** `container up`
+   starts the machine gateway only when its previous run is positively stopped.
+   A start that does not verify a ready gateway is a refusal naming the observed
+   status, and an unobservable or legacy identity warns or refuses without
+   starting or replacing anything. Route registration never follows an
+   unverified running claim.
+
 ## What changed from v0.14
 
 The file provenance marker, the owner/group permission check and the legacy

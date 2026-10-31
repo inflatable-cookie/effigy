@@ -18,5 +18,7 @@ pub(super) fn state_with_logs(lines: usize) -> SessionState {
 mod cursor_tests;
 #[path = "plain_tests.rs"]
 mod plain_tests;
+#[path = "startup_tests.rs"]
+mod startup_tests;
 #[path = "vt_tests.rs"]
 mod vt_tests;

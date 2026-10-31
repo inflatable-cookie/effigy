@@ -2013,7 +2013,7 @@ mod live_progress_tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(4)),
-                "installing pinned guest binary; last: guest artifact verified; 4s elapsed"
+                "installing pinned guest binary; waiting for workspace guest publication; last: guest artifact verified; 4s elapsed"
             );
             progress.update(
                 "publishing workspace context",
@@ -2022,7 +2022,7 @@ mod live_progress_tests {
             );
             assert_eq!(
                 progress.frame_at(Duration::from_secs(6)),
-                "publishing workspace context (1/2); last: guest binary installed; 6s elapsed"
+                "publishing workspace context (1/2); waiting for workspace guest publication; last: guest binary installed; 6s elapsed"
             );
             progress.finish_clear();
         });

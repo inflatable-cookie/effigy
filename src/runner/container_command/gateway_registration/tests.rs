@@ -576,6 +576,203 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     assert_eq!(rows.len(), 2);
 }
 
+/// One observed gateway-port wait, as a stable string for assertions.
+fn described(wait: GatewayPortWait<'_>) -> String {
+    match wait {
+        GatewayPortWait::Reading { attempt } => format!("reading {attempt}"),
+        GatewayPortWait::Blocked { attempt, detail } => format!("blocked {attempt}: {detail}"),
+        GatewayPortWait::ConfirmingOwnership => "confirming ownership".to_owned(),
+        GatewayPortWait::ResolvingRoutes => "resolving routes".to_owned(),
+        GatewayPortWait::ReconcilingRoutes => "reconciling routes".to_owned(),
+        GatewayPortWait::ReadingExitedContainers => "reading exited containers".to_owned(),
+    }
+}
+
+/// A poll that is blocked once and then ready names both reads, and reports no
+/// blocker once the ports are published (effigy#460, Q-017).
+#[test]
+fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let blocked = vec![RunningComposeContainer {
+        container_name: "demo-web-dev-app-1".to_owned(),
+        status: "Up 10 seconds".to_owned(),
+        ports: Vec::new(),
+        project_name: Some("demo-web-dev".to_owned()),
+        working_dir: Some("/tmp".to_owned()),
+        service: Some("app".to_owned()),
+        oneoff: false,
+    }];
+    let ready = vec![
+        RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp".to_owned()),
+            service: Some("app".to_owned()),
+            oneoff: false,
+        },
+        RunningComposeContainer {
+            container_name: "demo-web-dev-db-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp".to_owned()),
+            service: Some("db".to_owned()),
+            oneoff: false,
+        },
+    ];
+    let mut observed = Vec::new();
+    let mut calls = 0;
+    let mut running_rows = |_: std::time::Duration| {
+        let rows = if calls == 0 {
+            blocked.clone()
+        } else {
+            ready.clone()
+        };
+        calls += 1;
+        Ok(rows)
+    };
+    let mut all_rows = |_: std::time::Duration| Ok(Vec::new());
+    let mut pause = |_: std::time::Duration| {};
+    let rows = wait_for_gateway_service_ports_ready_observed(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_millis(1),
+        &mut |wait| observed.push(described(wait)),
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
+        },
+    )
+    .expect("published service ports become ready");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(observed[0], "reading 1", "{observed:?}");
+    assert!(
+        observed[1].starts_with("blocked 1: "),
+        "the blocked poll names its blocker: {observed:?}"
+    );
+    assert_eq!(observed[2], "reading 2", "{observed:?}");
+    assert_eq!(
+        observed.len(),
+        3,
+        "a ready poll reports no blocker and no diagnostic read: {observed:?}"
+    );
+}
+
+/// The post-poll work is reported as its own stages, so the frame never claims
+/// the container read is still running while routes are resolved and written.
+#[test]
+fn route_registration_reports_its_post_poll_stages() {
+    with_test_home("post-poll-stages", || {
+        let route_table_path = gateway_route_table_path().expect("route table path");
+        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
+            .expect("mkdir route table parent");
+        let checkout = tempfile::tempdir().expect("checkout");
+        let project_path = checkout.path().display().to_string();
+        let mut policy = test_policy();
+        policy.repo_root = PathBuf::from(&project_path);
+        let rows = vec![
+            RunningComposeContainer {
+                container_name: "demo-web-dev-app-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some(project_path.clone()),
+                service: Some("app".to_owned()),
+                oneoff: false,
+            },
+            RunningComposeContainer {
+                container_name: "demo-web-dev-db-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["127.0.0.1:15432->5432/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some(project_path.clone()),
+                service: Some("db".to_owned()),
+                oneoff: false,
+            },
+        ];
+        let mut observed = Vec::new();
+        let routes = finish_gateway_route_registration(
+            &policy.repo_root,
+            &policy,
+            None,
+            &rows,
+            &mut |wait| observed.push(described(wait)),
+        )
+        .expect("published ports register their declared routes");
+        assert!(!routes.is_empty());
+        assert_eq!(
+            observed,
+            vec![
+                "resolving routes".to_owned(),
+                "reconciling routes".to_owned()
+            ],
+            "the post-poll work names its own stages"
+        );
+    });
+}
+
+/// The wait reports each poll it makes: the runtime read in flight, then the
+/// blocker that read returned, so a stalled or repeatedly blocked poll is
+/// visible while it runs (effigy#460, Q-017).
+#[test]
+fn gateway_readiness_reports_each_poll_and_its_blocker() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let mut waits = Vec::new();
+    let mut running_rows = |_: std::time::Duration| {
+        // One running service that has published no port for its declared
+        // gateway route yet: the poll is blocked, not complete.
+        Ok(vec![RunningComposeContainer {
+            container_name: "demo-web-dev-db-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: Vec::new(),
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp".to_owned()),
+            service: Some("db".to_owned()),
+            oneoff: false,
+        }])
+    };
+    let mut all_rows = |_: std::time::Duration| Ok(Vec::new());
+    let mut pause = |_: std::time::Duration| {};
+    let error = wait_for_gateway_service_ports_ready_observed(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_millis(20),
+        std::time::Duration::from_millis(1),
+        &mut |wait| waits.push(described(wait)),
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
+        },
+    )
+    .expect_err("ports that never publish are a timeout");
+
+    assert!(
+        waits.len() >= 2,
+        "each poll reports a read and its answer: {waits:?}"
+    );
+    assert_eq!(waits[0], "reading 1", "{waits:?}");
+    assert!(
+        waits[1].starts_with("blocked 1: "),
+        "the read's answer names what blocks it: {waits:?}"
+    );
+    assert_eq!(
+        waits.last().map(String::as_str),
+        Some("reading exited containers"),
+        "the timeout diagnostic read is reported as its own wait: {waits:?}"
+    );
+    assert!(
+        error.to_string().contains("gateway"),
+        "the timeout still names the wait: {error}"
+    );
+}
+
 #[test]
 fn gateway_readiness_reports_a_declared_service_exit() {
     let policy = test_policy();
@@ -1707,4 +1904,99 @@ fn a_declared_base_domain_wins_for_service_alias_claims() {
             .any(|claim| claim.domain == "postgres.s3.acme.test"),
         "{claims:?}"
     );
+}
+
+/// `container up` for a stopped machine gateway, end to end through the
+/// registration code: the managed start runs through the machine branch before
+/// any route registers, and the checkout's route then lands in the gateway's
+/// own route store. Both the operator start and the preflight are injected, so
+/// the live machine gateway is never touched (effigy#480).
+#[test]
+fn container_up_starts_a_stopped_machine_gateway_then_registers_its_route() {
+    with_test_home("container-up-stopped-machine", || {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let repo_root = checkout.path().to_path_buf();
+        let policy = test_policy();
+        assert!(
+            crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(&policy),
+            "the fixture policy routes through the gateway"
+        );
+
+        let starts = std::cell::Cell::new(0);
+        ensure_gateway_running_for_container_with(&policy, |command| {
+            let config = crate::runner::gateway_command::gateway_config().expect("gateway config");
+            crate::runner::gateway_command::managed_gateway_up(
+                &config,
+                command,
+                |_| {
+                    starts.set(starts.get() + 1);
+                    Ok(crate::runner::gateway_command::ManagedStartOutcome {
+                        status: "running",
+                        ready: true,
+                        reason: None,
+                    })
+                },
+                |_| crate::runner::gateway_command::GatewayUpStatusProbe {
+                    status: Err(effigy_gateway::GatewayError::NotRunning),
+                    identity_permission_denied: false,
+                },
+            )
+        })
+        .expect("container up starts the stopped gateway");
+        assert_eq!(starts.get(), 1, "the stopped machine gateway starts once");
+
+        let rows = published_rows(&policy, &[(8080, 80)], None);
+        let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+            .expect("routes")
+            .expect("published");
+        let route_table_path = gateway_route_table_path().expect("gateway route table");
+        reconcile_gateway_routes(&route_table_path, &repo_root, &routes).expect("register");
+        let table = RouteTable::load(&route_table_path).expect("load registered route table");
+        let registered = table.lookup("clientname.test").expect("registered route");
+        assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
+    });
+}
+
+/// A managed start that did not verify a running gateway stops `container up`
+/// before any route registers: an unverified identity is never a running
+/// claim, so no route is written for a gateway this run cannot vouch for
+/// (effigy#480).
+#[test]
+fn container_up_refuses_an_unverified_machine_gateway_before_registering_routes() {
+    with_test_home("container-up-unverified-machine", || {
+        let policy = test_policy();
+        assert!(
+            crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(&policy),
+            "the fixture policy routes through the gateway"
+        );
+        let refusal = ensure_gateway_running_for_container_with(&policy, |command| {
+            let config = crate::runner::gateway_command::gateway_config().expect("gateway config");
+            crate::runner::gateway_command::managed_gateway_up(
+                &config,
+                command,
+                |_| {
+                    Ok(crate::runner::gateway_command::ManagedStartOutcome {
+                        status: "unknown",
+                        ready: false,
+                        reason: Some("gateway ownership is unobservable".to_owned()),
+                    })
+                },
+                |_| crate::runner::gateway_command::GatewayUpStatusProbe {
+                    status: Err(effigy_gateway::GatewayError::NotRunning),
+                    identity_permission_denied: false,
+                },
+            )
+        })
+        .expect_err("an unverified gateway is a refusal");
+        let message = refusal.to_string();
+        assert!(message.contains("did not verify a running gateway"));
+        assert!(message.contains("operator status `unknown`"));
+        assert!(message.contains("gateway ownership is unobservable"));
+        let route_table_path = gateway_route_table_path().expect("gateway route table");
+        assert!(
+            !route_table_path.exists(),
+            "no route is registered after the refusal: {}",
+            route_table_path.display()
+        );
+    });
 }

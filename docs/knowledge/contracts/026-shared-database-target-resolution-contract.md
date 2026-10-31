@@ -35,8 +35,14 @@ provider provisioning, or secret creation.
 ## Credential and Compatibility Rules
 
 Credential references may influence command plans, but secret values must
-never appear in reports, debug output, logs, or error text. Seed and dump must
-agree on service classification and target choice. A change to fallback or
+never appear in reports, debug output, logs, error text, or a spawned command's
+argv. A plan carries the client password by variable name
+(`DatabaseCommandPlan::credential_env`, `MYSQL_PWD` / `PGPASSWORD`) and never
+the value: the runner sources it from a private per-exec file that it removes
+afterwards, and passes `-e NAME` name-only, for the host and Colima-VM
+backends alike. A value the plan cannot hand over that way fails the exec
+instead of running the client without a credential. Seed and dump must agree
+on service classification and target choice. A change to fallback or
 ambiguous-target behavior is a product decision with focused tests, not a
 side effect of moving helpers.
 

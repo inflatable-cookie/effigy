@@ -1133,9 +1133,14 @@ mod tests {
             Some("1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d"),
             DeployProviderFetch::Offline,
         );
+        // One fetch, read twice: the elapsed wait moves for the same source.
         assert_eq!(
             pinned.frame_at(Duration::from_secs(5)),
             "resolving deploy provider acme (offline); waiting for git source https://example.test/acme.git at rev 1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d; 5s elapsed"
+        );
+        assert_eq!(
+            pinned.frame_at(Duration::from_secs(45)),
+            "resolving deploy provider acme (offline); waiting for git source https://example.test/acme.git at rev 1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d; 45s elapsed"
         );
         let floating = provider_fetch_progress(
             "acme",
@@ -1147,6 +1152,10 @@ mod tests {
         assert_eq!(
             floating.frame_at(Duration::from_secs(2)),
             "resolving deploy provider acme (online); waiting for git source https://example.test/acme.git at ref main; 2s elapsed"
+        );
+        assert_eq!(
+            floating.frame_at(Duration::from_secs(60)),
+            "resolving deploy provider acme (online); waiting for git source https://example.test/acme.git at ref main; 60s elapsed"
         );
     }
 }

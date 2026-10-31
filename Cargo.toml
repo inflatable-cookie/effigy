@@ -46,7 +46,7 @@ license = "MIT"
 [workspace.lints]
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)", "cfg(effigy_feedback_lint)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(effigy_shared_process)"] }
 
 # Custody fingerprints the real CLI in development proofs. Keep the cryptographic
 # compressor optimized, as in release builds, even for large debug executables.
@@ -147,9 +147,14 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 minijinja = "2"
 rpassword = "7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+x509-parser = "0.16"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 tempfile = "3"
 
 [dev-dependencies]
+
+effigy-json-schema = { path = "crates/effigy-json-schema" }
 effigy-test-support = { path = "crates/effigy-test-support" }
 # A settled-run proof asks the kernel whether a workload group still exists.
 libc = "0.2"

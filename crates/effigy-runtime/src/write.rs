@@ -72,9 +72,18 @@ where
         policy.project_name.clone(),
     ));
     // A runtime that narrates nothing this parser recognises still gets one
-    // live step, so an operator is never looking at a silent teardown.
-    let whole_stack = prepared
-        .then(|| effigy_containers::exec::phase(format!("stopping the `{}` stack", policy.name)));
+    // live step, so an operator is never looking at a silent teardown. It
+    // awaits the teardown command's own exit, not a report the silent runtime
+    // may never write.
+    let whole_stack = prepared.then(|| {
+        effigy_containers::exec::runtime_wait(
+            format!("stopping the `{}` stack", policy.name),
+            format!(
+                "the teardown command for the `{}` stack to exit",
+                policy.name
+            ),
+        )
+    });
     let stopped = transition(repo_root, &policy, &|| {
         if prepared {
             run_shutdown_compose_watched(repo_root, &policy, &mut |line| {
@@ -386,14 +395,40 @@ fn finish_whole_stack(whole_stack: &effigy_containers::exec::TimedStep, ending: 
 mod tests {
     use super::{finish_whole_stack, whole_stack_ending, WholeStackEnding};
     use crate::EffigyRuntimeError;
-    use effigy_containers::exec::{phase, ComposeStepEvent, ComposeSteps};
+    use effigy_containers::exec::{runtime_wait, ComposeStepEvent, ComposeSteps};
+
+    /// The silent fallback waits for the teardown command's exit, and two
+    /// fake-clock reads prove the frame moves with its elapsed wait.
+    #[test]
+    fn a_silent_runtime_teardown_step_names_the_command_it_awaits_and_its_elapsed_wait() {
+        let step = runtime_wait(
+            "stopping the `web` stack",
+            "the teardown command for the `web` stack to exit",
+        );
+        let early = step.frame_at(std::time::Duration::from_secs(2));
+        assert_eq!(
+            early,
+            "stopping the `web` stack; waiting for the teardown command for the `web` stack to \
+             exit; 2s elapsed"
+        );
+        let later = step.frame_at(std::time::Duration::from_secs(45));
+        assert_eq!(
+            later,
+            "stopping the `web` stack; waiting for the teardown command for the `web` stack to \
+             exit; 45s elapsed"
+        );
+        assert_ne!(early, later, "a frame that never changes is not progress");
+    }
 
     #[test]
     fn a_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_check() {
         let (_, lines) = effigy_ui::steps::capture_lines(|| {
             let ending = whole_stack_ending(0, &Ok(()));
             assert_eq!(ending, WholeStackEnding::Stopped);
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(
+                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
+                ending,
+            );
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
@@ -415,7 +450,10 @@ mod tests {
                     "the stack did not stop: docker compose down exited 1".to_owned()
                 )
             );
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(
+                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
+                ending,
+            );
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
@@ -436,7 +474,10 @@ mod tests {
             });
             let ending = whole_stack_ending(steps.touched(), &Ok(()));
             assert_eq!(ending, WholeStackEnding::Cleared);
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(
+                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
+                ending,
+            );
             steps.finish_unfinished_teardown(Some(&["demo-web-dev-web-1".to_owned()]));
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
@@ -451,7 +492,10 @@ mod tests {
                 subject: "demo-web-dev-web-1".to_owned(),
             });
             let ending = whole_stack_ending(steps.touched(), &Ok(()));
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(
+                &runtime_wait("stopping the `web` stack", "the teardown command to exit"),
+                ending,
+            );
             steps.finish_unfinished_teardown(Some(&[]));
         });
         assert_eq!(lines.len(), 1, "{lines:?}");

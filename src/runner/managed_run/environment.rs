@@ -28,6 +28,9 @@ const START_PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// One route probe's own bound.
 const ROUTE_PROBE: Duration = Duration::from_secs(3);
+/// How often the environment phase re-reads the container counts its own `up`
+/// publishes, so every entry that waits for it names them (effigy#458).
+const ENVIRONMENT_PROGRESS_READ: Duration = Duration::from_millis(250);
 
 /// The environment one managed run brings up, or borrows.
 #[derive(Debug, Clone)]
@@ -60,12 +63,17 @@ pub(in crate::runner) enum NotReady {
 /// Brings the environment up, records the run's obligation to stop it (or
 /// leave a borrowed one running) and observes its readiness. `stop` is
 /// polled at every wait boundary.
+///
+/// `progress` receives the containers the environment's own `up` reports
+/// healthy while the phase runs, so the wait names them rather than a generic
+/// spinner.
 pub(in crate::runner) fn bring_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     token: &str,
     ansi_front: bool,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<(), NotReady> {
     let effect = EnvironmentEffect {
         repo: plan.repo.clone(),
@@ -91,7 +99,7 @@ pub(in crate::runner) fn bring_up(
     // after the activation's attachment, so the reverse-order settle (K4)
     // stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
-    let up = run_up(run, plan, ansi_front, stop);
+    let up = run_up(run, plan, ansi_front, stop, progress);
     let ticket = {
         let mut kernel = run
             .run_mut()
@@ -161,6 +169,17 @@ impl RouteHealth {
         }
     }
 
+    /// The request the wait is currently observing, named the way a person
+    /// reads it: `GET /api/health`.
+    pub(in crate::runner) fn probe_label(&self) -> Option<String> {
+        let url = self.urls.first()?;
+        let path = url
+            .split_once("://")
+            .map_or(url.as_str(), |(_scheme, rest)| rest);
+        let path = path.find('/').map_or("/", |slash| &path[slash..]);
+        Some(format!("GET {path}"))
+    }
+
     /// Probes the next unready route when its backoff is due. The deadline
     /// starts at the first poll, once every workload has started.
     pub(in crate::runner) fn poll(&mut self) -> Health {
@@ -221,6 +240,7 @@ fn run_up(
     plan: &EnvironmentPlan,
     ansi_front: bool,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<i32, NotReady> {
     let mut env = task_engine::spawn_environment(&plan.repo)
         .map_err(|error| NotReady::Failed(error.to_string()))?;
@@ -266,11 +286,16 @@ fn run_up(
         .spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()))
         .map_err(|error| NotReady::Failed(format!("environment up did not start: {error}")))?;
     let mut next_progress = started + START_PROGRESS_INTERVAL;
+    let mut next_progress_read = started;
     loop {
         run.verify_admission()
             .map_err(|error| NotReady::Failed(error.to_string()))?;
         if let Some(cause) = stop(run) {
             return Err(NotReady::Stopped(cause));
+        }
+        if Instant::now() >= next_progress_read {
+            next_progress_read = Instant::now() + ENVIRONMENT_PROGRESS_READ;
+            progress(environment_counts(plan));
         }
         if Instant::now() >= next_progress {
             next_progress = Instant::now() + START_PROGRESS_INTERVAL;
@@ -304,6 +329,15 @@ fn run_up(
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// The containers the environment's own `up` reported healthy so far, from
+/// the record it publishes while it waits for readiness.
+fn environment_counts(plan: &EnvironmentPlan) -> Option<(u32, u32)> {
+    // The container readiness publisher writes the phase's own record, not an
+    // entry's, and a host process may legitimately be named `environment`
+    // (effigy#458).
+    crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name).read_progress()
 }
 
 /// The owned binding of the service exec workloads attach to, observed with
@@ -444,6 +478,87 @@ fn find_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_tui::waits::WaitOn;
+
+    /// The wait names the request being observed, not the whole URL: the
+    /// readiness line a person reads (effigy#458).
+    #[test]
+    fn the_readiness_probe_names_its_request() {
+        let route = health(
+            "http://app.test/api/health".to_owned(),
+            Duration::from_secs(1),
+        );
+        assert_eq!(route.probe_label().as_deref(), Some("GET /api/health"));
+        let route = health("http://app.test".to_owned(), Duration::from_secs(1));
+        assert_eq!(route.probe_label().as_deref(), Some("GET /"));
+        assert_eq!(
+            RouteHealth::new(&plan(std::env::temp_dir())).probe_label(),
+            None
+        );
+    }
+
+    /// The environment phase reads the containers its own `up` reported
+    /// healthy from the record that `up` publishes.
+    /// The owner reads the counts from the record the readiness publisher
+    /// writes (`publish_phase`), and a host process an operator named
+    /// `environment` cannot shadow the phase (effigy#458).
+    #[test]
+    fn the_environment_phase_reads_the_published_container_counts() {
+        let repo = tempfile::tempdir().expect("repo");
+        let plan = plan(repo.path().to_path_buf());
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(repo.path(), &plan.name);
+        ledger.clear();
+        assert_eq!(environment_counts(&plan), None, "nothing is published yet");
+
+        // The readiness publisher's own write path.
+        ledger.publish_phase(&effigy_tui::waits::EntryState {
+            entry: "environment".to_owned(),
+            phase: effigy_tui::waits::EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 12_000,
+        });
+        assert_eq!(environment_counts(&plan), Some((3, 4)));
+
+        // A host process that happens to be named `environment` is an entry,
+        // not the phase, and never changes the counts.
+        ledger.publish(&effigy_tui::waits::EntryState {
+            entry: "environment".to_owned(),
+            phase: effigy_tui::waits::EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(environment_counts(&plan), Some((3, 4)));
+
+        // The phase reporting ready ends the counts.
+        ledger.settle_phase();
+        assert_eq!(environment_counts(&plan), None);
+    }
+
+    fn plan(repo: std::path::PathBuf) -> EnvironmentPlan {
+        EnvironmentPlan {
+            name: "app".to_owned(),
+            repo,
+            binding: Binding::Inline {
+                task: "dev".to_owned(),
+            },
+            up: "true".to_owned(),
+            up_env: Vec::new(),
+            borrowed: false,
+            exec_probe: None,
+            route_urls: Vec::new(),
+            readiness_budget: Duration::from_secs(60),
+            ready_lines: Vec::new(),
+        }
+    }
 
     #[test]
     fn first_line_keeps_only_the_headline() {

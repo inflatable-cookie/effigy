@@ -814,6 +814,82 @@ fn workspace_attachment_control_respects_its_budget_while_store_is_held() {
 }
 
 #[test]
+fn workspace_lookup_reads_legacy_schema_without_migrating_or_relaxing_fences() {
+    for removed in [
+        "DROP TABLE workspace_session_runs; DROP TABLE workspace_activation_reservations;",
+        "DROP TABLE workspace_session_runs;",
+        "DROP TABLE workspace_activation_reservations;",
+    ] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let mut fake = Fake::new(fixture.path());
+        let completed = admission_key(70);
+        settled(&cx, &root, completed, id(1), &mut fake);
+        let live = admission_key(71);
+        let run = admitted(&cx, &root, live, id(2), &mut fake);
+
+        // Model an older schema-1 writer. From here, lookup must use only
+        // Store::read; opening a writer would silently install the missing tables.
+        let path = root.path().join("kernel.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(removed).unwrap();
+        conn.execute(
+            "UPDATE meta SET value='older-build' WHERE key='last_written_by'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(reader(&cx, &root).schema_version(), 1);
+        let before_db = std::fs::read(&path).unwrap();
+        let before_wal = std::fs::read(root.path().join("kernel.db-wal")).unwrap();
+        assert!(matches!(
+            lookup_now(&cx, &root, completed),
+            Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(1)
+        ));
+        assert!(matches!(
+            lookup_now(&cx, &root, live),
+            Observed::Verified(Recovered::Admitted { run, .. }, _) if run == id(2)
+        ));
+        assert!(matches!(
+            lookup_now(&cx, &root, admission_key(72)),
+            Observed::Absent(_)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before_db);
+        assert_eq!(
+            std::fs::read(root.path().join("kernel.db-wal")).unwrap(),
+            before_wal,
+            "Observe changed the legacy journal"
+        );
+
+        conn.execute(
+            "UPDATE resources SET generation=generation+1 WHERE name=(SELECT owner FROM runs WHERE run_id=?1)",
+            [session().run.to_string()],
+        )
+        .unwrap();
+        for key in [completed, live, admission_key(72)] {
+            assert!(matches!(lookup_now(&cx, &root, key), Observed::Unknown(_)));
+        }
+        drop(run);
+    }
+}
+
+#[test]
+fn workspace_lookup_does_not_treat_malformed_overlap_tables_as_legacy() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let conn = Connection::open(root.path().join("kernel.db")).unwrap();
+    conn.execute_batch(
+        "DROP TABLE workspace_session_runs; CREATE TABLE workspace_session_runs (broken TEXT);",
+    )
+    .unwrap();
+    assert!(matches!(
+        lookup_now(&cx, &root, admission_key(72)),
+        Observed::Unknown(UnknownReason::StoreUnreadable(_))
+    ));
+}
+
+#[test]
 fn workspace_admission_changed_digest_conflicts_and_never_readmits() {
     let fixture = home();
     let home = fixture.path();

@@ -28,6 +28,7 @@ use super::host_tabs::{HostFollower, HostProcessTab};
 use super::wire::{self, EngineEvent, Front, Payload};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
+use effigy_tui::waits::EntryState;
 
 /// How long a client waits for one supervisor event before its next turn.
 const TURN: Duration = Duration::from_millis(50);
@@ -200,6 +201,9 @@ struct TextFollower {
     /// The environment's host processes: `[name] [host] status` and
     /// `[name] line`, from the logs their own supervisors write.
     hosts: Vec<HostFollower>,
+    /// The last wait line printed for each entry, so a live wait is printed
+    /// when it advances and a settled one prints once (effigy#458).
+    waits: std::collections::BTreeMap<String, String>,
 }
 
 struct FollowedWorkload {
@@ -278,6 +282,29 @@ impl TextFollower {
             run,
             workloads: Vec::new(),
             hosts: hosts.into_iter().map(HostFollower::new).collect(),
+            waits: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Prints the entries whose own wait changed: the same line the TUI tab
+    /// shows, so the text and interactive planes never disagree.
+    fn relay_waits(&mut self, states: impl IntoIterator<Item = EntryState>) {
+        let mut lines = String::new();
+        for state in states {
+            let Some(line) = state.headless_line() else {
+                continue;
+            };
+            if self.waits.get(&state.entry) == Some(&line) {
+                continue;
+            }
+            self.waits.insert(state.entry.clone(), line.clone());
+            lines.push_str(&line);
+            lines.push('\n');
+        }
+        if !lines.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(lines.as_bytes());
+            let _ = stdout.flush();
         }
     }
 
@@ -428,6 +455,9 @@ pub(in crate::runner) fn attach_text(
         output.relay(false);
         match next_event(&mut client) {
             Ok(Some(Event::Engine(bytes))) => {
+                if let Some(EngineEvent::Entry { state }) = wire::decode(&bytes) {
+                    output.relay_waits(std::iter::once(state));
+                }
                 if let Some(EngineEvent::Outcome { error, code }) = wire::decode(&bytes) {
                     output.relay(false);
                     // Closed follows the outcome on the same pipe.

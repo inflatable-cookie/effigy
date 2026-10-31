@@ -403,7 +403,7 @@ impl HostAliasResolver {
         let start = match environment.is_empty() {
             true => "start this checkout's stack first".to_owned(),
             false => format!(
-                "start this checkout's stack first with `effigy container up {environment}`"
+                "start this checkout's stack first with `effigy container {environment} up`"
             ),
         };
         RunnerError::task_invocation(format!(
@@ -449,6 +449,10 @@ pub(in crate::runner) fn host_env_aliases(
 /// environment's (effigy#431 review). The default environment comes first, so
 /// it wins a declared name two environments would otherwise both claim.
 ///
+/// A checkout whose manifest declares no `[containers]` registry has no
+/// backing service to resolve, so it has no policies. That absence is read
+/// from the manifest's shape, not from a load error.
+///
 /// A registry this checkout declares but Effigy cannot read is refused: without
 /// it there is no way to know which names belong to this scope, so host
 /// execution could quietly deliver the canonical alias and reach another
@@ -456,13 +460,12 @@ pub(in crate::runner) fn host_env_aliases(
 fn scoped_environment_policies(
     scope_root: &Path,
 ) -> Result<Vec<EffectiveContainerPolicy>, RunnerError> {
+    if !effigy_containers::declares_container_registry(scope_root).map_err(policy_did_not_load)? {
+        return Ok(Vec::new());
+    }
     let default = effigy_containers::load_container_policy(scope_root, None).ok();
-    let every = effigy_containers::load_all_container_policies(scope_root).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "this checkout is a runtime scope, so a declared backing-service alias has to resolve \
-             inside it, but its container policy did not load: {error}"
-        ))
-    })?;
+    let every =
+        effigy_containers::load_all_container_policies(scope_root).map_err(policy_did_not_load)?;
     let mut policies = default.clone().into_iter().collect::<Vec<_>>();
     for policy in every {
         if default
@@ -474,6 +477,14 @@ fn scoped_environment_policies(
         policies.push(policy);
     }
     Ok(policies)
+}
+
+/// The refusal for a declared registry that could not be read.
+fn policy_did_not_load(error: impl std::fmt::Display) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "this checkout is a runtime scope, so a declared backing-service alias has to resolve \
+         inside it, but its container policy did not load: {error}"
+    ))
 }
 
 /// Whether a recorded upstream accepts a connection, within the gateway's own

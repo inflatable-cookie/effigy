@@ -445,6 +445,7 @@ fn start_managed_run(
                 tabs,
                 order,
                 shells,
+                initial_waits(&plan),
             )
         }
     }
@@ -664,7 +665,7 @@ fn session_tabs(
             // A host process belongs to the environment, not to a workload's
             // exit policy: its lifecycle is the environment's.
             shutdown_on_exit: false,
-            source: TabSource::HostProcess(host),
+            source: TabSource::HostProcess(Box::new(host)),
         });
     }
     for process in processes {
@@ -702,6 +703,26 @@ fn session_tabs(
         }
     }
     (tabs, order)
+}
+
+/// The session's waits before the supervisor's first event: every workload
+/// names the environment phase or the entry before it, so no tab opens with a
+/// generic spinner (effigy#458).
+fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_tui::waits::EntryState> {
+    let order = effigy_tui::waits::SessionOrder::workloads(
+        &plan
+            .processes
+            .iter()
+            .filter(|process| process.role == ManagedProcessRole::Standard)
+            .map(|process| effigy_tui::waits::WorkloadOrder {
+                name: &process.name,
+                after: &process.after,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let environment = plan.owns_environment.then_some("environment");
+    let now = std::time::Instant::now();
+    effigy_tui::waits::EntryWaits::new(order, environment, now).states(now)
 }
 
 /// A shell tab's interactive attach, run by the TUI client itself.
@@ -807,6 +828,19 @@ fn own_managed_run(
         // displays.
         let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
         let target = context.target(&plan.profile);
+        // The run's own ordering graph, resolved once: the supervisor derives
+        // every entry's wait from it (effigy#458).
+        let workload_order = effigy_tui::waits::SessionOrder::workloads(
+            &plan
+                .processes
+                .iter()
+                .filter(|process| process.role == ManagedProcessRole::Standard)
+                .map(|process| effigy_tui::waits::WorkloadOrder {
+                    name: &process.name,
+                    after: &process.after,
+                })
+                .collect::<Vec<_>>(),
+        );
         let owned = OwnedRun {
             target,
             lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
@@ -824,6 +858,7 @@ fn own_managed_run(
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
             scratch: managed_task_scratch(selection.task),
+            workload_order,
             secrets: secrets
                 .iter()
                 .map(|(_, value)| value.expose().to_owned())
@@ -1420,15 +1455,7 @@ fn managed_workloads(
 /// and is never left bare, and every byte outside `[A-Za-z0-9_-]` is
 /// escaped as `%XX`, so distinct names never share a marker.
 fn marker_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
+    crate::runner::managed_wait::path_component(value)
 }
 
 /// A settle's release of an inline environment the run started: the task's
@@ -2078,6 +2105,10 @@ working_dir = "/workspace"
             listener_state: None,
             restart: HostProcessRestart::Never,
             restart_delay_ms: 0,
+            wait_ledger: crate::runner::managed_wait::WaitLedger::environment(
+                std::path::Path::new("/repo"),
+                "web",
+            ),
         }
     }
 

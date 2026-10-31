@@ -84,9 +84,8 @@ pub(in crate::runner) fn run_standard_task(
     let memory = run_key.is_none()
         && inherited_managed_run.is_none()
         && !inside_container_handoff()
-        && crate::runner::program_fallback::configured()
+        && !crate::runner::program_fallback::activates_here()
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            .is_empty()
         && super::super::sequence_run::foreground_tree(preflight, selection)?;
     let begin = if memory {
         TaskRun::begin_foreground
@@ -1123,6 +1122,11 @@ fn activate_inline_workspace_container_runtime_with(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            reconcile_shared_services:
+                crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                    policy,
+                    session_context,
+                ),
         },
         &plan,
     )
