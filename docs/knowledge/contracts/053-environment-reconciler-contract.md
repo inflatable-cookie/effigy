@@ -98,11 +98,51 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   backend and releases nobody, and it adds no JSON payload beyond the command's
   error: `HeldBy` (a live holder protects the environment) and kernel journal
   contention stay distinct refusals.
-- **Effects.** An apply is journalled `environment:apply` with `Retain`
-  settlement; a stop is `environment:stop`, `Irreversible`. Recording either
+- **Effects.** An ordinary or reserved apply is journalled
+  `environment:gate-scoped-id-difference` with `Retain` settlement; a stop is
+  `environment:stop`, `Irreversible`. Recording either
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
+- **Creation inference.** That apply record uses the same permit, gate,
+  retention and one caller deadline. Ordinary unsealed applies produce an explicit
+  unproven
+  outcome; only the sealed workspace route may attribute creation. Complete
+  before/after project inventories bind exact
+  full IDs to frozen service, project, managed, scope and checkout labels and
+  explicit image capabilities (052 §8.12): container image ID; reference plus
+  stable resolved image-inspect ID only for IDs created in this gate; digest-pinned
+  reference; or attached reference/config-hash with no resolved container-image ID.
+  Attached reference-only rows must match Compose's config hash for the merged
+  frozen render. A pre-window tag move underneath an attached container is
+  undetectable on this engine: the current lookup is never claimed as that
+  container's actual image (owner ruling, 2026-10-31). Nerdctl's absent one-off
+  flag requires actual project/service, name and frozen network corroboration.
+  Observed tag moves refuse; same-user retag/restore inside the gate is outside
+  the narrowed guarantee (owner ruling, 2026-10-31).
+  The post-apply service set must equal the frozen
+  set. Before apply, the workspace predecessor is allowed to remain attached or
+  be replaced for any Compose reason, including environment, mount and entrypoint
+  changes at the same image reference. Replacement requires its predecessor to
+  disappear and one new full ID absent from the complete pre-apply set. The
+  new-ID difference must equal that optional workspace replacement plus the
+  required fresh/recreated services; other attached dependencies retain their
+  exact IDs (owner ruling, 2026-10-31; 052 §8.12). The record is
+  explicitly a gate-scoped inference, never an engine create response. A same-user
+  actor forging identical labels inside this exclusive window is outside the
+  v0.15 guarantee. An `Absent` reservation names an unknown desired successor,
+  including an authorized non-live predecessor replacement, and binds only this
+  run's exact new ID; an `Observed` target must retain its exact ID. #506's gated
+  compatibility check must refuse recreation of a live protected predecessor.
+  Failed apply or incomplete observations produce no creation
+  receipt. A retry reads only this run's journalled result and never reapplies or
+  invents a later receipt. `created_by(project, full_id)` reads that journal;
+  missing evidence is Unknown, never a global NoCreator claim. Bare Active
+  publication refuses a reserved generation, including its claiming run; the
+  sanctioned reserved Active route is #506/#512's full commit with guest/serving
+  receipts. #510's native target-binding proof does NOT prove guest workspace-session
+  commit/publication. Retained records
+  remain readable after settle (effigy#510, 052 §8.12).
 - **Settlement budget.** Settlement is bounded on its own clock: admission
   makes its window once `Gate(Env)` is held, after a wait that may take ten
   minutes, and each settling holder and the run's own settle make theirs when
@@ -141,7 +181,10 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
   edited image, environment or mount is applied by the next `up` without a
-  `down`. Effigy adds no per-service digest label and no comparison pass. An
+  `down`. Effigy adds no per-service digest label. Attached reference-only image
+  evidence requires a bounded read of Compose's own `config --hash` over the
+  ordered frozen files; this observation is not a second apply. Partial
+  extra-hosts overrides inherit the base service's network declarations. An
   apply failure is an error naming the service and Compose's own output; no
   failure is logged as a warning and continued.
 - **Down** stops host processes, then the backend, publishes `stopped` with a

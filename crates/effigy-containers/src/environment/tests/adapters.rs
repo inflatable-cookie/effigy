@@ -103,6 +103,7 @@ fn colima_adapter_targets_only_its_profile() {
                 "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),
             format!("nerdctl --profile fixture -- inspect {ID}"),
+            format!("nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
         ]
     );
     assert!(
@@ -136,9 +137,10 @@ fn docker_adapter_targets_only_the_docker_cli() {
         tools.calls("docker"),
         [
             format!(
-                "ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+                "--context default ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),
-            format!("inspect {ID}"),
+            format!("--context default inspect {ID}"),
+            format!("--context default ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
         ]
     );
     assert!(
@@ -196,5 +198,533 @@ fn selection_reasons_follow_policy_precedence() {
     match backend {
         Some(backend) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", backend),
         None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+    }
+}
+
+/// A fake engine whose `inspect` answers by name and whose `image inspect`
+/// answers one exact image id, so the create read-back can be exercised on both
+/// backend paths without a running engine.
+struct CreationTools {
+    _dir: effigy_test_support::Fixture,
+    inspect: PathBuf,
+    image: PathBuf,
+    logs: PathBuf,
+    previous_path: Option<std::ffi::OsString>,
+    _env: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CreationTools {
+    fn install() -> Self {
+        let env = crate::test_env_lock();
+        let dir = home();
+        let bin = dir.path().join("bin");
+        let logs = dir.path().join("logs");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&logs).unwrap();
+        let inspect = dir.path().join("created.inspect.json");
+        std::fs::write(
+            &inspect,
+            format!(
+                r#"[{{
+                  "Id": "{ID}",
+                  "Name": "/{project}-app-1",
+                  "Image": "sha256:{image}",
+                  "State": {{"Running": true}},
+                  "Config": {{
+                    "Image": "fixture:latest",
+                    "Labels": {{
+                      "com.docker.compose.project": "{project}",
+                      "com.docker.compose.service": "app",
+                      "com.docker.compose.oneoff": "False",
+                      "com.effigy.managed": "true",
+                      "com.effigy.project": "{project}",
+                      "com.effigy.scope": "4677bfcb81da18054ef32e71aa3f3c29",
+                      "com.effigy.checkout": "/checkout"
+                    }}
+                  }}
+                }}]"#,
+                project = PROJECT,
+                image = "c".repeat(64),
+            ),
+        )
+        .unwrap();
+        let image = dir.path().join("image.inspect.json");
+        std::fs::write(
+            &image,
+            format!(r#"[{{"Id": "sha256:{}"}}]"#, "c".repeat(64)),
+        )
+        .unwrap();
+        for tool in ["colima", "docker"] {
+            let script = bin.join(tool);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n  *' image inspect '*) cat '{}' ;;\n  *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
+                    logs.display(),
+                    image.display(),
+                    inspect.display(),
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let previous_path = std::env::var_os("PATH");
+        let mut path = std::ffi::OsString::from(&bin);
+        if let Some(previous) = &previous_path {
+            path.push(":");
+            path.push(previous);
+        }
+        std::env::set_var("PATH", path);
+        Self {
+            _dir: dir,
+            inspect,
+            image,
+            logs,
+            previous_path,
+            _env: env,
+        }
+    }
+
+    fn calls(&self, tool: &str) -> Vec<String> {
+        std::fs::read_to_string(self.logs.join(tool))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+impl Drop for CreationTools {
+    fn drop(&mut self) {
+        match self.previous_path.take() {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        let _ = (&self.inspect, &self.image);
+    }
+}
+
+fn docker_selection() -> BackendSelection {
+    BackendSelection {
+        kind: if cfg!(target_os = "macos") {
+            BackendKind::DockerDesktop
+        } else {
+            BackendKind::DockerEngine
+        },
+        engine: crate::BackendId::docker_compose(),
+        context: "default".into(),
+        reason: BackendReason::UserPreference,
+    }
+}
+
+/// The container is read back by its exact full ID on the selected backend
+/// only, and the image ID it runs is resolved
+/// on that same backend.
+#[test]
+fn a_container_is_read_back_by_full_id_on_both_backends() {
+    for (label, selection, tool) in [
+        ("colima", selection(), "colima"),
+        ("docker", docker_selection(), "docker"),
+    ] {
+        let tools = CreationTools::install();
+        let workdir = tools.logs.parent().unwrap().to_path_buf();
+        let name = format!("{PROJECT}-app-1");
+        let mut adapter = selection.adapter();
+        let rows = match adapter.containers_by_id(&workdir, std::slice::from_ref(&ID.to_owned())) {
+            Observed::Verified(rows, _) => rows,
+            other => panic!("{label}: named read: {other:?}"),
+        };
+        assert_eq!(rows.len(), 1, "{label}");
+        assert_eq!(rows[0].id, ID, "{label}");
+        assert_eq!(rows[0].name, name, "{label}");
+        assert_eq!(rows[0].image, format!("sha256:{}", "c".repeat(64)));
+        assert_eq!(rows[0].image_reference, "fixture:latest");
+        let resolved = match adapter.image_id(&workdir, "fixture:latest") {
+            Observed::Verified(id, _) => id,
+            other => panic!("{label}: image read: {other:?}"),
+        };
+        assert_eq!(resolved, format!("sha256:{}", "c".repeat(64)));
+        let calls = tools.calls(tool);
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains(&format!("inspect {ID}"))),
+            "{label}: the read names the created id: {calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains("image inspect fixture:latest")),
+            "{label}: the image id is read on the same backend: {calls:?}"
+        );
+        let other_tool = if tool == "docker" { "colima" } else { "docker" };
+        assert!(
+            tools.calls(other_tool).is_empty(),
+            "{label}: the unselected backend was called"
+        );
+    }
+}
+
+/// An inspect that answers an id requested ID set did not name is not a partial
+/// success: the whole read-back refuses.
+#[test]
+fn an_id_read_refuses_an_answer_for_another_container() {
+    let tools = CreationTools::install();
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let mut adapter = selection().adapter();
+    match adapter.containers_by_id(&workdir, &["d".repeat(64)]) {
+        Observed::Unknown(UnknownReason::Inconsistent(reason)) => {
+            assert!(reason.contains("requested ID set did not name"), "{reason}")
+        }
+        other => panic!("expected a refusal for a foreign answer, got {other:?}"),
+    }
+}
+
+/// An image the engine reports only as a mutable reference is not an image id,
+/// so it is never accepted as one.
+#[test]
+fn an_image_read_that_is_only_a_reference_is_refused() {
+    let tools = CreationTools::install();
+    std::fs::write(&tools.image, br#"[{"Id": "fixture:latest"}]"#).unwrap();
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let mut adapter = selection().adapter();
+    assert!(
+        matches!(
+            adapter.image_id(&workdir, "fixture:latest"),
+            Observed::Unknown(_)
+        ),
+        "a reference is not an image id"
+    );
+}
+
+/// Every ID in the project listing must answer exactly once. A successful
+/// inspect command alone does not prove that the inventory is complete.
+#[test]
+fn project_inventory_requires_the_complete_listed_id_set() {
+    for selected in [selection(), docker_selection()] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let inspect = workdir.join("inspect.json");
+        let original = std::fs::read(&inspect).unwrap();
+        let row: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        let mut foreign = row[0].clone();
+        foreign["Id"] = serde_json::Value::String("d".repeat(64));
+        for answer in [
+            serde_json::json!([]),
+            serde_json::json!([row[0], row[0]]),
+            serde_json::json!([foreign]),
+        ] {
+            std::fs::write(&inspect, serde_json::to_vec(&answer).unwrap()).unwrap();
+            let mut backend = selected.adapter();
+            assert!(
+                matches!(
+                    backend.inventory_until(
+                        workdir,
+                        PROJECT,
+                        std::time::Instant::now() + std::time::Duration::from_secs(10)
+                    ),
+                    Observed::Unknown(_)
+                ),
+                "accepted incomplete or replaced inspect: {answer}"
+            );
+        }
+    }
+}
+
+/// An elapsed caller deadline refuses before launching either backend CLI.
+#[test]
+fn expired_observation_deadlines_do_not_launch_an_engine() {
+    for selected in [selection(), docker_selection()] {
+        let tools = CreationTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let mut backend = selected.adapter();
+        let deadline = std::time::Instant::now();
+        assert!(matches!(
+            backend.inventory_until(workdir, PROJECT, deadline),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(matches!(
+            backend.image_id_until(workdir, "fixture:latest", deadline),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(tools.calls("docker").is_empty());
+        assert!(tools.calls("colima").is_empty());
+    }
+}
+
+/// A live but unresponsive engine is terminated and reaped by the caller's
+/// absolute observation deadline, including during the inventory's inspect.
+#[test]
+fn inspection_is_bounded_by_the_callers_deadline() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        std::fs::write(
+            tools.bin.join(tool),
+            format!(
+            "#!/bin/sh\ncase \" $* \" in\n *' ps '*) echo {ID} ;;\n *) exec sleep 30 ;;\nesac\n"
+        ),
+        )
+        .unwrap();
+        let mut backend = selected.adapter();
+        let budget = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            backend.inventory_until(workdir, PROJECT, started + budget),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            backend.image_id_until(workdir, "fixture:latest", started + budget),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+}
+
+/// A new project member between listing and inspection invalidates the entire
+/// inventory, including a foreign container whose ownership labels are wrong.
+#[test]
+fn concurrent_project_membership_change_refuses_both_adapters() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let marker = workdir.join("listed-once");
+        std::fs::write(tools.bin.join(tool), format!(
+            "#!/bin/sh\ncase \" $* \" in\n *' ps '*) echo {ID}; if test -f '{}'; then echo {}; else touch '{}'; fi ;;\n *' inspect '*) cat '{}' ;;\nesac\n",
+            marker.display(), "d".repeat(64), marker.display(), workdir.join("inspect.json").display()
+        )).unwrap();
+        let mut backend = selected.adapter();
+        assert!(matches!(
+            backend.inventory_until(
+                workdir,
+                PROJECT,
+                std::time::Instant::now() + std::time::Duration::from_secs(10)
+            ),
+            Observed::Unknown(_)
+        ));
+    }
+}
+
+#[test]
+fn docker_context_and_endpoint_are_explicit_on_apply_and_observation() {
+    let tools = CreationTools::install();
+    let workdir = tools.logs.parent().unwrap();
+    for (context, flag) in [
+        ("named-fixture", "--context"),
+        ("unix:///fixture.sock", "--host"),
+    ] {
+        let mut selected = docker_selection();
+        selected.context = context.into();
+        let (_, argv) = selected
+            .compose_invocation(&["compose".into(), "up".into(), "-d".into()])
+            .unwrap();
+        assert_eq!(argv[0], flag);
+        assert_eq!(argv[1], context);
+        assert!(matches!(
+            selected.adapter().image_id_until(
+                workdir,
+                "fixture:latest",
+                std::time::Instant::now() + std::time::Duration::from_secs(10)
+            ),
+            Observed::Verified(_, _)
+        ));
+        assert!(tools
+            .calls("docker")
+            .iter()
+            .any(|call| call.starts_with(&format!("{flag} {context} image inspect"))));
+    }
+}
+
+/// Exercise the complete sealed before/apply/after protocol through each CLI
+/// adapter, rather than accepting a fake's preassembled Workload directly.
+#[test]
+fn sealed_id_difference_records_each_cli_image_capability_and_nerdctl_membership() {
+    use crate::environment::creation::{CreationPreflight, CreationRequest};
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        for reference_only in [false, true] {
+            let tools = CreationTools::install();
+            let workdir = tools.logs.parent().unwrap();
+            let created = workdir.join("created");
+            let program = workdir.join("bin").join(tool);
+            std::fs::write(&program, format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n *' compose up -d '*) touch '{}' ;;\n *' image inspect '*) cat '{}' ;;\n *' ps '*) if test -f '{}'; then echo {ID}; fi ;;\n *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
+                tools.logs.display(), created.display(), tools.image.display(), created.display(), tools.inspect.display()
+            )).unwrap();
+            if reference_only {
+                let mut rows: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&tools.inspect).unwrap()).unwrap();
+                rows[0]["Image"] = "docker.io/library/fixture:latest".into();
+                rows[0]["Config"]["Image"] = "docker.io/library/fixture:latest".into();
+                if tool == "colima" {
+                    rows[0]["Config"]["Labels"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("com.docker.compose.oneoff");
+                    rows[0]["Config"]["Labels"]["nerdctl/name"] = rows[0]["Name"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches('/')
+                        .into();
+                    rows[0]["Config"]["Labels"]["nerdctl/networks"] =
+                        serde_json::to_string(&[format!("{PROJECT}_default")])
+                            .unwrap()
+                            .into();
+                }
+                std::fs::write(&tools.inspect, serde_json::to_vec(&rows).unwrap()).unwrap();
+            }
+            let labels = serde_json::json!({
+                "com.effigy.managed":"true", "com.effigy.project":PROJECT,
+                "com.effigy.scope":"4677bfcb81da18054ef32e71aa3f3c29", "com.effigy.checkout":"/checkout"
+            });
+            let render = Closure::new([("compose.yml".into(), serde_json::to_vec(&serde_json::json!({"services":{"app":{"image":"fixture:latest","labels":labels}}})).unwrap())].into_iter().collect()).unwrap();
+            let state = root(workdir);
+            let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let stack = env("stack");
+            let mut adapter = selected.adapter();
+            let request = CreationRequest {
+                workdir,
+                project: PROJECT,
+                primary_service: "app",
+                compose_files: &[],
+                render: Some(&render),
+                preflight: None,
+                required: true,
+                deadline: std::time::Instant::now() + std::time::Duration::from_secs(20),
+            };
+            let preflight = CreationPreflight::observe(adapter.as_mut(), request).unwrap();
+            let seal = effigy_kernel::objects::Objects::seal_for_preflight(
+                &ctx.cx,
+                &state,
+                &render,
+                request.deadline,
+            )
+            .unwrap();
+            let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+            run.publish_sealed_desired(&seal, &render).unwrap();
+            let request = CreationRequest {
+                preflight: Some(&preflight),
+                ..request
+            };
+            let (program, argv) = selected
+                .compose_invocation(&["compose".into(), "up".into(), "-d".into()])
+                .unwrap();
+            let outcome = run.create_with(adapter.as_mut(), &selected, request, || {
+                crate::exec::run_backend_invocation(workdir, &program, &argv, "fixture apply", &[])
+                    .map(|_| ())
+                    .map_err(|error| BackendError::Uncertain(error.to_string()))
+            });
+            let accepted = !reference_only || tool == "colima";
+            assert_eq!(outcome.is_ok(), accepted, "{tool}: {outcome:?}");
+            if accepted {
+                let outcome = outcome.unwrap();
+                let receipt = outcome.receipt().unwrap();
+                assert_eq!(receipt.created_ids().collect::<Vec<_>>(), [ID]);
+                assert_eq!(
+                    receipt.created()[0].image_capability(),
+                    if reference_only {
+                        crate::environment::ImageCapability::ReferenceResolvedId
+                    } else {
+                        crate::environment::ImageCapability::ContainerImageId
+                    }
+                );
+                receipt
+                    .reobserve(adapter.as_mut(), request.deadline)
+                    .unwrap();
+            }
+            assert_eq!(
+                tools
+                    .calls(tool)
+                    .iter()
+                    .filter(|call| call.contains("compose up -d"))
+                    .count(),
+                1
+            );
+            run.finish(accepted).unwrap();
+        }
+    }
+}
+
+#[test]
+fn unreadable_selected_context_refuses_without_launching_a_cli() {
+    let tools = CreationTools::install();
+    let workdir = tools.logs.parent().unwrap();
+    let mut selected = docker_selection();
+    selected.context.clear();
+    assert!(selected
+        .compose_invocation(&["compose".into(), "up".into()])
+        .is_err());
+    let mut backend = selected.adapter();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    assert!(matches!(
+        backend.inventory_until(workdir, PROJECT, deadline),
+        Observed::Unknown(_)
+    ));
+    assert!(matches!(
+        backend.image_id_until(workdir, "fixture:latest", deadline),
+        Observed::Unknown(_)
+    ));
+    assert!(tools.calls("docker").is_empty());
+}
+
+#[test]
+fn frozen_config_hash_read_pins_context_file_order_and_deadline_on_both_backends() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = CreationTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let files = [
+            workdir.join("frozen-base.yml"),
+            workdir.join("frozen-extra-hosts.yml"),
+        ];
+        for file in &files {
+            std::fs::write(file, "services: {}\n").unwrap();
+        }
+        let script = workdir.join("bin").join(tool);
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\nprintf 'app {}\\n'\n",
+                tools.logs.display(),
+                "d".repeat(64)
+            ),
+        )
+        .unwrap();
+        let mut adapter = selected.adapter();
+        let hashes = adapter.service_config_hashes_until(
+            workdir,
+            PROJECT,
+            &files,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        assert!(
+            matches!(hashes,Observed::Verified(ref hashes,_) if hashes.get("app")==Some(&"d".repeat(64)))
+        );
+        let calls = tools.calls(tool);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].contains(&format!(
+            "compose --project-name {PROJECT} -f {} -f {} config --hash *",
+            files[0].display(),
+            files[1].display()
+        )));
+        assert!(calls[0].starts_with(if tool == "colima" {
+            "nerdctl --profile fixture --"
+        } else {
+            "--context default"
+        }));
+        assert!(matches!(
+            adapter.service_config_hashes_until(
+                workdir,
+                PROJECT,
+                &files,
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            ),
+            Observed::Unknown(_)
+        ));
+        assert_eq!(
+            tools.calls(tool).len(),
+            1,
+            "expired hash read launched a command"
+        );
     }
 }

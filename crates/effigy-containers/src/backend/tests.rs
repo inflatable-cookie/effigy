@@ -176,3 +176,79 @@ fn an_explicit_backend_wins_and_is_recorded_by_prepare() {
     );
     assert_eq!(endpoint_backend("effigy"), BackendId::colima_nerdctl());
 }
+
+#[test]
+fn first_prepare_records_the_frozen_docker_endpoint_or_configured_context() {
+    let _lock = crate::test_env_lock();
+    for (host, config, expected) in [
+        (
+            "unix:///private-fixture/docker.sock",
+            "{}",
+            Some("unix:///private-fixture/docker.sock"),
+        ),
+        ("", r#"{"currentContext":"remote-A"}"#, Some("remote-A")),
+        ("", "not JSON", None),
+    ] {
+        let fixture = fixture();
+        std::fs::write(
+            fixture.home.join("config.toml"),
+            "[containers]\nbackend = \"docker\"\n",
+        )
+        .unwrap();
+        let docker_config = fixture._fixture.path().join("docker-config");
+        std::fs::create_dir(&docker_config).unwrap();
+        std::fs::write(docker_config.join("config.json"), config).unwrap();
+        let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
+            ("DOCKER_CONTEXT", "".into()),
+            ("DOCKER_HOST", host.into()),
+            ("DOCKER_CONFIG", docker_config.as_os_str().to_owned()),
+            ("EFFIGY_COMPOSE_BACKEND", "".into()),
+        ]);
+        isolated(&fixture, || {
+            assert_eq!(
+                exact_backend(&fixture.checkout, "web", ManifestContainerDriver::Colima).source,
+                BackendSource::UserPreference
+            );
+            let policy = prepare_container_policy(&fixture.checkout, None).unwrap();
+            let frozen: serde_json::Value = serde_json::from_slice(
+                &policy.render.as_ref().unwrap().closure.files()["inputs/environment.json"],
+            )
+            .unwrap();
+            let Observed::Verified(record, _) =
+                crate::policy::render::recorded_backend(&fixture.checkout, "web")
+            else {
+                panic!("prepared record must be readable")
+            };
+            match expected {
+                Some(context) => {
+                    assert_eq!(frozen["backend_context"], context);
+                    let record = record.expect("exact context recorded");
+                    assert_eq!(record.context, context);
+                    assert_eq!(record.engine, "docker-compose");
+                    std::env::set_var("DOCKER_HOST", "");
+                    std::fs::write(
+                        docker_config.join("config.json"),
+                        r#"{"currentContext":"default"}"#,
+                    )
+                    .unwrap();
+                    let next = load_container_policy(&fixture.checkout, None).unwrap();
+                    let frozen: serde_json::Value = serde_json::from_slice(
+                        &next.render.as_ref().unwrap().closure.files()["inputs/environment.json"],
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        frozen["backend_context"], context,
+                        "next activation retains the recorded target"
+                    );
+                }
+                None => {
+                    assert_eq!(frozen["backend_context"], "");
+                    assert!(
+                        record.is_none(),
+                        "unreadable Docker context is never recorded as default"
+                    );
+                }
+            }
+        });
+    }
+}
