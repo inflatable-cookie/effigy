@@ -1102,35 +1102,25 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
     // Distinct terminals are identified by their device NAME: two pty pairs can
     // report the same device/inode numbers, and sharing those numbers would give
     // two terminals one capability file.
-    let first_tty =
-        effigy::workspace_serving_fixture::terminal_identity(Some("ttys001"), 0x10, 0x20, 4242)
-            .expect("a terminal identity");
-    let same_tty =
-        effigy::workspace_serving_fixture::terminal_identity(Some("ttys001"), 0x10, 0x20, 4242)
-            .expect("a terminal identity");
-    let second_tty =
-        effigy::workspace_serving_fixture::terminal_identity(Some("ttys004"), 0x10, 0x20, 4242)
-            .expect("a terminal identity");
+    let first_tty = effigy::workspace_serving_fixture::terminal_identity(Some(0x20), 4242)
+        .expect("a terminal identity");
+    let same_tty = effigy::workspace_serving_fixture::terminal_identity(Some(0x20), 4242)
+        .expect("a terminal identity");
+    let second_tty = effigy::workspace_serving_fixture::terminal_identity(Some(0x21), 4242)
+        .expect("a terminal identity");
     assert_eq!(first_tty, same_tty, "one terminal keeps one identity");
     assert_ne!(
         first_tty, second_tty,
         "two terminals with the same device numbers are still two clients"
     );
-    // A platform that cannot name the terminal falls back to its numbers, and one
-    // with neither falls back to the session; neither shares silently.
-    let numbered = effigy::workspace_serving_fixture::terminal_identity(None, 0x10, 0x21, 4242)
-        .expect("a numbered identity");
-    let also_numbered =
-        effigy::workspace_serving_fixture::terminal_identity(Some(""), 0x10, 0x21, 4242)
-            .expect("a numbered identity");
-    assert_eq!(numbered, also_numbered);
-    assert_ne!(numbered, first_tty);
-    let sessionless = effigy::workspace_serving_fixture::terminal_identity(None, 0, 0, 4242)
+    // A command with no terminal falls back to its session; it never shares a
+    // terminal client's record.
+    let sessionless = effigy::workspace_serving_fixture::terminal_identity(None, 4242)
         .expect("a session identity");
     assert_eq!(sessionless, "terminal-4242");
     assert_ne!(sessionless, first_tty, "a terminal is not a session client");
     assert!(
-        effigy::workspace_serving_fixture::terminal_identity(None, 0, 0, -1).is_err(),
+        effigy::workspace_serving_fixture::terminal_identity(None, -1).is_err(),
         "a client with neither a terminal nor a session is refused, never shared"
     );
 

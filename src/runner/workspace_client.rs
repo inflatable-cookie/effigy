@@ -143,39 +143,27 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
     // issued, and two separate terminals are two clients even when they share a
     // login session. A terminal with no controlling tty falls back to its session;
     // with neither, the client is refused by name rather than sharing a file.
-    let terminal = controlling_terminal();
-    let identity = terminal
-        .as_ref()
-        .map(|(name, device, inode)| (name.as_str(), *device, *inode));
-    terminal_client_identity(identity, current_session())
+    if let Some(device) = controlling_terminal_device() {
+        return Ok(format!("tty-{device:x}"));
+    }
+    terminal_client_identity(None, current_session())
 }
 
-/// The identity one terminal's commands share: its controlling terminal when it
-/// has one, else its session, else a refusal.
+/// The identity one terminal's commands share: its terminal DEVICE when it has
+/// one, else its session, else a refusal.
 ///
-/// The terminal is named by the *device* its controlling terminal actually is -
-/// `ttyname` of `/dev/tty` - and only falls back to the device numbers when the
-/// platform will not name it. A name is what distinguishes two terminals: several
-/// pty pairs can report the same `st_dev`/`st_ino`, so the numbers alone would let
-/// two terminals share one capability file. Redirecting stdin (or stdout or
-/// stderr) never changes either, because the answer comes from the controlling
-/// terminal, not from a descriptor.
+/// The device number (`st_rdev`) is the one fact that identifies an individual
+/// terminal: every pty slave in a session can report the same filesystem inode and
+/// the same `ttyname` answer, while the device number is unique to the terminal.
+/// A command's own descriptors are asked first, so two independent pty pairs are
+/// two clients even when their controlling terminal is shared; `/dev/tty` is the
+/// fallback for a command whose descriptors are all redirected.
 pub(crate) fn terminal_client_identity(
-    terminal: Option<(&str, u64, u64)>,
+    terminal: Option<u64>,
     session: libc::pid_t,
 ) -> Result<String, RunnerError> {
-    if let Some((name, device, inode)) = terminal {
-        if let Some(name) = std::path::Path::new(name)
-            .file_name()
-            .and_then(|name| name.to_str())
-        {
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()) {
-                return Ok(format!("tty-{name}"));
-            }
-        }
-        if device != 0 && inode != 0 {
-            return Ok(format!("tty-{device:x}-{inode:x}"));
-        }
+    if let Some(device) = terminal {
+        return Ok(format!("tty-{device:x}"));
     }
     if session >= 0 {
         return Ok(format!("terminal-{session}"));
@@ -187,9 +175,29 @@ pub(crate) fn terminal_client_identity(
     ))
 }
 
-/// The controlling terminal of this process: its device name when the platform
-/// will give one, and its device and inode numbers.
-fn controlling_terminal() -> Option<(String, u64, u64)> {
+/// The terminal device one of this process's standard descriptors is, when one of
+/// them is a terminal at all.
+///
+/// It is the descriptor's own `st_rdev` — the terminal *device* number — not the
+/// file's inode and not its path: every pty slave in a session can share an inode
+/// and a `ttyname` can answer `/dev/tty`, while the device number is the one thing
+/// that identifies the individual terminal.
+fn descriptor_terminal_device() -> Option<u64> {
+    for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstat writes into the zeroed struct for a borrowed descriptor.
+        if unsafe { libc::fstat(fd, &mut stat) } != 0 {
+            continue;
+        }
+        if stat.st_rdev != 0 && (stat.st_mode & libc::S_IFMT) == libc::S_IFCHR {
+            return Some(stat.st_rdev as u64);
+        }
+    }
+    None
+}
+
+/// The controlling terminal device of this process, when it has one.
+fn controlling_terminal_device() -> Option<u64> {
     // SAFETY: open a fixed path with no flags that could take ownership of the
     // terminal, then read that file's own name and metadata.
     let fd = unsafe {
@@ -201,30 +209,15 @@ fn controlling_terminal() -> Option<(String, u64, u64)> {
     if fd < 0 {
         return None;
     }
-    let mut name = vec![0u8; 1024];
-    // SAFETY: ttyname_r writes at most name.len() bytes into the buffer for the
-    // open descriptor and retains no pointer.
-    let named = unsafe { libc::ttyname_r(fd, name.as_mut_ptr() as *mut libc::c_char, name.len()) };
-    let path = if named == 0 {
-        let end = name.iter().position(|byte| *byte == 0).unwrap_or(0);
-        String::from_utf8_lossy(&name[..end]).into_owned()
-    } else {
-        String::new()
-    };
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
     // SAFETY: fstat writes into the zeroed struct for the open descriptor.
     let result = unsafe { libc::fstat(fd, &mut stat) };
     // SAFETY: the descriptor was opened above and is not used again.
     unsafe { libc::close(fd) };
-    if result != 0 {
+    if result != 0 || stat.st_rdev == 0 {
         return None;
     }
-    let device = stat.st_dev as u64;
-    let inode = stat.st_ino as u64;
-    if path.is_empty() && (device == 0 || inode == 0) {
-        return None;
-    }
-    Some((path, device, inode))
+    Some(stat.st_rdev as u64)
 }
 
 /// This process's session id, or a negative value when unavailable.
