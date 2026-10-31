@@ -81,6 +81,14 @@ impl EnvironmentBackend for Recorded {
     fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
         panic!("this fake models the creator record, not an inventory of `{project}`")
     }
+    fn inventory_until(
+        &mut self,
+        _: &Path,
+        project: &str,
+        _: std::time::Instant,
+    ) -> Observed<Vec<Workload>> {
+        panic!("this fake models the creator record, not an inventory of `{project}`")
+    }
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         let state = self.state.borrow();
         if let Some(detail) = &state.unreadable {

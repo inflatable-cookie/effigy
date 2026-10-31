@@ -236,6 +236,8 @@ pub(in crate::runner) fn reconcile(
             project: &policy.project_name,
             backend: &backend(repo_root, policy),
             retention,
+            workdir: repo_root,
+            adapter: None,
         },
         apply,
     )

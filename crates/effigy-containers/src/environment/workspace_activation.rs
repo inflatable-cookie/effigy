@@ -141,6 +141,13 @@ impl<'r> WorkspaceActivation<'r> {
         &mut self.environment
     }
 
+    /// What this activation's one gated apply proved about container creation
+    /// (effigy#508, 052 §8.12). A fresh-target publication reads its
+    /// attribution here and compares the run with this activation's own.
+    pub fn creation(&self) -> super::creation::Creation {
+        self.environment.creation()
+    }
+
     /// A listener factory must borrow this exact run, never recreate an owner
     /// from SessionRef. It registers custody before launching its bound key.
     pub fn session_run_mut(&mut self) -> &mut Run<'r> {

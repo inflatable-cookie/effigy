@@ -705,6 +705,39 @@ fn workspace_reserved_every_guest_write_boundary_crash_before_after_preserves_au
     }
 }
 
+/// The creation window's read, without an engine. These proofs apply nothing,
+/// so its two inventories are the same empty project and the window proves no
+/// container was created.
+struct NoEngine(effigy_containers::environment::BackendSelection);
+
+impl effigy_containers::environment::EnvironmentBackend for NoEngine {
+    fn selection(&self) -> &effigy_containers::environment::BackendSelection {
+        &self.0
+    }
+    fn inventory(
+        &mut self,
+        _: &std::path::Path,
+        project: &str,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::environment::Workload>> {
+        panic!("unmodelled inventory of `{project}`")
+    }
+    fn inventory_until(
+        &mut self,
+        _: &std::path::Path,
+        _: &str,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::environment::Workload>> {
+        effigy_kernel::observe::Observed::Verified(
+            Vec::new(),
+            effigy_kernel::observe::Evidence::new("test creation window".into(), None)
+                .expect("evidence"),
+        )
+    }
+    fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
+        panic!("unmodelled creator question for `{container_id}` in `{project}`")
+    }
+}
+
 struct TlsProbe;
 impl effigy_kernel::workspace_session::ServingProbe for TlsProbe {
     fn pinned_handshake(
@@ -786,6 +819,7 @@ fn recover_fixture<'a>(
     );
     assert_eq!(before, shared.borrow().tree_digest());
     let backend = environment::backend(&request.policy.repo_root, request.policy);
+    let mut creation = NoEngine(backend.clone());
     activation
         .apply_with(
             Up {
@@ -793,6 +827,8 @@ fn recover_fixture<'a>(
                 project: &request.policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &request.policy.repo_root,
+                adapter: Some(&mut creation),
             },
             || Ok(()),
         )

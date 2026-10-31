@@ -1018,6 +1018,7 @@ dependencies = [
 name = "effigy-containers"
 version = "0.14.1"
 dependencies = [
+ "chrono",
  "effigy-catalog",
  "effigy-core",
  "effigy-gateway",

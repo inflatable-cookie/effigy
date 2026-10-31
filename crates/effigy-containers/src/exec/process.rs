@@ -85,6 +85,37 @@ pub(super) fn run_command_capture_os_with_env(
     Ok(output)
 }
 
+/// [`run_command_capture_os_with_env`] bounded by the caller's absolute
+/// deadline: the same one deadline supervises the child, so an engine that
+/// stops answering cannot hold the caller past it (effigy#508).
+pub(super) fn run_command_capture_os_with_env_until(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<Output, ContainerExecError> {
+    // An expired deadline never spawns a child: it reports the same timeout an
+    // observed one does instead of buying the invocation fresh time.
+    let reported_timeout = remaining_until_deadline(deadline, label)?;
+    let child =
+        spawn_capture_child_with_env(repo_root, program, args, false, env).map_err(|error| {
+            ContainerExecError::Launch {
+                command: format!("{program} {}", format_args(args)),
+                error,
+            }
+        })?;
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let rendered: Vec<&str> = rendered.iter().map(String::as_str).collect();
+    let output =
+        supervise_capture_child(child, program, &rendered, label, deadline, reported_timeout)?;
+    require_success(label, output)
+}
+
 /// One post-exit drain budget for both streams, without retained reader threads.
 const PIPE_EOF_GRACE: Duration = Duration::from_secs(2);
 const CAPTURE_LIMIT: usize = 1024 * 1024;
@@ -1068,7 +1099,7 @@ fn terminate_child_process_tree(child: &mut std::process::Child) {
     }
 }
 
-pub(super) fn error_is_timeout(error: &ContainerExecError) -> bool {
+pub fn error_is_timeout(error: &ContainerExecError) -> bool {
     match error {
         ContainerExecError::Failure { stderr, .. } => stderr.contains("command timed out"),
         ContainerExecError::Launch { .. } => false,

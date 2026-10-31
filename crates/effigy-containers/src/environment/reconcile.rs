@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Read;
+use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +38,8 @@ use effigy_kernel::run::{
 use effigy_ui::steps::{ProgressSource, Step};
 use serde_json::{json, Value};
 
-use super::backend::{BackendError, BackendSelection};
+use super::backend::{BackendError, BackendSelection, EnvironmentBackend};
+use super::creation::{ApplyOutcome, Creation, CreationWindow, CREATION_WINDOW};
 use super::record::{EngineRecord, EnvRecord, EnvState};
 
 /// Journal kind of a backend apply. The stack outlives the run by design;
@@ -583,6 +585,10 @@ pub struct EnvRun<'r> {
     /// how far through it is and the last thing it observed (effigy#461).
     progress: ProgressSource,
     step: Step,
+    /// What this run's one gated apply proved about container creation
+    /// (effigy#508, 052 §8.12). In memory only: nothing here is serializable
+    /// state, and a crash loses the window rather than minting a partial one.
+    creation: Creation,
 }
 
 impl<'r> EnvRun<'r> {
@@ -734,6 +740,7 @@ impl<'r> EnvRun<'r> {
             transitioned: false,
             progress,
             step,
+            creation: Creation::not_applied(),
         })
     }
 
@@ -898,11 +905,27 @@ impl<'r> EnvRun<'r> {
     }
 
     /// The one backend apply: journals the intent under a permit, then runs
-    /// `effect` (K3, R4).
+    /// `effect` (K3, R4), with a creation window on both sides of it
+    /// (effigy#508, 052 §8.12).
     pub fn apply_with(
         &mut self,
         selection: &BackendSelection,
         project: &str,
+        workdir: &Path,
+        effect: impl FnOnce() -> Result<(), BackendError>,
+    ) -> Result<(), EnvError> {
+        let mut backend = selection.adapter();
+        self.apply_with_backend(selection, project, workdir, backend.as_mut(), effect)
+    }
+
+    /// [`Self::apply_with`] with the adapter supplied: a proof hands its own
+    /// backend, production resolves [`BackendSelection::adapter`].
+    pub fn apply_with_backend(
+        &mut self,
+        selection: &BackendSelection,
+        project: &str,
+        workdir: &Path,
+        backend: &mut dyn EnvironmentBackend,
         effect: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
         let payload = json!({
@@ -910,14 +933,50 @@ impl<'r> EnvRun<'r> {
             "context": selection.context,
             "project": project,
         });
-        self.transition(
+        // One absolute deadline supervises both inventories, so a runtime that
+        // stops answering fails the read instead of holding the gate. The apply
+        // itself keeps the run's own budget (K8).
+        let remaining = self.cx.operation().remaining().unwrap_or_default();
+        let deadline = Instant::now() + remaining.min(CREATION_WINDOW);
+        // The window opens inside the effect closure, so it is taken after the
+        // permit's attach check and after the intent is journalled: a refused
+        // apply reads nothing and creates nothing.
+        let environment = self.env.resource.clone();
+        let run = self.run.id();
+        let mut window = None;
+        let result = self.transition(
             APPLY_EFFECT,
             "reconciling the backend",
             payload,
             Settlement::Retain,
             None,
-            effect,
-        )
+            || {
+                window = Some(CreationWindow::open(
+                    backend,
+                    workdir,
+                    selection,
+                    project,
+                    environment,
+                    run,
+                    deadline,
+                ));
+                effect()
+            },
+        );
+        self.creation = match window {
+            None => Creation::NothingCreated,
+            Some(window) => window.close(match &result {
+                Ok(()) => ApplyOutcome::Completed,
+                Err(EnvError::Backend(BackendError::NotStarted(_))) => ApplyOutcome::NotStarted,
+                Err(error) => ApplyOutcome::Uncertain(error.to_string()),
+            }),
+        };
+        result
+    }
+
+    /// What this run's one gated apply proved about container creation.
+    pub fn creation(&self) -> Creation {
+        self.creation.clone()
     }
 
     /// The one backend stop: journalled under a permit, then published
@@ -1936,9 +1995,12 @@ mod tests {
             matches!(&holders, Observed::Verified(rows, _) if rows.len() == 1),
             "{holders:?}"
         );
-        let refused = run.apply_with(&super::super::tests::selection(), "acme-stack", || {
-            panic!("a refused transition never reaches the backend")
-        });
+        let refused = run.apply_with(
+            &super::super::tests::selection(),
+            "acme-stack",
+            super::super::tests::up_workdir(),
+            || panic!("a refused transition never reaches the backend"),
+        );
         assert!(
             matches!(refused, Err(EnvError::HeldBy { .. })),
             "{refused:?}"

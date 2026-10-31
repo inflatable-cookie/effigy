@@ -208,35 +208,50 @@ implements the same trait; it must pass the strict-fake adapter suite and
 
 ### 6.1 Creation receipts (effigy#508)
 
-`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>` is
-the seam a caller uses to attribute a fresh container to the run whose apply
-created it. `Verified(run)` is a backend's own creator record for that exact
-full container id in that project; `Absent(NoCreator { .. })` is a backend
-that keeps creator records and holds none for the container (another actor's
-container, a replacement, or an id a failed apply never created);
-`Unknown(NoBackendRecord(..))` is a backend with no such record, and its reason
-names the missing API. Only `Verified` is a receipt, and the caller compares
-the run with its own activation before attributing anything.
+A fresh Compose target is attributed to the environment run whose apply created
+it only by the run's **creation window**, whose rules and threat boundary are
+052 §8.12. The window is part of the apply effect seam, not something a caller
+starts:
+
+* `Up` carries the checkout the apply reads (`workdir`). Under the exclusive
+  `Gate(Env)` the apply already holds, and after the permit's attach check, the
+  run takes the project's exact-identity inventory, records the apply's start,
+  runs the one Compose apply, and takes the same inventory again.
+* `EnvRun::creation()` — `WorkspaceActivation::creation()` for a reserved
+  workspace activation — answers `Creation::Proven(CreationReceipt)`,
+  `NothingCreated` (the apply was refused before it reached the backend) or
+  `Unproven(reason)`. `CreationReceipt::created_by(project, container_id)`
+  returns `Verified(run)` only for an exact full id this window proved the run
+  created; every other id is `Absent(NoCreator)`, scoped to what the window
+  covers, and an unproven window is `Unknown`.
+* Both inventories are supervised by one absolute deadline
+  (`CREATION_WINDOW`, also bounded by the run's own budget), so a runtime that
+  stops answering fails the read instead of holding the gate. The apply keeps
+  its own budget (K8), so a long first build still applies; a window that
+  outlives its deadline simply publishes no receipt.
+
+`Up::adapter` is the proof seam: production leaves it `None` and the
+selection's own adapter reads, while a proof supplies a fake so no engine is
+contacted.
+
+Asking the **raw backend** is a different question.
+`EnvironmentBackend::created_by(project, container_id)` stays as the honest
+answer to "does this engine record a creator?": neither Docker Engine/Docker Desktop nor containerd
+records which client created a container, `inspect` and `compose ps` expose only
+id, name, creation time, image id and labels, the event streams name an actor id
+and its labels, and `docker compose up` reports creation as a human progress
+line naming the container with no id and no machine-readable form. So both
+adapters answer `Unknown(NoBackendRecord(..))` naming the missing API, without
+issuing a backend command, and a caller that has no window gets nothing from
+this question.
 
 A creation timestamp, an inventory that was empty before an apply and populated
 after it, Compose's own project, service and name labels, and a run id the
-caller supplies are not evidence: a competing Compose actor creates all of
-them. The seam therefore never builds a receipt from observation, and neither
-adapter issues a backend command to answer: there is nothing to observe.
-
-Both adapters answer `Unknown(NoBackendRecord)`. Neither Docker Engine, Docker
-Desktop nor containerd records *which client* created a container: `inspect`
-and `compose ps` expose the id, name, creation time and labels, and the event
-streams name an actor id and its labels, never a creating client. The one
-authenticated creation fact is the `Id` in the engine's create response, which
-is returned to the client that issued the create — here the Compose CLI that
-performs the environment's single apply. Effigy never sees that response, and
-`docker compose up` reports creation as a human progress line naming the
-container, with no id and no machine-readable form (`up` has no `--format` or
-JSON output). A receipt therefore needs one of the two things this seam does
-not have: a Compose apply that returns the ids it created, or creation issued
-by Effigy itself through the engine API. Until one exists a fresh target cannot
-be attributed to a run, and a caller must refuse it rather than infer it.
+caller supplies are each insufficient on their own; the receipt exists because
+it binds all of them to the run whose gated apply produced them, and because
+every incomplete case above refuses rather than minting a weaker answer. The
+excluded actor — a foreign process deliberately forging Effigy's labels inside
+the one gated window — is stated in 052 §8.12 and is not protected against here.
 
 The engine and its precedence are one resolver,
 `effigy_containers::backend::exact_backend` (effigy#230). Highest first:
@@ -373,7 +388,7 @@ a projection, never authority (effigy#458).
 | --- | --- |
 | Record, stopped publication, apply-run attach, exempt permit | `test:kernel:environment` |
 | Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down and reset, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters | `test:containers:environment` |
-| Backend creation receipt: the exact-id creator record for the creating run, a competing creator, a replacement, an id another project created, an unreadable record, a failed apply and a retry; both adapters refuse without a backend call and name the engine and the missing API | `test:containers:environment` |
+| Creation window: a fresh create's exact ids, an unchanged re-up that adopts and creates nothing, a partial recreate that names only the replaced container, a duplicate service, missing and mismatched labels, an image and creation-stamp mismatch, a failed apply, a timed-out window with its retry, another project's container and a run that never applied; both adapters' bounded inventory refuses an expired deadline without reading, and the raw creator question still refuses without a backend call | `test:containers:environment` |
 | Runner cutover: lifecycle, task activation, managed runs, handover, deferral, builder recovery | `test:environment:runner` |
 | Busy refusal diagnostics: the live exact-gate holder, terminal and successor observations, unreadable identity, the original wait deadline, explicit unknown/absent record semantics, held-by and journal-contention controls, with no backend call | `test:environment:busy-diagnostics` (the one-sentence refusal in `runner::environment::tests` and the refusal-command test) |
 | One apply: `up -d --remove-orphans` from task preparation, and a compose failure reported as an error | `test:containers:mount-prepare`, `test:containers:generations:callers` |

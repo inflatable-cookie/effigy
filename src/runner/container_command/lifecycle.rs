@@ -3246,6 +3246,8 @@ catalog = "postgres"
                     project: &policy.project_name,
                     backend: &crate::runner::environment::backend(&self.repo_root, policy),
                     retention: effigy_containers::environment::Retention::Persistent,
+                    workdir: &self.repo_root,
+                    adapter: None,
                 },
                 || Ok(()),
             )

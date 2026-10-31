@@ -8,15 +8,15 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::objects::{Closure, Objects};
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::AttachMode;
+use std::path::Path;
 use std::time::Instant;
 
-use super::backend::{BackendError, BackendSelection};
+use super::backend::{BackendError, BackendSelection, EnvironmentBackend};
 use super::reconcile::{EnvContext, EnvError, EnvRef, EnvRun, Operation, GATE_WAIT};
 use super::record::{EngineRecord, Retention};
 use effigy_kernel::run::Holder;
 
 /// One bring-up.
-#[derive(Debug)]
 pub struct Up<'a> {
     /// The render this environment points at; `None` for a repository-owned
     /// Compose file the reconciler cannot snapshot.
@@ -24,6 +24,25 @@ pub struct Up<'a> {
     pub project: &'a str,
     pub backend: &'a BackendSelection,
     pub retention: Retention,
+    /// The checkout the apply reads. The creation window takes its two
+    /// inventories here (effigy#508).
+    pub workdir: &'a Path,
+    /// The adapter the creation window reads through. Production resolves the
+    /// selection's own adapter (`None`); a proof supplies its fake, so no real
+    /// engine is contacted.
+    pub adapter: Option<&'a mut dyn EnvironmentBackend>,
+}
+
+impl std::fmt::Debug for Up<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Up")
+            .field("project", &self.project)
+            .field("backend", &self.backend)
+            .field("retention", &self.retention)
+            .field("workdir", &self.workdir)
+            .field("adapter", &self.adapter.as_ref().map(|_| "supplied"))
+            .finish()
+    }
 }
 
 /// What a bring-up did to the backend.
@@ -106,7 +125,19 @@ pub(super) fn reconcile_in(
     if !holders.is_empty() {
         return Ok(Applied::HeldByRuns(holders));
     }
-    run.apply_with(request.backend, request.project, apply)?;
+    let Up {
+        backend,
+        project,
+        workdir,
+        adapter,
+        ..
+    } = request;
+    match adapter {
+        Some(backend_adapter) => {
+            run.apply_with_backend(backend, project, workdir, backend_adapter, apply)?
+        }
+        None => run.apply_with(backend, project, workdir, apply)?,
+    }
     Ok(match unreadable {
         Some(reason) => Applied::ReconciledUnreadableHolders(reason),
         None => Applied::Reconciled,

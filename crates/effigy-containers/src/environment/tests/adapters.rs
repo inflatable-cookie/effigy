@@ -236,3 +236,53 @@ fn docker_selection() -> BackendSelection {
         reason: BackendReason::UserPreference,
     }
 }
+
+/// effigy#508: the creation window's bounded inventory shares one absolute
+/// deadline. An expired deadline refuses before the read spawns anything, so a
+/// hung runtime can never hold the environment gate open.
+#[test]
+fn an_expired_window_deadline_refuses_the_inventory_without_reading() {
+    let tools = FakeTools::install();
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let deadline = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    for mut adapter in [selection().adapter(), docker_selection().adapter()] {
+        match adapter.inventory_until(&workdir, PROJECT, deadline) {
+            Observed::Unknown(UnknownReason::TimedOut { phase }) => {
+                assert_eq!(
+                    phase, "list project",
+                    "the phase names the read that refused"
+                )
+            }
+            other => panic!("an expired window must time out, not {other:?}"),
+        }
+    }
+    assert!(
+        tools.calls("colima").is_empty() && tools.calls("docker").is_empty(),
+        "an expired deadline spawned a backend read: {:?} {:?}",
+        tools.calls("colima"),
+        tools.calls("docker")
+    );
+}
+
+/// The bounded inventory issues exactly the unbounded one's calls, so the
+/// window reads the same exact identity the rest of the seam does.
+#[test]
+fn a_bounded_inventory_reads_the_same_exact_identity() {
+    let tools = FakeTools::install();
+    let workdir = tools.logs.parent().unwrap().to_path_buf();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut adapter = selection().adapter();
+    assert!(matches!(
+        adapter.inventory_until(&workdir, PROJECT, deadline),
+        Observed::Verified(rows, _) if rows.len() == 1 && rows[0].id == ID
+    ));
+    assert_eq!(
+        tools.calls("colima"),
+        [
+            format!(
+                "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+            ),
+            format!("nerdctl --profile fixture -- inspect {ID}"),
+        ]
+    );
+}

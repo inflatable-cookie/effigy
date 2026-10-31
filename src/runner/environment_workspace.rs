@@ -145,6 +145,8 @@ pub(in crate::runner) fn up<'a>(
                 project: &policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &policy.repo_root,
+                adapter: None,
             },
             apply,
         )?;

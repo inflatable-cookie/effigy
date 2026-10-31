@@ -92,10 +92,12 @@ pub enum AbsenceProof {
     ContainerGone {
         id: String,
     },
-    /// The backend's own creator record holds no row for this exact container
-    /// in this project: no run's create produced it. It is the proof a backend
-    /// that records creators gives for another actor's container and for a
-    /// replacement, never a receipt (effigy#508).
+    /// The creator record that was asked holds no row for this exact container
+    /// in this project: no creation that record covers produced it. The proof
+    /// is scoped to the record's coverage — a backend's complete creator
+    /// record, or one environment run's creation window — so it is never a
+    /// receipt and never a claim about a creation the record cannot see
+    /// (effigy#508).
     NoCreator {
         creator: CreatorRef,
     },

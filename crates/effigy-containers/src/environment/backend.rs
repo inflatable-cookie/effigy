@@ -10,6 +10,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Instant;
 
 use effigy_kernel::id::RunId;
 use effigy_kernel::observe::{Observed, UnknownReason};
@@ -285,6 +286,14 @@ pub struct Workload {
     /// Host sources of bind mounts: ownership evidence for pre-label stacks.
     #[serde(default)]
     pub binds: Vec<String>,
+    /// The image ID the container runs, as the engine reports it (`Image`).
+    /// A creation window binds the container to the image it was created from
+    /// (effigy#508).
+    pub image: String,
+    /// The container's own creation time (`Created`, RFC 3339). A container
+    /// the window did not exist before cannot carry a stamp older than the
+    /// apply it appeared in.
+    pub created: String,
 }
 
 /// The seam every engine adapter implements. Applying and stopping run
@@ -293,6 +302,15 @@ pub trait EnvironmentBackend {
     fn selection(&self) -> &BackendSelection;
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
+    /// [`Self::inventory`] supervised by the caller's one absolute deadline,
+    /// so a runtime that stops answering fails the read instead of holding the
+    /// environment gate open (effigy#508).
+    fn inventory_until(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        deadline: Instant,
+    ) -> Observed<Vec<Workload>>;
     /// The run whose one Compose apply created `container_id` in `project`, as
     /// this backend's own creator record proves it (effigy#508).
     ///
@@ -345,6 +363,14 @@ macro_rules! compose_adapter {
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
+            fn inventory_until(
+                &mut self,
+                workdir: &Path,
+                project: &str,
+                deadline: Instant,
+            ) -> Observed<Vec<Workload>> {
+                inventory_until(&self.selection, workdir, project, Some(deadline))
+            }
             fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
                 created_by(&self.selection, project, container_id)
             }
@@ -381,6 +407,19 @@ fn inventory(
     workdir: &Path,
     project: &str,
 ) -> Observed<Vec<Workload>> {
+    inventory_until(selection, workdir, project, None)
+}
+
+/// [`inventory`] under the caller's one absolute deadline (effigy#508): the
+/// listing and the inspect of its rows are supervised by the same deadline, so
+/// a runtime that stops answering reports a timeout instead of holding the
+/// caller.
+fn inventory_until(
+    selection: &BackendSelection,
+    workdir: &Path,
+    project: &str,
+    deadline: Option<Instant>,
+) -> Observed<Vec<Workload>> {
     let filter = format!("label={COMPOSE_PROJECT_LABEL}={project}");
     let ps = [
         "ps",
@@ -393,16 +432,15 @@ fn inventory(
     ]
     .map(OsString::from);
     let (program, args) = runtime_invocation(selection, &ps);
-    let ids =
-        match crate::exec::run_backend_invocation(workdir, &program, &args, "list project", &[]) {
-            Ok(output) => String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>(),
-            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
-        };
+    let ids = match capture(workdir, &program, &args, "list project", deadline) {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        Err(error) => return Observed::Unknown(read_reason("list project", error)),
+    };
     if ids.is_empty() {
         return Observed::Verified(
             Vec::new(),
@@ -413,7 +451,7 @@ fn inventory(
     let mut inspect = vec![OsString::from("inspect")];
     inspect.extend(ids.iter().map(OsString::from));
     let (program, args) = runtime_invocation(selection, &inspect);
-    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect project", &[]) {
+    match capture(workdir, &program, &args, "inspect project", deadline) {
         Ok(output) => match parse_inspect(&output.stdout) {
             Ok(rows) => Observed::Verified(
                 rows,
@@ -422,7 +460,36 @@ fn inventory(
             ),
             Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
         },
-        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        Err(error) => Observed::Unknown(read_reason("inspect project", error)),
+    }
+}
+
+/// One backend read on the caller's deadline, or unbounded when the caller set
+/// none (the ordinary inventory).
+fn capture(
+    workdir: &Path,
+    program: &std::ffi::OsStr,
+    args: &[OsString],
+    label: &str,
+    deadline: Option<Instant>,
+) -> Result<std::process::Output, crate::exec::ContainerExecError> {
+    match deadline {
+        Some(deadline) => {
+            crate::exec::run_backend_invocation_until(workdir, program, args, label, &[], deadline)
+        }
+        None => crate::exec::run_backend_invocation(workdir, program, args, label, &[]),
+    }
+}
+
+/// Why a backend read could not be taken. A read that timed out says so and
+/// stays retryable; anything else is an engine answer this seam cannot use.
+fn read_reason(label: &str, error: crate::exec::ContainerExecError) -> UnknownReason {
+    if crate::exec::error_is_timeout(&error) {
+        UnknownReason::TimedOut {
+            phase: label.to_owned(),
+        }
+    } else {
+        UnknownReason::Inconsistent(error.to_string())
     }
 }
 
@@ -554,6 +621,10 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
     struct Row {
         id: String,
         name: String,
+        /// The image ID the container runs.
+        image: String,
+        /// The container's own creation time, RFC 3339.
+        created: String,
         state: State,
         config: Config,
         #[serde(default)]
@@ -587,6 +658,8 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
             name: row.name.trim_start_matches('/').to_owned(),
             running: row.state.running,
             labels: row.config.labels.unwrap_or_default(),
+            image: row.image,
+            created: row.created,
             binds: row
                 .mounts
                 .into_iter()

@@ -201,22 +201,34 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
-- **The environment backend answers "which run created this container?" with a
-  receipt or with nothing.** `EnvironmentBackend::created_by(project,
-  container_id)` returns `Verified(run)` only from a backend's own creator
-  record for that exact full container id, `Absent(NoCreator { .. })` when a
-  backend that keeps such records holds none (another actor's container, a
-  replacement, or an id a failed apply never created), and
-  `Unknown(NoBackendRecord(..))` when the backend has no such record at all. A
-  creation timestamp, an inventory that was empty before an apply and populated
-  after it, matching Compose project, service and name labels, and a
-  caller-supplied run id are not evidence — a competing Compose actor creates
-  all of them — so no receipt is built from observation. Neither Docker
-  Engine/Docker Desktop nor containerd records which client created a
-  container: both adapters answer `Unknown(NoBackendRecord)` naming the missing
-  API, without issuing a backend command, so a fresh target still cannot be
-  attributed to a run. Kernel `UnknownReason` gains `NoBackendRecord` and
-  `AbsenceProof` gains `NoCreator`.
+- **The environment backend proves which run created a fresh container, inside
+  a stated threat boundary.** An environment run now keeps a creation window
+  around its one Compose apply, under the exclusive `Gate(Env)` it already
+  holds and one absolute deadline: the project's exact-identity inventory
+  immediately before the apply (full id, labels, image id, `Created`), the
+  apply's own start and successful outcome, and the same inventory immediately
+  after. A container absent before and present after is created by that run,
+  and must carry Effigy's managed, project, scope and checkout labels, a single
+  Compose service identity, an image id (and an agreeing `com.docker.compose.
+  image` label when Compose wrote one) and a `Created` stamp no older than the
+  apply start; an id present before is adopted and never attributed. A missing
+  or duplicated service identity, a disagreeing label or image, an older
+  creation stamp, an incomplete or timed-out inventory, a failed or unproven
+  apply, and a partial window after a crash or retry all publish no receipt
+  rather than a weaker one. `EnvRun::creation()` (and
+  `WorkspaceActivation::creation()` for a reserved workspace activation)
+  answers `Creation::Proven(CreationReceipt)`, `NothingCreated` or
+  `Unproven(reason)`, and `CreationReceipt::created_by(project, container_id)`
+  returns `Verified(run)` only for an exact full id that window proved.
+  **Excluded threat:** a foreign process that deliberately creates a container
+  with Effigy's exact labels inside the one gated apply window; the canonical
+  `Gate(Env)` excludes concurrent Effigy activations, and no protection against
+  a forging foreign actor is claimed (contract 052 §8.12). Asking the raw
+  backend — `EnvironmentBackend::created_by` — still answers
+  `Unknown(NoBackendRecord)`, because neither Docker Engine/Docker Desktop nor
+  containerd records which client created a container, and it issues no backend
+  command. Kernel `UnknownReason` gains `NoBackendRecord` and `AbsenceProof`
+  gains `NoCreator`.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 

@@ -73,11 +73,18 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 }
 
 mod adapters;
+mod creation;
 mod faults;
 mod guest_publication;
 mod receipt;
 
 const PROJECT: &str = "acme-stack";
+
+/// The checkout path a creation window reads. The fakes in these proofs ignore
+/// it: only a real engine adapter resolves it into a read.
+pub(super) fn up_workdir() -> &'static Path {
+    Path::new("fixture-checkout")
+}
 
 pub(super) fn home() -> effigy_test_support::Fixture {
     effigy_test_support::Fixture::new("effigy-environment-").expect("private home")
@@ -217,6 +224,9 @@ struct FakeState {
     calls: Vec<String>,
     outcomes: VecDeque<Result<(), BackendError>>,
     log: Option<PathBuf>,
+    /// The inventories a creation window reads, in order: the before and after
+    /// inventory of one apply. Exhausted means an empty project.
+    inventories: VecDeque<Observed<Vec<Workload>>>,
 }
 
 impl Fake {
@@ -233,6 +243,7 @@ impl Fake {
                 calls: vec![],
                 outcomes: VecDeque::new(),
                 log,
+                inventories: VecDeque::new(),
             })),
         }
     }
@@ -300,6 +311,25 @@ impl EnvironmentBackend for Fake {
     fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
         panic!("strict fake: unmodelled inventory of `{project}`")
     }
+    /// The window's read: whatever this fake queued, else an empty project.
+    fn inventory_until(
+        &mut self,
+        _: &Path,
+        project: &str,
+        _: std::time::Instant,
+    ) -> Observed<Vec<Workload>> {
+        assert_eq!(project, PROJECT, "fake refuses an unmodelled project");
+        self.state
+            .borrow_mut()
+            .inventories
+            .pop_front()
+            .unwrap_or_else(|| {
+                Observed::Verified(
+                    Vec::new(),
+                    Evidence::new("fake inventory".to_owned(), None).expect("evidence"),
+                )
+            })
+    }
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("strict fake: unmodelled creator record for `{container_id}` in `{project}`")
     }
@@ -315,6 +345,7 @@ pub(super) fn bring_up(
     retention: Retention,
     holders: &[(RunId, AttachMode)],
 ) -> Result<Applied, EnvError> {
+    let mut adapter = fake.clone();
     let applied = reconcile(
         ctx,
         env,
@@ -323,6 +354,8 @@ pub(super) fn bring_up(
             project: PROJECT,
             backend: &selection(),
             retention,
+            workdir: up_workdir(),
+            adapter: Some(&mut adapter),
         },
         || fake.apply(),
     )?;
@@ -419,18 +452,26 @@ fn an_unreadable_holder_list_applies_and_says_so() {
     let stack = env("stack");
     let render = closure("one");
     let backend = selection();
-    let up = || Up {
-        render: Some(&render),
-        project: PROJECT,
-        backend: &backend,
-        retention: Retention::Held,
-    };
     let fake = Fake::new();
     let observer = |_: &EnvRun<'_>| {
         Observed::Unknown(UnknownReason::StoreUnreadable("fake observer".to_owned()))
     };
-    let applied =
-        super::ops::reconcile_observing(&ctx, &stack, up(), || fake.apply(), observer).unwrap();
+    let mut adapter = fake.clone();
+    let applied = super::ops::reconcile_observing(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&render),
+            project: PROJECT,
+            backend: &backend,
+            retention: Retention::Held,
+            workdir: up_workdir(),
+            adapter: Some(&mut adapter),
+        },
+        || fake.apply(),
+        observer,
+    )
+    .unwrap();
     assert_eq!(
         applied,
         Applied::ReconciledUnreadableHolders(UnknownReason::StoreUnreadable(
@@ -446,8 +487,23 @@ fn an_unreadable_holder_list_applies_and_says_so() {
         let evidence = Evidence::new("fake observer".to_owned(), None).expect("evidence");
         Observed::Verified(Vec::new(), evidence)
     };
+    let mut quiet_adapter = quiet.clone();
     assert_eq!(
-        super::ops::reconcile_observing(&ctx, &stack, up(), || quiet.apply(), empty).unwrap(),
+        super::ops::reconcile_observing(
+            &ctx,
+            &stack,
+            Up {
+                render: Some(&render),
+                project: PROJECT,
+                backend: &backend,
+                retention: Retention::Held,
+                workdir: up_workdir(),
+                adapter: Some(&mut quiet_adapter),
+            },
+            || quiet.apply(),
+            empty,
+        )
+        .unwrap(),
         Applied::Reconciled
     );
     assert_eq!(quiet.calls(), ["apply"]);
@@ -928,6 +984,7 @@ fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
     let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
     let stack = env("stack");
     let fake = Fake::new();
+    let mut adapter = fake.clone();
     assert_eq!(
         reconcile(
             &ctx,
@@ -937,6 +994,8 @@ fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
                 project: PROJECT,
                 backend: &selection(),
                 retention: Retention::Persistent,
+                workdir: up_workdir(),
+                adapter: Some(&mut adapter),
             },
             || fake.apply(),
         )
@@ -1103,6 +1162,7 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
     let stack = env("stack");
     let fake = Fake::new();
     let render = closure("one");
+    let mut adapter = fake.clone();
     let applied = reconcile(
         &ctx,
         &stack,
@@ -1111,6 +1171,8 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
+            workdir: up_workdir(),
+            adapter: Some(&mut adapter),
         },
         || {
             // A cold stack's bring-up, longer than the settlement budget.
@@ -1148,6 +1210,7 @@ fn an_activation_past_the_sixty_second_budget_still_settles() {
     let fake = Fake::new();
     let render = closure("one");
     let started = std::time::Instant::now();
+    let mut adapter = fake.clone();
     assert_eq!(
         reconcile(
             &ctx,
@@ -1157,6 +1220,8 @@ fn an_activation_past_the_sixty_second_budget_still_settles() {
                 project: PROJECT,
                 backend: &selection(),
                 retention: Retention::Held,
+                workdir: up_workdir(),
+                adapter: Some(&mut adapter),
             },
             || {
                 std::thread::sleep(ACTIVATION);
@@ -1225,7 +1290,7 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let fake = Fake::new();
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
     run.publish_desired(&closure("one")).unwrap();
-    run.apply_with(&selection(), PROJECT, || fake.apply())
+    run.apply_with(&selection(), PROJECT, up_workdir(), || fake.apply())
         .unwrap();
     // The operator stops the activation after the backend acted.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
@@ -1259,6 +1324,7 @@ fn a_failed_activation_settles_on_its_own_budget() {
     let fake = Fake::new();
     fake.queue(Err(BackendError::NotStarted("runtime refused".into())));
     let render = closure("one");
+    let mut adapter = fake.clone();
     let failed = reconcile(
         &ctx,
         &stack,
@@ -1267,6 +1333,8 @@ fn a_failed_activation_settles_on_its_own_budget() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
+            workdir: up_workdir(),
+            adapter: Some(&mut adapter),
         },
         || {
             std::thread::sleep(std::time::Duration::from_millis(900));

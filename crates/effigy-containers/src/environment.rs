@@ -6,6 +6,7 @@
 //! `Gate(Env)` through one `EnvRun`; holders attach through [`hold`].
 
 mod backend;
+mod creation;
 mod hold;
 mod ops;
 mod reconcile;
@@ -22,6 +23,9 @@ pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,
     BackendError, BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend,
     EnvironmentBackend, ProjectResources, Workload,
+};
+pub use creation::{
+    CreatedContainer, Creation, CreationEvidence, CreationReceipt, CREATION_WINDOW,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use ops::{activate, activate_with, down, reconcile, reset, Applied, Up};

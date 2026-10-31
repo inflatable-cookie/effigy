@@ -49,10 +49,11 @@ pub use implementation::{
     list_running_compose_containers_for_profile,
     list_running_compose_containers_for_project_with_deadline,
     list_running_compose_containers_profiled, owned_service_listing_args, run_backend_invocation,
-    run_compose_capture, run_compose_capture_with_env, run_compose_invocation_capture,
-    run_compose_invocation_capture_with_env, run_compose_invocation_streaming_with_env,
-    run_docker_capture, set_restart_policy, shared_project_containers, shared_render_identity,
-    shutdown_container, verify_owned_running_compose_identities, verify_owned_running_compose_rows,
+    run_backend_invocation_until, run_compose_capture, run_compose_capture_with_env,
+    run_compose_invocation_capture, run_compose_invocation_capture_with_env,
+    run_compose_invocation_streaming_with_env, run_docker_capture, set_restart_policy,
+    shared_project_containers, shared_render_identity, shutdown_container,
+    verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_shared_render_container, verify_workspace_artifact_builder,
     verify_workspace_artifact_builder_declaration, ContainerExecError, OwnershipContext,
     RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
@@ -65,7 +66,7 @@ pub use parse::{
     RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,
 };
 pub use process::{
-    no_containers_diagnostic, retained_backend_log_path, run_command_capture,
+    error_is_timeout, no_containers_diagnostic, retained_backend_log_path, run_command_capture,
     run_command_capture_allow_failure, run_input_capture_until,
 };
 pub use ssh_agent_preflight::{

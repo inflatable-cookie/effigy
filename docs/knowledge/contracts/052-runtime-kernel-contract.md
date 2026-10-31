@@ -1979,8 +1979,8 @@ pub enum AbsenceProof {
     NoGateInode, GateFreeRunClosed, BootChanged { recorded: String, current: String },
     NoSuchProcess { pid: u32 }, StartIdentityDiffers { pid: u32 }, GroupEmpty { pgid: u32 },
     NotInInventory { inventory: InventoryRef }, ContainerGone { id: FullContainerId },
-    // A backend that keeps creator records holds none for this exact container
-    // in this project: no run's create produced it (effigy#508).
+    // The creator record that was asked holds none for this exact container in
+    // this project: no creation it covers produced it (effigy#508).
     NoCreator { creator: CreatorRef },
 }
 
@@ -2037,13 +2037,14 @@ all produce an `ObserveContext`; Observe commands get nothing else.
 | Network | `connect`: local TCP connect, HTTP `GET` or `HEAD` without a body, Unix control sockets, DNS to the gateway; targets come from the resolved invocation, the store or endpoint claims; bounded response and per-attempt deadline | source acquisition (fetch, clone, pull), any other method, any target not derived from Effigy state |
 | Files and state | read-only opens; gate probes | any write, gate acquisition, store transaction |
 
-`NoCreator { .. }` is the proof from a backend that keeps creator records
-when none names the observed container — its `CreatorRef` names the project
-and the exact full container id the record was asked about — and
-`NoBackendRecord` is the honest answer when the backend has no such record at
-all: absent API surface, not a transient failure. Neither is ever a reason to
-substitute a weaker fact for the one asked about, and only `Verified` carries a
-value a caller may act on.
+`NoCreator { .. }` is the proof from a creator record that holds none for the
+observed container, scoped to what that record covers — a backend's complete
+creator record, or one environment run's creation window (052 §8.12) — and its
+`CreatorRef` names the project and the exact full container id the record was
+asked about. `NoBackendRecord` is the honest answer when the backend has no such
+record at all: absent API surface, not a transient failure. Neither is ever a
+reason to substitute a weaker fact for the one asked about, and only `Verified`
+carries a value a caller may act on.
 
 Probe custody. The observer is the probe's parent and primary owner. One
 `__kernel-probe-guard` per observing process (the same binary, in its own
@@ -3485,6 +3486,59 @@ listener loss and mispinned-peer zero credential/Hello bytes. Each backend needs
 native identity/dial/observe/invoke/reconnect qualification. Proposed selectors above are not implemented or run here. #452's 239
 fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
 #452's stop conditions.
+
+### 8.12 Environment creation window and its threat boundary
+
+A fresh Compose target may be attributed to the environment run whose apply
+created it only by the receipt below (effigy#508). No engine Effigy targets
+records which client created a container: `inspect` and `compose ps` expose the
+id, name, creation time, image id and labels, and the event streams name an
+actor id and its labels; the one authenticated creation fact is the `Id` in the
+engine's create response, which is returned to the client that issued the
+create — the Compose CLI that performs the environment's one apply.
+
+**The window.** Under the exclusive `Gate(Env)` the apply already holds, and
+under one absolute deadline, an environment run takes the project's
+exact-identity inventory — `ps -a --no-trunc` by Compose project label, then one
+`inspect` of those exact ids for full id, labels, image id and `Created` —
+immediately before the one Compose apply. It records the apply's own start and
+its successful exit. It takes the same inventory again immediately after. A
+container whose id is absent before and present after appeared inside that
+window; each such candidate must carry Effigy's `com.docker.compose.project`,
+`com.effigy.managed`, `com.effigy.project`, `com.effigy.scope` and
+`com.effigy.checkout` labels, exactly one Compose service identity for its
+service, an image id (and a `com.docker.compose.image` label that agrees when
+Compose wrote one) and a `Created` stamp no older than the apply start. An id
+present before is adopted and is never `created_by` this run.
+
+**Refusals.** The run publishes no receipt — and no weaker one — when a service
+identity is missing or duplicated, a label or image disagrees, a creation stamp
+precedes the apply, either inventory is incomplete or times out, the apply
+failed or is unproven, or the window is otherwise partial. A crash or retry
+leaves the earlier attempt with no receipt, and the retry's own complete window
+is the only one that names containers.
+
+**Threat boundary** (supervisor ruling, 2026-10-31). This receipt excludes a
+foreign process that deliberately creates a container carrying Effigy's exact
+managed, project, scope and checkout labels inside the one gated apply window.
+The canonical `Gate(Env)` excludes concurrent Effigy activations of the same
+project, and that is the actor this rule rules out. A foreign actor that forges
+Effigy's own labels is a separate threat: no protection against it is claimed
+here, and no count, timestamp or label comparison may be presented as if it
+were. Closing that gap needs an engine-issued creator receipt, which is the
+Effigy-owned engine-create path and not this window. No label is injected into
+the render and the apply stays the one Compose invocation it was; the window
+only reads.
+
+**Receipt rule.** `CreationReceipt` binds the environment, the run, the engine
+and context, the project, the apply's start and completion, the exact full ids
+it created with their service and image, the ids it adopted, and the inventory
+evidence it read. A caller may attribute a fresh target only when its own
+`EnvironmentBackend::created_by(project, container_id)` answer is `Verified` for
+the exact full id *and* names its own activation run; `Absent` (adopted, or not
+created in this window) and `Unknown` (no window, or a window that failed) both
+refuse. A timestamp, a before/after absence, matching labels or a
+caller-supplied run id alone is never a receipt.
 
 ## 9. Authority map
 
