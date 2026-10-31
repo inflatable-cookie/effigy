@@ -107,6 +107,14 @@ impl EnvironmentBackend for Recorded {
             }),
         }
     }
+    fn image_id_until(
+        &mut self,
+        _: &Path,
+        reference: &str,
+        _: std::time::Instant,
+    ) -> Observed<String> {
+        panic!("this fake models the creator record, not the image table (`{reference}`)")
+    }
 }
 
 /// A creation record bound to the exact full id is the only receipt: the run

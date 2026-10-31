@@ -1,0 +1,44 @@
+[
+    {
+        "Id": "sha256:6cf065f724d522cbb3e1898559cd88f015db8a1a4210d2d048a0853b69b57ba9",
+        "RepoTags": [
+            "alpine:3.19",
+            "public.ecr.aws/docker/library/alpine:3.19"
+        ],
+        "RepoDigests": [
+            "alpine@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+            "public.ecr.aws/docker/library/alpine@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1"
+        ],
+        "Parent": "",
+        "Comment": "buildkit.dockerfile.v0",
+        "Created": "2025-10-08T11:10:40Z",
+        "DockerVersion": "",
+        "Author": "",
+        "Config": {
+            "AttachStdin": false,
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Cmd": [
+                "/bin/sh"
+            ],
+            "Image": "docker.io/library/alpine:3.19",
+            "WorkingDir": "/"
+        },
+        "Architecture": "arm64",
+        "Variant": "v8",
+        "Os": "linux",
+        "Size": 8417280,
+        "VirtualSize": 8417280,
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:8ff721756ec0097ba331876f1502858f8849716bdf720516fafa96c72a8d7dac"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "0001-01-01T00:00:00Z"
+        }
+    }
+]
+

@@ -24,6 +24,14 @@ const RETRY: &str = "22222222222222222222222222222222222222222222222222222222222
 const SCOPE: &str = "4677bfcb81da18054ef32e71aa3f3c29";
 const CHECKOUT: &str = "/fixtures/checkout";
 const IMAGE: &str = "postgres:16";
+/// The exact image id the fake backend resolves `IMAGE` to, and the spelling it
+/// reports as a fully-qualified reference.
+const IMAGE_ID: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const QUALIFIED_IMAGE: &str = "docker.io/library/postgres:16";
+/// A different image the backend knows: a container created from it is never
+/// the render's target, even when the reference it reports agrees.
+const OTHER_IMAGE_ID: &str =
+    "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 /// A stamp no apply has reached yet: the window requires `Created` no older
 /// than its own start.
 const AFTER_APPLY: &str = "2999-01-01T00:00:00.000000000Z";
@@ -66,7 +74,7 @@ fn row(project: &str, id: &str, service: &str) -> Workload {
             ("com.effigy.checkout".to_owned(), CHECKOUT.to_owned()),
         ]),
         binds: vec![],
-        image: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+        image: IMAGE_ID.to_owned(),
         image_reference: IMAGE.to_owned(),
         created: AFTER_APPLY.to_owned(),
     }
@@ -90,11 +98,16 @@ fn when(mut workload: Workload, created: &str) -> Workload {
     workload
 }
 
-/// A strict fake backend that replays the window's inventories in order.
+/// A strict fake backend that replays the window's inventories in order, and
+/// answers its image table from the references the proofs declare.
 struct Inventories {
     selection: BackendSelection,
     queued: VecDeque<Observed<Vec<Workload>>>,
     reads: Rc<RefCell<Vec<String>>>,
+    /// The image table: reference spellings the backend resolves, and their
+    /// exact image ids.
+    images: BTreeMap<String, Observed<String>>,
+    image_reads: Rc<RefCell<Vec<String>>>,
 }
 
 impl Inventories {
@@ -103,6 +116,17 @@ impl Inventories {
             selection: selection(),
             queued: VecDeque::new(),
             reads: Rc::new(RefCell::new(Vec::new())),
+            images: BTreeMap::from([
+                (
+                    IMAGE.to_owned(),
+                    Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+                ),
+                (
+                    QUALIFIED_IMAGE.to_owned(),
+                    Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+                ),
+            ]),
+            image_reads: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -118,8 +142,18 @@ impl Inventories {
         self
     }
 
+    /// Replace what this backend's image table answers for one reference.
+    fn image(&mut self, reference: &str, answer: Observed<String>) -> &mut Self {
+        self.images.insert(reference.to_owned(), answer);
+        self
+    }
+
     fn reads(&self) -> Vec<String> {
         self.reads.borrow().clone()
+    }
+
+    fn image_reads(&self) -> Vec<String> {
+        self.image_reads.borrow().clone()
     }
 }
 
@@ -144,6 +178,21 @@ impl EnvironmentBackend for Inventories {
     }
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("a proof does not ask the raw backend about `{container_id}` in `{project}`")
+    }
+    /// The window's image-table read, answered from the scripted table. An
+    /// unscripted reference is a mistake in the proof, not a fact: this fake
+    /// refuses it loudly, exactly as it refuses an unmodelled inventory read.
+    fn image_id_until(
+        &mut self,
+        _: &Path,
+        reference: &str,
+        _: std::time::Instant,
+    ) -> Observed<String> {
+        self.image_reads.borrow_mut().push(reference.to_owned());
+        self.images
+            .get(reference)
+            .cloned()
+            .unwrap_or_else(|| panic!("the proof did not script the image table for `{reference}`"))
     }
 }
 
@@ -220,7 +269,16 @@ fn a_fresh_create_names_the_exact_containers_this_apply_created() {
     assert!(receipt.attached().is_empty());
     let app = receipt.for_service("app").expect("app was created");
     assert_eq!(app.image_reference(), IMAGE);
-    assert!(!app.image().is_empty());
+    assert_eq!(
+        app.image_id(),
+        IMAGE_ID,
+        "the receipt binds the exact image id the render's reference resolves to"
+    );
+    assert_eq!(
+        app.image_id_source(),
+        ImageIdSource::Reported,
+        "the engine reported the container's image as an exact id"
+    );
     assert_eq!(app.created(), AFTER_APPLY);
     // The receipt attributes exactly those ids, and only to this run.
     for id in [FRESH, DB] {
@@ -427,12 +485,168 @@ fn an_image_that_disagrees_with_the_admitted_render_refuses_the_window() {
 fn a_fully_qualified_spelling_of_the_declared_image_is_accepted() {
     let mut backend = Inventories::new();
     let mut qualified = row(PROJECT, FRESH, "app");
-    qualified.image_reference = "docker.io/library/postgres:16".to_owned();
+    qualified.image_reference = QUALIFIED_IMAGE.to_owned();
     backend.then(Vec::new()).then(vec![qualified]);
     let (creation, run, _environment) = window(&mut backend, || Ok(()));
     assert_eq!(
         creation.created_by(PROJECT, FRESH).verified().copied(),
         Some(run),
+        "{creation:?}"
+    );
+}
+
+/// The reference is not the image. Two containers can carry the render's own
+/// image reference and still run different images — a retag, a rebuilt tag or
+/// an actor's `docker run` of another image under the same name — so the window
+/// binds the **exact image id** the render's reference resolves to on the
+/// applying backend. A matching reference with a different image id refuses.
+#[test]
+fn a_matching_image_reference_with_a_mismatched_image_id_refuses_the_window() {
+    let mut backend = Inventories::new();
+    let mut mismatched = row(PROJECT, FRESH, "app");
+    // The reference the render declares, exactly as Compose records it...
+    mismatched.image_reference = QUALIFIED_IMAGE.to_owned();
+    // ...and an image the render does not declare.
+    mismatched.image = OTHER_IMAGE_ID.to_owned();
+    backend.then(Vec::new()).then(vec![mismatched]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    let report = format!("was created from image id `{OTHER_IMAGE_ID}`");
+    let expected = format!("resolves to image id `{IMAGE_ID}`");
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains(&report) && detail.contains(&expected)
+        ),
+        "{creation:?}"
+    );
+    assert!(matches!(
+        creation.created_by(PROJECT, FRESH),
+        Observed::Unknown(UnknownReason::Inconsistent(_))
+    ));
+}
+
+/// A backend whose inspect reports the container's image as a reference
+/// (nerdctl) is bound through that reference: the window resolves what the
+/// container reports and requires the same exact image id the render's own
+/// reference resolves to. Here the container's reference resolves to another
+/// image, so the window refuses.
+#[test]
+fn a_reported_reference_that_resolves_to_another_image_id_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend.image(
+        QUALIFIED_IMAGE,
+        Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence()),
+    );
+    let mut reference_only = row(PROJECT, FRESH, "app");
+    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
+    reference_only.image = QUALIFIED_IMAGE.to_owned();
+    backend.then(Vec::new()).then(vec![reference_only]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert_eq!(
+        backend.image_reads(),
+        [IMAGE, QUALIFIED_IMAGE],
+        "the render's reference and the container's own reference are each resolved once"
+    );
+    let report = format!("was created from image id `{OTHER_IMAGE_ID}`");
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail)) if detail.contains(&report)
+        ),
+        "{creation:?}"
+    );
+}
+
+/// A reported reference is bound as the exact image id it resolves to, and the
+/// receipt records that the id came from the reference rather than from an id
+/// the engine printed for the container.
+#[test]
+fn a_reported_reference_binds_to_its_exact_image_id() {
+    let mut backend = Inventories::new();
+    let mut reference_only = row(PROJECT, FRESH, "app");
+    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
+    reference_only.image = QUALIFIED_IMAGE.to_owned();
+    backend.then(Vec::new()).then(vec![reference_only]);
+    let (creation, run, _environment) = window(&mut backend, || Ok(()));
+    let receipt = creation.receipt().expect("a completed window is a receipt");
+    let created = receipt.for_service("app").expect("app was created");
+    assert_eq!(created.image_id(), IMAGE_ID);
+    assert_eq!(
+        created.image_id_source(),
+        ImageIdSource::ResolvedFromReference,
+        "nerdctl reports a reference, so the id follows from it"
+    );
+    assert_eq!(
+        creation.created_by(PROJECT, FRESH).verified().copied(),
+        Some(run)
+    );
+}
+
+/// An image table that cannot answer for the render's own reference refuses the
+/// window: without the exact image id there is nothing to bind, and the
+/// reference alone is not the image a container runs.
+#[test]
+fn an_image_the_backend_cannot_resolve_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend.image(
+        IMAGE,
+        Observed::Unknown(UnknownReason::Inconsistent(
+            "the image inspect of `postgres:16` answered nothing".to_owned(),
+        )),
+    );
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("answered nothing")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// An `image inspect` answer that is not an exact image id (a short id, a
+/// reference, an empty value) is not a binding: the window refuses rather than
+/// compare two spellings that might name different images.
+#[test]
+fn an_image_inspect_answer_that_is_not_an_exact_image_id_refuses_the_window() {
+    for answer in ["postgres:16", "0123456789abcdef", "", "sha256:xyz"] {
+        let mut backend = Inventories::new();
+        backend.image(IMAGE, Observed::Verified(answer.to_owned(), evidence()));
+        backend
+            .then(Vec::new())
+            .then(vec![row(PROJECT, FRESH, "app")]);
+        let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+        assert!(
+            matches!(
+                &creation,
+                Creation::Unproven(UnknownReason::Inconsistent(detail))
+                    if detail.contains("not an exact image id")
+            ),
+            "{answer}: {creation:?}"
+        );
+    }
+}
+
+/// A container that reports no image identity at all is unproven: the window
+/// has nothing to bind to the render's image id.
+#[test]
+fn a_container_reporting_no_image_identity_refuses_the_window() {
+    let mut backend = Inventories::new();
+    let mut anonymous = row(PROJECT, FRESH, "app");
+    anonymous.image = String::new();
+    backend.then(Vec::new()).then(vec![anonymous]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("reports no image id")
+        ),
         "{creation:?}"
     );
 }

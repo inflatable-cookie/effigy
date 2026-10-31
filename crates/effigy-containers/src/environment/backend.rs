@@ -315,6 +315,21 @@ pub trait EnvironmentBackend {
         project: &str,
         deadline: Instant,
     ) -> Observed<Vec<Workload>>;
+    /// The exact image id `reference` resolves to in this backend's own image
+    /// table, read under the caller's absolute deadline (effigy#508).
+    ///
+    /// A render declares an image *reference*; the engine's image table is the
+    /// only authority that turns it into the exact image id a container created
+    /// from it carries. The creation window binds a container to that exact id,
+    /// so a matching reference that the engine maps to a different image is
+    /// never a receipt. `Verified` carries the engine's own id; `Absent` and
+    /// `Unknown` refuse the window rather than fall back to the reference alone.
+    fn image_id_until(
+        &mut self,
+        workdir: &Path,
+        reference: &str,
+        deadline: Instant,
+    ) -> Observed<String>;
     /// The run whose one Compose apply created `container_id` in `project`, as
     /// this backend's own creator record proves it (effigy#508).
     ///
@@ -375,6 +390,14 @@ macro_rules! compose_adapter {
             ) -> Observed<Vec<Workload>> {
                 inventory_until(&self.selection, workdir, project, Some(deadline))
             }
+            fn image_id_until(
+                &mut self,
+                workdir: &Path,
+                reference: &str,
+                deadline: Instant,
+            ) -> Observed<String> {
+                image_id_until(&self.selection, workdir, reference, Some(deadline))
+            }
             fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
                 created_by(&self.selection, project, container_id)
             }
@@ -412,6 +435,29 @@ fn inventory(
     project: &str,
 ) -> Observed<Vec<Workload>> {
     inventory_until(selection, workdir, project, None)
+}
+
+/// [`EnvironmentBackend::image_id_until`]: one `image inspect` of the exact
+/// reference, under the caller's deadline.
+fn image_id_until(
+    selection: &BackendSelection,
+    workdir: &Path,
+    reference: &str,
+    deadline: Option<Instant>,
+) -> Observed<String> {
+    let args = ["image", "inspect", reference].map(OsString::from);
+    let (program, args) = runtime_invocation(selection, &args);
+    match capture(workdir, &program, &args, "inspect image", deadline) {
+        Ok(output) => match parse_image_inspect(&output.stdout) {
+            Ok(id) => Observed::Verified(
+                id,
+                effigy_kernel::observe::Evidence::new("backend image inspect".into(), None)
+                    .expect("fixed evidence"),
+            ),
+            Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
+        },
+        Err(error) => Observed::Unknown(read_reason("inspect image", error)),
+    }
 }
 
 /// [`inventory`] under the caller's one absolute deadline (effigy#508): the
@@ -688,6 +734,51 @@ fn runtime_invocation(
     }
 }
 
+/// The exact image id a value spells, or `None` when it is not one.
+///
+/// An image id is the engine's own `sha256:` and sixty-four hexadecimal
+/// digits (the `Id` both Docker and nerdctl print for an image). A bare
+/// sixty-four-digit spelling is accepted and normalised to the `sha256:` form;
+/// a short id, a reference or an empty value is not an image id, and nothing
+/// here treats one as if it were.
+pub(crate) fn exact_image_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    let digits = value.strip_prefix("sha256:").unwrap_or(value);
+    if digits.len() != 64 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("sha256:{}", digits.to_ascii_lowercase()))
+}
+
+/// Parses `docker image inspect` / `nerdctl image inspect` JSON into the one
+/// exact image id it answers for the inspected reference.
+///
+/// The answer is exact or it is nothing: exactly one image row, carrying an
+/// exact image id. An empty list (the reference named nothing), several rows
+/// or an id that is not one make the read unusable, so the creation window
+/// refuses instead of binding a container to a guess.
+pub(crate) fn parse_image_inspect(bytes: &[u8]) -> Result<String, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Row {
+        id: String,
+    }
+    let rows: Vec<Row> = serde_json::from_slice(bytes)
+        .map_err(|error| format!("unparsable image inspect: {error}"))?;
+    let [row] = rows.as_slice() else {
+        return Err(format!(
+            "the image inspect answered {} images where one reference names exactly one",
+            rows.len()
+        ));
+    };
+    exact_image_id(&row.id).ok_or_else(|| {
+        format!(
+            "the image inspect reported `{}`, which is not an image id",
+            row.id
+        )
+    })
+}
+
 /// Parses `docker inspect` / `nerdctl inspect` JSON into workloads. Fields
 /// the seam does not use (environment, volumes, networks) are never retained.
 pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
@@ -751,7 +842,62 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_lines, ProjectResources};
+    use super::{exact_image_id, non_empty_lines, parse_image_inspect, ProjectResources};
+
+    /// An image id is the engine's `sha256:` and sixty-four hex digits; a short
+    /// id, a reference or an empty value is not one, and the bare spelling is
+    /// normalised rather than refused.
+    #[test]
+    fn an_image_id_is_exactly_one_image_id() {
+        let digits = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            exact_image_id(&format!("sha256:{digits}")),
+            Some(format!("sha256:{digits}"))
+        );
+        assert_eq!(exact_image_id(digits), Some(format!("sha256:{digits}")));
+        assert_eq!(
+            exact_image_id(&format!("  sha256:{}  ", digits.to_uppercase())),
+            Some(format!("sha256:{digits}")),
+            "the engine's own id spelling is normalised, not reinterpreted"
+        );
+        for value in [
+            "",
+            "postgres:16",
+            "0123456789abcdef",
+            &format!("sha256:{}0", digits),
+            "sha256:zz",
+        ] {
+            assert_eq!(exact_image_id(value), None, "{value}");
+        }
+    }
+
+    /// An image inspect is exact or it is nothing: one image row carrying an
+    /// exact image id. Empty, multiple or non-id answers are refused.
+    #[test]
+    fn an_image_inspect_must_answer_exactly_one_image_id() {
+        let digits = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            parse_image_inspect(format!(r#"[{{"Id": "sha256:{digits}"}}]"#).as_bytes()),
+            Ok(format!("sha256:{digits}"))
+        );
+        assert!(
+            parse_image_inspect(b"[]").is_err(),
+            "the reference named nothing"
+        );
+        for malformed in [
+            format!(r#"[{{"Id": "sha256:{digits}"}}, {{"Id": "sha256:{digits}"}}]"#),
+            r#"[{"Id": "alpine:3.19"}]"#.to_owned(),
+            r#"[{"Id": "0123456789abcdef"}]"#.to_owned(),
+            r#"[{"Id": ""}]"#.to_owned(),
+            "not json".to_owned(),
+            String::new(),
+        ] {
+            assert!(
+                parse_image_inspect(malformed.as_bytes()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
 
     /// A listing that names nothing is an empty listing; a listing the backend
     /// could not answer is never counted as one (`project_resources` refuses

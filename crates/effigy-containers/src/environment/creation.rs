@@ -20,8 +20,21 @@
 //!   and must then match the **admitted render's own declared values** for its
 //!   service: Effigy's managed, project, scope and checkout labels exactly as
 //!   the render declares them, a service the render declares, the image
-//!   reference the render declares, and a `Created` stamp no older than the
-//!   apply start. Anything else refuses, and the run publishes no receipt.
+//!   reference the render declares, the **exact image id** that reference
+//!   resolves to on the applying backend, and a `Created` stamp no older than
+//!   the apply start. Anything else refuses, and the run publishes no receipt.
+//!
+//! **The image id.** The render declares a reference (`postgres:16`); the
+//! backend's image table is the only authority that turns it into an image id.
+//! The window resolves the render's reference inside its own deadline and
+//! requires the container's own image identity to be that exact id: reported as
+//! an id by the engine (Docker prints `sha256:…` in `Image`) it is compared
+//! directly, and reported as a reference (nerdctl prints the reference) the
+//! reference the container carries is resolved on the same backend and the ids
+//! must agree. `CreatedContainer::image_id_source` says which of the two the
+//! receipt stands on, so the weaker reading is visible rather than implied: on a
+//! backend whose inspect reports only a reference, the id follows from that
+//! reference and is not an independent engine fact about the container.
 //!
 //! **Threat boundary** (contract 052 §8.12): this excludes a foreign process
 //! that deliberately creates a container carrying Effigy's own managed,
@@ -47,7 +60,7 @@ use effigy_kernel::id::{ResourceId, RunId};
 use effigy_kernel::objects::Closure;
 use effigy_kernel::observe::{AbsenceProof, CreatorRef, Evidence, Observed, UnknownReason};
 
-use super::backend::{BackendSelection, EnvironmentBackend, Workload};
+use super::backend::{exact_image_id, BackendSelection, EnvironmentBackend, Workload};
 use crate::runtime::scope::{
     CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
@@ -67,6 +80,19 @@ const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, 
 /// stays bounded by the run's own budget (K8).
 pub const CREATION_WINDOW: Duration = Duration::from_secs(30 * 60);
 
+/// How the window learned a container's exact image id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageIdSource {
+    /// The engine's own inspect reported the container's image as an exact
+    /// image id (Docker prints `sha256:…` in `Image`).
+    Reported,
+    /// The engine's inspect reported the container's image as a reference
+    /// (nerdctl), which the window resolved to an exact image id on the same
+    /// backend. The id then follows from that reference; it is not a separate
+    /// engine fact about the container.
+    ResolvedFromReference,
+}
+
 /// One container the window proved this run's apply created.
 ///
 /// It is read-only outside this module: only the gated window that took the
@@ -76,6 +102,8 @@ pub struct CreatedContainer {
     container_id: String,
     service: String,
     image: String,
+    image_id: String,
+    image_id_source: ImageIdSource,
     image_reference: String,
     created: String,
 }
@@ -91,10 +119,23 @@ impl CreatedContainer {
         &self.service
     }
 
-    /// The image the engine reports for the container (`Image`): the image id
-    /// on Docker, the resolved reference on nerdctl.
+    /// The image field the engine reported for the container (`Image`): the
+    /// image id on Docker, the resolved reference on nerdctl. It is what the
+    /// window bound, never the expectation.
     pub fn image(&self) -> &str {
         &self.image
+    }
+
+    /// The exact image id this window bound the container to: the id the
+    /// admitted render's declared reference resolves to on the applying
+    /// backend, which the container's own image identity must equal.
+    pub fn image_id(&self) -> &str {
+        &self.image_id
+    }
+
+    /// How the window learned the container's image id (see [`ImageIdSource`]).
+    pub fn image_id_source(&self) -> ImageIdSource {
+        self.image_id_source
     }
 
     /// The image reference Compose created the container from
@@ -524,6 +565,9 @@ impl<'a> CreationWindow<'a> {
             Err(reason) => return Creation::Unproven(reason),
         };
         match receipt(
+            backend,
+            workdir,
+            deadline,
             selection,
             environment,
             run,
@@ -544,6 +588,9 @@ impl<'a> CreationWindow<'a> {
 /// The receipt one complete before/apply/after window proves.
 #[allow(clippy::too_many_arguments)]
 fn receipt(
+    backend: &mut dyn EnvironmentBackend,
+    workdir: &Path,
+    deadline: Instant,
     selection: &BackendSelection,
     environment: ResourceId,
     run: RunId,
@@ -582,6 +629,10 @@ fn receipt(
         .collect();
     let mut created: Vec<CreatedContainer> = Vec::with_capacity(candidates.len());
     let mut services: BTreeSet<String> = BTreeSet::new();
+    // One image-table read per distinct reference: the render's declared
+    // reference and, on a backend that reports a reference instead of an id,
+    // the reference the container itself carries.
+    let mut images: BTreeMap<String, String> = BTreeMap::new();
     for row in candidates {
         let service = row
             .labels
@@ -639,9 +690,30 @@ fn receipt(
                 row.id, row.image_reference
             )));
         }
-        if row.image.trim().is_empty() {
+        // The reference is not the image: the backend's own image table turns
+        // the render's declared reference into the exact image id this
+        // container must carry, and the container's own image identity — the
+        // id the engine reports, or the reference it reports resolved on this
+        // same backend — must be that exact id.
+        let expected_image_id =
+            resolved_image_id(backend, workdir, deadline, &mut images, expected_image)?;
+        let reported_image = row.image.trim();
+        if reported_image.is_empty() {
             return Err(inconsistent(format!(
                 "container `{}` created in this window reports no image id",
+                row.id
+            )));
+        }
+        let (actual_image_id, image_id_source) = match exact_image_id(reported_image) {
+            Some(id) => (id, ImageIdSource::Reported),
+            None => (
+                resolved_image_id(backend, workdir, deadline, &mut images, reported_image)?,
+                ImageIdSource::ResolvedFromReference,
+            ),
+        };
+        if actual_image_id != expected_image_id {
+            return Err(inconsistent(format!(
+                "container `{}` was created from image id `{actual_image_id}` while the admitted render declares `{expected_image}` for service `{service}`, which resolves to image id `{expected_image_id}` on this backend",
                 row.id
             )));
         }
@@ -681,6 +753,8 @@ fn receipt(
             container_id: row.id.clone(),
             service: service.to_owned(),
             image: row.image.clone(),
+            image_id: actual_image_id,
+            image_id_source,
             image_reference: row.image_reference.clone(),
             created: row.created.clone(),
         });
@@ -702,7 +776,7 @@ fn receipt(
         attached,
         evidence: CreationEvidence {
             source: format!(
-                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}, bound to the admitted render",
+                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}, bound to the admitted render, with the exact image ids resolved on the same backend",
                 selection.kind.label(),
                 selection.context
             ),
@@ -710,6 +784,40 @@ fn receipt(
             after: after.len(),
         },
     })
+}
+
+/// The exact image id `reference` resolves to on the applying backend, under
+/// the window's one deadline.
+///
+/// Resolved once per reference per window, so the render's declaration and a
+/// container's reported reference cost one read each at most. An answer that is
+/// not an exact image id, or a backend that has no answer, refuses the whole
+/// window: a reference alone is not the image a container runs.
+fn resolved_image_id(
+    backend: &mut dyn EnvironmentBackend,
+    workdir: &Path,
+    deadline: Instant,
+    resolved: &mut BTreeMap<String, String>,
+    reference: &str,
+) -> Result<String, UnknownReason> {
+    if let Some(id) = resolved.get(reference) {
+        return Ok(id.clone());
+    }
+    let id = match backend.image_id_until(workdir, reference, deadline) {
+        Observed::Verified(id, _) => exact_image_id(&id).ok_or_else(|| {
+            inconsistent(format!(
+                "the image inspect of `{reference}` answered `{id}`, which is not an exact image id"
+            ))
+        })?,
+        Observed::Absent(proof) => {
+            return Err(inconsistent(format!(
+                "the backend resolved no image for `{reference}` ({proof}), so no exact image id can be bound"
+            )))
+        }
+        Observed::Unknown(reason) => return Err(reason),
+    };
+    resolved.insert(reference.to_owned(), id.clone());
+    Ok(id)
 }
 
 /// Whether the container's image reference is the render's declared one.
@@ -773,10 +881,15 @@ fn parse_stamp(value: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::{normalize_reference, reference_matches};
-    use crate::environment::backend::parse_inspect;
+    use crate::environment::backend::{parse_image_inspect, parse_inspect};
     use crate::environment::tests::{env as test_env, selection};
+    use crate::environment::{BackendSelection, EnvironmentBackend, Workload, CREATION_WINDOW};
     use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
+    use effigy_kernel::id::RunId;
+    use effigy_kernel::observe::{Evidence, Observed};
     use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::time::Instant;
 
     /// Compose resolves a short reference before it creates a container, so
     /// the fully-qualified spelling of one reference is the same image.
@@ -813,21 +926,72 @@ mod tests {
         );
     }
 
+    /// A backend whose image table is the native `nerdctl image inspect` trace
+    /// below: every spelling of the one reference the trace names resolves to
+    /// the exact image id the engine reported, which is exactly what the real
+    /// adapter reads.
+    struct NativeImages {
+        selection: BackendSelection,
+        image_id: String,
+    }
+
+    impl EnvironmentBackend for NativeImages {
+        fn selection(&self) -> &BackendSelection {
+            &self.selection
+        }
+        fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
+            panic!("the native trace supplies its own inventory ({project})")
+        }
+        fn inventory_until(
+            &mut self,
+            _: &Path,
+            project: &str,
+            _: Instant,
+        ) -> Observed<Vec<Workload>> {
+            panic!("the native trace supplies its own inventory ({project})")
+        }
+        fn image_id_until(&mut self, _: &Path, reference: &str, _: Instant) -> Observed<String> {
+            assert!(
+                reference == "alpine:3.19" || reference == "docker.io/library/alpine:3.19",
+                "the trace names one image: {reference}"
+            );
+            Observed::Verified(
+                self.image_id.clone(),
+                Evidence::new("native image inspect".to_owned(), None).expect("evidence"),
+            )
+        }
+        fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
+            panic!("a proof does not ask the raw backend about `{container_id}` in `{project}`")
+        }
+    }
+
     /// A native trace, not a fake: the container below was created by
-    /// `colima nerdctl --profile effigy -- compose up -d` on the machine this
-    /// task ran on (project `effigy-508-trace-1793419616-36063`, image
-    /// `alpine:3.19`), captured with `nerdctl inspect`, then removed. The
-    /// window binds it to a render that declares the short reference, which is
-    /// what Compose resolves before it creates the container.
+    /// `colima nerdctl --profile effigy -- compose -p … up -d` on the machine
+    /// this task ran on (project `effigy-508-img-8004725814`, image
+    /// `alpine:3.19`), captured with `nerdctl inspect` and `nerdctl image
+    /// inspect`, then removed. The window binds it to a render that declares
+    /// the short reference, and to the exact image id the engine reports for
+    /// that reference — which is the point of the id bind: the container's own
+    /// `Image` field is a reference on nerdctl, so the id comes from the image
+    /// table read inside the window.
     #[test]
-    fn a_native_nerdctl_container_binds_to_the_renders_short_image_reference() {
-        let bytes = include_bytes!(concat!(
+    fn a_native_nerdctl_container_binds_to_the_exact_image_id_its_reference_resolves_to() {
+        let rows = parse_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-compose.inspect.json"
-        ));
-        let rows = parse_inspect(bytes).expect("the native inspect parses");
+        )))
+        .expect("the native inspect parses");
         assert_eq!(rows.len(), 1, "one container in the trace");
         let row = &rows[0];
+        let image_id = parse_image_inspect(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/environment/colima-nerdctl-alpine-3.19.image.inspect.json"
+        )))
+        .expect("the native image inspect parses");
+        assert_eq!(
+            image_id, "sha256:6cf065f724d522cbb3e1898559cd88f015db8a1a4210d2d048a0853b69b57ba9",
+            "the engine's own image id for alpine:3.19"
+        );
         let project = row.labels[PROJECT_LABEL].clone();
         let declared = BTreeMap::from([(
             "app".to_owned(),
@@ -835,7 +999,7 @@ mod tests {
                 labels: BTreeMap::from([
                     (MANAGED_LABEL.to_owned(), "true".to_owned()),
                     (PROJECT_LABEL.to_owned(), project.clone()),
-                    (SCOPE_LABEL.to_owned(), "508trace".to_owned()),
+                    (SCOPE_LABEL.to_owned(), "508imgtrace".to_owned()),
                     (
                         CHECKOUT_LABEL.to_owned(),
                         row.labels[CHECKOUT_LABEL].clone(),
@@ -844,13 +1008,20 @@ mod tests {
                 image: Some("alpine:3.19".to_owned()),
             },
         )]);
-        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:07:00Z")
+        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:28:00Z")
             .expect("start")
             .with_timezone(&chrono::Utc);
-        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:08:00Z")
+        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:29:00Z")
             .expect("completion")
             .with_timezone(&chrono::Utc);
+        let mut backend = NativeImages {
+            selection: selection(),
+            image_id: image_id.clone(),
+        };
         let receipt = super::receipt(
+            &mut backend,
+            Path::new("/fixtures/checkout"),
+            Instant::now() + CREATION_WINDOW,
             &selection(),
             test_env("stack").resource,
             effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
@@ -858,7 +1029,7 @@ mod tests {
             &declared,
             &[],
             &rows,
-            "2026-10-31T04:07:00.000000000Z",
+            "2026-10-31T04:28:00.000000000Z",
             started,
             completed,
         )
@@ -877,6 +1048,16 @@ mod tests {
             "docker.io/library/alpine:3.19",
             "nerdctl reports the resolved reference in `Image`"
         );
-        assert_eq!(created.created(), "2026-10-31T04:07:43.603235578Z");
+        assert_eq!(
+            created.image_id(),
+            image_id,
+            "the receipt binds the exact image id the render's reference resolves to"
+        );
+        assert_eq!(
+            created.image_id_source(),
+            super::ImageIdSource::ResolvedFromReference,
+            "nerdctl reports a reference, so the id is a resolution of it"
+        );
+        assert_eq!(created.created(), "2026-10-31T04:28:47.205573495Z");
     }
 }

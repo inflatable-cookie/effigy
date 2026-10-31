@@ -215,8 +215,12 @@ During v0.x, MINOR bumps may include breaking changes.
   and present after is created by that run, and must match the admitted
   render's own declared values for its service: the render declares the
   service, its `com.effigy.managed`, `.project`, `.scope` and `.checkout`
-  labels and the image reference the container was created from, the image the
-  engine reports is recorded, and the `Created` stamp is no older than the
+  labels and the image reference the container was created from, and the
+  window binds the exact image id that reference resolves to in the backend's
+  own image table, read inside the same window — a matching reference whose
+  image id differs refuses, and the receipt says whether the engine reported
+  the container's id or a reference the window resolved. The `Created` stamp is
+  no older than the
   apply start. A
   container's self-reported labels are compared with the render and are never
   the expectation; a render that declares one value twice, an apply with no

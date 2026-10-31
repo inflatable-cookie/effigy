@@ -3514,11 +3514,25 @@ values** for its service — `com.docker.compose.project`, Effigy's
 `com.docker.compose.service`, `com.effigy.managed`, `.project`, `.scope` and
 `.checkout` labels and image reference exactly as the render declares them (a
 short and a fully-qualified spelling of one reference agree; nothing else does),
-a service the render declares, an image id, and a `Created` stamp no older than
+a service the render declares, the **exact image id** that reference resolves to
+in the applying backend's own image table, and a `Created` stamp no older than
 the apply start. A render that declares one bound value twice with different
 values refuses, and an apply with no admitted render refuses too: the container's
 own labels are compared with the render and are never the expectation. An id
 present before is adopted and is never `created_by` this run.
+
+The **image id** is bound, not just the reference. The window reads
+`image inspect` for the render's declared reference under the same deadline and
+requires the container's own image identity to be that exact id: an engine that
+reports the container's image as an id (Docker's `Image`) is compared directly,
+and one that reports it as a reference (nerdctl's `Image`) has that reference
+resolved on the same backend, so the ids must still agree. A matching reference
+whose image id differs refuses — a retagged or rebuilt tag, or another actor's
+container of a different image under the same name, is not this run's target.
+The receipt records which reading it stands on (`ImageIdSource`), so a backend
+that cannot report a container's image id never presents that bind as an
+independent engine fact. An `image inspect` that answers nothing, more than one
+image, or anything that is not an exact image id refuses the whole window.
 
 **Refusals.** The run publishes no receipt — and no weaker one — when a service
 identity is missing or duplicated, a label or image disagrees, a creation stamp
@@ -3541,8 +3555,8 @@ only reads.
 
 **Receipt rule.** `CreationReceipt` binds the environment, the run, the engine
 and context, the project, the apply's start and completion, the exact full ids
-it created with their service, image id and image reference, the ids it adopted,
-and the inventory evidence it read. It has no public constructor and exposes
+it created with their service, exact image id and image reference, the ids it
+adopted, and the inventory evidence it read. It has no public constructor and exposes
 read-only accessors; only the gated window builds one, so a caller cannot pair
 its own run id with someone else's container. A caller may attribute a fresh
 target only when the receipt's `created_by(project, container_id)` is
