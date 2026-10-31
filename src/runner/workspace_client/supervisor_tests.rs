@@ -901,3 +901,42 @@ fn a_session_runs_phase_owner_and_outcome_are_named_at_every_settle_boundary() {
         );
     });
 }
+
+/// The handoff boundary refuses an unswitched selection, at the boundary itself:
+/// only a `Switched` commit may be handed to service, and the lease must be the
+/// one the launch published.
+#[test]
+fn the_handoff_boundary_refuses_pending_and_abandoned_selections() {
+    use effigy_kernel::workspace_session::SelectionState;
+
+    for state in [SelectionState::Pending, SelectionState::Abandoned] {
+        with_serving_session(|mut supervisor, session, cx, root, observe| {
+            let prepared = prepare_owned_channel(&mut supervisor, &session);
+            let lease = published(&prepared);
+            let refused = ServingHandoff::fenced_owned(
+                owner(supervisor, &session, prepared, cx, observe, root),
+                state,
+                &lease,
+            )
+            .expect_err("an unswitched selection never hands off");
+            assert!(
+                matches!(refused, HandoffRefusal::Unswitched(named) if named == state.as_str()),
+                "the boundary names the durable state it found: {refused}"
+            );
+        });
+    }
+
+    // A switched commit at the same boundary hands off, and its launch published
+    // exactly that lease.
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let lease = published(&prepared);
+        let handoff = ServingHandoff::fenced_owned(
+            owner(supervisor, &session, prepared, cx, observe, root),
+            effigy_kernel::workspace_session::SelectionState::Switched,
+            &lease,
+        )
+        .expect("a switched commit hands off");
+        assert_eq!(handoff.lease(), &lease);
+    });
+}

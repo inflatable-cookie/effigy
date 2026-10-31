@@ -288,16 +288,33 @@ impl ServingHandoff<'static> {
         // A commit is not a selection until it has switched: the publication is
         // only servable once every selector and object read back at its
         // committed value, which is what `Switched` records (§8.11).
-        committed_state(obligation.state())?;
-        Self::published(owner, obligation.receipt())
+        Self::fenced(owner, obligation.state(), obligation.receipt().serving())
     }
 
-    /// The same handoff, from the receipt that was committed.
-    pub(crate) fn published(
+    /// The handoff boundary: a custody may be handed over only for a selection
+    /// that switched and was read back, under exactly the lease the commit
+    /// recorded. This is the one route into service, so there is no
+    /// receipt-only constructor that could skip the state fence.
+    pub(crate) fn fenced(
         owner: WorkspaceOwner,
-        receipt: &SelectionReceipt,
+        state: SelectionState,
+        committed: &ServingLease,
     ) -> Result<Self, HandoffRefusal> {
-        Self::validated(owner.into(), receipt.serving())
+        committed_state(state)?;
+        Self::validated(owner.into(), committed)
+    }
+}
+
+impl<'a> ServingHandoff<'a> {
+    /// The same boundary for an already-owned channel (the proofs build one
+    /// directly): identical fence, no separate route into service.
+    pub(crate) fn fenced_owned(
+        owner: OwnedWorkspaceChannel<'a>,
+        state: SelectionState,
+        committed: &ServingLease,
+    ) -> Result<Self, HandoffRefusal> {
+        committed_state(state)?;
+        Self::validated(owner, committed)
     }
 }
 

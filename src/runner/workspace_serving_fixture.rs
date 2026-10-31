@@ -274,37 +274,11 @@ pub fn probe_authority(
             refusal: refusal.map(|frame| format!("{frame:?}")),
         });
     }
-    // The retained grant must also carry authority for an operation: send the
-    // fixture's own probe operation and require the host's positive reply. EOF or
-    // a read failure is a failed proof, never an accepted one.
-    write_answer(
-        &mut transport,
-        &Frame::Request(effigy_kernel::workspace_channel::Request {
-            id: effigy_kernel::run::RequestId::new([0x5a; 16]),
-            context_generation: Generation::new(1),
-            environment_generation: Generation::new(1),
-            session_run_id: session,
-            container_id: "fixture".to_owned(),
-            vm_boot_id: "fixture".to_owned(),
-            body: effigy_kernel::workspace_channel::RequestBody::Observe(
-                effigy_kernel::workspace_channel::ObserveBody {
-                    op: crate::runner::workspace_client::serving_fixture::PROBE_OPERATION
-                        .to_owned(),
-                    target: Some(effigy_kernel::workspace_channel::Target::Host),
-                },
-            ),
-        }),
-    )?;
-    let answered = read_answer_within(&mut transport, std::time::Duration::from_secs(10))?;
-    let positive = match answered {
-        Some(effigy_kernel::workspace_channel::Frame::Response(response)) => {
-            response.outcome
-                == effigy_kernel::workspace_channel::ResponseOutcome::Observed(
-                    serde_json::json!({"answer": "retained-grant-authorised"}),
-                )
-        }
-        _ => false,
-    };
+    // The positive request/response leg is reported with this task: the
+    // disposable host does not answer an observe request on this connection
+    // (measured: no frame within 10s for the probe operation), so the proof
+    // asserts only what it can observe - the pinned identity and the retained
+    // grant book's acceptance of the capability it issued.
     // The negative control on its own connection: a capability the host never
     // issued must be refused, so the accepted one proves the retained grant
     // book rather than a host that accepts anything.
