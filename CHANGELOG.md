@@ -233,6 +233,28 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **A workspace session owns its terminals' input, resize and retained
+  output.** `workspace_client::terminal` implements the kernel's `Terminal` and
+  `Streams` seams for the merged #507 serving owner: `WorkspaceTerminal` holds
+  one admitted run's writer, newest geometry and retirement behind an injected
+  `TerminalWriter` (the child's writer, resize handle and close), and
+  `TerminalCustody` serves one `RetainedStreams<WorkspaceTerminal>` per admitted
+  run for a session. Input and resize re-read the run's owning attachment with
+  `Attachment::attached_observed` immediately before every effect, so a stale,
+  released, replaced or foreign attachment, a second terminal, or a run this
+  session owns no terminal for refuses with zero bytes and zero resize. Input is
+  bounded (two frames, then a refusal) instead of queued without limit; resize
+  keeps only the newest size, so a burst cannot become a backlog; a second
+  terminal's detach never stops the owning run; the owning client's end of
+  stream retires the writer exactly once; and a reconnect resumes the retained
+  log at its negotiated cursor or reports the rotated range as a `gap`. The
+  writer is a production-shaped fake in this slice: #452's container-up caller
+  opens one entry per admitted run and #519 binds the live child PTY with its
+  two-real-PTY process proof. `workspace_client::serving_host` serves the
+  session's terminal custody through the merged #507 loop, and
+  `ServingOwner::terminal_custody` / `ServiceOwner::terminal_custody` are the
+  typed handoff those callers use.
+
 - **A workspace session's custody can live in a detached process.** A serving
   host supervisor starts before the session run is adopted or the listener
   exists, performs the activation in its own process, announces the committed

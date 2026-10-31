@@ -27,6 +27,7 @@ use effigy_kernel::workspace_channel::{self as channel, Refusal, Served, Streams
 use effigy_kernel::workspace_session::SessionRef;
 use effigy_kernel::workspace_session::{ServingRefusal, SessionLaunch, SessionSupervisor};
 
+use super::terminal::TerminalCustody;
 use crate::runner::workspace_transport::listener::{HostChannelAcceptor, ServerTlsTransport};
 use crate::runner::workspace_transport::qualification::{
     PreparedHostChannel, QualifiedHostLocator,
@@ -275,7 +276,9 @@ where
         {
             return Err(AdoptError::WrongSession);
         }
-        let mut owner = Self::new(supervisor, launch, acceptor, server, effect, observe, root);
+        let mut owner = Self::new(
+            supervisor, session, launch, acceptor, server, effect, observe, root,
+        );
         owner.custody.locator = Some(locator);
         owner.serving = Some(serving);
         Ok(owner)
@@ -324,7 +327,9 @@ impl<'a>
             return Err(AdoptError::Facts);
         }
         let (server, admitted) = super::host_dispatch::production_server(&serving, root.clone());
-        let mut owner = Self::new(supervisor, launch, acceptor, server, effect, observe, root);
+        let mut owner = Self::new(
+            supervisor, session, launch, acceptor, server, effect, observe, root,
+        );
         owner.custody.locator = Some(locator);
         owner.serving = Some(serving);
         owner.admitted = Some(admitted);
@@ -349,6 +354,9 @@ where
     Id: channel::RunIds,
 {
     supervisor: SessionSupervisor<'a>,
+    /// The one session this owner serves. Retained with the custody so a
+    /// terminal opened here is bound to the session it serves and no other.
+    session: SessionRef,
     custody: ChannelCustody,
     acceptor: A,
     server: channel::Server<Ad, Rs, Ob, Id>,
@@ -380,6 +388,25 @@ where
     /// one. Publication and the guest's dial are one fact (§8.11).
     pub(crate) fn locator(&self) -> Option<&QualifiedHostLocator> {
         self.custody.locator.as_ref()
+    }
+
+    /// The session this owner serves.
+    pub(crate) fn session(&self) -> &SessionRef {
+        &self.session
+    }
+
+    /// The session's terminal custody: one terminal owner and one retained
+    /// reader per admitted run (effigy#485).
+    ///
+    /// #452's container-up caller opens one entry per run it admits
+    /// ([`TerminalCustody::open`]) — the run's captured-stream plan and the
+    /// writer its guest types into — and retains the custody across
+    /// [`Self::serve_pending`] and [`Self::run`] turns. It is bound to this
+    /// owner's own session, so no other session's client can type into a
+    /// terminal opened here, and a run with no entry refuses terminal frames
+    /// instead of dropping them. The live child-PTY writer is effigy#519.
+    pub(crate) fn terminal_custody(&self, observe: &ObserveContext) -> TerminalCustody {
+        TerminalCustody::new(self.session.session(), observe.clone(), self.root.clone())
     }
 
     /// Durable settlement: stop serving, release the listener and key, and
@@ -439,6 +466,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         supervisor: SessionSupervisor<'a>,
+        session: SessionRef,
         launch: SessionLaunch,
         acceptor: A,
         server: channel::Server<Ad, Rs, Ob, Id>,
@@ -448,6 +476,7 @@ where
     ) -> Self {
         Self {
             supervisor,
+            session,
             custody: ChannelCustody {
                 launch: Some(launch),
                 locator: None,

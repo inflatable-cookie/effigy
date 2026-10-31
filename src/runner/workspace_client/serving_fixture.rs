@@ -483,6 +483,7 @@ pub(crate) fn activate<'r>(
     let server = serving_server(request, disposable, &session, pin, root)?;
     let owner = ServingOwner::new(
         supervisor,
+        session.clone(),
         launch,
         acceptor,
         server,

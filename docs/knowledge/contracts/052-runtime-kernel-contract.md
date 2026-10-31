@@ -4529,13 +4529,33 @@ connection while each frame stays its own stream's: an acknowledgement releases
 that stream's frames that sit between other streams' frames, so an interleaved
 stream's consumption is never blocked by another stream's order. A host with no
 terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
-delivery it did not make. The kernel has no per-run terminal input/resize
-writer, and no host front end owns a session terminal yet (the transport, the
-guest client and the runner integration are separate tasks), so channel-owned
-delivery stops at the `Terminal` contract: the production runner terminal writer
-and the serving-loop binding are a separately owned follow-up, and nothing here
-claims production terminal delivery.
+delivery it did not make.
 `test:kernel:workspace-channel` owns these proofs.
+
+The runner supplies the owner that contract was written for (effigy#485,
+`workspace_client::terminal`). The kernel has no per-run terminal input/resize
+writer, so `WorkspaceTerminal` holds one admitted run's writer, newest geometry
+and retirement behind an injected `TerminalWriter` — the child's bounded,
+non-blocking write, its resize handle and its one close — and `TerminalCustody`
+is the session-bound `Streams` the merged #507 serving owner serves its
+connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
+`ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
+handoff its caller opens entries through. The owner binds the run's owning
+attachment, so input and resize re-read that exact row with
+`Attachment::attached_observed` immediately before every effect and refuse a
+stale, released, replaced or foreign attachment, a second terminal, and a run
+this session owns no terminal for, with zero bytes and zero resize. Input is
+bounded at two frames and then refuses rather than growing a queue; resize keeps
+one size and never replays an older one; a second terminal's detach releases only
+its own row and never stops the owning run; the owning client's end of stream
+retires the writer exactly once; and a reconnect resumes the retained log at the
+negotiated cursor or reports the rotated range as a `gap`, with no second replay
+store. `effigy#485` proves those behaviours with production-shaped fake writers
+through the real `Server::serve` loop and the merged serving loop, owned by
+`test:workspace:publication:c`. The container-up caller that opens one entry per
+admitted run is effigy#452, and the live child-PTY writer with its
+two-real-PTY process proof is effigy#519: nothing above claims a production
+terminal binding.
 
 ## Appendix B: NON-NORMATIVE post-v0.15 sequence candidates
 
