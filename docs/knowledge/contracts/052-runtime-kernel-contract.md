@@ -1318,6 +1318,128 @@ normalization path would recreate the split. A consumer that needs both
 streams reads the merged capture, never a concatenation of the projections,
 and a consumer that wants a bounded tail takes the merged tail.
 
+Host producers use `Custody::spawn_logged_auxiliary` with captured pipes and
+one `CanonicalOutput` shared across child generations and supervisor messages. The
+existing custody sanitizer records style data and feeds the existing two-pass
+redactor in merged observed arrival order. Child EOF resets terminal framing;
+only supervisor completion finishes the shared redactor. CR is removed from
+CRLF before redaction. Complete UTF-8 text is appended and synced before any
+live/tail fanout. A failed append poisons capture; no unwritten output is
+acknowledged. A partial failed append can leave an unacknowledged plain suffix.
+Effigy readers never expose that suffix. Host and managed journal writers
+publish a durable committed extent after syncing data. A synced pending record
+retains the prior extent until publication completes; a failed or interrupted
+append bounds reads to that prior extent and refuses a host restart for explicit
+operator recovery. Effigy reads use the existing nonblocking kernel file-lock
+boundary to avoid observing an in-flight publication. Writer lock acquisition
+is bounded to 500 ms; a stalled reader cannot hold cleanup indefinitely.
+Failure syncing removal of a pending record after data and extent are durable
+does not uncommit those bytes: capture reports truncation and stops further
+appends, while recovery may require handling a resurrected pending record.
+Managed Standard workloads opt into `Terminal::Styled`, which uses the same
+writer with a journal destination and persists merged plain output in stdout
+(the stderr log is empty). The managed supervisor's own sequence-0 pipe capture
+uses that same writer; it never filters the result back into separate streams.
+A sequence-0 setup failure nulls both descriptors and records a typed journal
+capture-truncation effect before setup may continue; its readers report
+`Truncated` with no payload. Failure to make descriptors safe or record that
+state refuses startup. A host generation drain timeout closes both old pipes,
+resets terminal framing through the existing EOF path, retains the same merged
+redactor and held secret prefixes, and records Truncated without overriding the
+declared restart policy. Its successor cannot inherit unfinished CSI/OSC/CR or
+UTF-8 framing. A failed append/provenance boundary still poisons the writer and
+refuses further generations; a drain gap alone does not. Unsupported redaction
+replacement disables Standard capture without changing the workload outcome.
+A producer restart frames an unfinished pane line as a generation boundary,
+so a new generation cannot complete an old partial value. Ordinary
+custody callers retain their existing separate-stream contract.
+Text followers discard a held partial line at an expired-byte gap, emit an
+explicit gap, and stop a line exceeding 64 KiB with a diagnostic. They validate
+plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
+select the last nonempty contiguous child block without joining across owner
+messages or letting a later blank frame hide an earlier error.
+Multi-source log following keeps separate bounded partial lines and flushes
+them on closure. Pane lifecycle status comes from the owner journal and a
+listener record bound to the current run and custody nonce. Child text cannot
+forge it, and unavailable, failed, stopped or stale generations clear Ready.
+
+Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
+an untrusted historical prefix safe. Under the newly admitted host owner gate,
+with predecessors settled, an owned regular no-follow legacy log moves to the
+same runtime directory's private `.legacy-host-logs` quarantine. Its name ends
+in `.legacy`, not `.log`; discovery never includes it. A new 0600 canonical
+inode is created exclusively in a private stage, bound to durable migration
+intent, then published with an atomic no-replace move at the same public path.
+A foreign empty file is never adopted. Intent, file and parent
+directory syncs precede producer admission. The durable private ready record
+`.<sha256(log basename)>.host-log-ready` is version 2, with an `owner` array of
+32 digest bytes, `canonical: {device, inode}` and a `committed` byte extent.
+A matching ready identity
+allows subsequent generations to append without another cutover. Changed,
+foreign, symlinked or uncertain identities fail closed, preserving operator
+data. Crash retries retain the original intent and quarantined identity and
+sync both rename directories even when the legacy entry was already moved.
+Exclusive rename plus moved-inode verification prevents destination clobbering;
+uncertain source or record replacements are retained privately and refused.
+
+Effigy readers require matching durable ready provenance before opening
+payload bytes and recheck identity before exposure. Bounded followers reset
+both offset and partial text on inode replacement or shrink, reporting a gap;
+replacement is detected even when the new file grew beyond the old offset.
+The bundled Underlay presentation follower tracks device/inode and offset,
+resets on replacement/shrink and reports one gap. It does not enforce Effigy
+ready provenance or committed extents. The owner's 2026-10-30 ruling keeps it
+presentation-only: it and an operator reading the file directly can see already
+sanitized/redacted bytes between write and sync. Those reads acknowledge no
+durability and can show a line later lost on crash. Effigy TUI, JSON, doctor,
+status, excerpts and Queue readers honor the committed extent. Before cutover
+Underlay's behavior remains the pre-existing owner
+file contract. An already-open pre-upgrade POSIX descriptor cannot be revoked
+by rename/chmod: stop and reopen older attached followers after upgrading.
+Continuity across that transition is not guaranteed, and numeric offsets are
+never preserved by padding or replay of raw bytes.
+
+Style primitives and the existing ANSI line/parser/SGR implementation live in
+`effigy-core::terminal_text`; the TUI facade reuses them. The writer records SGR
+as bounded style data. Redaction clears style on masked ranges. A bounded
+private `.styled-tap` sidecar publishes a window of typed, already-redacted
+spans only after successful plain append. It is optional presentation data,
+not a log checkpoint: it grants no durability acknowledgement, changes no
+canonical offsets and never replays an untrusted prefix. A pane uses styles
+only where identity, byte offset and text exactly match its canonical read;
+missing, stale or expired style data renders plain. TUI typed ingest renders
+those spans directly, without ANSI interpretation or a second redactor.
+
+Tom's 2026-10-31 launcher ruling classifies ambient `CLAUDE_CODE_*` as a
+non-secret switch namespace only for the exact values `0`, `1`, `true`, `false`.
+Switch names are bounded to 128 ASCII alphanumeric/underscore bytes with a
+nonempty suffix. Case-insensitive `TOKEN`, `KEY`, `SECRET`, `PASSWORD`,
+`CREDENTIAL` and `AUTH` name segments override the namespace. Schema sensitivity
+and aliases containing a known secret also override all metadata exceptions.
+Non-boolean values and unknown names outside the namespace remain Secret;
+the established exact launcher flags keep their closed-domain classification.
+The custody argv guard is unchanged. This policy avoids an expanding list of
+individual Claude flags without trusting arbitrary environment values.
+
+Canonical shared-lock reads intentionally return `WouldBlock` during writer
+commit. TUI followers retry on their next poll without blocking all panes;
+one-shot consumers may retry within their own deadline or report temporary
+unavailability. They never fall back to raw or uncommitted suffixes. Tests wait
+for a committed extent, rather than a raw visible write, before asserting text.
+The full-pipe/unconsumed-tap stop proof requires closure before half the kernel
+drain margin and a non-truncated durable capture report, distinguishing prompt
+stop from waiting for a drain deadline.
+
+The initiating TUI capability is non-secret and fixed before detached host
+handoff. Cargo `always` and `CLICOLOR_FORCE=1` are selected only for that ANSI
+destination in the absence of NO_COLOR, CI, a dumb terminal or an explicit
+colour preference. Text/headless/detached starts do not force colour.
+
+**Known qualification limit:** the migration, complete fault/security matrix,
+combined bundled follower proof and independent exact-head reviews must pass
+before the provisional host-log limit and manual merge hold can be released.
+A writer primitive alone does not qualify the delivered path.
+
 #### Failure model
 
 | Fault | Behavior |
@@ -5085,6 +5207,16 @@ generation while P's context remains selected.
 
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
+
+**Creator attribution ruling (Tom, 2026-10-31).** A foreign actor creating an
+identically labelled container during the apply window remains in the threat
+model. Before/after container ID sets, labels, timestamps and image-reference
+checks cannot prove which actor created that container, even under `Gate(Env)`.
+The v0.15 first-up path must use an Effigy-owned engine create/apply operation
+that returns the exact created container IDs as authenticated effect results,
+then verify those IDs against the intended project, service, image and target
+before publication. The provisional Option C inventory-difference design is
+rejected; a foreign creation is never adopted as this activation's target.
 
 | Window | What the guest resolves | Recovery |
 | --- | --- | --- |

@@ -592,9 +592,30 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
         }
     };
     session.admitted(&mut run)?;
-    session
-        .capture_output(&run, vec![b"engine-secret".to_vec()])
-        .map_err(RunError::from)?;
+    let secrets = if std::env::var_os("FIXTURE_CAPTURE_EXHAUSTED").is_some() {
+        (0x20u8..=0x7e).map(|byte| vec![byte]).collect()
+    } else {
+        vec![b"engine-secret".to_vec()]
+    };
+    let capture = || session.capture_output(&mut run, secrets);
+    #[cfg(feature = "fault-injection")]
+    let captured = if let Ok(point) = std::env::var("FIXTURE_CAPTURE_SETUP_FAULT") {
+        effigy_kernel::fault_injection::with_hook(
+            move |seen| {
+                if seen == point {
+                    Err(std::io::Error::from_raw_os_error(libc::ENOSPC))
+                } else {
+                    Ok(())
+                }
+            },
+            capture,
+        )
+    } else {
+        capture()
+    };
+    #[cfg(not(feature = "fault-injection"))]
+    let captured = capture();
+    captured.map_err(RunError::from)?;
     println!(
         "engine output engine-secret cwd={} env={}",
         std::env::current_dir().unwrap().display(),

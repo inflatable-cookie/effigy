@@ -521,3 +521,158 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
         _ => panic!("the config frame lost the engine work"),
     }
 }
+
+#[test]
+fn canonical_supervisor_pipe_capture_sanitizes_before_redaction_without_regrouping() {
+    use crate::custody::{CanonicalOutput, CaptureState, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("canonical-output"),
+        opts(41, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = run
+        .capture_log(OUTPUT_SEQUENCE, Stream::Stdout, cx.operation().limits())
+        .unwrap()
+        .unwrap();
+    let output =
+        CanonicalOutput::for_run(log, vec![b"supersecret".to_vec()], cx.operation().limits())
+            .unwrap();
+    let (read0, write0) = crate::custody::spawn::pipe().unwrap();
+    let (read1, write1) = crate::custody::spawn::pipe().unwrap();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_output = output.clone();
+    let worker_done = done.clone();
+    let thread =
+        std::thread::spawn(move || pump_output([read0, read1], worker_output, worker_done));
+    let mut stdout = std::fs::File::from(write0);
+    let mut stderr = std::fs::File::from(write1);
+    let wait = |ready: &dyn Fn() -> bool| {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !ready() {
+            assert!(Instant::now() < until, "capture acknowledgement timed out");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    // Separate stdout projection would reconstruct the key here. The single
+    // observed-order log must retain stderr's intervening visible bytes.
+    stdout.write_all(b"super").unwrap();
+    stderr.write_all(b"noise").unwrap();
+    wait(&|| output.tail() == b"supernoise");
+    stdout.write_all(b"secret\n").unwrap();
+    wait(&|| output.tail() == b"supernoisesecret\n");
+    stdout.write_all(b"super\x1b[").unwrap();
+    stderr.write_all(b"31msecret\n").unwrap();
+    wait(&|| output.tail().ends_with(b"[REDACTED]\n"));
+    stdout.write_all(b"super\x1b]hidden-title").unwrap();
+    stderr.write_all(b"\x07secret\n").unwrap();
+    wait(&|| {
+        output
+            .tail()
+            .windows(b"[REDACTED]".len())
+            .filter(|bytes| *bytes == b"[REDACTED]")
+            .count()
+            == 2
+    });
+    stdout
+        .write_all(b"\x1b[32mcolour\x1b[0m\nkept\x1b[32")
+        .unwrap();
+    drop(stdout);
+    drop(stderr);
+    thread.join().unwrap();
+    assert_eq!(output.capture_state(), CaptureState::Complete);
+    let observe = cx.operation().observe().unwrap();
+    let Observed::Verified(read, _) = crate::run::read_log(
+        &observe,
+        &root,
+        run.id(),
+        OUTPUT_SEQUENCE,
+        Stream::Stdout,
+        0,
+        4096,
+    ) else {
+        panic!("canonical supervisor log missing");
+    };
+    assert_eq!(
+        read.bytes,
+        b"supernoisesecret\n[REDACTED]\n[REDACTED]\ncolour\nkept"
+    );
+    let text = std::str::from_utf8(&read.bytes).unwrap();
+    assert!(!text.contains("supersecret") && !text.chars().any(|ch| ch.is_control() && ch != '\n'));
+    let json = serde_json::to_string(&serde_json::json!({"output":text})).unwrap();
+    assert!(!json.contains("supersecret") && !json.contains("\\u001b"));
+    assert!(matches!(
+        crate::run::read_log(
+            &observe,
+            &root,
+            run.id(),
+            OUTPUT_SEQUENCE,
+            Stream::Stderr,
+            0,
+            4096
+        ),
+        Observed::Absent(_)
+    ));
+    let styles = output.take_styled_output();
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .any(|span| span.text.contains("colour") && span.style != Default::default()));
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .filter(|span| span.text.contains("REDACTED"))
+        .all(|span| span.style == Default::default()));
+}
+
+#[test]
+fn canonical_supervisor_stop_is_bounded_with_an_inherited_pipe_holder() {
+    use crate::custody::{CanonicalOutput, CaptureState, Stream};
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv("blocked-output"),
+        opts(42, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    let log = run
+        .capture_log(OUTPUT_SEQUENCE, Stream::Stdout, cx.operation().limits())
+        .unwrap()
+        .unwrap();
+    let output = CanonicalOutput::for_run(log, vec![], cx.operation().limits()).unwrap();
+    let (read0, _held0) = crate::custody::spawn::pipe().unwrap();
+    let (read1, _held1) = crate::custody::spawn::pipe().unwrap();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let worker = output.clone();
+    let started = Instant::now();
+    std::thread::spawn(move || pump_output([read0, read1], worker, done))
+        .join()
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(matches!(output.capture_state(), CaptureState::Truncated(_)));
+    let Observed::Verified(read, _) = crate::run::read_log(
+        &cx.operation().observe().unwrap(),
+        &root,
+        run.id(),
+        OUTPUT_SEQUENCE,
+        Stream::Stdout,
+        0,
+        4096,
+    ) else {
+        panic!("truncation metadata missing");
+    };
+    assert!(read.truncated && read.bytes.is_empty());
+}

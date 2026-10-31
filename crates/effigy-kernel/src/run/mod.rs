@@ -930,6 +930,19 @@ impl<'a> Run<'a> {
         }
         crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits).map(Some)
     }
+    /// The reserved capture-failure effect is owned by the kernel, never an
+    /// engine-provided kind. It survives missing/unusable output files.
+    pub(crate) fn record_capture_failure(&mut self, reason: &'static str) -> Result<(), RunError> {
+        self.verify_custody()?;
+        let ticket = self.intend_inner(EffectSpec {
+            target: self.fence().clone(),
+            kind: "kernel:capture-truncated".into(),
+            payload: serde_json::json!({"version":1,"sequence":crate::supervise::OUTPUT_SEQUENCE,"reason":reason}),
+            settlement: Settlement::Retain,
+            required: false,
+        })?;
+        self.applied(&ticket, serde_json::json!({"truncated":true}))
+    }
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {
         self.cx.operation().limits().clone()

@@ -19,6 +19,11 @@ use crate::runner::workspace_transport::{opener::resolve_hosts, TlsChannelTransp
 pub(crate) struct GuestProbeReply {
     pub(crate) schema: String,
     pub(crate) identity: GuestSelfObservation,
+    /// SHA-256 of the bytes this process is actually running (`/proc/self/exe`).
+    /// The host refuses an observation that does not name the pinned object, so
+    /// a replaced object cannot report evidence for the object it replaced.
+    #[serde(default)]
+    pub(crate) executable: Option<String>,
     pub(crate) address: Option<IpAddr>,
     pub(crate) peer: Option<SocketAddr>,
     pub(crate) pin: Option<String>,
@@ -29,9 +34,13 @@ pub(crate) fn run(args: GuestProbeArgs) -> Result<String, RunnerError> {
     let identity = ProcGuestIdentity::process()
         .observe()
         .map_err(|reason| invalid(format!("guest-local identity is unproven ({reason})")))?;
+    // Hash the running executable once, before any observation, so every reply
+    // names the exact bytes that produced it.
+    let executable = executable_digest()?;
     let mut reply = GuestProbeReply {
         schema: "effigy.guest-probe.v1".into(),
         identity,
+        executable: Some(format!("sha256:{}", executable.hex())),
         address: None,
         peer: None,
         pin: None,
@@ -43,7 +52,7 @@ pub(crate) fn run(args: GuestProbeArgs) -> Result<String, RunnerError> {
             timeout_ms,
         } => {
             let started = Instant::now();
-            let document = read_context(&context, &digest, &reply.identity)?;
+            let document = read_context(&context, &digest, &reply.identity, &executable)?;
             let remaining = Duration::from_millis(timeout_ms)
                 .checked_sub(started.elapsed())
                 .filter(|left| !left.is_zero())
@@ -135,6 +144,7 @@ fn read_context(
     path: &str,
     expected: &str,
     identity: &GuestSelfObservation,
+    executable: &Digest,
 ) -> Result<super::context::v2::WorkspaceContextV2, RunnerError> {
     use super::context::{context_path, WorkspaceContainerIdentity};
     let refused = |message| RunnerError::task_invocation(message);
@@ -172,9 +182,9 @@ fn read_context(
             "context probe version or generation differs".into(),
         ));
     }
-    // Hash the executable that is actually running, not a mutable entry link.
-    let actual = executable_digest()?;
-    if document.artifact_digest != format!("sha256:{}", actual.hex()) {
+    // The running executable was hashed once for this whole reply; the
+    // document must pin those same bytes, not a mutable entry link.
+    if document.artifact_digest != format!("sha256:{}", executable.hex()) {
         return Err(refused(
             "context probe executable differs from pinned artifact".into(),
         ));

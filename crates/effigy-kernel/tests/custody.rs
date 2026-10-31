@@ -1231,6 +1231,85 @@ fn custody_engine_owning_client_kill_stops_and_settles() {
     );
 }
 
+#[test]
+fn custody_engine_failed_capture_is_durably_truncated_and_discards_setup_output() {
+    for env in [
+        vec![("FIXTURE_CAPTURE_EXHAUSTED".into(), "1".into())],
+        vec![(
+            "FIXTURE_CAPTURE_SETUP_FAULT".into(),
+            "CaptureSetupAfterStdout".into(),
+        )],
+        vec![(
+            "FIXTURE_CAPTURE_SETUP_FAULT".into(),
+            "CaptureSetupBeforeThread".into(),
+        )],
+    ] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut client = start_engine(
+            &cx,
+            home.path(),
+            EngineLaunch {
+                payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+                cwd: home.path().into(),
+                env,
+                handoff: None,
+                admission: None,
+            },
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        let run = client.run;
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        // Active proves the spawn barrier, not that the workload has executed
+        // its PID-file write. Observe that recorded PID before closing input,
+        // otherwise a fast stop can remove it before the cleanup proof exists.
+        eventually(|| {
+            std::fs::read_to_string(home.path().join("engine-workload.pid"))
+                .is_ok_and(|pid| pid.trim().parse::<u32>().is_ok())
+        });
+        let read = effigy_kernel::run::read_log(
+            &cx.operation().observe().unwrap(),
+            &root,
+            run,
+            OUTPUT_SEQUENCE,
+            Stream::Stdout,
+            0,
+            4096,
+        );
+        // Settle and reap the owned processes before asserting the result.
+        client.close_input();
+        client.wait(cx.operation()).unwrap();
+        eventually(|| workload_gone(home.path()));
+        let read = read
+            .verified()
+            .expect("capture failure remains observable without a log");
+        assert!(read.truncated && read.bytes.is_empty(), "{read:?}");
+        let reader =
+            match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(reader, _) => reader,
+                other => panic!("{other:?}"),
+            };
+        let effects = effigy_kernel::run::effects(&reader, run);
+        assert!(effects
+            .verified()
+            .unwrap()
+            .iter()
+            .any(|effect| effect.spec.kind == "kernel:capture-truncated"));
+        let path = root
+            .path()
+            .join("runs")
+            .join(run.to_string())
+            .join("0.stdout.0.log");
+        assert!(
+            std::fs::read(path).unwrap_or_default().is_empty(),
+            "setup output must stay on known-safe null descriptors"
+        );
+    }
+}
+
 /// A detached client exits without stopping the run; a stop request then
 /// settles it through the same owner loop.
 #[test]

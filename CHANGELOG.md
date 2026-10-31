@@ -6,15 +6,37 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-Known limits: Environment-owned host processes write their child's raw stdout and stderr
-directly to `.effigy/runtime/host-processes/.../<process>.log`. A secret echoed
-by the child can appear in that log. This direct-log behavior predates
-v0.15; the new custody output sanitizer does not cover this path. ANSI colour
-forcing and plain-log projection for managed TUI panes are deferred to v0.16
-until the host-log writer has a safe secret-handling boundary.
-
 ### Security
 
+- Host-process children use custody-owned output pipes instead of inheriting
+  raw log descriptors. Their merged output is sanitized and redacted before
+  append to the existing plain follower path; failed appends stop capture
+  fanout rather than acknowledge unwritten output. Schema-sensitive and
+  unclassified application-specific inherited environment values are passed
+  to custody as secrets. At the first proven stopped boundary, an untrusted
+  legacy host log is retained in private quarantine and replaced at the same
+  path with a fresh canonical inode and durable provenance. Stop and reopen
+  pre-upgrade followers after upgrading; already-open descriptors cannot be
+  revoked. The bundled Underlay follower resets on inode change even when the
+  replacement is larger than its previous byte offset.
+  Effigy readers honor a durable committed extent and hide failed or torn
+  appends; a poisoned log refuses restart for explicit operator recovery.
+  Direct file/Underlay presentation reads may show a safe line before sync
+  that is later lost on crash; they do not acknowledge durability.
+- Managed panes consume redacted typed style spans from a bounded tap after
+  successful plain append. Managed Standard output remains merged plain text
+  in its canonical stdout log; plain and JSON readers use those bytes directly.
+  Text followers bound partial lines and report expired-byte gaps without
+  joining text across them.
+  Host status uses owner/generation records rather than child log markers,
+  and clears readiness when a listener becomes unavailable.
+  A bounded generation drain gap resets terminal framing and reports truncation
+  while preserving the declared restart policy and merged secret lookahead.
+  Approved launcher boolean switches no longer cause spurious secret-in-argv
+  refusals; schema-sensitive values, secret-bearing keys and unclassified
+  environment values remain protected.
+  Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
+  explicit colour preferences, NO_COLOR and CI.
 - Workspace publication now freezes one typed serving value (host negotiation, session
   fence, TLS pin, host checkout and the narrow enrolment secret) from the strict v2
   document, the committed selection receipt and the session-owned qualified channel,

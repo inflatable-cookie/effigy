@@ -1,6 +1,6 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui_core::style::{Color, Modifier, Style};
 
-pub(super) fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
+pub fn apply_sgr(current: Style, sgr: &str, base: Style) -> Style {
     let mut style = current;
     let params = if sgr.is_empty() {
         vec!["0"]
