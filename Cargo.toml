@@ -125,6 +125,7 @@ effigy-state = { path = "crates/effigy-state" }
 effigy-tasks = { path = "crates/effigy-tasks" }
 effigy-tui = { path = "crates/effigy-tui" }
 effigy-ui = { path = "crates/effigy-ui" }
+getrandom = "0.4"
 anstyle = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -118,6 +118,14 @@ fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
     }
 }
 
+/// The gateway address this profile's guest reaches its host at, for the
+/// renderer that must name one before the profile has started.
+///
+/// This is the *rendering* default, not an observation: it reports `192.168.5.2`
+/// when the profile has written no configuration yet. A caller that must prove
+/// reachability (the workspace channel) uses
+/// [`observed_runtime_gateway_address`] instead, which reports what the profile
+/// actually says and refuses when it says nothing.
 pub(crate) fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
     // Rendering precedes profile startup. Its default gateway must not depend
     // on whether Colima has written colima.yaml yet (also true on Linux).
@@ -133,6 +141,64 @@ pub(crate) fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
         })
         .filter(|value| !value.trim().is_empty())
         .or_else(|| Some("192.168.5.2".into()))
+}
+
+/// The gateway address one Colima profile's own configuration names, as an
+/// observation.
+///
+/// The legacy renderer falls back to Lima's `192.168.5.2`; a caller that must
+/// prove the guest can reach the host cannot, so this reader distinguishes the
+/// four states instead of promoting the default:
+///
+/// * `Verified(Some(address))`: the profile names a usable gateway address.
+/// * `Verified(None)`: the profile configures no gateway, so this profile does
+///   not prove the address its guest would use.
+/// * `Absent`: the profile has written no configuration file at all.
+/// * `Unknown`: the profile file or this observation could not be read.
+pub fn observed_runtime_gateway_address(
+    profile: &str,
+) -> effigy_kernel::observe::Observed<Option<String>> {
+    use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
+    let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    let Some(home) = colima_home_dir() else {
+        return unknown("the Colima home directory is not resolvable".into());
+    };
+    let path = home.join(profile).join("colima.yaml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Observed::Absent(AbsenceProof::NoFile {
+                name: path.display().to_string(),
+            })
+        }
+        Err(error) => {
+            return unknown(format!(
+                "the Colima profile `{}` is unreadable: {error}",
+                path.display()
+            ))
+        }
+    };
+    let document: serde_yaml::Value = match serde_yaml::from_str(&text) {
+        Ok(document) => document,
+        Err(error) => {
+            return unknown(format!(
+                "the Colima profile `{}` is unparsable: {error}",
+                path.display()
+            ))
+        }
+    };
+    let configured = document
+        .get("network")
+        .and_then(|network| network.get("gatewayAddress"))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Observed::Verified(
+        configured,
+        Evidence::new("Colima profile network.gatewayAddress".into(), None)
+            .expect("fixed evidence"),
+    )
 }
 
 pub(crate) fn colima_home_dir() -> Option<PathBuf> {
@@ -296,6 +362,63 @@ fn render_runtime_dns_override(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A profile's gateway is what the file says, never the renderer's default:
+    /// a configured address, a profile that configures none, an absent profile
+    /// and an unreadable one are four different answers.
+    #[test]
+    fn the_observed_gateway_reports_a_configured_profile_and_refuses_to_default() {
+        let _env = crate::test_env_lock();
+        let fixture = tempfile::tempdir().expect("fixture");
+        let profile = fixture.path().join("effigy");
+        std::fs::create_dir_all(&profile).expect("profile directory");
+        let previous = std::env::var_os("COLIMA_HOME");
+        std::env::set_var("COLIMA_HOME", fixture.path());
+
+        assert!(
+            matches!(
+                observed_runtime_gateway_address("effigy"),
+                effigy_kernel::observe::Observed::Absent(_)
+            ),
+            "a profile with no file names no gateway"
+        );
+
+        std::fs::write(
+            profile.join("colima.yaml"),
+            "network:\n  gatewayAddress: 192.0.2.7\n",
+        )
+        .expect("profile");
+        match observed_runtime_gateway_address("effigy") {
+            effigy_kernel::observe::Observed::Verified(Some(address), _) => {
+                assert_eq!(address, "192.0.2.7")
+            }
+            _ => panic!("a configured profile gateway must be observed, never defaulted"),
+        }
+
+        std::fs::write(profile.join("colima.yaml"), "network:\n  address: true\n")
+            .expect("profile");
+        assert!(
+            matches!(
+                observed_runtime_gateway_address("effigy"),
+                effigy_kernel::observe::Observed::Verified(None, _)
+            ),
+            "a profile that configures no gateway must not become 192.168.5.2"
+        );
+
+        std::fs::write(profile.join("colima.yaml"), "network: [\n").expect("profile");
+        assert!(
+            matches!(
+                observed_runtime_gateway_address("effigy"),
+                effigy_kernel::observe::Observed::Unknown(_)
+            ),
+            "an unparsable profile is unknown, never a default"
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("COLIMA_HOME", value),
+            None => std::env::remove_var("COLIMA_HOME"),
+        }
+    }
 
     fn route(domain: &str) -> EffectiveDnsRoute {
         EffectiveDnsRoute {

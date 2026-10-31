@@ -48,6 +48,9 @@ const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie
 pub(super) const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str =
     "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
 static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// One identity probe reads four short `/proc` fields and two `ls` lines.
+const WORKSPACE_IDENTITY_STDOUT_BYTES: u64 = 64 * 1024;
+const WORKSPACE_IDENTITY_STDERR_BYTES: u64 = 8 * 1024;
 #[cfg(test)]
 const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
@@ -81,7 +84,7 @@ pub(super) struct EffigySourceConfig {
 }
 
 impl LinuxWorkspaceTarget {
-    pub(super) fn release_triple(self) -> &'static str {
+    pub(in crate::runner) fn release_triple(self) -> &'static str {
         match self {
             Self::X86_64Gnu => "x86_64-unknown-linux-gnu",
             Self::Aarch64Gnu => "aarch64-unknown-linux-gnu",
@@ -93,7 +96,7 @@ impl LinuxWorkspaceTarget {
     /// The artifact family an image needs: its platform **and** its C library
     /// (§8.9). An artifact built against the other C library does not run, so a
     /// guest whose libc this host cannot prove has no selectable artifact.
-    pub(super) fn from_image(machine: &str, libc: &str) -> Result<Self, RunnerError> {
+    pub(in crate::runner) fn from_image(machine: &str, libc: &str) -> Result<Self, RunnerError> {
         let machine = match machine.trim() {
             "x86_64" | "amd64" => "x86_64",
             "aarch64" | "arm64" => "aarch64",
@@ -122,6 +125,29 @@ impl LinuxWorkspaceTarget {
             ("x86_64", "musl") => Self::X86_64Musl,
             _ => Self::Aarch64Musl,
         })
+    }
+
+    /// The image facts this artifact family was built for. The release triple in
+    /// the producer's receipt is its own record, so this is the artifact side of
+    /// the independent platform comparison, never a read of the image.
+    pub(in crate::runner) fn image_platform(
+        self,
+    ) -> effigy_kernel::workspace_session::ImagePlatform {
+        use effigy_kernel::workspace_session::{ImagePlatform, LoaderFamily};
+        let (architecture, loader) = match self {
+            Self::X86_64Gnu => ("amd64", LoaderFamily::Gnu),
+            Self::Aarch64Gnu => ("arm64", LoaderFamily::Gnu),
+            Self::X86_64Musl => ("amd64", LoaderFamily::Musl),
+            Self::Aarch64Musl => ("arm64", LoaderFamily::Musl),
+        };
+        ImagePlatform {
+            os: "linux".into(),
+            architecture: architecture.into(),
+            // A release triple names a machine type, never an optional CPU
+            // variant, so the artifact claims no variant it was not built for.
+            variant: String::new(),
+            loader,
+        }
     }
 
     pub(super) fn artifact_relative_path(self) -> PathBuf {
@@ -979,9 +1005,20 @@ fn publish_enrolment_credential(
 /// The receipt names the target and the digest the bytes must have. It is
 /// written by the artifact producer (the release download or the artifact
 /// build), never by this verifier, so a sidecar alone cannot bless bytes.
-fn verify_guest_artifact(
+pub(in crate::runner) fn verify_guest_artifact(
     artifact: &Path,
     target: LinuxWorkspaceTarget,
+) -> Result<GuestBinaryIdentity, RunnerError> {
+    verify_guest_artifact_until(artifact, target, None)
+}
+
+/// The same authentication, bounded by the publication's one absolute deadline:
+/// the digest aborts with a deadline refusal instead of hashing an artifact past
+/// the budget it was given.
+pub(in crate::runner) fn verify_guest_artifact_until(
+    artifact: &Path,
+    target: LinuxWorkspaceTarget,
+    until: Option<std::time::Instant>,
 ) -> Result<GuestBinaryIdentity, RunnerError> {
     let version = read_trimmed_workspace_effigy_active_version(
         &workspace_effigy_active_version_file(artifact),
@@ -1003,20 +1040,22 @@ fn verify_guest_artifact(
             host_version
         )));
     }
-    let digest = linux_workspace_artifact_digest(artifact, || true)
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "cannot read linux workspace artifact `{}`: {error}",
-                artifact.display()
-            ))
-        })?
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "linux workspace artifact `{}` is missing; run `{HOST_REPREPARE_COMMAND}` on the \
+    let digest = linux_workspace_artifact_digest(artifact, || {
+        until.is_none_or(|until| std::time::Instant::now() < until)
+    })
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot read linux workspace artifact `{}`: {error}",
+            artifact.display()
+        ))
+    })?
+    .ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "linux workspace artifact `{}` is missing; run `{HOST_REPREPARE_COMMAND}` on the \
                  host to re-prepare the workspace",
-                artifact.display()
-            ))
-        })?;
+            artifact.display()
+        ))
+    })?;
     let digest = render_digest(digest);
     let receipt = workspace_artifact_receipt(artifact)?;
     if receipt.get("release_triple").map(String::as_str) != Some(target.release_triple()) {
@@ -1054,7 +1093,7 @@ fn verify_guest_artifact(
 
 /// Each target's producer receipt lives beside its own binary, so producing
 /// another target cannot invalidate a still-current local artifact.
-pub(super) fn workspace_artifact_receipt_path(artifact: &Path) -> PathBuf {
+pub(in crate::runner) fn workspace_artifact_receipt_path(artifact: &Path) -> PathBuf {
     let mut path = artifact.as_os_str().to_owned();
     path.push(".receipt");
     PathBuf::from(path)
@@ -1133,7 +1172,7 @@ fn environment_declares_operator_workspace(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-fn workspace_path_map(
+pub(in crate::runner) fn workspace_path_map(
     repo_root: &Path,
     workspace: &OperatorWorkspace,
 ) -> Result<WorkspacePathMap, RunnerError> {
@@ -1149,7 +1188,7 @@ fn workspace_path_map(
     })
 }
 
-fn host_user() -> String {
+pub(in crate::runner) fn host_user() -> String {
     std::env::var("USER")
         .ok()
         .map(|user| user.trim().to_owned())
@@ -1192,12 +1231,12 @@ pub(super) fn environment_generation(
 /// the rendered document published into the guest store, so a bundle- or
 /// catalog-provided task is readable without the guest reading a cache the
 /// host did not approve.
-pub(super) struct WorkspaceSourceClosure {
-    pub(super) pins: Vec<WorkspacePinnedSource>,
-    pub(super) snapshots: Vec<(String, Vec<u8>)>,
+pub(in crate::runner) struct WorkspaceSourceClosure {
+    pub(in crate::runner) pins: Vec<WorkspacePinnedSource>,
+    pub(in crate::runner) snapshots: Vec<(String, Vec<u8>)>,
 }
 
-fn workspace_source_closure(
+pub(in crate::runner) fn workspace_source_closure(
     repo_root: &Path,
     paths: &WorkspacePathMap,
 ) -> Result<WorkspaceSourceClosure, RunnerError> {
@@ -1419,7 +1458,9 @@ fn guest_checkout_path(paths: &WorkspacePathMap, relative: &str) -> String {
     )
 }
 
-fn workspace_routes(policy: &EffectiveContainerPolicy) -> Vec<WorkspaceRoute> {
+pub(in crate::runner) fn workspace_routes(
+    policy: &EffectiveContainerPolicy,
+) -> Vec<WorkspaceRoute> {
     policy
         .dns_routes
         .iter()
@@ -1885,6 +1926,29 @@ impl ComposeWorkspaceGuest<'_> {
     }
 }
 
+/// The boot, machine type and C library one exact verified target reports about
+/// itself, read through the bounded Compose guest adapter.
+///
+/// The caller supplies the full id the host verified and the publication's one
+/// absolute deadline; nothing else is inferred here. The machine type and loader
+/// this returns are the guest's own diagnostic report, used for the target's
+/// identity fence and its loader family, never for the image's platform.
+pub(in crate::runner) fn observed_workspace_container_identity(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    target_id: &str,
+    deadline: std::time::Instant,
+) -> Result<WorkspaceContainerIdentity, RunnerError> {
+    let mut budget = BoundedCommandBudget::new(
+        std::time::Instant::now(),
+        deadline,
+        WORKSPACE_IDENTITY_STDOUT_BYTES,
+        WORKSPACE_IDENTITY_STDERR_BYTES,
+    );
+    let mut guest = ComposeWorkspaceGuest::bounded(repo_root, policy, target_id, &mut budget);
+    guest.probe_container_identity()
+}
+
 /// Combine a probe taken through an exact target exec with the host-verified
 /// full backend id it targeted. Neither a hostname nor cgroup text grants
 /// placement, even when it looks like a full or short container id.
@@ -2035,7 +2099,44 @@ impl Drop for StagedHostFile {
 /// runtime: it consumes bytes a release download or an explicit `effigy
 /// workspace:linux:artifact` already produced, or refuses naming that command.
 /// The bytes are authenticated against the producer receipt before publication.
-pub(super) fn produced_linux_workspace_effigy_artifact(
+/// The artifact this host already holds and can authenticate for one family.
+///
+/// This is [`produced_linux_workspace_effigy_artifact`] with the network path
+/// removed: a current local artifact, or an already-current release cache. A
+/// host that would have to download one is refused with the re-prepare command,
+/// because the reserved publication's one absolute deadline cannot bound an HTTP
+/// transfer and an unbounded external call is not allowed on that path.
+pub(in crate::runner) fn held_linux_workspace_effigy_artifact(
+    repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+) -> Result<PathBuf, RunnerError> {
+    let release_identity = workspace_effigy_release_install_identity();
+    let rebuild = format!(
+        "`EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` on the host, or \
+         set `{env}=download` and re-run the host prepare once to populate the release cache",
+        triple = target.release_triple(),
+        env = EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    );
+    if configured_linux_workspace_artifact_source()? != LinuxWorkspaceArtifactSource::Download {
+        if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(repo_root)? {
+            let artifact = effigy_repo_root.join(target.artifact_relative_path());
+            if produced_linux_workspace_artifact_is_current(&artifact, target) {
+                return Ok(artifact);
+            }
+        }
+    }
+    let cache = linux_workspace_effigy_cache_path(target)?;
+    if linux_workspace_release_cache_is_current(&cache, &release_identity) {
+        return Ok(cache);
+    }
+    Err(RunnerError::task_invocation(format!(
+        "no current produced linux workspace artifact for `{}` is held on this host, and the \
+         reserved publication does not download inside its deadline; run {rebuild}",
+        target.release_triple(),
+    )))
+}
+
+pub(in crate::runner) fn produced_linux_workspace_effigy_artifact(
     repo_root: &Path,
     target: LinuxWorkspaceTarget,
 ) -> Result<(PathBuf, Option<String>), RunnerError> {
@@ -2816,7 +2917,7 @@ fn write_workspace_artifact_receipt(
     })
 }
 
-pub(super) fn workspace_effigy_active_version_file(binary: &Path) -> PathBuf {
+pub(in crate::runner) fn workspace_effigy_active_version_file(binary: &Path) -> PathBuf {
     binary.with_extension("active-version")
 }
 

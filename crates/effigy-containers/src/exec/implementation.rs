@@ -1477,6 +1477,30 @@ pub fn inspect_containers_for_policy(
     )
 }
 
+/// `runtime image inspect` for one exact image. The caller reads the platform
+/// the backend reports for the image itself; a container's own report, a host
+/// default or a guess never substitutes for it.
+pub fn inspect_image_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    image: &str,
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let args = vec![
+        OsString::from("image"),
+        OsString::from("inspect"),
+        OsString::from(image),
+    ];
+    capture_runtime_command(
+        repo_root,
+        policy,
+        &args,
+        "runtime image inspect",
+        Some(COMPOSE_PS_TIMEOUT),
+        deadline,
+    )
+}
+
 /// The one line that says why a container stopped: the last line it logged
 /// that names a cause, else the last line it logged. Read on demand for one
 /// failure diagnostic; only exited or unhealthy services are read this way, so

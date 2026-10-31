@@ -698,6 +698,107 @@ fn verify_live_checkout_mount_using(
     })
 }
 
+/// What the backend reports about the exact image one verified container runs.
+///
+/// These are the image's own facts, read from the image the container names:
+/// the host never derives them from the guest's `uname`, from its own
+/// architecture or from the artifact it wants to publish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct ObservedImagePlatform {
+    pub(in crate::runner) os: String,
+    pub(in crate::runner) architecture: String,
+    pub(in crate::runner) variant: String,
+}
+
+/// Observe the image platform behind one verified container id.
+///
+/// Two bounded runtime reads: the container's own inspect names its image, then
+/// the image's inspect reports the OS, architecture and variant. A capture that
+/// fails, a missing or non-string field, or an expired deadline is `Unknown`; no
+/// default, host architecture or guest report stands in for it.
+pub(in crate::runner) fn observed_image_platform(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_id: &str,
+    deadline: Instant,
+) -> effigy_kernel::observe::Observed<ObservedImagePlatform> {
+    use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+
+    let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    let container = match effigy_containers::exec::inspect_containers_for_policy(
+        repo_root,
+        policy,
+        std::slice::from_ref(&container_id.to_owned()),
+        Some(deadline),
+    ) {
+        Ok(output) => output.stdout,
+        Err(error) => return unknown(format!("container inspect is unavailable: {error}")),
+    };
+    let image = match image_reference(&container) {
+        Ok(image) => image,
+        Err(reason) => return unknown(reason),
+    };
+    let inspected = match effigy_containers::exec::inspect_image_for_policy(
+        repo_root,
+        policy,
+        &image,
+        Some(deadline),
+    ) {
+        Ok(output) => output.stdout,
+        Err(error) => return unknown(format!("image inspect is unavailable: {error}")),
+    };
+    let platform = match parse_image_platform(&inspected) {
+        Ok(platform) => platform,
+        Err(reason) => return unknown(reason),
+    };
+    Observed::Verified(
+        platform,
+        Evidence::new("backend image inspect".into(), None).expect("fixed evidence"),
+    )
+}
+
+/// The image one container inspect record names.
+fn image_reference(container_inspect: &[u8]) -> Result<String, String> {
+    serde_json::from_slice::<serde_json::Value>(container_inspect)
+        .ok()
+        .and_then(|records| {
+            records
+                .as_array()?
+                .first()?
+                .get("Image")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .map(|image| image.trim().to_owned())
+        .filter(|image| !image.is_empty())
+        .ok_or_else(|| "the container inspect names no image".to_owned())
+}
+
+/// The platform one image inspect record reports. A missing or non-string OS or
+/// architecture is unknown; the variant may legitimately be absent.
+fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, String> {
+    let record = serde_json::from_slice::<serde_json::Value>(image_inspect)
+        .ok()
+        .and_then(|records| records.as_array()?.first().cloned())
+        .ok_or_else(|| "the image inspect returned no record".to_owned())?;
+    let field = |name: &str| {
+        record
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let (Some(os), Some(architecture)) = (field("Os"), field("Architecture")) else {
+        return Err("the image inspect names no OS or architecture".to_owned());
+    };
+    Ok(ObservedImagePlatform {
+        os,
+        architecture,
+        variant: field("Variant").unwrap_or_default(),
+    })
+}
+
 /// Verify the owned binding of `service`: the running container that this
 /// checkout and scope own. Readiness itself is Running plus the service's own
 /// health check, which the bring-up wait already decided (C1); an exec that

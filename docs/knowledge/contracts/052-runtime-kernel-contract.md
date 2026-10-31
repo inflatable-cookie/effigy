@@ -3001,13 +3001,44 @@ preparation remains separate from that reserved authority path. Native Colima,
 Docker Desktop and Linux Docker identity/reachability qualification is still
 required at the candidate gate.
 
-The host selects the first artifact from the exact container image's backend OS/architecture/variant and one observed image loader
-family, before executing it. `/proc/self/exe` ELF machine/interpreter verifies those staged bytes; it does not select them.
-`uname` is diagnostic, including under emulation. Unknown or conflicting platform/libc, or an artifact that cannot execute,
-refuses. Prepare runs the staged binary's context-free `__guest-identity` in the exact target and compares its observation with
-the host-bound container, boot, platform and libc before publishing. No source is qualified merely by naming a backend. If a
-required backend cannot supply these facts, report the missing capability and smallest contract decision; do not fabricate an
-identity or invent a fallback.
+**Reserved publication inputs — #506.** The producer's input is built by
+`src/runner/container_command/reserved_input.rs`, and it is split at the apply
+because those facts are not all knowable at one moment. `plan` runs before
+`WorkspaceActivation::begin` freezes the decision and before ordinary apply: it
+observes the admitted `BackendSelection` through `environment::observed_backend`,
+which keeps an unreadable record or recorded backend `Unknown` instead of
+collapsing into the policy default; it observes the addresses that backend's
+guest actually reaches (Docker Desktop and Colima reach the host on loopback,
+proved bindable rather than assumed; the Colima gateway is the profile's own
+`network.gatewayAddress` through `effigy_containers::runtime_gateway_observation`,
+where a missing profile, an unreadable one, one that configures no gateway and a
+configured one are four distinct outcomes); it refuses to re-render over a **live
+predecessor** whose environment record published another Compose closure digest;
+and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
+the apply and the decision take, then freezes the `GuestContextInputs`
+materialisation the decision and the published context share.
+`ReservedPublicationPlan::publish_inputs` fills the decision's `guest`,
+`selection` and `inputs_digest` from that same frozen plan and refuses artifact or
+target evidence that names another backend, project or target. `observe` runs
+after the apply, in the same process, on the admitted activation: it re-verifies
+the exact primary binding, takes the **image platform** (OS, architecture,
+variant) from the backend's own `runtime image inspect` of the image that
+container runs and the loader family from the image root the guest reports,
+requires the guest's diagnostic machine type to agree with the image, selects the
+pinned artifact family from the *image* platform, authenticates it against its
+producer receipt under the same deadline, and refuses a target the frozen
+decision did not name. Execution is claimed only for native execution: an image
+built for another machine type needs emulation evidence no owner produces
+(`Q-018`) and refuses instead. The artifact must already be held and current — a
+host that would have to download refuses rather than making an unbounded external
+call inside the deadline. Its one enrolment secret is 32 OS-random bytes in
+canonical 64-hex form; no pid, clock or request id participates. The producer now
+takes that same **absolute** deadline rather than a fresh budget, and the guest it
+receives is `staging::DeadlineGuest`: one deadline and one cumulative capture
+budget for every staging, snapshot and selector command. The plan, the observed
+input and the guest remain in one process, so the durable owner #507 launches can
+plan, freeze, apply once, observe and publish without moving a live handle across
+a process boundary. Rootless Linux and Apple Containers remain unqualified.
 
 **Qualified TLS locator — #483 (A).** Proposed context and guest transport seams:
 

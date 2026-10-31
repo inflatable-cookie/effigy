@@ -109,6 +109,7 @@ enum Fault {
     RecoveryDead,
     RecoveryUnknown,
     Hybrid,
+    ExpiredDeadline,
 }
 struct Probe {
     identity: GuestSelfObservation,
@@ -494,7 +495,7 @@ home = "/home/vscode"
                     io_count.clone(),
                     fired.clone(),
                 )),
-                artifact: &artifact,
+                artifact: artifact.clone(),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
                         identity: target.clone(),
@@ -514,7 +515,7 @@ home = "/home/vscode"
                     },
                     evidence(),
                 ),
-                alias: &alias,
+                alias: alias.clone(),
                 probe,
                 context,
                 snapshots,
@@ -531,7 +532,12 @@ home = "/home/vscode"
                         "fixture-only-secret",
                     ))
                 }),
-                budget: Duration::from_secs(20),
+                deadline: match fault {
+                    // The one absolute deadline is already past: the producer must
+                    // refuse rather than measure a fresh budget from now.
+                    Fault::ExpiredDeadline => std::time::Instant::now() - Duration::from_secs(1),
+                    _ => std::time::Instant::now() + Duration::from_secs(20),
+                },
             })
         };
         let result = match fault {
@@ -613,6 +619,35 @@ home = "/home/vscode"
                 .supervisor
                 .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
                 .unwrap();
+        } else if matches!(fault, Fault::ExpiredDeadline) {
+            let error = match result.expect_err("an expired publication deadline refuses") {
+                WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Preparation(error) => error.to_string(),
+            };
+            assert!(error.contains("deadline expired"), "{error}");
+            assert_eq!(minted.get(), 0, "no credential is minted past the deadline");
+            assert_eq!(io_count.get(), 0, "an expired budget performs no guest I/O");
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+            assert_eq!(
+                guest.text(BINARY_CURRENT_PATH).as_deref(),
+                Some("/predecessor")
+            );
+            assert_eq!(
+                guest.link_target(ENTRY_SELECTOR).as_deref(),
+                Some("/predecessor")
+            );
+            // The refused publication is recorded unknown, so it neither
+            // publishes nor leaves a selection obligation a successor must settle.
+            let ctx = environment::context(&repo).unwrap();
+            let observed = effigy_kernel::store::Store::read(&ctx.observe(), ctx.root);
+            let journal = observed.verified().expect("journal");
+            assert!(
+                !matches!(
+                    effigy_kernel::workspace_session::unfinished_selection(journal, &env.resource),
+                    Observed::Verified(Some(_), _)
+                ),
+                "a publication that never started leaves no pending selection"
+            );
         } else if matches!(fault, Fault::Io(..)) {
             assert!(
                 fired.get(),
@@ -924,4 +959,9 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_expired_publication_deadline_refuses_without_guest_io() {
+    run(Fault::ExpiredDeadline);
 }
