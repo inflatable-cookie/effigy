@@ -501,13 +501,53 @@ impl From<RunnerError> for LocalReadError {
     }
 }
 
+/// The pinned facts one local read is answered from.
+///
+/// There is exactly one canonical document a guest reads (the strict v2
+/// `WorkspaceContextDocument`), and this is the narrow view a local read needs
+/// from it. The v1 projection implements it so the producer's own focused
+/// tests keep their semantics; the guest entry reads v2 only (§8.11).
+pub(crate) trait LocalReadSource {
+    fn context_generation(&self) -> u64;
+    fn host_version(&self) -> &str;
+    fn guest_version(&self) -> &str;
+    fn guest_digest(&self) -> &str;
+    fn protocol(&self) -> u32;
+    fn paths(&self) -> &WorkspacePathMap;
+    fn sources(&self) -> &[WorkspacePinnedSource];
+}
+
+impl LocalReadSource for WorkspaceContext {
+    fn context_generation(&self) -> u64 {
+        self.generation
+    }
+    fn host_version(&self) -> &str {
+        &self.host.version
+    }
+    fn guest_version(&self) -> &str {
+        &self.binary.version
+    }
+    fn guest_digest(&self) -> &str {
+        &self.binary.digest
+    }
+    fn protocol(&self) -> u32 {
+        self.binary.protocol
+    }
+    fn paths(&self) -> &WorkspacePathMap {
+        &self.paths
+    }
+    fn sources(&self) -> &[WorkspacePinnedSource] {
+        &self.sources
+    }
+}
+
 /// A container-mode guest's local read surface: the pinned context and the
 /// mounted checkout, nothing else (R2).
 ///
 /// It holds no capability and no enrolment credential, so a local read cannot
 /// enrol, and it has no writer, so a local read cannot write.
 pub(crate) struct GuestLocalReads<'a> {
-    pub(crate) context: &'a WorkspaceContext,
+    pub(crate) context: &'a (dyn LocalReadSource + 'a),
     pub(crate) guest: &'a mut dyn GuestReader,
     pub(crate) checkout: &'a mut dyn CheckoutReader,
 }
@@ -520,20 +560,22 @@ impl GuestLocalReads<'_> {
         request: &LocalRead,
         context_generation: u64,
     ) -> Result<LocalReadOutcome, LocalReadError> {
-        if context_generation != self.context.generation {
-            return Err(
-                ContextRefusal::stale_context(context_generation, self.context.generation).into(),
-            );
+        if context_generation != self.context.context_generation() {
+            return Err(ContextRefusal::stale_context(
+                context_generation,
+                self.context.context_generation(),
+            )
+            .into());
         }
         match request {
             LocalRead::Version => Ok(LocalReadOutcome::Version {
-                host_version: self.context.host.version.clone(),
-                guest_version: self.context.binary.version.clone(),
-                digest: self.context.binary.digest.clone(),
-                protocol: self.context.binary.protocol,
-                context_generation: self.context.generation,
+                host_version: self.context.host_version().to_owned(),
+                guest_version: self.context.guest_version().to_owned(),
+                digest: self.context.guest_digest().to_owned(),
+                protocol: self.context.protocol(),
+                context_generation: self.context.context_generation(),
             }),
-            LocalRead::Sources => Ok(LocalReadOutcome::Sources(self.context.sources.clone())),
+            LocalRead::Sources => Ok(LocalReadOutcome::Sources(self.context.sources().to_vec())),
             LocalRead::Tasks => self.read_pinned_tasks(),
             LocalRead::CheckoutFile(relative) => {
                 let bytes = self.checkout.read_checkout_file(relative)?;
@@ -542,7 +584,7 @@ impl GuestLocalReads<'_> {
                     None => Err(LocalReadError::Refused(ContextRefusal::unavailable(
                         format!(
                             "`{relative}` is not in the mounted checkout at `{guest}`",
-                            guest = self.context.paths.guest_checkout
+                            guest = self.context.paths().guest_checkout
                         ),
                     ))),
                 }
@@ -561,12 +603,12 @@ impl GuestLocalReads<'_> {
         self.verify_checkout_pins()?;
         let pin = self
             .context
-            .sources
+            .sources()
             .iter()
             .find(|source| source.kind == COMPOSED_MANIFEST_KIND)
             .or_else(|| {
                 self.context
-                    .sources
+                    .sources()
                     .iter()
                     .find(|source| source.kind == "manifest")
             })
@@ -609,10 +651,10 @@ impl GuestLocalReads<'_> {
     /// A pin whose bytes no longer match is a checkout that moved on since
     /// Prepare; the read refuses instead of reading unapproved inputs.
     fn verify_checkout_pins(&mut self) -> Result<(), LocalReadError> {
-        let checkout_root = self.context.paths.guest_checkout.trim_end_matches('/');
+        let checkout_root = self.context.paths().guest_checkout.trim_end_matches('/');
         let pins = self
             .context
-            .sources
+            .sources()
             .iter()
             .filter_map(|pin| {
                 let relative = checkout_relative(pin.snapshot.as_deref()?, checkout_root)?;
@@ -649,7 +691,7 @@ impl GuestLocalReads<'_> {
         &mut self,
         pin: &WorkspacePinnedSource,
     ) -> Result<Vec<u8>, LocalReadError> {
-        let checkout_root = self.context.paths.guest_checkout.trim_end_matches('/');
+        let checkout_root = self.context.paths().guest_checkout.trim_end_matches('/');
         let Some(snapshot) = pin.snapshot.as_deref() else {
             return Err(LocalReadError::Refused(ContextRefusal::unavailable(
                 format!(
@@ -1048,6 +1090,13 @@ impl WorkspaceEnrolmentCredential {
             container_id: container_id.into(),
             secret: secret.into(),
         }
+    }
+
+    /// The credential secret itself. It stays in trusted host memory: it is
+    /// handed to the session's grant book, never logged, serialized or copied
+    /// into a guest-visible field.
+    pub(crate) fn secret(&self) -> &str {
+        &self.secret
     }
 
     /// The bytes Prepare writes 0600 for the workspace user. Never logged.

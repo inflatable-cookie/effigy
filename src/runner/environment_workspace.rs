@@ -37,6 +37,10 @@ pub(in crate::runner) trait WorkspaceSelectionIo: SelectorReader {
 pub(in crate::runner) struct WorkspacePublication<'a> {
     pub(in crate::runner) receipt: SelectionReceipt,
     pub(in crate::runner) channel: PreparedHostChannel,
+    /// The validated facts this session serves with, frozen before the Env
+    /// commit and the selector switch (contract 052 §8.11, owner ruling
+    /// 2026-10-30). The serving owner constructs the channel server from it.
+    pub(in crate::runner) serving: crate::runner::workspace_client::ServingFacts,
     pub(in crate::runner) guest: Box<dyn WorkspaceSelectionIo + 'a>,
 }
 
@@ -55,6 +59,9 @@ pub(in crate::runner) struct WorkspaceOwner {
     pub(in crate::runner) supervisor: SessionSupervisor<'static>,
     pub(in crate::runner) session: SessionRef,
     pub(in crate::runner) channel: PreparedHostChannel,
+    /// The serving facts the publication validated; carried unchanged into the
+    /// serving owner with the adopted supervisor.
+    pub(in crate::runner) serving: crate::runner::workspace_client::ServingFacts,
     pub(in crate::runner) effect: Arc<effigy_kernel::ctx::EffectContext>,
     pub(in crate::runner) observe: Arc<effigy_kernel::ctx::ObserveContext>,
     pub(in crate::runner) root: &'static effigy_kernel::root::StateRoot,
@@ -174,9 +181,9 @@ pub(in crate::runner) fn up<'a>(
             publication.channel.launch.stop();
             return Err(error);
         }
-        Ok(publication.channel)
+        Ok((publication.channel, publication.serving))
     })();
-    let channel = match result {
+    let (channel, serving) = match result {
         Ok(channel) => channel,
         Err(cause) => {
             let cleanup = activation
@@ -194,6 +201,7 @@ pub(in crate::runner) fn up<'a>(
         supervisor,
         session,
         channel,
+        serving,
         effect,
         observe,
         root: ctx.root,

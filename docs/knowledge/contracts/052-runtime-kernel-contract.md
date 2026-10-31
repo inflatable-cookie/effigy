@@ -3471,6 +3471,302 @@ native identity/dial/observe/invoke/reconnect qualification. Proposed selectors 
 fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
 #452's stop conditions.
 
+#### Implemented: the client glue (effigy#452)
+
+`src/runner/workspace_client.rs` is the one integration file this section
+allows to join the lanes, and it takes the module root lane C left as
+`src/runner/workspace_client/mod.rs`. It owns no authority: no store, no gate,
+no run, no resolution and no second credential.
+
+- **Dispatch.** `runner::run_command`, `run_command_with_context` and
+  `run_skill_passthrough_with_context` consult the guest dispatch first. It
+  returns `None` when no context is published, so an ordinary host command and
+  a hybrid workspace take the unchanged host dispatch and nothing is written.
+  Every other entry point — `effigy container …` and `effigy workspace …`
+  included — reaches it through that one seam, so those two command modules
+  needed no adaptation of their own.
+- **Local reads.** Version, the pinned task list from the context's composed
+  manifest snapshot, the pinned sources and a checkout-relative file read are
+  served by lane C's `GuestLocalReads` from the published generation and the
+  mounted checkout. They open no connection, hold no capability and write
+  nothing.
+- **Host authority.** Everything else becomes one channel request: `observe`
+  for a live read (`doctor`, run and container status, logs, hosts, scope) and
+  `invoke` for anything with authority (tasks, `container down` and the rest of
+  the container lifecycle, the workspace entry, stores, delivery). The method
+  label grants nothing — the host decides the effect class from its own policy.
+  The body carries a selector, the checkout-relative cwd, the host target, the
+  operator's own arguments and the output mode; it carries no plan, executable,
+  entry point or state root.
+- **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
+  authentication) and a request-level refusal both return an error that names
+  lane A's stable code; nothing falls back to guest state or guest execution.
+  One request is one `Intent` — its id and body together — so a connection that
+  dies before answering is replayed on a fresh connection under the same id and
+  the host answers from its record instead of admitting a second run. Detach is
+  accepted only for the run this connection admitted, so a secondary terminal
+  leaving writes no control frame. Stream frames are acknowledged and dropped:
+  output belongs to the session front end that attaches.
+- **Pin before hello.** The server identity the selected context pinned is
+  checked against what the transport verified *before* the first byte is
+  written: a mispinned peer receives no `hello`, no version, no digest and no
+  capability (§8.11). The negotiation follows, then the credential, then the
+  request.
+- **Attach, cursor and reconnect.** An attach is an `Intent` like any other, so
+  its request id is its attachment identity: the same intent on the same
+  connection is the same attachment, never a second one. The client
+  acknowledges data frames and records the highest consumed sequence per stream;
+  a `gap` never advances it, and `Intent::resume_attach` asks from where the
+  reader truly stopped. A cursor the host cannot resume is a typed refusal, not
+  a silent restart.
+- **Typed refusals.** A refusal code is preserved (`identity_mismatch`,
+  `stale_context`, `unauthenticated`, `forbidden`, `held_by`, `invalid_request`,
+  …) and a transport failure is reported as unavailable/`unknown`, never as a
+  success or a refusal. Neither becomes a different claim on the way out.
+
+Three facts the merged lanes do not give a guest are refused for rather than
+guessed at. Each refusal names what is missing; none of them falls back:
+
+- **The container identity.** `context::GuestWorkspace::probe_container_identity`
+  is the host's Prepare probe. Nothing in the guest observes its own container
+  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
+  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
+  refuses host access and leaves local reads working.
+- **The transport.** Every context published today carries
+  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
+  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
+  a backend with no qualified transport.
+- **The session generation.** A direct terminal must present
+  `workspace_channel::EnrolRequest::session_generation`, and the published
+  context names only `session_run_id`. `enrolment_session` refuses instead of
+  presenting a generation nobody published (§8.8: a missing credential leaves
+  local reads working and reports host access unavailable).
+
+Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
+pinned read and its stability, hybrid detection writing nothing, the dispatch
+table for command and container entry, each refusal (version, identity,
+generation, capability, unqualified channel) before any effect, the host's real
+`Server` over an in-memory transport reaching resolution and the kernel's own
+admission record, a repeated intent answered from that record, and a secondary
+terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
+and lane B's `test:kernel:workspace` own the wire and session halves. The
+transport, the guest container observation and the published session
+generation remain their own tasks.
+
+**Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
+consumes what a prepared channel was waiting for. `ServingOwner` holds the
+adopted `SessionSupervisor`, the `SessionLaunch` with its listener and key, the
+accept source and the kernel dispatcher. Its turn marks the launch serving for
+the adopted run *before* it accepts anything, so no connection is taken for a
+session nothing owns or a locator that was never published; it then feeds the
+accepted transport to the kernel's `Server::serve`, which keeps its own pin
+check, session fence, grants and frame limits. Accepting is bounded and returns
+"nothing waiting", so the supervisor owns the cadence; `run` polls until its own
+stop flag. Dropping or stopping the owner stops the listener and wipes the key,
+and the run's settlement takes the same custody — so neither the socket nor the
+signing key outlives its owner. `ChannelAccept` is the typed seam: production
+binds `HostChannelAcceptor`, and a proof supplies scripted transports.
+
+Proofs for it: a connection is refused acceptance until the run serves (the
+fake acceptor asserts `launch.serving(run)` on every hand-over), an accepted
+connection's negotiation reaches the dispatcher and is answered, and both
+`stop` and dropping the owner close the bound socket and wipe the key.
+
+**Frozen activation handoff (effigy#452, trace finding 11).**
+`ServingOwner::adopt_owned` is the consuming entry the environment calls once,
+after its environment commit, CAS receipt and `selection_switched` record, with
+the owned values it produced:
+
+```rust
+ServingOwner::adopt_owned(
+    OwnedWorkspaceChannel {
+        supervisor,            // the run already adopted under its supervisor id
+        session: SessionRef,
+        channel: PreparedHostChannel,
+        effect: Arc<EffectContext>,     // the activation's own retained operation
+        observe: Arc<ObserveContext>,   // derived from that same operation
+        root: &'a StateRoot,            // the environment's cached state root
+    },
+    dispatcher,
+) -> Result<ServingOwner, AdoptError>
+```
+
+**#452 integration scope and its binding state (owner ruling, 2026-10-30).**
+With #482 and #504 merged, two adapters are this task's own work rather than
+another lane's.
+
+*Bound (this branch):*
+
+- **Guest-local reads over the one strict canonical document.**
+  `workspace_client::context::LocalReadSource` is the narrow view a local read
+  uses, and `LocalReadSource for v2::WorkspaceContextV2` serves
+  `context_generation`, version/artifact digest/protocol, `paths` and `sources`
+  from the canonical `WorkspaceContextDocument`. `GuestLocalReads` therefore
+  has one bounded read implementation for both the producer's v1 projection and
+  the guest's v2 document; it holds no capability and no writer, so
+  `LocalRead`/`Static`/local `Observe` still admit nothing and enrol nothing.
+- **`detect()` binds v2 after an independent identity observation.**
+  `context::v2::read_published_guest(&mut dyn GuestReader, &mut dyn
+  identity::GuestIdentity) -> Result<Option<v2::PublishedGuestContext>,
+  ContextReadError>` strictly parses the published generation (v1 bytes refuse,
+  nothing is reinterpreted) and compares the document's container id, VM boot,
+  platform and libc against `ProcGuestIdentity::process()`'s own observation
+  before selecting `GuestPlacement::Guest`. An unproven or disagreeing
+  observation refuses before any local read or connection. The placeholder
+  identity seam (`GuestIdentity`, `UnobservedContainer`, `live_guest_run` over
+  v1) is deleted in the same binding.
+- **Pin, then credential.** `WorkspaceClient::connect` performs
+  `check_server_pin` and the `hello`/`HelloOk` negotiation only;
+  `ChannelRequest::authenticate` presents the capability or enrolment
+  credential after that, and the guest reads the credential from private
+  storage only once the connection's peer verified as the pinned host. A
+  mispinned peer therefore receives zero `hello` bytes and causes zero
+  credential reads. The v2 document's `credential.path` and
+  `credential.digest` are the ones used, and bytes that differ from the pinned
+  digest refuse instead of being presented. A direct terminal presents the
+  published `session { run_id, generation }`.
+
+*Bound (owner ruling 2026-10-30, bounded engine-owned handoff):*
+
+- **The exact reservation reaches the admitting run.** `managed_run::client::start_admitted`
+  carries a dispatcher's `AdmissionTicket` unchanged into the same
+  `EngineLaunch.admission` field the supervisor config already had; the engine reads it
+  back as `EngineSession::admission()` and `managed_run::engine::own` threads it into
+  `task_engine::run::TaskRunRequest::workspace_admission` (a new field beside the existing
+  Q-006 `admission`). A ticketed top-level task run uses `opts.id = ticket.run()` and
+  `Run::begin_admitted(…, ticket)` under the same gate, predecessor settlement, custody
+  and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
+  calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
+  admission transaction, so the ticket alone binds nothing.
+- **Shapes that cannot honour the exact run refuse before any effect.**
+  `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
+  run, a nested task run, a caller-keyed run and a run that would take a task-declared
+  shared lock first: each would own another run or another id, so each refuses instead of
+  admitting a second run or discarding the reservation. Ordinary no-ticket runs take the
+  unchanged `Run::begin` / `begin_child` paths.
+- **Proofs.** `task_engine::tests` reserves a key against a live session run and shows the
+  admitted run id equals the ticket's, that the key replays from `Recorded` rather than
+  admitting again, that the spent ticket refuses a second admission, and the full refusal
+  matrix. `task_engine`, `run_control`, `managed_secrets` and `remote` fixtures prove the
+  ordinary paths keep their shape with `workspace_admission: None`.
+
+*Bound (owner ruling 2026-10-30, C-to-glue serving-facts handoff):*
+
+- **One typed serving value crosses the publication handoff.**
+  `workspace_client::ServingFacts::validated(document, receipt, selection, credential,
+  locator)` freezes `workspace_channel::Negotiation`, `SessionFence`, the TLS `pin`, the
+  host checkout and the narrow enrolment secret/scope from the strict v2 document, the
+  committed `SelectionReceipt`, the switched `GuestSelection` and the session-owned
+  qualified channel. It runs in `prepare_reserved_guest` **before** the Env commit and
+  the selector switch, and refuses when any equality disagrees: receipt vs document
+  (context generation, container, VM boot, artifact digest, environment generation),
+  selection vs session (binary digest, context/credential generations, run and
+  generation) and qualified channel vs document (session, pin, exact bound endpoint).
+  The numeric host bind stays distinct from the guest alias: only `ServingLease::endpoint`
+  names it.
+- **The value is carried, never rebuilt.** `WorkspacePublication` and `WorkspaceOwner`
+  gain the typed field, and `OwnedWorkspaceChannel` forwards it into `ServingOwner`,
+  which retains it for the session's whole life. Its `Debug` redacts the enrolment
+  secret; it is never serialized, logged or copied into a guest-visible field, and the
+  session's `GrantBook` is seeded from it only (`grant_book()`), so revocation and drop
+  follow the owner.
+- **The enrolment credential must be a canonical channel secret.** The 64-hex text the
+  guest presents is the exact bytes the grant book matches, so publication refuses any
+  other shape instead of installing an unusable credential. No production mint site
+  exists yet (the activation caller is still #482-owned); the focused fixtures mint a
+  canonical secret.
+
+*Remaining binding:*
+
+- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
+  now supplies every fact `channel::Server::new` needs, so the remaining work is the
+  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
+  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
+  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
+  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
+  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
+  no kernel or lane module changes are needed.
+
+**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+call site, and the binding replaces the bridge entirely rather than adding a
+second seam:
+
+- `workspace_client::context::v2::read_published_v2(&mut dyn GuestReader) ->
+  Result<Option<WorkspaceContextV2>, ContextReadError>` strictly parses the
+  canonical kernel document; v1 refuses and nothing is reinterpreted. An
+  unprepared workspace still reads as "not a guest".
+- `WorkspaceContextV2::verify(&mut dyn identity::GuestIdentity, &LiveGuestRun) ->
+  Result<VerifiedWorkspaceContext, ContextRefusal>` takes the shared identity
+  trait `workspace_client::identity::GuestIdentity { fn observe(&mut self) ->
+  Result<GuestSelfObservation, GuestIdentityRefusal> }`, whose production
+  implementation is `ProcGuestIdentity::process() -> Self` — infallible, stateless
+  and zero-sized, and not `Clone`. One mutable instance is held for one command and
+  handed to `verify` as `&mut`; `verify` re-observes independently before it grants
+  a `VerifiedWorkspaceContext`, so nothing is cached, retained or reused between
+  commands. The observation carries the full container id, VM boot, platform and
+  libc and compares them itself (`GuestSelfObservation::compare`), so no guest
+  trusts the context's own claim.
+- The verified value carries `session_run_id: String` and a nonzero exact
+  `session_generation: u64`, the admitted session's own S, distinct from the
+  environment generation and the context generation. A direct terminal's
+  enrolment therefore takes `SessionIdentity { run: RunId parsed from
+  session_run_id, generation: Generation::new(session_generation) }` from it, and
+  the "no published session generation" refusal disappears.
+
+The binding commit deleted this module's placeholder identity seam
+(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and bound the paths
+above at the same call site: `detect` now selects the strict document only after
+`ProcGuestIdentity` observed and compared the container itself, and every
+authority request re-verifies that same document against the retained
+observation before it opens a connection.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+two contexts are retained as owned `Arc` handles rather than borrowed for
+`'static`: the environment context is local to the activation, and the activation
+hands over its own operation and cancellation state instead of leaking it or
+building a self-referential owner. The root is the environment's cached
+`StateRoot` reference. The entry refuses a prepared channel whose locator names
+another session, and retains run, listener, key, advertised locator and both
+contexts for the session's whole life; the activation must move them and not
+keep, drop or recreate them when its call returns. `settle` stops serving, stops
+the listener, wipes the key and settles the adopted run through the kernel's
+close transaction; dropping the owner stops the listener and wipes the key
+without settling, so the supervisor decides the outcome.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+entry refuses a prepared channel whose locator names another session, and
+retains run, listener, key and advertised locator for the session's whole life;
+the activation must move them and not keep, drop or recreate them when its call
+returns. `settle` stops serving, stops the listener, wipes the key and settles
+the adopted run through the kernel's close transaction; dropping the owner
+stops the listener and wipes the key without settling, so the supervisor decides
+the outcome.
+
+The pinned TLS connection is the production transport now that #504 merged: a
+context that qualifies a locator is opened through `PinnedChannelOpener`
+(alias resolution, exact bound port, SPKI pin during the handshake) and the
+guest client's own `check_server_pin` still runs before the first byte. A
+context whose locator is not a qualified alias refuses `unavailable` and local
+reads keep working. #482's production context and the guest-local identity
+observation are bound by `read_published_guest` (§8.1: the context's own
+container claim is never trusted).
+
+Session custody is durable and released in the close. `SessionSupervisor::adopt`
+records `workspace_session_custody`, and a run's close transaction now deletes
+the row for that exact run in the same commit that writes `phase='closed'`
+(`run/settle.rs`, beside `workspace::closed`). Nothing releases it earlier: a
+crash or a stopped listener before the close keeps the row, so a successor still
+finds the recorded owner and settles or refuses instead of silently dropping
+authority, and a settled session is never an owner.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
