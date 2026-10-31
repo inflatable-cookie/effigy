@@ -391,6 +391,10 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
+    /// The session's one live listener claim, when this run is a workspace
+    /// session. A second launch for the same session refuses instead of opening
+    /// a second listener and key under one session's custody.
+    session_launch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for Run<'_> {
@@ -706,6 +710,7 @@ impl<'a> Run<'a> {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
+                session_launch: None,
             };
             previous.settle_recovering(
                 &cleanup,
@@ -765,6 +770,7 @@ impl<'a> Run<'a> {
             checkout_custody: None,
             ancestor_closure: None,
             processes: Default::default(),
+            session_launch: None,
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
@@ -802,6 +808,29 @@ impl<'a> Run<'a> {
     /// workspace session yields one, so a listener and key are always launched
     /// for the detached session owner itself, never for a binding a caller
     /// assembled or for an environment run.
+    /// Claim the session's one live listener for this run.
+    ///
+    /// A workspace session has exactly one listener and key: a second launch for
+    /// a session whose listener is already live refuses here, so one session can
+    /// never serve through two owners. The claim is released when the launch
+    /// stops or its run settles.
+    pub(crate) fn claim_session_launch(
+        &mut self,
+    ) -> Result<
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        crate::workspace_session::ServingRefusal,
+    > {
+        use std::sync::atomic::Ordering;
+        if let Some(existing) = &self.session_launch {
+            if existing.load(Ordering::SeqCst) {
+                return Err(crate::workspace_session::ServingRefusal::AlreadyPublished);
+            }
+        }
+        let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        self.session_launch = Some(claim.clone());
+        Ok(claim)
+    }
+
     pub fn session_owner(&mut self) -> Result<crate::workspace_session::SessionOwner, RunError> {
         self.can_effect()?;
         if self.owner.resource.kind() != crate::id::ResourceKind::Task {

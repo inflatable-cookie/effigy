@@ -339,26 +339,6 @@ fn only_the_committed_lease_hands_off() {
     });
 
     with_serving_session(|mut supervisor, session, cx, root, observe| {
-        // Two prepares on one session publish two leases. The custody holds the
-        // first; a commit that recorded the second is not this custody's.
-        let first = prepare_owned_channel(&mut supervisor, &session);
-        let second = prepare_owned_channel(&mut supervisor, &session);
-        let endpoint = first.launch.endpoint().expect("bound");
-        let other = published(&second);
-        assert!(matches!(
-            ServingHandoff::validated(
-                owner(supervisor, &session, first, cx, observe, root),
-                &other,
-            ),
-            Err(HandoffRefusal::Unpublished)
-        ));
-        assert!(
-            TcpStream::connect(endpoint).is_err(),
-            "an uncommitted custody keeps nothing listening"
-        );
-    });
-
-    with_serving_session(|mut supervisor, session, cx, root, observe| {
         let mut prepared = prepare_owned_channel(&mut supervisor, &session);
         let lease = published(&prepared);
         // A launch whose key is gone cannot serve under it.
@@ -459,28 +439,61 @@ fn serving_ends_on_a_stop_an_owner_loss_or_a_refused_custody() {
 
 /// A serving owner that published another lease is not retained under this
 /// one: adoption refuses and the candidate it was handed stops.
+/// A custody is retained under its own published lease only: another session's
+/// lease refuses, and the candidate it came with stops.
 #[test]
-fn a_server_that_published_another_lease_is_not_retained() {
+fn a_custody_is_not_retained_under_another_sessions_lease() {
     use crate::runner::workspace_client::serving::{AdoptError, ServingOwner};
+
+    let foreign = with_serving_session(|mut supervisor, session, _cx, _root, _observe| {
+        published(&prepare_owned_channel(&mut supervisor, &session))
+    });
 
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let first = prepare_owned_channel(&mut supervisor, &session);
         let endpoint = first.launch.endpoint().expect("bound");
-        let second = prepare_owned_channel(&mut supervisor, &session);
-        let other = published(&second);
-        assert_ne!(other, published(&first), "two prepares publish two leases");
-
         let adopted =
             ServingOwner::adopt_production(owner(supervisor, &session, first, cx, observe, root))
-                .expect("the first channel adopts under its own lease");
-        let refused = ServiceOwner::retained(adopted, session, other);
+                .expect("the channel adopts under its own lease");
+        let refused = ServiceOwner::retained(adopted, session, foreign);
         assert!(
             matches!(refused, Err(AdoptError::WrongSession)),
-            "a server that published another lease is not retained"
+            "a custody is not retained under another session's lease"
         );
         assert!(
             TcpStream::connect(endpoint).is_err(),
-            "refusing to retain a lease stops the candidate"
+            "refusing to retain the custody stops the candidate"
+        );
+    });
+}
+
+/// One session serves through exactly one owner: a second launch for the same
+/// session refuses at the kernel boundary instead of opening a second listener.
+#[test]
+fn a_session_serves_through_one_owner_only() {
+    use effigy_kernel::workspace_session::SessionLaunch;
+
+    with_serving_session(|mut supervisor, session, _cx, _root, _observe| {
+        let _first = prepare_owned_channel(&mut supervisor, &session);
+        let (listener, key, _acceptor) =
+            crate::runner::workspace_transport::listener::SessionTlsListener::bind(
+                std::net::SocketAddr::from(([127u8, 0, 0, 1], 0)),
+                Duration::from_millis(500),
+            )
+            .expect("a second bound listener");
+        let second = SessionLaunch::launch(
+            &mut supervisor,
+            &session,
+            "507-competing-owner",
+            key,
+            Box::new(listener),
+        );
+        assert!(
+            matches!(
+                second,
+                Err(effigy_kernel::workspace_session::ServingRefusal::AlreadyPublished)
+            ),
+            "a second owner for one session refuses"
         );
     });
 }

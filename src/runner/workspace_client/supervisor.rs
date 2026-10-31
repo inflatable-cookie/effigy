@@ -545,10 +545,17 @@ impl<'a> ServiceOwner<'a> {
             owner.stop();
             return Err(AdoptError::WrongSession);
         }
-        // A custody that carries its published locator must have published
-        // exactly this lease. Only an injected disposable activation, which has
-        // no qualified locator, is identified by the lease its caller just
-        // published for this session.
+        // The structural fence, for every path: the custody's own launch must
+        // have published exactly this lease. A launch that published nothing, or
+        // another lease, is not this session's service — an injected activation
+        // cannot name a lease its listener never published, and a qualified
+        // custody must agree with the locator it advertises.
+        let published = owner.launch().and_then(|launch| launch.lease());
+        if published.as_ref() != Some(&lease) {
+            let mut owner = owner;
+            owner.stop();
+            return Err(AdoptError::WrongSession);
+        }
         if let Some(locator) = owner.locator() {
             if locator.bound().lease() != &lease {
                 let mut owner = owner;

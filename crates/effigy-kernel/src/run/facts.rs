@@ -78,6 +78,7 @@ impl MachineFacts {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
+                session_launch: None,
             };
             previous.settle_inner(cleanup, adapter)?;
             let effects = previous

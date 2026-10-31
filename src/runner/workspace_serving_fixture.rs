@@ -23,6 +23,17 @@ use super::workspace_client::serving_host::{self, ServingHostRequest};
 /// acknowledge the kernel detach and return that result as JSON. The caller is
 /// expected to exit: the host keeps serving in its own process.
 pub fn initiate(request_json: &str) -> Result<String, String> {
+    initiate_with(request_json, true)
+}
+
+/// The same launch, but the front end exits **without** acknowledging the
+/// detach: the kernel's owner-loss path. The host must stop serving and settle
+/// instead of claiming the session it announced.
+pub fn initiate_abandoning(request_json: &str) -> Result<String, String> {
+    initiate_with(request_json, false)
+}
+
+fn initiate_with(request_json: &str, detach: bool) -> Result<String, String> {
     let request: ServingHostRequest =
         serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
@@ -37,14 +48,32 @@ pub fn initiate(request_json: &str) -> Result<String, String> {
     let published = host
         .await_serving(&cx, Duration::from_secs(120))
         .map_err(|error| format!("the startup result: {error}"))?;
-    let supervisor_run = host
-        .detach(&cx)
-        .map_err(|error| format!("the detach: {error}"))?;
+    let supervisor_run = if detach {
+        host.detach(&cx)
+            .map_err(|error| format!("the detach: {error}"))?
+    } else {
+        // No acknowledgement: dropping the front end here is owner loss.
+        let run = host.run();
+        drop(host);
+        run
+    };
     serde_json::to_string(&serde_json::json!({
         "supervisor_run": supervisor_run.to_string(),
         "published": published,
+        "detached": detach,
     }))
     .map_err(|error| format!("the result: {error}"))
+}
+
+/// Read one request from stdin, launch it without acknowledging the detach and
+/// print the result.
+pub fn initiate_abandoning_from_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|error| format!("the request could not be read: {error}"))?;
+    initiate_abandoning(body.trim())
 }
 
 /// Read one request from stdin, initiate it and print the result.

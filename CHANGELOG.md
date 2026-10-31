@@ -216,7 +216,11 @@ until the host-log writer has a safe secret-handling boundary.
   The container-up producer stays #452's (`ContainerUp` refuses by name in this
   head); the process-lifetime proof runs the same launcher with the disposable
   activation the `workspace-serving-fixture` feature compiles in, so it proves
-  process custody and not container-mode preparation.
+  process custody and not container-mode preparation. One session serves through
+  one owner: a second launch for a session whose listener is already live refuses
+  at the kernel boundary, and the claim is released only when that launch stops
+  or settles. An unacknowledged detach is the kernel's owner-loss path, which
+  stops serving and settles instead of claiming the session.
 
 - **A workspace terminal keeps its own capability, and a session's service has
   recovery, down and retirement seams.** A guest capability is now stored per

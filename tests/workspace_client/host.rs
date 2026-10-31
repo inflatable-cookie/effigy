@@ -101,6 +101,60 @@ fn endpoint_of(published_endpoint: &str) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
 
+/// One disposable request for a private fixture journal.
+fn request(fixture: &effigy_test_support::Fixture, project: &std::path::Path) -> serde_json::Value {
+    let checkout: Vec<u8> = (0u8..16).collect();
+    serde_json::json!({
+        "schema": "effigy.workspace-serving.v1",
+        "state_home": fixture.path().join("state"),
+        "project_path": project,
+        "checkout": checkout,
+        "environment": "serving-proof",
+        "profile": "default",
+        "activation": {
+            "kind": "Disposable",
+            "supervisor_id": "507-serving-proof",
+            "capability": CAPABILITY,
+            "tls_budget_ms": 1000,
+        },
+    })
+}
+
+/// Run one initiating front end to completion, in its own process, and read the
+/// result it printed. `entry` selects the acknowledging or the abandoning mode.
+fn initiate(entry: &str, request: &serde_json::Value) -> serde_json::Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg(entry)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the initiating process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("the request is written");
+    let output = child
+        .wait_with_output()
+        .expect("the initiating process exits");
+    assert!(
+        output.status.success(),
+        "the initiating process failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("the initiating process printed its result")
+}
+
+fn run_of(result: &serde_json::Value, field: &str) -> RunId {
+    result[field]
+        .as_str()
+        .expect("a run identity")
+        .parse()
+        .expect("a run id")
+}
+
 #[test]
 fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits() {
     let fixture = effigy_test_support::Fixture::new("workspace-serving-host").expect("fixture");
@@ -227,6 +281,110 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         assert!(
             Instant::now() < until,
             "the settled host released its listener"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // One settlement, complete cleanup, and nothing left to stop.
+    let settled = read_summary(&observe, &root, supervisor_run).expect("the closed host run");
+    assert_eq!(settled.phase, Phase::Closed);
+    assert_eq!(
+        settled.cleanup_complete,
+        Some(true),
+        "the host reports complete cleanup"
+    );
+    let session_settled =
+        read_summary(&observe, &root, session_run).expect("the closed session run");
+    assert_eq!(session_settled.phase, Phase::Closed);
+    assert_eq!(
+        session_settled.cleanup_complete,
+        Some(true),
+        "the session reports complete cleanup"
+    );
+    // A second stop is refused: the run already settled once.
+    let second = Request {
+        id: RunId::new(millis + 1, [0x44; 10]).expect("a request id"),
+        run: supervisor_run,
+        expected: Fence {
+            resource: settled
+                .invocation
+                .as_ref()
+                .expect("the host records its invocation")
+                .spec()
+                .owner
+                .clone(),
+            generation: settled.generation,
+        },
+        action: RequestAction::Stop,
+    };
+    assert!(
+        run::request(&cx, &root, &second).is_err(),
+        "a settled run takes no second stop"
+    );
+    assert_eq!(
+        read_summary(&observe, &root, supervisor_run).map(|summary| summary.phase),
+        Some(Phase::Closed),
+        "the settled run stays closed"
+    );
+}
+
+/// An unacknowledged detach is owner loss: the host stops serving and settles
+/// instead of claiming the session it announced, and nothing is left listening.
+#[test]
+fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving() {
+    let fixture =
+        effigy_test_support::Fixture::new("workspace-serving-abandoned").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = request(&fixture, &project);
+
+    // The initiating process announces the session and then exits *without*
+    // acknowledging the detach: the kernel's owner-loss window.
+    let result = initiate("__workspace-serving-fixture-abandon", &request);
+    assert_eq!(result["detached"], serde_json::json!(false));
+    let supervisor_run = run_of(&result, "supervisor_run");
+    let session_run = run_of(&result["published"], "session_run");
+    let endpoint = endpoint_of(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+
+    // Owner loss settles the host and its session, and releases the listener.
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let until = Instant::now() + Duration::from_secs(60);
+    loop {
+        let host = read_summary(&observe, &root, supervisor_run);
+        let session = read_summary(&observe, &root, session_run);
+        if matches!(
+            host.as_ref().map(|summary| summary.phase),
+            Some(Phase::Closed)
+        ) && matches!(
+            session.as_ref().map(|summary| summary.phase),
+            Some(Phase::Closed)
+        ) {
+            assert_eq!(
+                host.as_ref().and_then(|summary| summary.cleanup_complete),
+                Some(true),
+                "an owner-loss settle reports complete cleanup"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "an unacknowledged detach left the host serving"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let until = Instant::now() + Duration::from_secs(10);
+    while TcpStream::connect_timeout(&endpoint, Duration::from_secs(1)).is_ok() {
+        assert!(
+            Instant::now() < until,
+            "an owner-lost host released its listener"
         );
         std::thread::sleep(Duration::from_millis(50));
     }

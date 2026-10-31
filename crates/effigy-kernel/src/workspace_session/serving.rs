@@ -488,6 +488,9 @@ struct LaunchState {
     bound: Option<ChannelBound>,
     guest: Option<GuestLocator>,
     served: bool,
+    /// This session run's live-listener claim, released with the launch so a
+    /// successor may claim the session again after this one stops.
+    claim: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 #[derive(Debug)]
@@ -575,6 +578,11 @@ impl SessionLaunch {
         if listener.endpoint().is_none() {
             return Err(ServingRefusal::Unbound);
         }
+        // One session has one listener and key: a second launch for a session
+        // whose listener is already live refuses here instead of opening another.
+        let claim = session_run
+            .claim_session_launch()
+            .map_err(|refusal| refusal)?;
         let state = std::sync::Arc::new(std::sync::Mutex::new(LaunchState {
             held: Some(Held {
                 listener: Some(listener),
@@ -585,6 +593,7 @@ impl SessionLaunch {
             bound: None,
             guest: None,
             served: false,
+            claim: Some(claim),
         }));
         // The session run is the custody: settling it takes the listener and the
         // key away, so a settled session neither serves nor keeps a socket open.
@@ -916,6 +925,9 @@ fn release_state(state: &std::sync::Arc<std::sync::Mutex<LaunchState>>) {
     state.owned = false;
     state.bound = None;
     state.served = false;
+    if let Some(claim) = state.claim.take() {
+        claim.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
     if let Some(mut held) = state.held.take() {
         if let Some(mut listener) = held.listener.take() {
             listener.stop();
