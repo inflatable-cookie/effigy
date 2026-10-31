@@ -1352,20 +1352,18 @@ fn the_preflight_publishes_the_frozen_render_through_the_kernel_owner() {
 
         // The final publisher (the reconcile/apply path) accepts the very same
         // object: content-addressed, so nothing is rewritten or replaced.
-        let before: Vec<_> = render
-            .closure
-            .files()
-            .iter()
-            .map(|(relative, _)| fs::read(render.path.join(relative)).expect("bytes"))
-            .collect();
+        let read_all = || {
+            render
+                .closure
+                .files()
+                .keys()
+                .map(|relative| fs::read(render.path.join(relative)).expect("bytes"))
+                .collect::<Vec<_>>()
+        };
+        let before = read_all();
         effigy_containers::publish_render(&policy)
             .expect("the kernel publisher accepts it unchanged");
-        let after: Vec<_> = render
-            .closure
-            .files()
-            .iter()
-            .map(|(relative, _)| fs::read(render.path.join(relative)).expect("bytes"))
-            .collect();
+        let after = read_all();
         assert_eq!(before, after, "publication never replaces the object");
     });
 }
