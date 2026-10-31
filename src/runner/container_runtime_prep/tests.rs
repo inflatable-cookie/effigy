@@ -1554,3 +1554,181 @@ fn the_predecessor_adapter_seals_an_unpublished_render_for_the_fenced_publisher(
         );
     });
 }
+
+/// A deterministic live-predecessor fixture behind the exec seam: the production
+/// adapter computes the compatibility facts, and the sealed receipt it retained is
+/// promoted by the environment's fenced publisher.
+struct FixturePredecessor {
+    rows: Vec<effigy_containers::exec::RunningComposeContainer>,
+    inspect: Vec<u8>,
+    hashes: std::collections::BTreeMap<String, String>,
+}
+
+impl super::PredecessorBackend for FixturePredecessor {
+    fn inventory(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::exec::RunningComposeContainer>>
+    {
+        effigy_kernel::observe::Observed::Verified(
+            self.rows.clone(),
+            effigy_kernel::observe::Evidence::new("fixture inventory".into(), None).expect("fixed"),
+        )
+    }
+    fn inspect(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: &str,
+        _: std::time::Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<u8>> {
+        effigy_kernel::observe::Observed::Verified(
+            self.inspect.clone(),
+            effigy_kernel::observe::Evidence::new("fixture inspect".into(), None).expect("fixed"),
+        )
+    }
+    fn config_hashes(
+        &mut self,
+        _: &Path,
+        _: &effigy_containers::EffectiveContainerPolicy,
+        _: std::time::Instant,
+    ) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+        Ok(self.hashes.clone())
+    }
+}
+
+/// The required proof: the production adapter, an unpublished frozen render, a
+/// deterministic live predecessor whose Compose config hash matches, and the
+/// environment's fenced publisher promoting the exact seal it retained.
+#[test]
+fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes() {
+    let fixture = effigy_test_support::Fixture::new("effigy-predecessor-live-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let sealed = super::seal_render_for_preflight(
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("sealed");
+        let project = policy.project_name.clone();
+        let id = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
+        let config_hash = "0123456789abcdef0123456789abcdef";
+        let checkout_path = checkout
+            .canonicalize()
+            .unwrap_or_else(|_| checkout.clone())
+            .display()
+            .to_string();
+        let inspect = format!(
+            r#"[{{"Id":"{id}","Name":"/{project}-app-1","State":{{"Status":"running","Running":true}},"Config":{{"Image":"example:one","Labels":{{"com.docker.compose.project":"{project}","com.docker.compose.service":"app","com.docker.compose.oneoff":"False","com.docker.compose.project.working_dir":"{checkout_path}","com.docker.compose.config-hash":"{config_hash}"}}}},"NetworkSettings":{{"Ports":{{}}}}}}]"#
+        );
+        let mut live = FixturePredecessor {
+            rows: vec![effigy_containers::exec::RunningComposeContainer {
+                container_name: format!("{project}-app-1"),
+                status: "Up 1 minute".into(),
+                ports: Vec::new(),
+                project_name: Some(project.clone()),
+                working_dir: Some(checkout_path.clone()),
+                service: Some("app".into()),
+                oneoff: false,
+            }],
+            inspect: inspect.into_bytes(),
+            hashes: [("app".to_owned(), config_hash.to_owned())]
+                .into_iter()
+                .collect(),
+        };
+
+        let observed = super::observed_predecessor_compatibility_with(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+            &mut live,
+        );
+        match observed {
+            effigy_kernel::observe::Observed::Verified(compatibility, _) => assert_eq!(
+                compatibility,
+                super::PredecessorCompatibility::Matches(vec![(
+                    id.to_owned(),
+                    config_hash.to_owned()
+                )]),
+                "the live predecessor's own config hash matches the render's"
+            ),
+            other => panic!("a matching live predecessor is verified: {other:?}"),
+        }
+
+        // The fenced publisher then promotes the very seal the adapter retained.
+        let ctx = crate::runner::environment::context(&checkout).expect("environment context");
+        let env = crate::runner::environment::env_ref(&policy).expect("environment ref");
+        effigy_containers::environment::activate_with(&ctx, &env, &[], |run| {
+            run.publish_sealed_desired(sealed.receipt(), sealed.closure().expect("closure"))
+                .map(|_| ())
+        })
+        .expect("the gated publisher accepts the adapter's seal");
+        assert_eq!(
+            effigy_kernel::objects::Objects::resolve(
+                &ctx.observe(),
+                ctx.root,
+                &env.resource,
+                effigy_kernel::objects::Role::Desired,
+            )
+            .verified()
+            .map(|object| object.closure.digest()),
+            policy.render.as_ref().map(|render| render.closure.digest())
+        );
+    });
+}
+
+/// The seal's state-root open and staging run on the owner's bounded worker: an
+/// expired budget refuses before either, and a stalled worker read is bounded by
+/// the same adapter the FIFO fault proofs exercise.
+#[test]
+fn an_expired_preflight_seal_opens_no_state_root_and_stages_nothing() {
+    let fixture = effigy_test_support::Fixture::new("effigy-preflight-stall-").expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    let home = fixture.path().join("home/.effigy");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(&home).expect("home");
+    fs::create_dir_all(checkout.join(".git")).expect("git directory");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n",
+    )
+    .expect("compose file");
+    effigy_containers::with_test_effigy_home(&home, || {
+        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        assert!(
+            super::seal_render_for_preflight(
+                &policy,
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
+            )
+            .is_err(),
+            "an expired budget refuses before opening or sealing"
+        );
+        // Nothing was staged under the state root's staging family.
+        let staging = checkout.join(".effigy/state/staging");
+        if let Ok(entries) = fs::read_dir(&staging) {
+            assert_eq!(entries.count(), 0, "no seal tree was created");
+        }
+    });
+}

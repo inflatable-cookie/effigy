@@ -845,10 +845,114 @@ impl PredecessorCompatibility {
 /// Interpolation is not replayed: the hash is computed from the frozen rendered
 /// closure and the project, so a service config that depends on apply-time
 /// environment values can differ and refuses, which is the safe direction.
+/// The backend reads the live-predecessor guard performs.
+///
+/// Production reads the runtime; a test supplies a deterministic fixture, so the
+/// adapter → Compose config hash → fenced reconcile path can be exercised without
+/// a live container runtime. Every method is bounded by the caller's deadline.
+pub(in crate::runner) trait PredecessorBackend {
+    fn inventory(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        deadline: Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::exec::RunningComposeContainer>>;
+    fn inspect(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        name: &str,
+        deadline: Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<u8>>;
+    fn config_hashes(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        deadline: Instant,
+    ) -> Result<std::collections::BTreeMap<String, String>, RunnerError>;
+}
+
+/// The production reads: the runtime inventory, its inspect and `compose
+/// config --hash`.
+#[derive(Debug, Default)]
+pub(in crate::runner) struct RuntimePredecessorBackend;
+
+impl PredecessorBackend for RuntimePredecessorBackend {
+    fn inventory(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        deadline: Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<effigy_containers::exec::RunningComposeContainer>>
+    {
+        match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+            repo_root,
+            policy,
+            Some(deadline),
+        ) {
+            Ok(rows) => effigy_kernel::observe::Observed::Verified(
+                rows,
+                effigy_kernel::observe::Evidence::new("project inventory".into(), None)
+                    .expect("fixed evidence"),
+            ),
+            Err(error) => effigy_kernel::observe::Observed::Unknown(
+                effigy_kernel::observe::UnknownReason::Inconsistent(format!(
+                    "the project inventory is unavailable: {error}"
+                )),
+            ),
+        }
+    }
+
+    fn inspect(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        name: &str,
+        deadline: Instant,
+    ) -> effigy_kernel::observe::Observed<Vec<u8>> {
+        use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+        match effigy_containers::exec::inspect_containers_for_policy(
+            repo_root,
+            policy,
+            std::slice::from_ref(&name.to_owned()),
+            Some(deadline),
+        ) {
+            Ok(output) => Observed::Verified(
+                output.stdout,
+                Evidence::new("container inspect".into(), None).expect("fixed evidence"),
+            ),
+            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(format!(
+                "the predecessor `{name}` could not be inspected: {error}"
+            ))),
+        }
+    }
+
+    fn config_hashes(
+        &mut self,
+        repo_root: &Path,
+        policy: &EffectiveContainerPolicy,
+        deadline: Instant,
+    ) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+        compose_service_config_hashes(repo_root, policy, deadline)
+    }
+}
+
 pub(in crate::runner) fn observed_predecessor_compatibility(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
+) -> effigy_kernel::observe::Observed<PredecessorCompatibility> {
+    let mut backend = RuntimePredecessorBackend;
+    observed_predecessor_compatibility_with(repo_root, policy, deadline, &mut backend)
+}
+
+/// The same observation over an injected backend seam. Production passes
+/// [`RuntimePredecessorBackend`]; a test supplies a deterministic fixture.
+pub(in crate::runner) fn observed_predecessor_compatibility_with(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+    backend: &mut dyn PredecessorBackend,
 ) -> effigy_kernel::observe::Observed<PredecessorCompatibility> {
     use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
 
@@ -876,14 +980,11 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
             reason,
         )) => return unknown(format!("the checkout's ownership is unproven: {reason}")),
     };
-    let rows = match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
-        repo_root,
-        policy,
-        Some(deadline),
-    ) {
-        Ok(rows) => rows,
-        Err(error) => {
-            return unknown(format!("the project inventory is unavailable: {error}"));
+    let rows = match backend.inventory(repo_root, policy, deadline) {
+        effigy_kernel::observe::Observed::Verified(rows, _) => rows,
+        effigy_kernel::observe::Observed::Unknown(reason) => return Observed::Unknown(reason),
+        effigy_kernel::observe::Observed::Absent(_) => {
+            return unknown("the project inventory is absent".into())
         }
     };
     let running = rows
@@ -900,7 +1001,7 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
             Evidence::new("project inventory".into(), None).expect("fixed evidence"),
         );
     }
-    let intended = match compose_service_config_hashes(repo_root, policy, deadline) {
+    let intended = match backend.config_hashes(repo_root, policy, deadline) {
         Ok(hashes) => hashes,
         Err(error) => {
             return unknown(format!(
@@ -910,18 +1011,14 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     };
     let mut compared = Vec::new();
     for row in running {
-        let inspected = match effigy_containers::exec::inspect_containers_for_policy(
-            repo_root,
-            policy,
-            std::slice::from_ref(&row.container_name),
-            Some(deadline),
-        ) {
-            Ok(output) => output.stdout,
-            Err(error) => {
+        let inspected = match backend.inspect(repo_root, policy, &row.container_name, deadline) {
+            effigy_kernel::observe::Observed::Verified(bytes, _) => bytes,
+            other => {
                 return unknown(format!(
-                    "the predecessor `{}` could not be inspected: {error}",
+                    "the predecessor `{}` inspect is {other:?}",
                     row.container_name
-                ));
+                ))
+                .into()
             }
         };
         let verified = match ownership.verify_inspected(repo_root, policy, &row, &inspected) {
