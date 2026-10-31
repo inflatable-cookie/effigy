@@ -1236,43 +1236,45 @@ pub(in crate::runner) struct WorkspaceSourceClosure {
     pub(in crate::runner) snapshots: Vec<(String, Vec<u8>)>,
 }
 
-/// Why a publication could not obtain the checkout's pinned source closure.
+/// Why one deadline-bounded publication read produced no value.
 #[derive(Debug)]
-pub(in crate::runner) enum SourceClosureRefusal {
-    /// The publication's one absolute deadline passed first.
+pub(in crate::runner) enum BoundedReadRefusal {
+    /// The publication's one absolute deadline passed before the read finished.
     TimedOut,
-    /// The checkout's sources could not be read or composed.
+    /// The read finished but could not produce a value.
     Unavailable(String),
 }
 
-/// The checkout's pinned source closure, produced within one absolute deadline.
+/// Run one read-only publication step on its own worker and stop waiting at the
+/// absolute deadline.
 ///
-/// The closure reads the checkout, composes the manifest (includes, the source
-/// lock, bundle and catalog roots, every fragment) and reads each fragment. None
-/// of those steps can be interrupted once started, so the whole sequence runs on
-/// its own worker and the caller stops waiting at the deadline: a publication that
-/// cannot close its pins returns Unknown/pending instead of running past the one
-/// budget it declared. An abandoned worker only reads, so leaving it behind
-/// cannot publish or mutate anything.
-pub(in crate::runner) fn workspace_source_closure_until(
-    repo_root: &Path,
-    paths: &WorkspacePathMap,
+/// The steps a publication needs — resolving the operator workspace and loading
+/// its manifest, closing the checkout's source closure, finding and
+/// authenticating the produced artifact and reading its sidecars — are
+/// synchronous file work that cannot be interrupted once started. A clock check
+/// before or after such a call cannot enforce a budget while it is blocked, so
+/// each step runs here and the caller stops waiting at the deadline, reporting
+/// the fact unknown (the publication's pending/unknown path). An abandoned worker
+/// only reads: it cannot publish, mutate or hold an authority.
+pub(in crate::runner) fn bounded_publication_read<T, F>(
+    name: &'static str,
     until: std::time::Instant,
-) -> Result<WorkspaceSourceClosure, SourceClosureRefusal> {
+    read: F,
+) -> Result<T, BoundedReadRefusal>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, RunnerError> + Send + 'static,
+{
     use std::sync::mpsc::{channel, RecvTimeoutError};
 
-    let owned_root = repo_root.to_path_buf();
-    let owned_paths = paths.clone();
     let (send, receive) = channel();
     let worker = std::thread::Builder::new()
-        .name("effigy-workspace-source-closure".to_owned())
+        .name(format!("effigy-publication-{name}"))
         .spawn(move || {
-            let _ = send.send(workspace_source_closure(&owned_root, &owned_paths));
+            let _ = send.send(read());
         })
         .map_err(|error| {
-            SourceClosureRefusal::Unavailable(format!(
-                "the source closure worker could not start: {error}"
-            ))
+            BoundedReadRefusal::Unavailable(format!("the {name} worker could not start: {error}"))
         })?;
     let remaining = until.saturating_duration_since(std::time::Instant::now());
     let outcome = if remaining.is_zero() {
@@ -1281,22 +1283,64 @@ pub(in crate::runner) fn workspace_source_closure_until(
         receive.recv_timeout(remaining)
     };
     match outcome {
-        Ok(Ok(closure)) => {
+        Ok(Ok(value)) => {
             let _ = worker.join();
-            Ok(closure)
+            Ok(value)
         }
         Ok(Err(error)) => {
             let _ = worker.join();
-            Err(SourceClosureRefusal::Unavailable(error.to_string()))
+            Err(BoundedReadRefusal::Unavailable(error.to_string()))
         }
-        Err(RecvTimeoutError::Timeout) => Err(SourceClosureRefusal::TimedOut),
+        Err(RecvTimeoutError::Timeout) => Err(BoundedReadRefusal::TimedOut),
         Err(RecvTimeoutError::Disconnected) => {
             let _ = worker.join();
-            Err(SourceClosureRefusal::Unavailable(
-                "the source closure worker ended without a result".into(),
-            ))
+            Err(BoundedReadRefusal::Unavailable(format!(
+                "the {name} worker ended without a result"
+            )))
         }
     }
+}
+
+/// The operator workspace this checkout declares, resolved and read within one
+/// absolute deadline.
+///
+/// Resolving it loads and composes the checkout's manifest, so it is the first
+/// blocking read a publication performs; [`bounded_publication_read`] keeps it
+/// inside the publication's budget.
+pub(in crate::runner) fn operator_workspace_until(
+    repo_root: PathBuf,
+    policy: EffectiveContainerPolicy,
+    until: std::time::Instant,
+) -> Result<Option<OperatorWorkspace>, BoundedReadRefusal> {
+    bounded_publication_read("operator-workspace", until, move || {
+        operator_workspace_for_policy(repo_root.as_path(), &policy)
+    })
+}
+
+/// The produced artifact this host already holds, found within one absolute
+/// deadline. Finding it reads the artifact's version and receipt sidecars, so it
+/// is bounded like any other publication read, and it never downloads.
+pub(in crate::runner) fn held_linux_workspace_effigy_artifact_until(
+    repo_root: PathBuf,
+    target: LinuxWorkspaceTarget,
+    until: std::time::Instant,
+) -> Result<PathBuf, BoundedReadRefusal> {
+    bounded_publication_read("workspace-artifact", until, move || {
+        held_linux_workspace_effigy_artifact(repo_root.as_path(), target)
+    })
+}
+
+/// The produced artifact's identity, authenticated against its producer receipt
+/// within one absolute deadline: the version sidecar, the receipt and the
+/// artifact digest are one bounded read.
+pub(in crate::runner) fn verify_guest_artifact_bounded(
+    artifact: PathBuf,
+    target: LinuxWorkspaceTarget,
+    until: std::time::Instant,
+) -> Result<GuestBinaryIdentity, BoundedReadRefusal> {
+    bounded_publication_read("workspace-artifact-receipt", until, move || {
+        verify_guest_artifact_until(artifact.as_path(), target, Some(until))
+    })
 }
 
 pub(in crate::runner) fn workspace_source_closure(

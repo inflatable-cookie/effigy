@@ -3038,14 +3038,15 @@ call inside the deadline. Its one enrolment secret is 32 OS-random bytes in
 canonical 64-hex form; no pid, clock or request id participates. The producer now
 takes that same **absolute** deadline rather than a fresh budget, and the guest it
 receives is `staging::DeadlineGuest`: one deadline and one cumulative capture
-budget for every staging, snapshot and selector command. Planning's own local
-reads are bounded by the same deadline: the short ones are checked against the
-clock before they start and after they return, and the source closure — which
-reads the checkout, composes the manifest (includes, source lock, bundle and
-catalog roots) and reads every fragment, none of it interruptible once started —
-runs on its own bounded worker
-(`workspace_source_closure_until`), so the planner stops waiting at the one
-deadline and reports the pins unknown while the abandoned worker only reads. The
+budget for every staging, snapshot and selector command. Every blocking local read
+on the publication path runs on a bounded worker (`bounded_publication_read`):
+resolving the operator workspace and composing its manifest, the whole local
+planning sequence (the alias render, the checkout identity, the source closure
+with its includes, source lock, bundle and catalog roots and every fragment), and
+finding and authenticating the produced artifact (its version and receipt
+sidecars and its digest). A clock check before or after a synchronous read cannot
+enforce a budget while it is blocked, so the publication stops waiting at the one
+deadline and reports that fact unknown; an abandoned worker only reads. The
 producer's probe is owned, built by an injected factory from the identity the
 observation verified, so a caller's publication callback returns an input that
 borrows nothing from a local. The plan, the observed

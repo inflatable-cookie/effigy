@@ -1459,6 +1459,30 @@ fn fragment_checkout(label: &str, fragments: usize) -> (Fixture, PathBuf, PathBu
     (fixture, root, home)
 }
 
+/// The closure-shaped bounded read: an expired budget refuses without reading,
+/// a real budget verifies, and the checkout is reusable either way.
+fn bounded_closure(
+    root: &Path,
+    paths: &crate::runner::workspace_client::context::WorkspacePathMap,
+    until: Instant,
+) -> Result<
+    crate::runner::workspace_command::provisioning::WorkspaceSourceClosure,
+    crate::runner::workspace_command::provisioning::BoundedReadRefusal,
+> {
+    let owned_root = root.to_path_buf();
+    let owned_paths = paths.clone();
+    crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "test-source-closure",
+        until,
+        move || {
+            crate::runner::workspace_command::provisioning::workspace_source_closure(
+                &owned_root,
+                &owned_paths,
+            )
+        },
+    )
+}
+
 #[test]
 fn the_source_closure_is_bounded_by_the_publication_deadline() {
     let (_fixture, root, _home) = fragment_checkout("closure-bound", 8);
@@ -1474,27 +1498,18 @@ fn the_source_closure_is_bounded_by_the_publication_deadline() {
     .expect("path map");
 
     // A deadline that has already passed must not wait for the worker at all.
-    let expired = crate::runner::workspace_command::provisioning::workspace_source_closure_until(
-        &root,
-        &paths,
-        Instant::now() - Duration::from_secs(1),
-    );
     assert!(
         matches!(
-            expired,
-            Err(crate::runner::workspace_command::provisioning::SourceClosureRefusal::TimedOut)
+            bounded_closure(&root, &paths, Instant::now() - Duration::from_secs(1)),
+            Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut)
         ),
         "an expired publication refuses instead of reading the checkout"
     );
 
     // The abandoned worker is read-only: the checkout is unchanged and the next
     // attempt with a real budget closes its pins normally.
-    let closed = crate::runner::workspace_command::provisioning::workspace_source_closure_until(
-        &root,
-        &paths,
-        Instant::now() + Duration::from_secs(30),
-    )
-    .expect("a bounded closure with budget left");
+    let closed = bounded_closure(&root, &paths, Instant::now() + Duration::from_secs(30))
+        .expect("a bounded closure with budget left");
     assert!(
         closed
             .pins
@@ -1513,6 +1528,41 @@ fn the_source_closure_is_bounded_by_the_publication_deadline() {
             .iter()
             .map(|pin| pin.name.clone())
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_stalled_fragment_stops_the_closure_at_the_deadline() {
+    let (_fixture, root, _home) = fragment_checkout("closure-stalled", 2);
+    let policy = rendered_policy(&root);
+    let paths = crate::runner::workspace_command::provisioning::workspace_path_map(
+        &root,
+        &crate::runner::workspace_command::provisioning::operator_workspace_for_policy(
+            &root, &policy,
+        )
+        .expect("operator workspace")
+        .expect("container mode"),
+    )
+    .expect("path map");
+    // One included fragment is a FIFO: reading it blocks until a writer appears,
+    // which is the stalled read a clock check cannot interrupt.
+    let stalled_fragment = root.join("fragments/0001.toml");
+    std::fs::remove_file(&stalled_fragment).expect("remove the fragment");
+    stalled(&stalled_fragment);
+
+    let started = Instant::now();
+    let refusal = bounded_closure(&root, &paths, started + Duration::from_millis(50));
+
+    assert!(
+        matches!(
+            refusal,
+            Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut)
+        ),
+        "a stalled fragment is a timeout, not a blocked publication"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the closure stopped at its deadline"
     );
 }
 
@@ -1544,4 +1594,91 @@ fn a_publication_never_plans_past_its_deadline_composing_pins() {
         error.contains("deadline expired") || error.contains("source closure is unknown"),
         "{error}"
     );
+}
+
+// ------------------------------------ blocked reads cannot outlive the budget
+
+/// A FIFO at `path`: any reader of it blocks until a writer appears, which is the
+/// stalled-filesystem case a clock check cannot interrupt.
+fn stalled(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("path");
+    let created = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+    assert_eq!(created, 0, "mkfifo {} failed", path.display());
+}
+
+#[test]
+fn a_stalled_artifact_sidecar_refuses_at_the_deadline() {
+    let observation = observation_checkout("stalled-sidecar");
+    let artifact = produced_artifact(&observation.root, host_family());
+    // The receipt sidecar of a produced artifact can be a stalled read.
+    let receipt = workspace_artifact_receipt_path(&artifact);
+    std::fs::remove_file(&receipt).expect("remove the receipt");
+    stalled(&receipt);
+
+    let started = Instant::now();
+    let refusal = crate::runner::workspace_command::provisioning::verify_guest_artifact_bounded(
+        artifact.clone(),
+        host_family(),
+        started + Duration::from_millis(50),
+    );
+    let refused = match refusal {
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut) => true,
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::Unavailable(
+            reason,
+        )) => panic!("a stalled receipt is a timeout, not an error: {reason}"),
+        Ok(_) => false,
+    };
+
+    assert!(refused, "a stalled receipt cannot produce an identity");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the publication stopped at its deadline instead of blocking"
+    );
+
+    // The read was abandoned, not committed: a real artifact still authenticates.
+    std::fs::remove_file(&receipt).expect("remove the fifo");
+    let healthy = produced_artifact(&observation.root, host_family());
+    crate::runner::workspace_command::provisioning::verify_guest_artifact_bounded(
+        healthy,
+        host_family(),
+        Instant::now() + Duration::from_secs(30),
+    )
+    .expect("a healthy artifact still authenticates after the timeout");
+}
+
+#[test]
+fn a_stalled_manifest_refuses_at_the_deadline_before_planning() {
+    let (_fixture, root, home) = checkout("stalled-manifest");
+    let policy = rendered_policy(&root);
+    // The operator-workspace read loads the manifest; a stalled manifest must not
+    // hold planning past the publication's one deadline.
+    std::fs::remove_file(root.join("effigy.toml")).expect("remove the manifest");
+    stalled(&root.join("effigy.toml"));
+
+    let mut backend = FakeBackend::colima();
+    let started = Instant::now();
+    let refusal = effigy_containers::with_test_effigy_home(&home, || {
+        plan(
+            ReservedPlanRequest {
+                policy: &policy,
+                deadline: PublicationDeadline::new(started + Duration::from_millis(50)),
+            },
+            &mut backend,
+        )
+    });
+    let error = match refusal {
+        Ok(_) => panic!("a stalled manifest must not produce a plan"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(
+        error.contains("deadline expired") || error.contains("operator workspace is unknown"),
+        "{error}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "planning stopped at its deadline instead of blocking on the manifest"
+    );
+    assert_eq!(backend.count(), 0, "no backend fact was read");
 }

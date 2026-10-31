@@ -73,10 +73,10 @@ use crate::runner::workspace_command::provisioning::reserved_guest::{
 };
 use crate::runner::workspace_command::provisioning::staging::DeadlineGuest;
 use crate::runner::workspace_command::provisioning::{
-    held_linux_workspace_effigy_artifact, host_user, observed_workspace_container_identity,
-    operator_workspace_for_policy, verify_guest_artifact_until, workspace_path_map,
-    workspace_routes, workspace_source_closure_until, LinuxWorkspaceTarget, SourceClosureRefusal,
-    WorkspaceSourceClosure,
+    bounded_publication_read, held_linux_workspace_effigy_artifact_until, host_user,
+    observed_workspace_container_identity, operator_workspace_until, verify_guest_artifact_bounded,
+    workspace_path_map, workspace_routes, workspace_source_closure, BoundedReadRefusal,
+    LinuxWorkspaceTarget, OperatorWorkspace, WorkspaceSourceClosure,
 };
 use crate::runner::workspace_transport::qualification::{Backend, ChannelAliasPlan};
 
@@ -469,15 +469,20 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         deadline: PublicationDeadline,
     ) -> Observed<PathBuf> {
         // A held, current artifact only: the publication's deadline cannot bound
-        // a download, so a host that would need one refuses here.
-        if deadline.remaining().is_err() {
-            return Observed::Unknown(UnknownReason::TimedOut {
-                phase: "workspace artifact".into(),
-            });
-        }
-        match held_linux_workspace_effigy_artifact(policy.repo_root.as_path(), target) {
+        // a download, so a host that would need one refuses here. Finding it reads
+        // the version and receipt sidecars, so the read itself is deadline-bounded.
+        match held_linux_workspace_effigy_artifact_until(
+            policy.repo_root.clone(),
+            target,
+            deadline.at(),
+        ) {
             Ok(artifact) => Observed::Verified(artifact, evidence()),
-            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+            Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace artifact".into(),
+            }),
+            Err(BoundedReadRefusal::Unavailable(reason)) => {
+                Observed::Unknown(UnknownReason::Inconsistent(reason))
+            }
         }
     }
 
@@ -648,8 +653,14 @@ pub(in crate::runner) fn plan(
 ) -> Result<Option<ReservedPublicationPlan>, EnvError> {
     let policy = request.policy;
     let deadline = request.deadline;
-    let Some(workspace) =
-        operator_workspace_for_policy(policy.repo_root.as_path(), policy).map_err(io)?
+    // Resolving the operator workspace loads and composes the checkout's
+    // manifest, so it is the first blocking read of the publication: it is
+    // bounded like every other read, and a hybrid checkout still publishes
+    // nothing.
+    let Some(workspace) = bounded(
+        operator_workspace_until(policy.repo_root.clone(), policy.clone(), deadline.at()),
+        "workspace operator workspace",
+    )?
     else {
         return Ok(None);
     };
@@ -678,16 +689,32 @@ pub(in crate::runner) fn plan(
     )
     .map_err(|error| refused(format!("workspace alias is unqualified: {error}")))?;
     deadline.remaining()?;
-    // The apply must be handed the policy that carries this alias; the alias
-    // render is in-memory and creates no container and no network.
-    let rendered = policy
-        .with_workspace_host_alias(&alias.render_value)
-        .map_err(|error| refused(format!("workspace alias cannot be rendered: {error}")))?;
-    let render_digest = rendered
-        .render
-        .as_ref()
-        .map(|render| render.closure.digest().to_owned())
-        .ok_or_else(|| refused("the rendered workspace policy has no snapshotted render"))?;
+    // Every remaining planning step reads the filesystem: the alias render reads
+    // the Compose closure, the checkout identity is minted, and the source closure
+    // reads and composes the manifest and its fragments. None of that can be
+    // interrupted once started, so the whole local sequence runs on one bounded
+    // worker and the publication reports it unknown at its deadline instead of
+    // blocking past the one budget it declared.
+    let local = match bounded_publication_read("workspace-plan-local", deadline.at(), {
+        let policy = policy.clone();
+        let workspace = workspace.clone();
+        let alias = alias.clone();
+        let selected = selected.clone();
+        move || plan_local(&policy, &workspace, &alias, &selected)
+    }) {
+        Ok(local) => local,
+        Err(BoundedReadRefusal::TimedOut) => {
+            return Err(unavailable(
+                "workspace publication plan is unknown: the deadline expired while the \
+                 checkout's render and source pins were being computed",
+            ))
+        }
+        Err(BoundedReadRefusal::Unavailable(reason)) => {
+            return Err(unavailable(format!(
+                "workspace publication plan is unknown: {reason}"
+            )))
+        }
+    };
     deadline.remaining()?;
     // Before anything applies: a container already running for this project is a
     // live predecessor, and this apply may recreate it.
@@ -695,42 +722,72 @@ pub(in crate::runner) fn plan(
         observation.predecessor(policy, deadline),
         "workspace predecessor",
     )?;
-    if predecessor.running && predecessor.desired.as_deref() != Some(render_digest.as_str()) {
+    if predecessor.running && predecessor.desired.as_deref() != Some(local.render_digest.as_str()) {
         return Err(refused(format!(
             "a live workspace predecessor is running and this publication applies another render \
              (`{}`, recorded `{}`); stop it with `effigy container {} down` before republishing",
-            render_digest,
+            local.render_digest,
             predecessor.desired.as_deref().unwrap_or("none"),
             policy.name,
         )));
     }
-    // One read of the checkout's identity, path map and pinned source closure:
-    // the decision's frozen materialisation and the snapshots the producer
-    // stages come from this single observation. The closure reads the checkout,
-    // composes the manifest and reads every fragment, none of which can be
-    // interrupted once started, so it runs on its own bounded worker: the
-    // publication stops at its deadline and reports the pins unknown instead of
-    // running past the one budget it declared.
     deadline.remaining()?;
-    let paths = workspace_path_map(rendered.repo_root.as_path(), &workspace).map_err(io)?;
-    let closure =
-        match workspace_source_closure_until(rendered.repo_root.as_path(), &paths, deadline.at()) {
-            Ok(closure) => closure,
-            Err(SourceClosureRefusal::TimedOut) => {
-                return Err(unavailable(
-                    "workspace source closure is unknown: the publication deadline expired while \
-                 the checkout's pins were being composed",
-                ))
-            }
-            Err(SourceClosureRefusal::Unavailable(reason)) => {
-                return Err(unavailable(format!(
-                    "workspace source closure is unknown: {reason}"
-                )))
-            }
-        };
-    deadline.remaining()?;
-    let guest = environment_materialisation(&rendered, &selected, paths, &closure)?;
+    Ok(Some(ReservedPublicationPlan {
+        selected,
+        alias,
+        policy: local.policy,
+        guest: local.guest,
+        snapshots: local.snapshots,
+        selection: local.selection,
+        inputs: local.inputs,
+        deadline,
+        backend_label: local.backend_label,
+        render_digest: local.render_digest,
+    }))
+}
+
+/// Everything planning computes from local files, computed on one bounded worker.
+struct PlannedLocal {
+    policy: EffectiveContainerPolicy,
+    guest: GuestContextInputs,
+    snapshots: Vec<(String, Vec<u8>)>,
+    selection: Digest,
+    inputs: Digest,
+    render_digest: String,
+    backend_label: String,
+}
+
+fn plan_local(
+    policy: &EffectiveContainerPolicy,
+    workspace: &OperatorWorkspace,
+    alias: &ChannelAliasPlan,
+    selected: &BackendSelection,
+) -> Result<PlannedLocal, RunnerError> {
+    // The apply must be handed the policy that carries this alias; the alias
+    // render is in-memory and creates no container and no network.
+    let rendered = policy
+        .with_workspace_host_alias(&alias.render_value)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!("workspace alias cannot be rendered: {error}"))
+        })?;
+    let render_digest = rendered
+        .render
+        .as_ref()
+        .map(|render| render.closure.digest().to_owned())
+        .ok_or_else(|| {
+            RunnerError::task_invocation("the rendered workspace policy has no snapshotted render")
+        })?;
+    let paths = workspace_path_map(rendered.repo_root.as_path(), workspace)?;
+    let closure = workspace_source_closure(rendered.repo_root.as_path(), &paths)?;
+    let guest = environment_materialisation(&rendered, selected, paths, &closure)?;
     let backend_label = selected.engine.as_str().to_owned();
+    let canonical = |value: &serde_json::Value| {
+        serde_json::to_vec(value).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot serialize workspace publication facts: {error}"
+            ))
+        })
+    };
     let selection = Digest::of(&canonical(&serde_json::json!({
         "environment_resource": guest.environment_resource.clone(),
         "guest_paths": {
@@ -748,24 +805,21 @@ pub(in crate::runner) fn plan(
         "profile": selected.context.clone(),
     }))?);
     let inputs = Digest::of(&canonical(&serde_json::json!({
-        "backend": backend_label,
-        "profile": selected.context,
+        "backend": backend_label.clone(),
+        "profile": selected.context.clone(),
         "project": rendered.project_name.clone(),
         "service": rendered.primary_service.clone(),
         "sources": guest.sources.clone(),
     }))?);
-    Ok(Some(ReservedPublicationPlan {
-        selected,
-        alias,
+    Ok(PlannedLocal {
         policy: rendered,
         guest,
         snapshots: closure.snapshots,
         selection,
         inputs,
-        deadline,
-        backend_label,
         render_digest,
-    }))
+        backend_label,
+    })
 }
 
 fn environment_materialisation(
@@ -773,13 +827,12 @@ fn environment_materialisation(
     selected: &BackendSelection,
     paths: WorkspacePathMap,
     closure: &WorkspaceSourceClosure,
-) -> Result<GuestContextInputs, EnvError> {
+) -> Result<GuestContextInputs, RunnerError> {
     let guest = GuestContextInputs {
         version: effigy_core::build_info::active_version(),
         protocol: CHANNEL_PROTOCOL_VERSION,
         host_user: host_user(),
-        checkout_id: crate::runner::task_engine::checkout::mint(policy.repo_root.as_path())
-            .map_err(io)?
+        checkout_id: crate::runner::task_engine::checkout::mint(policy.repo_root.as_path())?
             .text()
             .to_owned(),
         // The environment resource an activation publishes, spelled the one way
@@ -794,7 +847,7 @@ fn environment_materialisation(
     };
     guest
         .validate()
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(guest)
 }
 
@@ -1076,9 +1129,13 @@ pub(in crate::runner) fn observe<'a>(
         observation.artifact(policy, family, deadline),
         "workspace guest artifact",
     )?;
-    // One absolute deadline for the digest, so an artifact that cannot be
-    // authenticated inside the publication refuses instead of overrunning it.
-    let binary = verify_guest_artifact_until(&artifact, family, Some(deadline.at())).map_err(io)?;
+    // The version sidecar, the producer receipt and the artifact digest are one
+    // bounded read: an artifact that cannot be authenticated inside the
+    // publication refuses instead of overrunning it.
+    let binary = bounded(
+        verify_guest_artifact_bounded(artifact.clone(), family, deadline.at()),
+        "workspace artifact receipt",
+    )?;
     let digest = binary
         .digest
         .strip_prefix("sha256:")
@@ -1231,6 +1288,19 @@ fn snapshots(snapshots: &[(String, Vec<u8>)]) -> Result<Vec<(GuestObject, Vec<u8
             ))
         })
         .collect()
+}
+
+/// One deadline-bounded owner read, or the publication's unknown refusal.
+fn bounded<T>(read: Result<T, BoundedReadRefusal>, what: &str) -> Result<T, EnvError> {
+    match read {
+        Ok(value) => Ok(value),
+        Err(BoundedReadRefusal::TimedOut) => Err(unavailable(format!(
+            "{what} is unknown: the publication deadline expired while it was being read"
+        ))),
+        Err(BoundedReadRefusal::Unavailable(reason)) => {
+            Err(unavailable(format!("{what} is unknown: {reason}")))
+        }
+    }
 }
 
 fn verified<T>(observed: Observed<T>, what: &str) -> Result<T, EnvError> {
