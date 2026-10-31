@@ -98,19 +98,20 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   backend and releases nobody, and it adds no JSON payload beyond the command's
   error: `HeldBy` (a live holder protects the environment) and kernel journal
   contention stay distinct refusals.
-- **Effects.** An apply is journalled `environment:apply` with `Retain`
-  settlement; a stop is `environment:stop`, `Irreversible`. Recording either
+- **Effects.** An ordinary or reserved apply is journalled
+  `environment:gate-scoped-id-difference` with `Retain` settlement; a stop is
+  `environment:stop`, `Irreversible`. Recording either
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
-- **Creation inference.** A bring-up journals
-  `environment:gate-scoped-id-difference` with the same permit, gate, retention
-  and one caller deadline. Ordinary unsealed applies produce an explicit unproven
+- **Creation inference.** That apply record uses the same permit, gate,
+  retention and one caller deadline. Ordinary unsealed applies produce an explicit unproven
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
   immutable image identities. The post-apply service set must equal the frozen
-  set; new IDs are created and pre-existing IDs stay attached. The record is
+  set; new IDs must equal the creation/recreation set expected before apply,
+  and attached services must retain their exact IDs. The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
   v0.15 guarantee. Failed apply or incomplete observations produce no creation
