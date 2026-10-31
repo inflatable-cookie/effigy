@@ -17,7 +17,9 @@ use effigy_kernel::ctx::OpenReason;
 use effigy_kernel::root::StateRoot;
 
 use super::task_engine;
-use super::workspace_client::serving_host::{self, ServingHostRequest};
+use super::workspace_client::serving_host::{
+    self, cleanup_budget, recovery_invocation, ServingHostRequest, ServingSettlement,
+};
 
 /// Start one disposable serving host, wait for its committed session, then
 /// acknowledge the kernel detach and return that result as JSON. The caller is
@@ -220,7 +222,7 @@ pub fn probe_authority(
         .map_err(|_| "the published session run is not a run id".to_owned())?;
     let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
         address,
-        pin,
+        pin.clone(),
         std::time::Duration::from_secs(5),
     )
     .map_err(|error| format!("the pinned connection failed: {error}"))?;
@@ -255,11 +257,51 @@ pub fn probe_authority(
             refusal: refusal.map(|frame| format!("{frame:?}")),
         });
     }
+    // The negative control on its own connection: a capability the host never
+    // issued must be refused, so the accepted one proves the retained grant
+    // book rather than a host that accepts anything.
+    drop(transport);
+    let refused = authenticate_unissued(address, &pin, session)?;
     Ok(AuthorityProbe {
         negotiated: true,
         authenticated: true,
-        refusal: None,
+        refusal: Some(match refused {
+            Some(_) => "refused".to_owned(),
+            None => "not-refused".to_owned(),
+        }),
     })
+}
+
+/// A second connection that presents a capability the host never issued.
+fn authenticate_unissued(
+    address: std::net::SocketAddr,
+    pin: &effigy_kernel::id::Digest,
+    session: effigy_kernel::id::RunId,
+) -> Result<Option<effigy_kernel::workspace_channel::Frame>, String> {
+    use effigy_kernel::workspace_channel::{Frame, Hello, PROTOCOL_V1, SCHEMA};
+    let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
+        address,
+        pin.clone(),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|error| format!("the pinned connection failed: {error}"))?;
+    write_answer(
+        &mut transport,
+        &Frame::Hello(Hello {
+            schema: SCHEMA.to_owned(),
+            protocol_versions: vec![PROTOCOL_V1],
+            effigy_version: "fixture".to_owned(),
+            binary_digest: effigy_kernel::id::Digest([0; 32]),
+            context_generation: effigy_kernel::id::Generation::new(1),
+            session_run_id: session,
+        }),
+    )?;
+    let _ = read_answer(&mut transport)?;
+    write_answer(
+        &mut transport,
+        &Frame::Authenticate(effigy_kernel::workspace_channel::Secret::new([0x00; 32])),
+    )?;
+    read_answer(&mut transport)
 }
 
 /// One competing process's attempt to become a live session's serving owner.
@@ -311,11 +353,68 @@ pub fn compete_for_session(request_json: &str) -> Result<CompetingOwner, String>
             reason: Some("the session is not live".to_owned()),
         });
     }
-    // The session's run is live under another process: this one cannot take it.
-    Ok(CompetingOwner {
-        refused: true,
-        reason: Some("the session run is live under its own serving owner".to_owned()),
-    })
+    // The ownership boundary itself: this process asks the kernel to begin the
+    // very run another process is serving. A live run belongs to its owner, so
+    // the kernel must refuse; a success here would be a second owner.
+    let attempt = effigy_kernel::run::Run::begin(
+        &cx,
+        &root,
+        &effigy_kernel::id::ResolvedInvocation::new(effigy_kernel::id::InvocationSpec {
+            owner: effigy_kernel::id::ResourceId::environment(
+                effigy_kernel::id::CheckoutId::new(
+                    effigy_kernel::id::CheckoutKind::EphemeralClone,
+                    request.checkout,
+                ),
+                &request.environment,
+            )
+            .map_err(|error| format!("the environment: {error}"))?,
+            task: effigy_kernel::id::TaskId::new(
+                effigy_kernel::id::CheckoutId::new(
+                    effigy_kernel::id::CheckoutKind::EphemeralClone,
+                    request.checkout,
+                ),
+                "",
+                effigy_kernel::id::Surface::Published,
+                "workspace-contender",
+                Some(&request.profile),
+            )
+            .map_err(|error| format!("the task: {error}"))?,
+            route: effigy_kernel::id::Route::Task,
+            argv: vec![std::ffi::OsString::from("effigy")],
+            cwd: String::new(),
+            target: effigy_kernel::id::ExecutionTarget::Host,
+            env: std::collections::BTreeMap::new(),
+            gates: Vec::new(),
+            attachments: Vec::new(),
+            class: effigy_kernel::ctx::EffectClass::Observe,
+            placement: effigy_kernel::ctx::Placement::Host,
+            provenance: std::collections::BTreeMap::new(),
+        })
+        .map_err(|error| format!("the contender invocation: {error}"))?,
+        effigy_kernel::run::BeginOpts {
+            id: session_run,
+            wait: effigy_kernel::gate::Wait::FailFast,
+            acknowledge: Vec::new(),
+            next: recovery_invocation().map_err(|error| error.to_string())?,
+            custody: None,
+        },
+        &cleanup_budget(),
+        &mut ServingSettlement,
+    );
+    match attempt {
+        Err(error) => Ok(CompetingOwner {
+            refused: true,
+            reason: Some(error.to_string()),
+        }),
+        Ok(mut stolen) => {
+            // A second owner was admitted: settle it and report the failure.
+            let _ = stolen.settle(&cleanup_budget(), &mut ServingSettlement);
+            Ok(CompetingOwner {
+                refused: false,
+                reason: Some("a second process began the live session run".to_owned()),
+            })
+        }
+    }
 }
 
 fn write_answer(

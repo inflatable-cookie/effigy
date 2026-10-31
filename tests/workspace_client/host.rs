@@ -279,8 +279,12 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
     );
     assert!(
         authority.authenticated,
-        "the retained grant book accepted the capability it issued: {:?}",
-        authority.refusal
+        "the retained grant book accepted the capability it issued"
+    );
+    assert_eq!(
+        authority.refusal.as_deref(),
+        Some("refused"),
+        "a capability the host never issued is refused, so the positive answer is the retained grant"
     );
     let session = read_summary(&observe, &root, session_run).expect("the session run is recorded");
     assert!(
@@ -444,6 +448,13 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    // No resurrection: the crashed session stays closed, and a second process
+    // asking for that session's ownership is refused even after the settle.
+    assert_eq!(
+        read_summary(&observe, &root, session_run).map(|summary| summary.phase),
+        Some(Phase::Closed),
+        "the crashed session is never resurrected"
+    );
 }
 
 /// A listener failure retires the session exactly once instead of leaving it
@@ -828,6 +839,11 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         authority.negotiated && authority.authenticated,
         "a crashed client does not end the session: {:?}",
         authority.refusal
+    );
+    assert_eq!(
+        authority.refusal.as_deref(),
+        Some("refused"),
+        "a capability the host never issued is refused, so the positive answer is the retained grant"
     );
 
     // A competing process cannot take the live session's ownership.

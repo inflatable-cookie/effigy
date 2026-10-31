@@ -529,9 +529,19 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     // it back from the journal and refuses to serve anything else, so no
     // activation can announce a session it never switched.
     match durable_selection(&observe, &root, service.session()) {
-        Ok(state) => {
-            if let Err(refusal) = super::supervisor::committed_state(state) {
-                let error = refuse(&session, Category::Refused, refusal.to_string());
+        Ok((state, committed)) => {
+            let refusal = super::supervisor::committed_state(state)
+                .err()
+                .map(|refusal| refusal.to_string());
+            let lease_mismatch = committed
+                .as_ref()
+                .is_some_and(|committed| committed != service.lease());
+            if let Some(reason) = refusal.or_else(|| {
+                lease_mismatch.then(|| {
+                    "the serving lease is not the lease the committed selection recorded".to_owned()
+                })
+            }) {
+                let error = refuse(&session, Category::Refused, reason);
                 let _ = service.abandon();
                 let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
                 let _ = run.settle(&cleanup_budget(), &mut adapter);
@@ -624,7 +634,13 @@ fn durable_selection(
     observe: &effigy_kernel::ctx::ObserveContext,
     root: &StateRoot,
     session: &effigy_kernel::workspace_session::SessionRef,
-) -> Result<effigy_kernel::workspace_session::SelectionState, RunError> {
+) -> Result<
+    (
+        effigy_kernel::workspace_session::SelectionState,
+        Option<effigy_kernel::workspace_session::ServingLease>,
+    ),
+    RunError,
+> {
     let reader = match Store::read(observe, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Unknown(reason) => {
@@ -649,7 +665,13 @@ fn durable_selection(
                     "the committed selection names another session; nothing is served",
                 ));
             }
-            return Ok(obligation.state());
+            // The durable receipt's serving lease is what may be served: the
+            // committed lease and the live lease must be one fact, so a custody
+            // that published another lease for the same session is refused.
+            return Ok((
+                obligation.state(),
+                Some(obligation.receipt().serving().clone()),
+            ));
         }
         Observed::Verified(None, _) => {}
         Observed::Unknown(reason) => {
@@ -668,7 +690,7 @@ fn durable_selection(
     }
     #[cfg(feature = "workspace-serving-fixture")]
     {
-        fixture_selection(&reader, session)
+        fixture_selection(&reader, session).map(|state| (state, None))
     }
 }
 
