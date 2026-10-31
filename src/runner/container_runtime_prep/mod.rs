@@ -41,6 +41,10 @@ use effigy_kernel::id::RunId;
 // deadlines still bound both phases without being extended.
 pub(in crate::runner) const OWNED_EXEC_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// One `compose config --hash` reads a small map: service names and hashes.
+const COMPOSE_HASH_STDOUT_BYTES: u64 = 64 * 1024;
+const COMPOSE_HASH_STDERR_BYTES: u64 = 16 * 1024;
+
 #[derive(Debug)]
 pub(in crate::runner) struct ContainerTaskActivation {
     /// The immutable snapshot used by every activation stage and its exec caller.
@@ -797,6 +801,241 @@ fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, S
         architecture,
         variant: field("Variant").unwrap_or_default(),
     })
+}
+
+/// What proves that applying one rendered policy cannot recreate a live
+/// predecessor of this environment.
+///
+/// The environment record's historical `desired` digest is *not* live evidence: it
+/// says what Effigy last published, not what the running container was created
+/// from. The one fact that does is Compose's own config hash: the container carries
+/// the hash of the service config it was created from, and the render this
+/// activation is about to apply can be asked for the hash it would produce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) enum PredecessorCompatibility {
+    /// This project has no running container, so nothing can be recreated.
+    NoPredecessor,
+    /// Every running container of this project was created from exactly the
+    /// service config this render produces: `(full container id, config hash)`.
+    Matches(Vec<(String, String)>),
+}
+
+impl PredecessorCompatibility {
+    /// How many live containers were compared.
+    pub(in crate::runner) fn compared(&self) -> usize {
+        match self {
+            Self::NoPredecessor => 0,
+            Self::Matches(containers) => containers.len(),
+        }
+    }
+}
+
+/// Observe the live recreate risk of one rendered policy, within one deadline.
+///
+/// Unknown, a changed container id, a changed config hash and a backend that
+/// cannot report Compose config hashes all refuse; only a live stack whose every
+/// service config is byte-identical to what this render produces is compatible.
+///
+/// Interpolation is not replayed: the hash is computed from the frozen rendered
+/// closure and the project, so a service config that depends on apply-time
+/// environment values can differ and refuses, which is the safe direction.
+pub(in crate::runner) fn observed_predecessor_compatibility(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> effigy_kernel::observe::Observed<PredecessorCompatibility> {
+    use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+
+    let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    let rows = match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+        repo_root,
+        policy,
+        Some(deadline),
+    ) {
+        Ok(rows) => rows,
+        Err(error) => {
+            return unknown(format!("the project inventory is unavailable: {error}"));
+        }
+    };
+    let running = rows
+        .into_iter()
+        .filter(|row| {
+            row.project_name.as_deref() == Some(policy.project_name.as_str())
+                && !row.oneoff
+                && effigy_containers::exec::compose_status_is_running(&row.status)
+        })
+        .collect::<Vec<_>>();
+    if running.is_empty() {
+        return Observed::Verified(
+            PredecessorCompatibility::NoPredecessor,
+            Evidence::new("project inventory".into(), None).expect("fixed evidence"),
+        );
+    }
+    let intended = match compose_service_config_hashes(repo_root, policy, deadline) {
+        Ok(hashes) => hashes,
+        Err(error) => {
+            return unknown(format!(
+                "this backend cannot report the render's Compose config hashes: {error}"
+            ));
+        }
+    };
+    let ownership = match effigy_containers::exec::OwnershipContext::resolve(repo_root, policy) {
+        Ok(ownership) => ownership,
+        Err(error) => return unknown(format!("the checkout's ownership is unproven: {error}")),
+    };
+    let mut compared = Vec::new();
+    for row in running {
+        let inspected = match effigy_containers::exec::inspect_containers_for_policy(
+            repo_root,
+            policy,
+            std::slice::from_ref(&row.container_name),
+            Some(deadline),
+        ) {
+            Ok(output) => output.stdout,
+            Err(error) => {
+                return unknown(format!(
+                    "the predecessor `{}` could not be inspected: {error}",
+                    row.container_name
+                ));
+            }
+        };
+        let verified = match ownership.verify_inspected(repo_root, policy, &row, &inspected) {
+            Ok(verified) => verified,
+            Err(error) => {
+                return unknown(format!(
+                    "the predecessor `{}` ownership or identity changed: {error}",
+                    row.container_name
+                ));
+            }
+        };
+        let (service, live_hash) = match inspected_config_hash(&inspected) {
+            Ok(facts) => facts,
+            Err(reason) => {
+                return unknown(format!(
+                    "the predecessor `{}` reports no Compose config hash: {reason}",
+                    row.container_name
+                ));
+            }
+        };
+        let Some(expected) = intended.get(&service) else {
+            return unknown(format!(
+                "the live predecessor runs service `{service}`, which this render does not declare"
+            ));
+        };
+        if expected != &live_hash {
+            return unknown(format!(
+                "the live predecessor for service `{service}` was created from config `{live_hash}`, \
+                 not the render's `{expected}`: applying would recreate it"
+            ));
+        }
+        compared.push((verified.id().to_owned(), live_hash));
+    }
+    Observed::Verified(
+        PredecessorCompatibility::Matches(compared),
+        Evidence::new("Compose config hash".into(), None).expect("fixed evidence"),
+    )
+}
+
+/// The service -> config-hash map one rendered policy produces.
+///
+/// `compose config --hash` is the backend's own answer, computed from the same
+/// frozen closure the apply uses. A backend without it (or an unparsable answer)
+/// refuses: an unsupported comparison is never treated as compatible.
+fn compose_service_config_hashes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+    let args = effigy_containers::compose::compose_args(policy, ["config", "--hash", "*"]);
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Status,
+        "workspace compose config hash",
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+        Instant::now(),
+        deadline,
+        COMPOSE_HASH_STDOUT_BYTES,
+        COMPOSE_HASH_STDERR_BYTES,
+    );
+    let captured = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            crate::runner::exec_command::BoundedCommandPhase::WorkspacePreparation,
+        )
+        .map_err(|failure| {
+            RunnerError::task_invocation(format!(
+                "compose config --hash failed: {:?}",
+                failure.failure
+            ))
+        })?;
+    if !captured.status.success() {
+        return Err(RunnerError::task_invocation(format!(
+            "compose config --hash failed: {}",
+            String::from_utf8_lossy(&captured.stderr).trim()
+        )));
+    }
+    parse_service_config_hashes(&captured.stdout)
+}
+
+/// Parse `compose config --hash` output: one `service hash` line per service.
+fn parse_service_config_hashes(
+    stdout: &[u8],
+) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut hashes = std::collections::BTreeMap::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Some((service, hash)) = line.split_once(char::is_whitespace) else {
+            return Err(RunnerError::task_invocation(
+                "compose config --hash printed no service hash pair",
+            ));
+        };
+        let hash = hash.trim();
+        if service.is_empty() || hash.is_empty() {
+            return Err(RunnerError::task_invocation(
+                "compose config --hash printed an empty service or hash",
+            ));
+        }
+        hashes.insert(service.to_owned(), hash.to_owned());
+    }
+    if hashes.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "compose config --hash reported no services",
+        ));
+    }
+    Ok(hashes)
+}
+
+/// The Compose service and config hash one inspected container records.
+fn inspected_config_hash(stdout: &[u8]) -> Result<(String, String), String> {
+    let raw: serde_json::Value =
+        serde_json::from_slice(stdout).map_err(|error| error.to_string())?;
+    let labels = raw
+        .as_array()
+        .and_then(|records| records.first())
+        .and_then(|record| record.get("Config"))
+        .and_then(|config| config.get("Labels"))
+        .ok_or_else(|| "the inspect names no labels".to_owned())?;
+    let label = |name: &str| {
+        labels
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("the inspect names no `{name}` label"))
+    };
+    Ok((
+        label("com.docker.compose.service")?,
+        label("com.docker.compose.config-hash")?,
+    ))
 }
 
 /// Verify the owned binding of `service`: the running container that this

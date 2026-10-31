@@ -3016,7 +3016,14 @@ proved bindable rather than assumed; the Colima gateway is the profile's own
 where a missing profile, an unreadable or oversized one, one that is not a
 regular file, one that configures no gateway and a configured one are distinct
 outcomes, and the read is size-bounded); it refuses to re-render over a **live
-predecessor** whose environment record published another Compose closure digest;
+predecessor** unless the live stack's own Compose config hashes equal the ones this
+render produces — the environment record's historical `desired` digest is *not*
+live evidence, a changed container id or hash refuses, and a backend that cannot
+report `compose config --hash` refuses rather than assuming compatibility. The same
+comparison is exposed as `recheck_live_predecessor(plan, observation)`, a budgeted
+typed recheck the caller invokes **under the activation gate immediately before the
+one Compose apply**, because the pre-decision read alone cannot see a container
+created, replaced or reconfigured in between;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`
 materialisation the decision and the published context share.

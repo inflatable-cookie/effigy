@@ -174,18 +174,20 @@ fn bound_container() -> ContainerIdentity {
     }
 }
 
-fn idle_predecessor() -> PredecessorState {
-    PredecessorState {
-        running: false,
-        desired: None,
-    }
+fn no_predecessor() -> PredecessorCompatibility {
+    PredecessorCompatibility::NoPredecessor
+}
+
+/// A live predecessor created from exactly the render's service config.
+fn matching_predecessor(hash: &str) -> PredecessorCompatibility {
+    PredecessorCompatibility::Matches(vec![(CONTAINER_ID.to_owned(), hash.to_owned())])
 }
 
 /// The scripted backend/provisioning seam. Production never constructs it.
 struct FakeBackend {
     selection: Observed<BackendSelection>,
     addressing: Observed<ReservedAddressing>,
-    predecessor: Observed<PredecessorState>,
+    predecessor: Observed<PredecessorCompatibility>,
     binding: Observed<VerifiedBinding>,
     identity: Observed<WorkspaceContainerIdentity>,
     image: Observed<ObservedImagePlatform>,
@@ -201,7 +203,7 @@ impl FakeBackend {
         Self {
             selection: Observed::Verified(selection.clone(), evidence()),
             addressing: Observed::Verified(addressing, evidence()),
-            predecessor: Observed::Verified(idle_predecessor(), evidence()),
+            predecessor: Observed::Verified(no_predecessor(), evidence()),
             binding: Observed::Verified(
                 VerifiedBinding {
                     container_id: CONTAINER_ID.to_owned(),
@@ -253,7 +255,7 @@ impl FakeBackend {
         self
     }
 
-    fn with_predecessor(mut self, predecessor: PredecessorState) -> Self {
+    fn with_predecessor(mut self, predecessor: PredecessorCompatibility) -> Self {
         self.predecessor = Observed::Verified(predecessor, evidence());
         self
     }
@@ -281,7 +283,7 @@ impl ReservedBackendObservation for FakeBackend {
         &mut self,
         _: &EffectiveContainerPolicy,
         _: PublicationDeadline,
-    ) -> Observed<PredecessorState> {
+    ) -> Observed<PredecessorCompatibility> {
         self.call();
         self.predecessor.clone()
     }
@@ -734,22 +736,10 @@ fn an_expired_deadline_refuses_before_planning() {
 // ------------------------------------------------- the live predecessor guard
 
 #[test]
-fn a_live_predecessor_on_this_very_render_is_compatible() {
-    let (_fixture, root, home) = checkout("predecessor-same");
+fn a_project_with_no_running_container_has_nothing_to_protect() {
+    let (_fixture, root, home) = checkout("predecessor-none");
     let policy = rendered_policy(&root);
-    // The render digest the record published is this plan's own render, which is
-    // what a re-up of an unchanged generation looks like.
-    let probe_render = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut FakeBackend::colima())
-            .expect("plan")
-            .expect("container mode")
-            .render_digest()
-            .to_owned()
-    });
-    let mut backend = FakeBackend::colima().with_predecessor(PredecessorState {
-        running: true,
-        desired: Some(probe_render),
-    });
+    let mut backend = FakeBackend::colima();
 
     let planned =
         effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend));
@@ -758,42 +748,64 @@ fn a_live_predecessor_on_this_very_render_is_compatible() {
 }
 
 #[test]
-fn a_live_predecessor_on_another_render_is_refused_before_apply() {
-    let (_fixture, root, home) = checkout("predecessor-differs");
+fn a_live_predecessor_on_the_renders_own_config_hash_is_compatible() {
+    let (_fixture, root, home) = checkout("predecessor-matches");
     let policy = rendered_policy(&root);
-    let mut backend = FakeBackend::colima().with_predecessor(PredecessorState {
-        running: true,
-        desired: Some(Digest::of(b"another render").hex()),
-    });
+    let mut backend = FakeBackend::colima()
+        .with_predecessor(matching_predecessor("0123456789abcdef0123456789abcdef"));
 
-    let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("a live predecessor serves another render")
-    })
-    .to_string();
+    let planned =
+        effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend))
+            .expect("plan");
 
-    assert!(error.contains("live workspace predecessor"), "{error}");
-    assert!(error.contains("container web down"), "{error}");
+    assert!(planned.is_some());
 }
 
 #[test]
-fn a_live_predecessor_with_no_recorded_render_is_refused() {
-    let (_fixture, root, home) = checkout("predecessor-unrecorded");
+fn a_live_predecessor_created_from_another_config_hash_is_refused() {
+    let (_fixture, root, home) = checkout("predecessor-changed-hash");
     let policy = rendered_policy(&root);
-    let mut backend = FakeBackend::colima().with_predecessor(PredecessorState {
-        running: true,
-        desired: None,
-    });
+    // The live container records a hash the render does not produce: applying it
+    // would recreate the container a live session is serving.
+    let mut backend = FakeBackend::colima();
+    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
+        "the live predecessor for service `app` was created from config `aaaa`, not the render's \
+         `bbbb`: applying would recreate it"
+            .into(),
+    ));
 
     let error = effigy_containers::with_test_effigy_home(&home, || {
-        plan_for(&policy, &mut backend).expect_err("nothing proves the predecessor's render")
+        plan_for(&policy, &mut backend).expect_err("a changed live config hash refuses")
     })
     .to_string();
 
-    assert!(error.contains("recorded `none`"), "{error}");
+    assert!(error.contains("live predecessor is unknown"), "{error}");
+    assert!(error.contains("would recreate it"), "{error}");
 }
 
 #[test]
-fn an_unknown_predecessor_refuses() {
+fn a_stale_record_with_an_externally_changed_live_hash_refuses() {
+    let (_fixture, root, home) = checkout("predecessor-stale-record");
+    let policy = rendered_policy(&root);
+    // The environment record still names the render Effigy published, but the
+    // live container was recreated outside Effigy from another config. Only the
+    // live Compose hash can see that; the record digest cannot.
+    let mut backend = FakeBackend::colima();
+    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
+        "the live predecessor for service `app` was created from config `changed-externally`"
+            .into(),
+    ));
+
+    let error = effigy_containers::with_test_effigy_home(&home, || {
+        plan_for(&policy, &mut backend).expect_err("a live hash that differs refuses")
+    })
+    .to_string();
+
+    assert!(error.contains("live predecessor is unknown"), "{error}");
+}
+
+#[test]
+fn an_unknown_live_predecessor_refuses() {
     let (_fixture, root, home) = checkout("predecessor-unknown");
     let policy = rendered_policy(&root);
     let mut backend = FakeBackend::colima();
@@ -805,6 +817,50 @@ fn an_unknown_predecessor_refuses() {
     .to_string();
 
     assert!(error.contains("predecessor is unknown"), "{error}");
+}
+
+#[test]
+fn an_unbudgeted_live_predecessor_refuses() {
+    let (_fixture, root, home) = checkout("predecessor-timeout");
+    let policy = rendered_policy(&root);
+    let mut backend = FakeBackend::colima();
+    backend.predecessor = Observed::Unknown(UnknownReason::TimedOut {
+        phase: "compose config hash".into(),
+    });
+
+    let error = effigy_containers::with_test_effigy_home(&home, || {
+        plan_for(&policy, &mut backend).expect_err("a timed-out predecessor read refuses")
+    })
+    .to_string();
+
+    assert!(error.contains("predecessor is unknown"), "{error}");
+}
+
+#[test]
+fn the_gated_recheck_refuses_a_predecessor_replaced_after_preflight() {
+    let observation = observation_checkout("predecessor-replaced");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend =
+        FakeBackend::colima().with_predecessor(matching_predecessor("0123456789abcdef"));
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+
+    // Between the pre-decision read and the gated recheck a competing actor
+    // replaced the container: the recheck sees another full id / another hash.
+    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
+        "the live predecessor ownership or identity changed".into(),
+    ));
+    let error = recheck_live_predecessor(&plan, &mut backend)
+        .expect_err("the gated recheck must refuse a replaced predecessor")
+        .to_string();
+
+    assert!(error.contains("predecessor is unknown"), "{error}");
+
+    // And the same recheck passes while the live stack still matches the render.
+    backend.predecessor = Observed::Verified(matching_predecessor("0123456789abcdef"), evidence());
+    let verified = recheck_live_predecessor(&plan, &mut backend).expect("unchanged live stack");
+    assert_eq!(verified.compared(), 1);
 }
 
 // ------------------------------------------------------- post-apply observation

@@ -1237,3 +1237,37 @@ fn the_observed_image_platform_reads_the_backend_report_and_refuses_the_rest() {
     assert!(super::parse_image_platform(br#"[{"Os": "linux", "Architecture": 7}]"#).is_err());
     assert!(super::parse_image_platform(b"[]").is_err());
 }
+
+// ------------------------------------------- live predecessor evidence
+
+#[test]
+fn the_compose_config_hash_parser_keeps_the_backends_own_pairs() {
+    let parsed =
+        super::parse_service_config_hashes(b"app 0123456789abcdef\nworker fedcba9876543210\n")
+            .expect("one pair per service");
+    assert_eq!(
+        parsed.get("app").map(String::as_str),
+        Some("0123456789abcdef")
+    );
+    assert_eq!(
+        parsed.get("worker").map(String::as_str),
+        Some("fedcba9876543210")
+    );
+    // An unsupported or empty answer is never treated as compatible.
+    assert!(super::parse_service_config_hashes(b"").is_err());
+    assert!(super::parse_service_config_hashes(b"app\n").is_err());
+    assert!(super::parse_service_config_hashes(b" app   \n").is_err());
+}
+
+#[test]
+fn the_inspected_config_hash_needs_a_service_and_a_hash() {
+    let inspect = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app", "com.docker.compose.config-hash": "abc123"}}}]"#;
+    assert_eq!(
+        super::inspected_config_hash(inspect).expect("both labels"),
+        ("app".to_owned(), "abc123".to_owned())
+    );
+    let no_hash = br#"[{"Config": {"Labels": {"com.docker.compose.service": "app"}}}]"#;
+    assert!(super::inspected_config_hash(no_hash).is_err());
+    assert!(super::inspected_config_hash(b"[]").is_err());
+    assert!(super::inspected_config_hash(b"not json").is_err());
+}

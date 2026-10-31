@@ -60,7 +60,10 @@ use effigy_kernel::workspace_session::{
     ImagePlatform, LoaderFamily, PublishInputs, TargetCandidate, TargetEvidence,
 };
 
-use crate::runner::container_runtime_prep::{observed_image_platform, ObservedImagePlatform};
+use crate::runner::container_runtime_prep::{
+    observed_image_platform, observed_predecessor_compatibility, ObservedImagePlatform,
+    PredecessorCompatibility,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::workspace_client::context::{
     snapshot_path, GuestWorkspace, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
@@ -148,18 +151,6 @@ impl VerifiedBinding {
     }
 }
 
-/// Whether a live predecessor exists, and what proves it compatible.
-///
-/// `desired` is the render digest this checkout's environment record published
-/// for the running stack. A render the record never published is not a
-/// compatible predecessor: applying it can recreate the container a live session
-/// is serving.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::runner) struct PredecessorState {
-    pub(in crate::runner) running: bool,
-    pub(in crate::runner) desired: Option<String>,
-}
-
 /// The verified backend and provisioning observations a reserved publication
 /// needs.
 ///
@@ -182,13 +173,15 @@ pub(in crate::runner) trait ReservedBackendObservation {
         selected: &BackendSelection,
         deadline: PublicationDeadline,
     ) -> Observed<ReservedAddressing>;
-    /// Whether a container of this project is already running, and the render
-    /// digest this checkout's record published for it.
+    /// The live recreate risk of applying this exact rendered policy: which of
+    /// this project's containers are running and whether each was created from
+    /// the service config the render produces. The environment record's
+    /// historical `desired` digest is not live evidence and plays no part.
     fn predecessor(
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorState>;
+    ) -> Observed<PredecessorCompatibility>;
     /// The host-verified full container id of the primary service.
     fn binding(
         &mut self,
@@ -346,61 +339,8 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorState> {
-        // One bounded project listing decides whether anything is running, then
-        // the verified binding and the record decide whether it is ours and what
-        // render created it.
-        let rows = match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
-            policy.repo_root.as_path(),
-            policy,
-            Some(deadline.at()),
-        ) {
-            Ok(rows) => rows,
-            Err(error) => {
-                return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                    "the project inventory is unavailable: {error}"
-                )))
-            }
-        };
-        let running = rows
-            .iter()
-            .filter(|row| {
-                row.project_name.as_deref() == Some(policy.project_name.as_str())
-                    && !row.oneoff
-                    && effigy_containers::exec::compose_status_is_running(&row.status)
-            })
-            .count();
-        if running == 0 {
-            return Observed::Verified(
-                PredecessorState {
-                    running: false,
-                    desired: None,
-                },
-                evidence(),
-            );
-        }
-        // A running stack must be this checkout's and scope's, with a full id.
-        if let Err(error) = crate::runner::container_runtime_prep::ensure_primary_service_binding(
-            policy.repo_root.as_path(),
-            policy,
-            Some(deadline.at()),
-        ) {
-            return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "a container of this project is running but its ownership is unproven: {error}"
-            )));
-        }
-        let desired = match environment_record_bounded(policy, deadline) {
-            Observed::Verified(record, _) => record.desired,
-            Observed::Absent(_) => None,
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
-        };
-        Observed::Verified(
-            PredecessorState {
-                running: true,
-                desired,
-            },
-            evidence(),
-        )
+    ) -> Observed<PredecessorCompatibility> {
+        observed_predecessor_compatibility(policy.repo_root.as_path(), policy, deadline.at())
     }
 
     fn binding(
@@ -804,20 +744,9 @@ pub(in crate::runner) fn plan(
     };
     deadline.remaining()?;
     // Before anything applies: a container already running for this project is a
-    // live predecessor, and this apply may recreate it.
-    let predecessor = verified(
-        observation.predecessor(policy, deadline),
-        "workspace predecessor",
-    )?;
-    if predecessor.running && predecessor.desired.as_deref() != Some(local.render_digest.as_str()) {
-        return Err(refused(format!(
-            "a live workspace predecessor is running and this publication applies another render \
-             (`{}`, recorded `{}`); stop it with `effigy container {} down` before republishing",
-            local.render_digest,
-            predecessor.desired.as_deref().unwrap_or("none"),
-            policy.name,
-        )));
-    }
+    // live predecessor, and this apply may recreate it. Only live Compose config
+    // hashes prove the render cannot, so the guard asks the backend.
+    verify_live_predecessor(&local.policy, deadline, observation)?;
     deadline.remaining()?;
     Ok(Some(ReservedPublicationPlan {
         selected,
@@ -831,6 +760,61 @@ pub(in crate::runner) fn plan(
         backend_label: local.backend_label,
         render_digest: local.render_digest,
     }))
+}
+
+/// The recreate-risk evidence one guarded application carries.
+///
+/// It exists only after [`recheck_live_predecessor`] verified the live stack
+/// against the render's own Compose config hashes, so a caller can hold it as the
+/// proof that the one apply it is about to perform cannot recreate a live
+/// predecessor.
+#[derive(Debug)]
+pub(in crate::runner) struct PredecessorRecheck {
+    compared: usize,
+}
+
+impl PredecessorRecheck {
+    /// How many live containers were compared against the render's own hashes.
+    pub(in crate::runner) fn compared(&self) -> usize {
+        self.compared
+    }
+}
+
+/// Refuse unless applying `policy` (the plan's rendered policy) cannot recreate a
+/// live predecessor.
+///
+/// Unknown, a changed container id, a changed Compose config hash and a backend
+/// that cannot report hashes all refuse. The environment record's historical
+/// `desired` digest is not consulted: it is not live evidence.
+fn verify_live_predecessor(
+    policy: &EffectiveContainerPolicy,
+    deadline: PublicationDeadline,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<PredecessorRecheck, EnvError> {
+    deadline.remaining()?;
+    let compatibility = verified(
+        observation.predecessor(policy, deadline),
+        "workspace live predecessor",
+    )?;
+    deadline.remaining()?;
+    Ok(PredecessorRecheck {
+        compared: compatibility.compared(),
+    })
+}
+
+/// The budgeted recheck #452 invokes **under the activation gate, immediately
+/// before the one Compose apply**.
+///
+/// The pre-decision read alone is insufficient: a container can be created,
+/// replaced or reconfigured between planning and the apply. This repeats the same
+/// live Compose config-hash comparison against the plan's rendered policy, inside
+/// the publication's one deadline, and refuses when anything changed. The caller
+/// owns the gate and must hold it through the apply this guards.
+pub(in crate::runner) fn recheck_live_predecessor(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<PredecessorRecheck, EnvError> {
+    verify_live_predecessor(&plan.policy, plan.deadline, observation)
 }
 
 /// Everything planning computes from local files, computed on one bounded worker.

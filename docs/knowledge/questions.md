@@ -865,7 +865,8 @@ than inventing them:
   address. Until an owner observes the
   address actually reachable from the guest for a default-configured profile,
   such a Colima workspace cannot publish through the reserved path.
-* **A container's creator — blocking the fresh-target path.** No owner records
+* **A container's creator — still blocking the fresh-target path (pending
+  effigy#508).** No owner records
   "this run created container X": the engine's apply effect names the engine,
   context and project, Compose's labels name the project and service, and a
   creation stamp inside this activation's window only proves *when* the container
@@ -878,3 +879,6 @@ than inventing them:
   re-observed target is exact identity matching and publishes normally, so a
   workspace can publish after its container exists; the first up of a brand-new
   environment cannot publish through the reserved path until that owner exists.
+  #508 owns the narrow backend receipt; timestamps, before/after absence and
+  matching Compose labels do not establish creator identity, so this refusal stays
+  until that receipt is integrated.
