@@ -275,53 +275,6 @@ impl std::fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// What one engine create is asked to create: the environment's workspace
-/// service, described by the admitted render (effigy#510).
-#[derive(Debug, Clone, Copy)]
-pub struct WorkspaceCreation<'a> {
-    /// The checkout the engine create runs from.
-    pub workdir: &'a Path,
-    /// The Compose project the workspace container belongs to.
-    pub project: &'a str,
-    /// The service the guest binary runs in.
-    pub service: &'a str,
-    /// The rendered Compose files the service specification is declared in.
-    pub compose_files: &'a [std::path::PathBuf],
-}
-
-/// One container an engine's create response named: the exact full id the
-/// operation returned and the name its request used.
-///
-/// Only an engine create builds one, so an inventory, a label match or a
-/// progress line can never stand in for a creation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CreatedContainerId {
-    container_id: String,
-    name: String,
-}
-
-impl CreatedContainerId {
-    /// The create response's own full container id.
-    pub fn container_id(&self) -> &str {
-        &self.container_id
-    }
-
-    /// The container name the create request used.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// A create response, for a fixture backend that must report one. No
-    /// production caller builds this: an adapter receives these fields from the
-    /// engine's own create response.
-    pub fn from_response(container_id: &str, name: &str) -> Self {
-        Self {
-            container_id: container_id.to_owned(),
-            name: name.to_owned(),
-        }
-    }
-}
-
 /// One workload the backend observes, with the labels that prove ownership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workload {
@@ -381,30 +334,6 @@ pub trait EnvironmentBackend {
         let _ = (workdir, reference, deadline);
         Observed::Unknown(UnknownReason::ToolUnavailable(
             "this backend cannot bound image inspection to a deadline".to_owned(),
-        ))
-    }
-
-    /// Create the environment's workspace container with the engine's own
-    /// create API, and return exactly the full ids that operation's successful
-    /// response named (effigy#510).
-    ///
-    /// This is the only creation fact that can become a receipt. Compose is a
-    /// client of the engine's create: its apply creates the container, but the
-    /// create response goes to Compose and never to Effigy, and Compose's
-    /// progress output names containers rather than the ids it received. A
-    /// backend that cannot issue the create itself therefore answers
-    /// `NoBackendRecord` naming the missing adapter; `Verified` carries exactly
-    /// the ids the create response returned, never an inventory, a name lookup,
-    /// a timestamp or a label match.
-    fn create_workspace_container(
-        &mut self,
-        request: &WorkspaceCreation<'_>,
-    ) -> Observed<Vec<CreatedContainerId>> {
-        let _ = request;
-        Observed::Unknown(UnknownReason::NoBackendRecord(
-            "this adapter issues no create of its own, so it never receives the engine's create \
-             response"
-                .to_owned(),
         ))
     }
 

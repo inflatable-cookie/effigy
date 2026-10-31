@@ -337,6 +337,9 @@ pub(super) fn create_request() -> crate::environment::CreationRequest<'static> {
         project: PROJECT,
         primary_service: "app",
         compose_files: &[],
+        render: None,
+        preflight: None,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
     }
 }
 

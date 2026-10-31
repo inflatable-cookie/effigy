@@ -126,7 +126,25 @@ impl<'r> WorkspaceActivation<'r> {
         request: super::Up<'_>,
         apply: impl FnOnce() -> Result<(), super::BackendError>,
     ) -> Result<super::BringUp, EnvError> {
-        super::ops::reconcile_in(&mut self.environment, request, apply, |run| run.holders())
+        super::ops::reconcile_in(&mut self.environment, request, None, apply, |run| {
+            run.holders()
+        })
+    }
+
+    pub fn apply_sealed_with(
+        &mut self,
+        request: super::Up<'_>,
+        sealed: &effigy_kernel::objects::SealedPreflight,
+        preflight: &super::CreationPreflight,
+        apply: impl FnOnce() -> Result<(), super::BackendError>,
+    ) -> Result<super::BringUp, EnvError> {
+        super::ops::reconcile_in(
+            &mut self.environment,
+            request,
+            Some((sealed, preflight)),
+            apply,
+            |run| run.holders(),
+        )
     }
 
     pub fn supervisor_id(&self) -> &str {

@@ -3818,6 +3818,32 @@ crash or a stopped listener before the close keeps the row, so a successor still
 finds the recorded owner and settles or refuses instead of silently dropping
 authority, and a settled session is never an owner.
 
+### 8.12 Gate-scoped creation inference (effigy#510)
+
+The v0.15 receipt is a complete before/after full-ID project inventory difference
+under the exclusive `Gate(Env)`, not an engine create response. Another checkout,
+project or stale generation must never be adopted. A same-user engine actor
+creating identically labelled containers inside the gate window is outside this
+narrowed guarantee (Tom, 2026-10-31; Q-017).
+
+Resolve each frozen service's immutable image ID before activation and recheck
+under the gate. The gate-scoped observations verify every row's exact ID, project,
+service, managed, scope and checkout labels and exact image reference/immutable ID.
+The post-apply service set must equal the frozen declared set; missing, extra,
+duplicate or replaced inventory rows refuse. Attached containers retain their IDs;
+only IDs absent before and present after can enter the created set. Image tag
+moves, reference-only container image identity, partial or failed apply, unknown
+journal state, expired deadlines, cancellation and gate loss grant no receipt.
+
+The environment effect is `environment:gate-scoped-id-difference`. Its result
+retains the complete observed inventory and the reservation's environment
+generation. Retry reads this result without another apply. The publication owner
+rechecks that inventory under the gate and refuses a stale reservation before
+binding; the reserved-input boundary reobserves target/platform immediately before
+`bind_target`. Missing attribution is Unknown, not proof of no creator. Colima
+currently refuses a reference-only container image result; deterministic fixtures
+are not native qualification.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |

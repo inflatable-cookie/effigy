@@ -43,6 +43,9 @@ impl Up<'_> {
             project: self.project,
             primary_service: self.primary_service,
             compose_files: self.compose_files,
+            render: self.render,
+            preflight: None,
+            deadline: Instant::now() + super::reconcile::RUN_BUDGET,
         }
     }
 }
@@ -95,7 +98,7 @@ pub fn reconcile_observing(
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = reconcile_in(&mut run, request, apply, observe_holders);
+    let result = reconcile_in(&mut run, request, None, apply, observe_holders);
     let ok = result.is_ok();
     run.finish(ok)?;
     result
@@ -104,11 +107,22 @@ pub fn reconcile_observing(
 pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
+    sealed: Option<(
+        &effigy_kernel::objects::SealedPreflight,
+        &super::CreationPreflight,
+    )>,
     apply: impl FnOnce() -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
 ) -> Result<BringUp, EnvError> {
     if let Some(closure) = request.render {
-        run.publish_desired(closure)?;
+        match sealed {
+            Some((sealed, _)) => {
+                run.publish_sealed_desired(sealed, closure)?;
+            }
+            None => {
+                run.publish_desired(closure)?;
+            }
+        }
     }
     run.settle_interrupted_holders()?;
     let previous = run.engine_record().cloned();
@@ -138,12 +152,9 @@ pub(super) fn reconcile_in(
         });
     }
     let mut adapter = request.backend.adapter();
-    let creation = run.create_with(
-        adapter.as_mut(),
-        request.backend,
-        request.creation_request(),
-        apply,
-    )?;
+    let mut creation_request = request.creation_request();
+    creation_request.preflight = sealed.map(|(_, preflight)| preflight);
+    let creation = run.create_with(adapter.as_mut(), request.backend, creation_request, apply)?;
     Ok(BringUp {
         applied: match unreadable {
             Some(reason) => Applied::ReconciledUnreadableHolders(reason),

@@ -42,11 +42,16 @@ pub(in crate::runner) trait WorkspaceGuestProbe: GuestChannelProbe {
 type CredentialFactory<'a> =
     Box<dyn FnOnce(&SessionRef, u64) -> Result<WorkspaceEnrolmentCredential, EnvError> + 'a>;
 
+type TargetObservation = (Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>);
+type TargetObserver<'a> = Box<dyn FnOnce(Instant) -> Result<TargetObservation, EnvError> + 'a>;
+
 pub(in crate::runner) struct ReservedGuestInput<'a> {
     pub(in crate::runner) guest: Box<dyn GuestWorkspace + 'a>,
     pub(in crate::runner) artifact: &'a Path,
     pub(in crate::runner) targets: Observed<Vec<TargetCandidate>>,
     pub(in crate::runner) platform: Observed<BoundPlatform>,
+    /// Fresh backend observation under the already-held activation gate.
+    pub(in crate::runner) reobserve: TargetObserver<'a>,
     pub(in crate::runner) alias: &'a ChannelAliasPlan,
     pub(in crate::runner) probe: &'a mut dyn WorkspaceGuestProbe,
     pub(in crate::runner) context: WorkspaceContextInput,
@@ -119,12 +124,32 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
         .intend_workspace_publication(&ctx_plan)?;
     let result = (|| {
         remaining()?;
+        let (gated_targets, gated_platform) = (input.reobserve)(until)?;
+        match (
+            &input.targets,
+            &gated_targets,
+            &input.platform,
+            &gated_platform,
+        ) {
+            (
+                Observed::Verified(before, _),
+                Observed::Verified(after, _),
+                Observed::Verified(before_platform, _),
+                Observed::Verified(after_platform, _),
+            ) if before == after && before_platform == after_platform => {}
+            _ => {
+                return Err(refused(
+                    "preflight and gated target/image identities differ or are unavailable",
+                ))
+            }
+        }
+        remaining()?;
         let target = activation
             .environment_mut()
-            .bind_target(&reservation, input.targets)?;
+            .bind_target(&reservation, gated_targets)?;
         let binding = activation
             .environment_mut()
-            .bind_platform(&reservation, input.platform)?;
+            .bind_platform(&reservation, gated_platform)?;
         if binding.target != target {
             return Err(refused("image and apply target differ"));
         }

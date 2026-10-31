@@ -760,6 +760,15 @@ impl<'r> EnvRun<'r> {
     }
 
     /// Publishes the environment's render as the object it points at.
+    pub fn publish_sealed_desired(
+        &mut self,
+        sealed: &effigy_kernel::objects::SealedPreflight,
+        closure: &Closure,
+    ) -> Result<String, EnvError> {
+        let result = Objects::publish_sealed_desired(&mut self.run, sealed, closure);
+        self.kernel(result)
+    }
+
     pub fn publish_desired(&mut self, closure: &Closure) -> Result<String, EnvError> {
         self.phase("publishing the desired render", None);
         let result = Objects::publish_desired(&mut self.run, closure);
@@ -898,16 +907,8 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
-    /// The one creating apply (effigy#510): journals the create intent under
-    /// the same permit and gate the ordinary apply takes, runs the caller's one
-    /// apply, and then asks the backend for the engine create response that
-    /// names what this activation created.
-    ///
-    /// An attributed response is verified against the applying backend and
-    /// sealed as this run's [`CreationReceipt`](super::creation::CreationReceipt);
-    /// a backend that issues no create of its own records an explicit absence of
-    /// attribution and names the missing API. Either way the effect result is
-    /// durable, and a retry returns it instead of running a second apply.
+    /// Journal one ordinary Compose apply and its complete gate-scoped ID
+    /// difference. An incomplete observation produces no attribution receipt.
     pub fn create_with(
         &mut self,
         backend: &mut dyn super::backend::EnvironmentBackend,
@@ -916,8 +917,14 @@ impl<'r> EnvRun<'r> {
         apply: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<super::creation::CreationOutcome, EnvError> {
         use super::creation::{self, RecordedCreation};
+        let mut request = request;
+        if let Deadline::At(deadline) = self.cx.operation().deadline() {
+            request.deadline = request.deadline.min(deadline);
+        }
         let env = self.env.name.clone();
         self.settle_interrupted_holders()?;
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
         if let Some(outcome) = self.journalled_creation()? {
             return Ok(outcome);
         }
@@ -951,9 +958,9 @@ impl<'r> EnvRun<'r> {
                 return Err(EnvError::from_run(&env, error));
             }
         };
-        // The one apply. The engine create it performs is Compose's; whether
-        // this backend can report the create response is what the next step
-        // asks.
+        // Both observations and the one apply run inside this EnvRun's gate.
+        // An incomplete window can never mint an attribution receipt.
+        let window = creation::CreationWindow::open(backend, request);
         let outcome = match fault("EnvBackendBefore") {
             Err(error) => Err(BackendError::NotStarted(error.to_string())),
             Ok(()) => {
@@ -992,73 +999,26 @@ impl<'r> EnvRun<'r> {
             self.failed = true;
             return Err(EnvError::Backend(error));
         }
-        // What did the engine's own create response name? Nothing else can
-        // answer it: Compose created the containers and kept the ids.
-        let response = backend.create_workspace_container(&super::backend::WorkspaceCreation {
-            workdir: request.workdir,
-            project: request.project,
-            service: request.primary_service,
-            compose_files: request.compose_files,
-        });
-        let record = match response {
-            Observed::Verified(created, _) => {
-                match creation::verify(backend, request, &created) {
-                    Ok(verified) => {
-                        let receipt = creation::seal(
-                            &self.env.resource,
-                            self.run.id(),
-                            request,
-                            selection.engine.as_str(),
-                            &selection.context,
-                            verified,
-                            Vec::new(),
-                        );
-                        self.progress.event(match receipt.created().len() {
-                            0 => "the engine create returned no container id".to_owned(),
-                            count => format!("the engine created {count} container(s)"),
-                        });
-                        RecordedCreation::Attributed {
-                            engine: receipt.engine().to_owned(),
-                            context: receipt.context().to_owned(),
-                            project: receipt.project().to_owned(),
-                            primary_service: request.primary_service.to_owned(),
-                            created: receipt.created().to_vec(),
-                            attached: receipt.attached().to_vec(),
-                        }
-                    }
-                    Err(refusal) => {
-                        // The engine acted, so this is never `Failed`: it is an
-                        // unattributable creation, and no weaker receipt is
-                        // recorded in its place.
-                        self.progress.event(format!(
-                            "the engine create's response cannot be attributed: {refusal}"
-                        ));
-                        let recorded = self
-                            .run
-                            .unknown(&ticket, UnknownReason::Inconsistent(refusal.to_string()));
-                        if let Err(error) = recorded {
-                            self.failed = true;
-                            return Err(EnvError::from_run(&env, error));
-                        }
-                        self.failed = true;
-                        return Err(EnvError::Backend(BackendError::Uncertain(format!(
-                            "the apply created containers this activation cannot attribute: {refusal}"
-                        ))));
-                    }
-                }
-            }
-            Observed::Absent(proof) => RecordedCreation::Unattributed {
+        let record = match window.and_then(|window| window.close(backend, request)) {
+            Ok(creation::InventoryDifference {
+                created,
+                attached,
+                observed,
+            }) => RecordedCreation::Attributed {
+                engine: selection.engine.as_str().to_owned(),
+                context: selection.context.clone(),
                 project: request.project.to_owned(),
-                reason: proof.to_string(),
+                primary_service: request.primary_service.to_owned(),
+                generation: self.fence().generation.get(),
+                observed,
+                workdir: request.workdir.to_path_buf(),
+                created,
+                attached,
             },
-            Observed::Unknown(reason) => {
-                self.progress
-                    .event(format!("the apply's creation is unattributed: {reason}"));
-                RecordedCreation::Unattributed {
-                    project: request.project.to_owned(),
-                    reason: reason.to_string(),
-                }
-            }
+            Err(reason) => RecordedCreation::Unproven {
+                project: request.project.to_owned(),
+                reason: reason.to_string(),
+            },
         };
         let recorded = creation::stored(record.clone())
             .map_err(|error| EnvError::Invalid(error.to_string()))?;
@@ -1395,6 +1355,45 @@ impl<'r> EnvRun<'r> {
         );
         self.progress.event("the environment is active");
         Ok(())
+    }
+
+    /// Recheck the apply's journalled inventory under its exact claimed
+    /// reservation, before the caller binds a target. Missing evidence refuses.
+    pub fn recheck_creation(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        backend: &mut dyn super::backend::EnvironmentBackend,
+        deadline: Instant,
+    ) -> Result<super::CreationReceipt, EnvError> {
+        if reservation.environment() != &self.fence().resource
+            || reservation.generation() != self.fence().generation
+        {
+            return Err(EnvError::Invalid(
+                "creation receipt targets a stale reservation generation".into(),
+            ));
+        }
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        let outcome = self.journalled_creation()?.ok_or_else(|| {
+            EnvError::Invalid("activation has no journalled apply inventory".into())
+        })?;
+        let receipt = outcome.receipt().ok_or_else(|| {
+            EnvError::Invalid("activation has no complete gate-scoped attribution".into())
+        })?;
+        if receipt.generation() != reservation.generation().get() || receipt.run() != self.id() {
+            return Err(EnvError::Invalid(
+                "creation receipt belongs to another activation".into(),
+            ));
+        }
+        receipt
+            .reobserve(backend, deadline)
+            .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        // The journal's binding transaction checks the live gate and fence;
+        // callers must still bind within this EnvRun, never carry this result
+        // into a later owner.
+        Ok(receipt.clone())
     }
 
     /// Bind only the apply inventory for this run's claimed activation. The

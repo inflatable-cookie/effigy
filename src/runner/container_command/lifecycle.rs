@@ -1089,13 +1089,13 @@ fn annotate_environment_record(
         });
         if let Some(creation) = creation {
             let object = environment.as_object_mut().expect("object");
-            match creation.unattributed() {
+            match creation.unproven() {
                 // Exactly the ids this activation's own engine create named. An
                 // unattributed apply reports no ids and says why, because it
                 // proves nothing either way (effigy#510).
                 Some(reason) => {
                     object.insert(
-                        "creation_unattributed".to_owned(),
+                        "creation_unproven".to_owned(),
                         serde_json::Value::String(reason.to_owned()),
                     );
                 }

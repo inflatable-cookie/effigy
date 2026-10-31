@@ -132,6 +132,37 @@ pub(in crate::runner) fn up<'a>(
         cause: Box::new(cause),
         cleanup: None,
     };
+    let closure = policy.render.as_ref().ok_or_else(|| {
+        owner_error(EnvError::Invalid(
+            "workspace activation has no frozen render".into(),
+        ))
+    })?;
+    let backend = super::backend(&policy.repo_root, policy);
+    let preflight = effigy_containers::environment::CreationPreflight::observe(
+        backend.adapter().as_mut(),
+        Up {
+            render: Some(&closure.closure),
+            project: &policy.project_name,
+            backend: &backend,
+            retention: request.retention,
+            workdir: &policy.repo_root,
+            primary_service: &policy.primary_service,
+            compose_files: &policy.compose_files,
+        }
+        .creation_request(),
+    )
+    .map_err(|error| {
+        owner_error(EnvError::Backend(BackendError::NotStarted(
+            error.to_string(),
+        )))
+    })?;
+    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+        &ctx.cx,
+        ctx.root,
+        &closure.closure,
+        std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET,
+    )
+    .map_err(|error| owner_error(EnvError::Kernel(error)))?;
     let mut activation = match WorkspaceActivation::begin(
         &ctx,
         &env,
@@ -151,7 +182,7 @@ pub(in crate::runner) fn up<'a>(
     let mut creation = None;
     let result = (|| {
         let backend = super::backend(&policy.repo_root, policy);
-        let bringing_up = activation.apply_with(
+        let bringing_up = activation.apply_sealed_with(
             Up {
                 render: policy.render.as_ref().map(|render| &render.closure),
                 project: &policy.project_name,
@@ -161,9 +192,20 @@ pub(in crate::runner) fn up<'a>(
                 primary_service: &policy.primary_service,
                 compose_files: &policy.compose_files,
             },
+            &sealed,
+            &preflight,
             apply,
         )?;
         creation = bringing_up.creation;
+        // A publication provider cannot turn an incomplete apply observation
+        // into a fresh target by supplying its own candidate.
+        let reservation = activation.reservation().clone();
+        activation.environment_mut().recheck_creation(
+            &reservation,
+            backend.adapter().as_mut(),
+            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET,
+        )?;
+
         // The provider binds the apply's exact target/platform and stages the
         // required guest binary ticket before independently probing the guest.
         // It returns only a real qualified launch and constructor-validated

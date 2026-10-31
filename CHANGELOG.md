@@ -284,24 +284,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
-- **A fresh workspace container can only be attributed from an engine create
-  response.** The environment's one apply now journals
-  `environment:engine-create`, whose record is either the exact full container
-  ids an engine create returned for the workspace service — read back by those
-  ids and verified for project, declared service, one-off marker and immutable
-  image id — or an explicit absence of attribution naming the missing adapter.
-  `effigy_containers::environment::created_by(project, full_id)` answers the
-  owning environment run from that journal, the `NoCreator` proof when every
-  recorded create is attributed, or an unknown when an apply recorded no
-  attribution; a retry reconciles the run's own record and never re-derives
-  attribution later. No container adapter can supply the create response today,
-  because Compose performs the one intended apply and keeps the engine's create
-  response, so a first up records no attribution and a fresh workspace target
-  stays unpublished. `container up --json` reports the created ids as
-  `environment.created_container_ids` when the create is attributed, and
-  `environment.creation_unattributed` with its reason when it is not. Proven by deterministic
-  backend and journal fixtures; no native create window has been recorded, and
-  `nerdctl` still reports a container image only as a mutable reference.
+- **Workspace creation uses a complete gate-scoped ID difference.** The
+  environment's one frozen Compose apply journals
+  `environment:gate-scoped-id-difference`. Full before/after inventories must
+  match the frozen project, service and checkout ownership labels and immutable
+  image identities; attached IDs stay attached. The inference excludes concurrent
+  Effigy activations through the environment gate. A same-user actor forging
+  identical labels inside that window is outside v0.15's guarantee. Unreadable or
+  incomplete evidence produces no receipt, and retries never reapply or fabricate
+  attribution from a later inventory. Missing journal evidence is Unknown.
+  Reference-only Colima container image observations refuse attribution.
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
   `Attach` or reserves exactly the next environment generation from the frozen

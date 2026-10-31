@@ -487,6 +487,12 @@ home = "/home/vscode"
             } else {
                 vec![]
             };
+            let reobserved_target = target.clone();
+            let reobserved_image = image.clone();
+            let reobserved_project = policy.project_name.clone();
+            let reobserved_object = object.clone();
+            let reobserved_version = version.clone();
+            let creating_run = activation.environment_mut().id();
             Ok(ReservedGuestInput {
                 guest: Box::new(Guest(
                     shared.clone(),
@@ -495,6 +501,30 @@ home = "/home/vscode"
                     fired.clone(),
                 )),
                 artifact: &artifact,
+                reobserve: Box::new(move |deadline| {
+                    assert!(std::time::Instant::now() < deadline);
+                    Ok((
+                        Observed::Verified(
+                            vec![TargetCandidate {
+                                identity: reobserved_target.clone(),
+                                project: reobserved_project,
+                                created_by: Some(creating_run),
+                            }],
+                            evidence(),
+                        ),
+                        Observed::Verified(
+                            BoundPlatform {
+                                target: reobserved_target,
+                                platform: reobserved_image.clone(),
+                                artifact_platform: reobserved_image,
+                                artifact: reobserved_object,
+                                artifact_version: reobserved_version,
+                                execution_available: true,
+                            },
+                            evidence(),
+                        ),
+                    ))
+                }),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
                         identity: target.clone(),
