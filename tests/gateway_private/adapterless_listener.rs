@@ -1515,6 +1515,57 @@ fn managed_host_adapterless_cleanup_stops_a_descendant_captured_before_its_leade
     );
 }
 
+/// The actual fixture's normal `Drop`: `AdapterlessSetup` is dropped, not a
+/// sweep called by hand. A descendant the watchdog captured while its leader
+/// lived must still be stopped after the leader is gone and its record cleared.
+#[test]
+fn managed_host_adapterless_cleanup_drop_stops_a_descendant_captured_before_its_leader_stopped() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let checkout = setup.fixture.path().join("checkout-drop");
+    fs::create_dir(&checkout).expect("drop checkout");
+    let pidfile = checkout.join("descendant.pid");
+    let mut leader = spawn_shell_group(&format!(
+        "sleep 300 & echo $! > '{}'; sleep 300",
+        pidfile.display()
+    ));
+    record_listener_child(&checkout, &leader, None);
+    let descendant = wait_for_pid(&pidfile);
+    wait_for_ledger_member(setup.fixture.path(), descendant);
+
+    // A settled `down` stops the leader and clears its listener record.
+    leader.kill().expect("end the recorded leader");
+    leader.wait().expect("reap the recorded leader");
+    fs::remove_file(listener_record_path(&checkout)).expect("clear the settled record");
+    assert!(
+        pid_alive(descendant),
+        "the descendant outlives the stopped leader"
+    );
+
+    drop(setup);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pid_alive(descendant) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let stopped = !pid_alive(descendant);
+    if !stopped {
+        // Backstop for a failing proof: the test started this descendant.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(descendant as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(
+        stopped,
+        "AdapterlessSetup::drop must stop a descendant the watchdog captured before its leader stopped"
+    );
+}
+
 fn listener_record_path(checkout: &Path) -> PathBuf {
     checkout.join(".effigy/runtime/host-processes/web/cleanup/web.listener.json")
 }
