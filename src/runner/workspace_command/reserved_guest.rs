@@ -42,17 +42,19 @@ pub(in crate::runner) trait WorkspaceGuestProbe: GuestChannelProbe {
 type CredentialFactory<'a> =
     Box<dyn FnOnce(&SessionRef, u64) -> Result<WorkspaceEnrolmentCredential, EnvError> + 'a>;
 
-/// The producer's input. Everything here is owned except the injected probe:
-/// the artifact path and the observed alias plan are the builder's own values,
-/// so one built input never borrows the state that gave it those facts and no
-/// caller is left holding a half-alive builder.
+/// The producer's input. Everything here is owned: the artifact path, the
+/// observed alias plan and the injected probe. The probe is boxed rather than
+/// borrowed because the target it must name is only known after apply, while the
+/// caller's publication closure returns this value: an owned probe lets the
+/// builder construct it from the verified target and hand it over with no
+/// self-reference and no local that dies at the closure boundary.
 pub(in crate::runner) struct ReservedGuestInput<'a> {
     pub(in crate::runner) guest: Box<dyn GuestWorkspace + 'a>,
     pub(in crate::runner) artifact: PathBuf,
     pub(in crate::runner) targets: Observed<Vec<TargetCandidate>>,
     pub(in crate::runner) platform: Observed<BoundPlatform>,
     pub(in crate::runner) alias: ChannelAliasPlan,
-    pub(in crate::runner) probe: &'a mut dyn WorkspaceGuestProbe,
+    pub(in crate::runner) probe: Box<dyn WorkspaceGuestProbe + 'a>,
     pub(in crate::runner) context: WorkspaceContextInput,
     pub(in crate::runner) snapshots: Vec<(GuestObject, Vec<u8>)>,
     pub(in crate::runner) credential: CredentialFactory<'a>,
@@ -192,7 +194,7 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
                 supervisor: &supervisor_id,
             },
             activation.session_run_mut(),
-            input.probe,
+            input.probe.as_mut(),
             remaining()?,
         )
         .map_err(|error| unavailable(error.to_string()))?

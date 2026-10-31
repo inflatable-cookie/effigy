@@ -154,7 +154,11 @@ pub(crate) fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
 /// * `Verified(None)`: the profile configures no gateway, so this profile does
 ///   not prove the address its guest would use.
 /// * `Absent`: the profile has written no configuration file at all.
-/// * `Unknown`: the profile file or this observation could not be read.
+/// * `Unknown`: the profile file is not a regular file, is larger than any
+///   Colima profile, or could not be read.
+///
+/// The read is size-bounded and refuses a non-regular path, so a FIFO, a device
+/// or a runaway file cannot hold a publication's observation open.
 pub fn observed_runtime_gateway_address(
     profile: &str,
 ) -> effigy_kernel::observe::Observed<Option<String>> {
@@ -164,16 +168,16 @@ pub fn observed_runtime_gateway_address(
         return unknown("the Colima home directory is not resolvable".into());
     };
     let path = home.join(profile).join("colima.yaml");
-    let text = match std::fs::read_to_string(&path) {
+    let text = match bounded_profile_text(&path) {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(ProfileRead::Missing) => {
             return Observed::Absent(AbsenceProof::NoFile {
                 name: path.display().to_string(),
             })
         }
-        Err(error) => {
+        Err(ProfileRead::Unreadable(reason)) => {
             return unknown(format!(
-                "the Colima profile `{}` is unreadable: {error}",
+                "the Colima profile `{}` is unreadable: {reason}",
                 path.display()
             ))
         }
@@ -199,6 +203,44 @@ pub fn observed_runtime_gateway_address(
         Evidence::new("Colima profile network.gatewayAddress".into(), None)
             .expect("fixed evidence"),
     )
+}
+
+/// A Colima profile is a small YAML document. Anything larger, or anything that
+/// is not a regular file, is not one, so the reader never blocks on a FIFO or
+/// pays for an arbitrary file.
+const COLIMA_PROFILE_LIMIT: u64 = 1024 * 1024;
+
+enum ProfileRead {
+    Missing,
+    Unreadable(String),
+}
+
+fn bounded_profile_text(path: &Path) -> Result<String, ProfileRead> {
+    use std::io::Read;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ProfileRead::Missing)
+        }
+        Err(error) => return Err(ProfileRead::Unreadable(error.to_string())),
+    };
+    if !metadata.is_file() {
+        return Err(ProfileRead::Unreadable(
+            "the profile path is not a regular file".into(),
+        ));
+    }
+    let file =
+        std::fs::File::open(path).map_err(|error| ProfileRead::Unreadable(error.to_string()))?;
+    let mut bytes = Vec::new();
+    file.take(COLIMA_PROFILE_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ProfileRead::Unreadable(error.to_string()))?;
+    if bytes.len() as u64 > COLIMA_PROFILE_LIMIT {
+        return Err(ProfileRead::Unreadable(format!(
+            "the profile exceeds {COLIMA_PROFILE_LIMIT} bytes"
+        )));
+    }
+    String::from_utf8(bytes).map_err(|error| ProfileRead::Unreadable(error.to_string()))
 }
 
 pub(crate) fn colima_home_dir() -> Option<PathBuf> {

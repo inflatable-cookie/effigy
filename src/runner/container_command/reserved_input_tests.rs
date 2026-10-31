@@ -179,6 +179,9 @@ struct FakeBackend {
     identity: Observed<WorkspaceContainerIdentity>,
     image: Observed<ObservedImagePlatform>,
     artifact: Observed<PathBuf>,
+    /// How long each observation pretends to take, so expiry can be exercised
+    /// while one is in flight.
+    takes: Option<Duration>,
     reads: Rc<Cell<usize>>,
 }
 
@@ -191,13 +194,14 @@ impl FakeBackend {
             binding: Observed::Verified(
                 VerifiedBinding {
                     container_id: CONTAINER_ID.to_owned(),
-                    backend: selection.engine.as_str().to_owned(),
+                    selected: selection.clone(),
                 },
                 evidence(),
             ),
             identity: Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
             image: Observed::Verified(image_facts(), evidence()),
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
+            takes: None,
             reads: Rc::new(Cell::new(0)),
         }
     }
@@ -218,6 +222,9 @@ impl FakeBackend {
 
     fn call(&self) {
         self.reads.set(self.reads.get() + 1);
+        if let Some(takes) = self.takes {
+            std::thread::sleep(takes);
+        }
     }
 
     fn with_artifact(mut self, artifact: PathBuf) -> Self {
@@ -484,6 +491,11 @@ fn reobserved_decision(
 
 fn deadline() -> PublicationDeadline {
     PublicationDeadline::new(Instant::now() + Duration::from_secs(30))
+}
+
+/// The production probe factory shape: it only needs the verified target.
+fn probe_factory<'a>() -> ReservedProbeFactory<'a> {
+    Box::new(|_target| Ok(Box::new(NoProbe) as Box<dyn WorkspaceGuestProbe>))
 }
 
 fn plan_for(
@@ -808,25 +820,42 @@ fn observation_checkout(label: &str) -> Observation {
     }
 }
 
-fn planned_for(observation: &Observation, backend: &mut FakeBackend) -> ReservedPublicationPlan {
-    let policy = rendered_policy(&observation.root);
-    effigy_containers::with_test_effigy_home(&observation.home, || {
-        plan_for(&policy, backend)
-            .expect("plan")
-            .expect("container mode")
-    })
+/// Plan for one observation checkout. The caller owns the policy, so the plan's
+/// borrow of it can outlive this call.
+fn planned_for(
+    policy: &EffectiveContainerPolicy,
+    backend: &mut FakeBackend,
+) -> ReservedPublicationPlan {
+    plan_for(policy, backend)
+        .expect("plan")
+        .expect("container mode")
+}
+
+/// Plan under the fixture's own Effigy home, returning the plan itself.
+fn planned_in_home(
+    observation: &Observation,
+    policy: &EffectiveContainerPolicy,
+    backend: &mut FakeBackend,
+) -> ReservedPublicationPlan {
+    effigy_containers::with_test_effigy_home(&observation.home, || planned_for(policy, backend))
 }
 
 #[test]
 fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
     let observation = observation_checkout("raced");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
-    let mut raced = backend.with_identity(WorkspaceContainerIdentity {
-        container_id: OTHER_CONTAINER_ID.to_owned(),
-        vm_boot_id: OTHER_BOOT_ID.to_owned(),
-        ..host_identity(host_machine(), "gnu")
-    });
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    backend.identity = Observed::Verified(
+        WorkspaceContainerIdentity {
+            container_id: OTHER_CONTAINER_ID.to_owned(),
+            vm_boot_id: OTHER_BOOT_ID.to_owned(),
+            ..host_identity(host_machine(), "gnu")
+        },
+        evidence(),
+    );
     let facts = fresh_decision(&plan);
 
     let error = observe(
@@ -834,8 +863,10 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
-        &mut raced,
+        &mut backend,
     )
     .expect_err("raced binding")
     .to_string();
@@ -847,7 +878,10 @@ fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
 fn a_target_the_decision_did_not_freeze_is_refused() {
     let observation = observation_checkout("stale");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     let mut inputs = plan
         .publish_inputs(
             ArtifactEvidence::Unselected {
@@ -872,6 +906,8 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
         &mut backend,
     )
@@ -885,7 +921,10 @@ fn a_target_the_decision_did_not_freeze_is_refused() {
 fn an_unknown_image_platform_refuses() {
     let observation = observation_checkout("image-unknown");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     backend.image = Observed::Unknown(UnknownReason::Inconsistent(
         "image inspect is unavailable".into(),
     ));
@@ -896,6 +935,8 @@ fn an_unknown_image_platform_refuses() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
         &mut backend,
     )
@@ -909,8 +950,11 @@ fn an_unknown_image_platform_refuses() {
 fn a_guest_that_disagrees_with_its_image_refuses() {
     let observation = observation_checkout("image-conflict");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
-    let mut conflicting = backend.with_identity(host_identity(other_arch_machine(), "gnu"));
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
     let facts = fresh_decision(&plan);
 
     let error = observe(
@@ -918,8 +962,10 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
-        &mut conflicting,
+        &mut backend,
     )
     .expect_err("conflicting observations")
     .to_string();
@@ -931,15 +977,20 @@ fn a_guest_that_disagrees_with_its_image_refuses() {
 fn emulated_execution_is_refused_rather_than_claimed() {
     let observation = observation_checkout("emulated");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     // A consistent emulated world: the backend says the image is for another
     // machine type and the guest agrees with it.
-    let mut emulated = backend
-        .with_image(ObservedImagePlatform {
+    backend.image = Observed::Verified(
+        ObservedImagePlatform {
             architecture: other_arch().into(),
             ..image_facts()
-        })
-        .with_identity(host_identity(other_arch_machine(), "gnu"));
+        },
+        evidence(),
+    );
+    backend.identity = Observed::Verified(host_identity(other_arch_machine(), "gnu"), evidence());
     let facts = fresh_decision(&plan);
 
     let error = observe(
@@ -947,8 +998,10 @@ fn emulated_execution_is_refused_rather_than_claimed() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
-        &mut emulated,
+        &mut backend,
     )
     .expect_err("unverified emulation")
     .to_string();
@@ -967,8 +1020,11 @@ fn other_arch_machine() -> &'static str {
 fn an_image_without_a_provable_c_library_refuses() {
     let observation = observation_checkout("libc");
     let mut backend = FakeBackend::colima();
-    let plan = planned_for(&observation, &mut backend);
-    let mut unknown_libc = backend.with_identity(host_identity(host_machine(), ""));
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    backend.identity = Observed::Verified(host_identity(host_machine(), ""), evidence());
     let facts = fresh_decision(&plan);
 
     let error = observe(
@@ -976,8 +1032,10 @@ fn an_image_without_a_provable_c_library_refuses() {
             repo_root: &observation.root,
         },
         &plan,
+        &rendered,
+        &probe,
         &facts,
-        &mut unknown_libc,
+        &mut backend,
     )
     .expect_err("no provable libc")
     .to_string();
@@ -990,8 +1048,12 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
     let observation = observation_checkout("artifact-receipt");
     let artifact = produced_artifact(&observation.root, host_family());
     std::fs::write(&artifact, b"swapped bytes").expect("swapped artifact");
-    let mut backend = FakeBackend::colima().with_artifact(artifact);
-    let plan = planned_for(&observation, &mut backend);
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     let facts = fresh_decision(&plan);
 
     let error = effigy_containers::with_test_effigy_home(&observation.home, || {
@@ -1000,6 +1062,8 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
                 repo_root: &observation.root,
             },
             &plan,
+            &rendered,
+            &probe,
             &facts,
             &mut backend,
         )
@@ -1014,8 +1078,12 @@ fn a_tampered_artifact_that_disagrees_with_its_receipt_refuses() {
 fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_platform() {
     let observation = observation_checkout("fresh");
     let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima().with_artifact(artifact.clone());
-    let plan = planned_for(&observation, &mut backend);
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact.clone(), evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     let facts = fresh_decision(&plan);
     let project = plan.policy().project_name.clone();
 
@@ -1025,6 +1093,8 @@ fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_plat
                 repo_root: &observation.root,
             },
             &plan,
+            &rendered,
+            &probe,
             &facts,
             &mut backend,
         )
@@ -1032,8 +1102,7 @@ fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_plat
     });
 
     assert_eq!(prepared.verified_container_id(), CONTAINER_ID);
-    let mut probe = NoProbe;
-    let input = prepared.into_input(&mut probe);
+    let input = prepared.into_input();
     assert_eq!(input.artifact, artifact);
     assert_eq!(input.alias.backend, Backend::Colima);
     assert!(
@@ -1101,8 +1170,12 @@ fn a_fresh_target_is_attributed_to_this_activation_and_carries_the_verified_plat
 fn a_reobserved_target_is_not_attributed_to_this_activation() {
     let observation = observation_checkout("reobserved");
     let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend = FakeBackend::colima().with_artifact(artifact);
-    let plan = planned_for(&observation, &mut backend);
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
     let facts = reobserved_decision(
         &plan,
         ContainerIdentity {
@@ -1118,13 +1191,14 @@ fn a_reobserved_target_is_not_attributed_to_this_activation() {
                 repo_root: &observation.root,
             },
             &plan,
+            &rendered,
+            &probe,
             &facts,
             &mut backend,
         )
         .expect("reobserved publication inputs")
     });
-    let mut probe = NoProbe;
-    let input = prepared.into_input(&mut probe);
+    let input = prepared.into_input();
     let Observed::Verified(targets, _) = &input.targets else {
         panic!("a built input carries verified target candidates");
     };
@@ -1166,4 +1240,179 @@ fn the_enrolment_secret_is_64_canonical_hex_and_fresh_every_time() {
     }
     assert_ne!(first.expose(), second.expose());
     assert!(ReservedEnrolmentSecret::canonical(&"A".repeat(64)).is_none());
+}
+
+#[test]
+fn an_observation_that_outlives_the_budget_is_a_timeout_not_a_panic() {
+    let (_fixture, root, home) = checkout("expiry-in-flight");
+    let policy = rendered_policy(&root);
+    let mut backend = FakeBackend::colima();
+    // The addressing observation outlives the budget. In a debug build a panic
+    // here would abort the publication instead of leaving it pending/unknown.
+    backend.takes = Some(Duration::from_millis(20));
+    let expired = PublicationDeadline::new(Instant::now() + Duration::from_millis(1));
+
+    let error = effigy_containers::with_test_effigy_home(&home, || {
+        plan(
+            ReservedPlanRequest {
+                policy: &policy,
+                deadline: expired,
+            },
+            &mut backend,
+        )
+        .expect_err("an expired observation is not a fact")
+    })
+    .to_string();
+
+    // Either the adapter noticed the elapsed budget and reported a timeout, or
+    // the planner refused the expired clock right after the read. Both refuse;
+    // neither panics nor publishes.
+    assert!(
+        error.contains("deadline expired") || error.contains("timed out"),
+        "{error}"
+    );
+    assert_eq!(
+        backend.count(),
+        1,
+        "planning stopped as soon as an observation outlived the budget"
+    );
+    assert!(
+        matches!(
+            backend.artifact,
+            Observed::Verified(ref path, _) if path == Path::new("/nonexistent/artifact")
+        ),
+        "no artifact was observed"
+    );
+}
+
+#[test]
+fn a_same_engine_but_different_profile_binding_is_refused() {
+    let observation = observation_checkout("profile-race");
+    let mut backend = FakeBackend::colima();
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    // The same engine, another Colima profile: a target bound to it would have
+    // published this plan's profile and alias.
+    backend.binding = Observed::Verified(
+        VerifiedBinding {
+            container_id: CONTAINER_ID.to_owned(),
+            selected: colima_selection("another-profile"),
+        },
+        evidence(),
+    );
+    let facts = fresh_decision(&plan);
+
+    let error = observe(
+        ReservedObservationRequest {
+            repo_root: &observation.root,
+        },
+        &plan,
+        &rendered,
+        &probe,
+        &facts,
+        &mut backend,
+    )
+    .expect_err("another profile is another backend")
+    .to_string();
+
+    assert!(error.contains("another-profile"), "{error}");
+    assert!(error.contains("effigy"), "{error}");
+}
+
+#[test]
+fn a_policy_that_is_not_the_plans_render_is_refused() {
+    let observation = observation_checkout("foreign-render");
+    let mut backend = FakeBackend::colima();
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let probe = probe_factory();
+    let facts = fresh_decision(&plan);
+
+    let error = observe(
+        ReservedObservationRequest {
+            repo_root: &observation.root,
+        },
+        &plan,
+        // The unrendered policy: no `effigy-host` alias, so not the plan's render.
+        &policy,
+        &probe,
+        &facts,
+        &mut backend,
+    )
+    .expect_err("another render was handed over")
+    .to_string();
+
+    assert!(
+        error.contains("another render than the planned one"),
+        "{error}"
+    );
+}
+
+/// The integration shape #452 writes, type-checked against `up_prepared`'s own
+/// callback parameter: one begin/apply, then the callback returns an input that
+/// owns its probe, so nothing borrows a local that dies with the callback.
+#[test]
+fn the_published_integration_shape_compiles_and_owns_its_probe() {
+    /// Exactly `up_prepared`'s third parameter.
+    fn accepts_published<'a>(
+        published: impl FnOnce(
+            &mut effigy_containers::environment::WorkspaceActivation<'static>,
+        ) -> Result<ReservedGuestInput<'a>, EnvError>,
+    ) {
+        // The compiler, not a run, proves the shape: a real activation needs the
+        // kernel journal, and the producer's own owner tests drive that.
+        let _ = published;
+    }
+
+    let observation = observation_checkout("integration-shape");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact.clone(), evidence());
+    // Declared before the plan so the closure below can borrow it for the
+    // publication's lifetime.
+    let mut second = FakeBackend::colima();
+    second.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let probe = probe_factory();
+    let facts = fresh_decision(&plan);
+
+    // The same shape built for real, so the ownership claim is exercised: the
+    // input's probe is the one the injected factory made for this target, and
+    // `into_input()` takes no borrow.
+    let input = effigy_containers::with_test_effigy_home(&observation.home, || {
+        observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &facts,
+            &mut backend,
+        )
+        .expect("the observation builds the owner input")
+        .into_input()
+    });
+    assert_eq!(input.alias.backend, Backend::Colima);
+    assert!(input.deadline > Instant::now());
+
+    // And the same closure, type-checked against `up_prepared`'s parameter.
+    let second_facts = facts;
+    accepts_published(|_activation| {
+        Ok(observe(
+            ReservedObservationRequest {
+                repo_root: &observation.root,
+            },
+            &plan,
+            &rendered,
+            &probe,
+            &second_facts,
+            &mut second,
+        )?
+        .into_input())
+    });
 }

@@ -860,7 +860,8 @@ than inventing them:
 * **A profile's guest-side gateway when the profile configures none.** The
   renderer keeps Lima's `192.168.5.2` default for pre-start rendering;
   `runtime_gateway_observation` reports a configured address, an absent profile,
-  an unreadable one and a profile that configures no gateway separately, and the
-  reserved publication refuses the last three. Until an owner observes the
+  an unreadable, oversized or non-regular one and a profile that configures no
+  gateway separately, and the reserved publication refuses all but the configured
+  address. Until an owner observes the
   address actually reachable from the guest for a default-configured profile,
   such a Colima workspace cannot publish through the reserved path.

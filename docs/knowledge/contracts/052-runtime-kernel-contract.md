@@ -3007,12 +3007,15 @@ because those facts are not all knowable at one moment. `plan` runs before
 `WorkspaceActivation::begin` freezes the decision and before ordinary apply: it
 observes the admitted `BackendSelection` through `environment::observed_backend`,
 which keeps an unreadable record or recorded backend `Unknown` instead of
-collapsing into the policy default; it observes the addresses that backend's
+collapsing into the policy default (the observation carries the whole selection —
+kind, profile/context and engine — and the post-apply binding must match all
+three, so two profiles on one engine cannot be swapped); it observes the addresses that backend's
 guest actually reaches (Docker Desktop and Colima reach the host on loopback,
 proved bindable rather than assumed; the Colima gateway is the profile's own
 `network.gatewayAddress` through `effigy_containers::runtime_gateway_observation`,
-where a missing profile, an unreadable one, one that configures no gateway and a
-configured one are four distinct outcomes); it refuses to re-render over a **live
+where a missing profile, an unreadable or oversized one, one that is not a
+regular file, one that configures no gateway and a configured one are distinct
+outcomes, and the read is size-bounded); it refuses to re-render over a **live
 predecessor** whose environment record published another Compose closure digest;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`

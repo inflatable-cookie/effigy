@@ -81,6 +81,11 @@ use crate::runner::workspace_transport::qualification::{Backend, ChannelAliasPla
 
 type EnvError = effigy_containers::environment::EnvError;
 
+/// Planning will not begin the checkout's source closure with less budget than
+/// this left: the closure reads the checkout and composes the manifest, and a
+/// publication that cannot finish it must refuse before it starts.
+const SOURCE_CLOSURE_FLOOR: Duration = Duration::from_millis(250);
+
 /// The fixed evidence label every derived value in this module carries. It names
 /// this builder, so a receipt reader can tell a builder fact from an
 /// owner-issued one.
@@ -132,11 +137,19 @@ pub(in crate::runner) struct ReservedAddressing {
 }
 
 /// The host-verified identity of the environment's primary container: its full
-/// backend id and the recorded engine that produced it.
+/// backend id and the *complete* backend selection (kind, profile/context and
+/// engine) that was admitted when it was bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::runner) struct VerifiedBinding {
     pub(in crate::runner) container_id: String,
-    pub(in crate::runner) backend: String,
+    pub(in crate::runner) selected: BackendSelection,
+}
+
+impl VerifiedBinding {
+    /// The engine label a published target and its evidence carry.
+    pub(in crate::runner) fn backend_label(&self) -> &str {
+        self.selected.engine.as_str()
+    }
 }
 
 /// Whether a live predecessor exists, and what proves it compatible.
@@ -310,7 +323,13 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                 Observed::Unknown(reason) => return Observed::Unknown(reason),
             }
         }
-        deadline_at_least(deadline);
+        // An observation that finished past the budget is a timeout, not a fact:
+        // the caller turns this into the pending/unknown path, never a panic.
+        if deadline.remaining().is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace alias addressing".into(),
+            });
+        }
         Observed::Verified(addressing, evidence())
     }
 
@@ -392,8 +411,11 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                     policy,
                     deadline.at(),
                 );
-                let backend = match selected {
-                    Observed::Verified(selected, _) => selected.engine.as_str().to_owned(),
+                // The whole selection, not just its engine: two Colima profiles
+                // or two Docker contexts share an engine while naming different
+                // backends, so only the full value fences the planned profile.
+                let selected = match selected {
+                    Observed::Verified(selected, _) => selected,
                     Observed::Absent(_) => {
                         return Observed::Unknown(UnknownReason::Inconsistent(
                             "the admitted backend is absent".into(),
@@ -404,7 +426,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                 Observed::Verified(
                     VerifiedBinding {
                         container_id: container.id().to_owned(),
-                        backend,
+                        selected,
                     },
                     evidence(),
                 )
@@ -478,14 +500,15 @@ impl ReservedBackendObservation for ContainerBackendObservation {
     }
 }
 
-/// The remaining budget is a fact the caller already holds; this only records
-/// that the observation above finished inside it.
-fn deadline_at_least(deadline: PublicationDeadline) {
-    debug_assert!(
-        deadline.at() > Instant::now(),
-        "an observation finished past the publication deadline"
-    );
-}
+/// Builds the production probe for the exact target a publication verified.
+///
+/// The probe's own constructor needs the target (container id and boot), which
+/// only exists after the apply. The caller injects this factory instead of a
+/// probe value, so the builder can construct the probe from the identity it just
+/// verified and hand ownership to the producer: no borrow of a local that dies
+/// at the publication closure's boundary.
+pub(in crate::runner) type ReservedProbeFactory<'a> =
+    Box<dyn Fn(&ContainerIdentity) -> Result<Box<dyn WorkspaceGuestProbe + 'a>, RunnerError> + 'a>;
 
 /// What a caller must hand the pre-decision plan.
 pub(in crate::runner) struct ReservedPlanRequest<'a> {
@@ -531,6 +554,13 @@ impl ReservedPublicationPlan {
     /// actually bound.
     pub(in crate::runner) fn policy(&self) -> &EffectiveContainerPolicy {
         &self.policy
+    }
+
+    /// The same rendered policy, owned by the caller for the rest of the
+    /// publication. [`observe`] takes it so the guest the producer stages
+    /// through borrows the caller's policy, not this plan.
+    pub(in crate::runner) fn rendered_policy(&self) -> EffectiveContainerPolicy {
+        self.policy.clone()
     }
 
     pub(in crate::runner) fn backend(&self) -> &BackendSelection {
@@ -678,12 +708,25 @@ pub(in crate::runner) fn plan(
             policy.name,
         )));
     }
+    // The source closure is a local file read plus the composed manifest, which
+    // may resolve pinned sources with their own bounded timeouts. It is the last
+    // unbounded-in-principle step before planning returns, so planning refuses to
+    // start it without a floor of budget left and refuses the result when the
+    // clock has passed: a publication is never built on work that overran it.
     deadline.remaining()?;
+    if deadline
+        .remaining()
+        .is_ok_and(|remaining| remaining < SOURCE_CLOSURE_FLOOR)
+    {
+        return Err(unavailable(format!(
+            "workspace publication has less than {SOURCE_CLOSURE_FLOOR:?} left, which cannot \
+             close the checkout's source pins"
+        )));
+    }
     // One read of the checkout's identity, path map and pinned source closure:
     // the decision's frozen materialisation and the snapshots the producer
     // stages come from this single observation.
     let paths = workspace_path_map(rendered.repo_root.as_path(), &workspace).map_err(io)?;
-    deadline.remaining()?;
     let closure = workspace_source_closure(rendered.repo_root.as_path(), &paths).map_err(io)?;
     deadline.remaining()?;
     let guest = environment_materialisation(&rendered, &selected, paths, &closure)?;
@@ -807,6 +850,7 @@ pub(in crate::runner) struct PreparedReservedPublication<'a> {
     snapshots: Vec<(GuestObject, Vec<u8>)>,
     secret: ReservedEnrolmentSecret,
     target: ContainerIdentity,
+    probe: Box<dyn WorkspaceGuestProbe + 'a>,
     reservation_generation: u64,
     deadline: Instant,
 }
@@ -836,11 +880,9 @@ impl PreparedReservedPublication<'_> {
 impl<'a> PreparedReservedPublication<'a> {
     /// The one `ReservedGuestInput` this publication is allowed to stage. It
     /// consumes the prepared facts, so a second publication cannot reuse the
-    /// secret or the staged-target assumptions.
-    pub(in crate::runner) fn into_input(
-        self,
-        probe: &'a mut dyn WorkspaceGuestProbe,
-    ) -> ReservedGuestInput<'a> {
+    /// secret or the staged-target assumptions, and it takes no borrow: the
+    /// probe it carries was built for the verified target and is owned here.
+    pub(in crate::runner) fn into_input(self) -> ReservedGuestInput<'a> {
         let Self {
             guest,
             artifact,
@@ -851,6 +893,7 @@ impl<'a> PreparedReservedPublication<'a> {
             snapshots,
             secret,
             target,
+            probe,
             reservation_generation,
             deadline,
         } = self;
@@ -883,6 +926,10 @@ impl<'a> PreparedReservedPublication<'a> {
 
 /// Observe the exact target and build the producer's input.
 ///
+/// `policy` is the caller's own [`ReservedPublicationPlan::rendered_policy`] copy:
+/// it must be the plan's exact render (checked here), and it is what the guest the
+/// producer stages through borrows.
+///
 /// Every fact is derived from the plan, the host's verified binding, the
 /// backend's image inspect, the guest's own report in that binding and the
 /// artifact's producer receipt. The frozen decision evidence is the guard: a
@@ -890,11 +937,20 @@ impl<'a> PreparedReservedPublication<'a> {
 /// raced or replaced container is never published into.
 pub(in crate::runner) fn observe<'a>(
     request: ReservedObservationRequest<'_>,
-    plan: &'a ReservedPublicationPlan,
+    plan: &ReservedPublicationPlan,
+    policy: &'a EffectiveContainerPolicy,
+    probe: &ReservedProbeFactory<'a>,
     facts: &ReservedDecisionFacts,
     observation: &'a mut dyn ReservedBackendObservation,
 ) -> Result<PreparedReservedPublication<'a>, EnvError> {
     let deadline = plan.deadline;
+    if policy.render.as_ref().map(|render| render.closure.digest())
+        != Some(plan.render_digest.as_str())
+    {
+        return Err(refused(
+            "workspace publication was handed another render than the planned one",
+        ));
+    }
     if request.repo_root != plan.policy.repo_root.as_path() {
         return Err(refused(
             "workspace publication observed another checkout than the planned one",
@@ -920,7 +976,7 @@ pub(in crate::runner) fn observe<'a>(
     }
     deadline.remaining()?;
     let binding = verified(
-        observation.binding(&plan.policy, deadline),
+        observation.binding(policy, deadline),
         "workspace primary binding",
     )?;
     // A full lowercase 64-hex id is the only id form a target may carry; a short
@@ -930,15 +986,21 @@ pub(in crate::runner) fn observe<'a>(
             "workspace binding is not a full container id, so placement is unproven",
         ));
     }
-    if binding.backend != plan.backend_label {
+    // The complete frozen selection, not just its engine: a different profile or
+    // Docker context with the same engine would otherwise publish the planned
+    // profile and alias for another backend's target.
+    if binding.selected != *plan.backend() {
         return Err(refused(format!(
-            "workspace binding reports backend `{}` but the admitted selection is `{}`",
-            binding.backend, plan.backend_label
+            "workspace binding reports backend `{}`/`{}` but the admitted selection is `{}`/`{}`",
+            binding.selected.engine.as_str(),
+            binding.selected.context,
+            plan.backend().engine.as_str(),
+            plan.backend().context,
         )));
     }
     deadline.remaining()?;
     let identity = verified(
-        observation.identity(&plan.policy, &binding.container_id, deadline),
+        observation.identity(policy, &binding.container_id, deadline),
         "workspace guest identity",
     )?;
     // The guest read the container the host bound, not a replacement the service
@@ -954,7 +1016,7 @@ pub(in crate::runner) fn observe<'a>(
     let target = ContainerIdentity {
         container_id: identity.container_id.clone(),
         vm_boot_id: identity.vm_boot_id.clone(),
-        backend: binding.backend.clone(),
+        backend: binding.backend_label().to_owned(),
     };
     let created_by = match &inputs.target {
         TargetEvidence::Observed(expected) => {
@@ -979,7 +1041,7 @@ pub(in crate::runner) fn observe<'a>(
     // family is the image root the guest reports. Neither the guest's `uname` nor
     // this host's architecture selects the artifact.
     let reported = verified(
-        observation.image_platform(&plan.policy, &binding.container_id, deadline),
+        observation.image_platform(policy, &binding.container_id, deadline),
         "workspace image platform",
     )?;
     let loader = loader_family(&identity.libc)?;
@@ -1011,7 +1073,7 @@ pub(in crate::runner) fn observe<'a>(
     let execution_available = native_execution(&platform)?;
     deadline.remaining()?;
     let artifact = verified(
-        observation.artifact(&plan.policy, family, deadline),
+        observation.artifact(policy, family, deadline),
         "workspace guest artifact",
     )?;
     // One absolute deadline for the digest, so an artifact that cannot be
@@ -1067,7 +1129,11 @@ pub(in crate::runner) fn observe<'a>(
     let snapshots = snapshots(&plan.snapshots)?;
     deadline.remaining()?;
     let secret = ReservedEnrolmentSecret::mint()?;
-    let guest = observation.guest(&plan.policy, &target, deadline)?;
+    // The injected production probe, built for the identity just verified. It is
+    // owned here, so the publication closure can hand the producer an input with
+    // no borrow of a local.
+    let probe = probe(&target).map_err(io)?;
+    let guest = observation.guest(policy, &target, deadline)?;
     Ok(PreparedReservedPublication {
         guest,
         artifact,
@@ -1082,6 +1148,7 @@ pub(in crate::runner) fn observe<'a>(
         snapshots,
         secret,
         target,
+        probe,
         reservation_generation,
         deadline: deadline.at(),
     })
