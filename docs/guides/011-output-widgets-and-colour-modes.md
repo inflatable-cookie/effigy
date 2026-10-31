@@ -25,10 +25,11 @@ Preferred widgets:
 - `summary` for command-level totals
 - `effigy_ui::steps::live_step(source)` and `effigy_ui::steps::finish_line(...)`
   for progress a person watches as work moves on; see section 6, which is the
-  only API for new work. The fixed-label spinner is gone —
-  `Renderer::spinner`, `SpinnerHandle` and `steps::step` no longer draw
-  anything, and `effigy lint:feedback` fails any site that builds one, directly
-  or through a wrapper.
+  only API for new work. `Renderer::spinner` and `SpinnerHandle` are removed.
+  `steps::step` and `Step::step` still exist and would still draw a fixed-label
+  bar if called, but they are deprecated lint anchors: `effigy lint:feedback`
+  fails on any use of them, directly or through a wrapper, so a canned label
+  cannot reach a release.
 
 ## 3) Colour and Mode Controls
 
