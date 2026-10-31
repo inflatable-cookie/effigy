@@ -1064,7 +1064,7 @@ mod tests {
                     "the refusal names the retag the reference cannot see: {detail}"
                 );
             }
-            other => panic!("{other:?}"),
+            other => panic!("the window published `{other}` instead of refusing"),
         }
     }
 }
