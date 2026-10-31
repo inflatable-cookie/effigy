@@ -129,10 +129,8 @@ pub(super) fn run_builtin_test_targets_tui(
     })
 }
 
-/// One suite's terminal status before the run's stop record decides whether an
-/// interrupted-looking status is a cancellation. Workers record only what they
-/// observed; the caller's stop record is read once, on the thread that owns the
-/// ports.
+/// One suite's terminal status before the run that owns it says whether the
+/// run's stop ended it. Workers record only what they observed.
 struct SuiteStatus {
     name: String,
     runner: String,
@@ -140,29 +138,20 @@ struct SuiteStatus {
     command: String,
     success: bool,
     code: Option<i32>,
-    signal: Option<i32>,
+    /// The run stopped this suite: it never reported a result of its own.
+    stopped: bool,
 }
 
-/// One suite's result from the terminal status of the process that ran it and
-/// the run's own stop record.
+/// One suite's result from the status the process reported and the per-suite
+/// stop fact the run that owns the suite recorded.
 ///
 /// A cancellation is the run's fact, never a suite's exit status: a suite that
 /// reports `130` or `143` on its own is a failure. Only a suite the run's stop
-/// ended — the interrupted convention of contract 052: a death from one of the
-/// stop's own signals, or the `128 + signal` status a shell substitutes for it
-/// — is cancelled, and only while the run records that stop.
-fn suite_outcome(
-    success: bool,
-    code: Option<i32>,
-    signal: Option<i32>,
-    run_stopped: bool,
-) -> BuiltinTestOutcome {
+/// ended is cancelled.
+fn suite_outcome(success: bool, stopped: bool) -> BuiltinTestOutcome {
     if success {
-        return BuiltinTestOutcome::Passed;
-    }
-    let interrupted_status = signal.is_some_and(effigy_process::interrupted_signal)
-        || code.is_some_and(effigy_process::interrupted_exit_code);
-    if run_stopped && interrupted_status {
+        BuiltinTestOutcome::Passed
+    } else if stopped {
         BuiltinTestOutcome::Cancelled
     } else {
         BuiltinTestOutcome::Failed
@@ -316,38 +305,26 @@ pub(super) fn run_builtin_test_targets_parallel(
                     if let Some(mut custody) = custody {
                         // The suite stays in this run's process group, so
                         // custody still settles it.
-                        let outcome =
-                            custody.run(&execution_command, &root, &host_env, capture_output);
-                        let result = outcome.map(|outcome| {
-                            #[cfg(unix)]
-                            let status = {
-                                use std::os::unix::process::ExitStatusExt;
-                                std::process::ExitStatus::from_raw(outcome.code.unwrap_or(1) << 8)
-                            };
-                            #[cfg(not(unix))]
-                            let status = {
-                                let _ = outcome;
-                                unreachable!("built-in test custody is a unix process group")
-                            };
-                            status
-                        });
-                        let succeeded = matches!(&result, Ok(status) if status.success());
-                        // The suite's outcome is recorded and its whole
-                        // process group stopped here, before the run that
-                        // owns the scratch directory concludes.
-                        custody.settle(succeeded);
-                        let status = result.map_err(|error| BuiltinError::TaskCommandLaunch {
-                            command: execution_command.clone(),
-                            error: std::io::Error::other(error.to_string()),
-                        })?;
+                        let suite = custody
+                            .run(&execution_command, &root, &host_env, capture_output)
+                            .map_err(|error| BuiltinError::TaskCommandLaunch {
+                                command: execution_command.clone(),
+                                error: std::io::Error::other(error.to_string()),
+                            })?;
+                        // The attempt's own outcome is recorded and its whole
+                        // process group stopped here, before the run that owns
+                        // the scratch directory concludes. The record is what
+                        // the run observed: a stop stays a cancellation and a
+                        // failure keeps its own code.
+                        custody.settle(&suite);
                         local.push(SuiteStatus {
                             name,
                             runner,
                             root,
                             command,
-                            success: status.success(),
-                            code: status.code(),
-                            signal: None,
+                            success: suite.code == Some(0),
+                            code: suite.code,
+                            stopped: suite.stopped,
                         });
                         continue;
                     }
@@ -455,8 +432,9 @@ pub(super) fn run_builtin_test_targets_parallel(
                         use std::os::unix::process::ExitStatusExt;
                         status.signal()
                     };
-                    #[cfg(not(unix))]
-                    let signal = None;
+                    // These suites are the built-in's own children, not the
+                    // run's: nothing the run records can say a stop ended one,
+                    // so its status is its own result.
                     local.push(SuiteStatus {
                         name,
                         runner,
@@ -464,7 +442,7 @@ pub(super) fn run_builtin_test_targets_parallel(
                         command,
                         success: status.success(),
                         code: status.code(),
-                        signal,
+                        stopped: false,
                     });
                 }
                 Ok::<Vec<SuiteStatus>, BuiltinError>(local)
@@ -487,13 +465,13 @@ pub(super) fn run_builtin_test_targets_parallel(
         Ok(combined)
     })?;
     finish_sweep(sweep)?;
-    // One read of the caller's stop record classifies every suite: a suite's
-    // own status is never evidence that the operator cancelled the run.
-    let run_stopped = ports.run_stopped();
+    // Every suite is classified by its own status and the stop fact the run
+    // that owned it recorded: a suite's exit status is never evidence that the
+    // operator cancelled the run.
     Ok(statuses
         .into_iter()
         .map(|status| BuiltinTestExecResult {
-            outcome: suite_outcome(status.success, status.code, status.signal, run_stopped),
+            outcome: suite_outcome(status.success, status.stopped),
             name: status.name,
             runner: status.runner,
             root: status.root,
@@ -732,9 +710,9 @@ mod tests {
     struct ScratchPorts {
         env: Vec<(String, OsString)>,
         custody_marker: Option<PathBuf>,
-        /// Whether the caller's run records a stop, which is the only thing
-        /// that makes an interrupted-looking suite status a cancellation.
-        run_stopped: bool,
+        /// What the custody double reports the owning run recorded for the
+        /// attempt it ran.
+        custody_outcome: crate::HostSuiteOutcome,
         /// `(container, lifecycle command)` pairs handed to container
         /// routing. Empty unless a non-nested container suite actually
         /// routed.
@@ -750,10 +728,6 @@ mod tests {
             self.custody_marker.is_some()
         }
 
-        fn run_stopped(&self) -> bool {
-            self.run_stopped
-        }
-
         fn host_suite_custody(
             &self,
             label: &str,
@@ -764,6 +738,7 @@ mod tests {
             Ok(Some(Box::new(RecordingCustody {
                 marker: marker.clone(),
                 label: label.to_owned(),
+                outcome: self.custody_outcome.clone(),
             })))
         }
 
@@ -860,6 +835,8 @@ mod tests {
     struct RecordingCustody {
         marker: PathBuf,
         label: String,
+        /// What the run that owns the suite records for this attempt.
+        outcome: crate::HostSuiteOutcome,
     }
 
     impl HostSuiteCustody for RecordingCustody {
@@ -899,10 +876,10 @@ mod tests {
                 ),
             )
             .expect("custody marker");
-            Ok(crate::HostSuiteOutcome { code: Some(0) })
+            Ok(self.outcome.clone())
         }
 
-        fn settle(self: Box<Self>, _succeeded: bool) {}
+        fn settle(self: Box<Self>, _outcome: &crate::HostSuiteOutcome) {}
     }
 
     fn ports(dir: &Path) -> ScratchPorts {
@@ -912,7 +889,10 @@ mod tests {
                 .map(|key| ((*key).to_owned(), dir.as_os_str().to_owned()))
                 .collect(),
             custody_marker: None,
-            run_stopped: false,
+            custody_outcome: crate::HostSuiteOutcome {
+                code: Some(0),
+                stopped: false,
+            },
             routed_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -1084,99 +1064,103 @@ mod tests {
         );
     }
 
-    /// A cancellation needs both facts: the run records a stop, and the suite
-    /// reports the interrupted convention. A suite's own exit status — even
-    /// `130` or `143` — is never a cancellation by itself.
+    /// A cancellation needs the per-suite stop fact the owning run recorded.
+    /// A suite's own exit status — even `130` or `143` — is never one.
     #[test]
-    fn a_noninteractive_suite_outcome_needs_the_run_stop_and_an_interrupted_status() {
+    fn a_noninteractive_suite_outcome_needs_the_runs_own_stop_record() {
         let cases = [
-            (true, Some(0), None, false, BuiltinTestOutcome::Passed),
-            (true, Some(0), None, true, BuiltinTestOutcome::Passed),
-            (false, Some(1), None, false, BuiltinTestOutcome::Failed),
-            (false, Some(7), None, true, BuiltinTestOutcome::Failed),
-            // An ordinary exit status is the suite's own result unless the
-            // run's stop ended it.
-            (false, Some(130), None, false, BuiltinTestOutcome::Failed),
-            (false, Some(143), None, false, BuiltinTestOutcome::Failed),
-            (false, Some(137), None, false, BuiltinTestOutcome::Failed),
-            (false, Some(129), None, false, BuiltinTestOutcome::Failed),
-            (false, Some(130), None, true, BuiltinTestOutcome::Cancelled),
-            (false, Some(143), None, true, BuiltinTestOutcome::Cancelled),
-            (false, Some(137), None, true, BuiltinTestOutcome::Cancelled),
-            (false, Some(139), None, true, BuiltinTestOutcome::Failed),
-            (false, None, Some(2), false, BuiltinTestOutcome::Failed),
-            (false, None, Some(2), true, BuiltinTestOutcome::Cancelled),
-            (false, None, Some(9), true, BuiltinTestOutcome::Cancelled),
-            (false, None, Some(15), true, BuiltinTestOutcome::Cancelled),
-            (false, None, Some(11), true, BuiltinTestOutcome::Failed),
-            (false, None, None, true, BuiltinTestOutcome::Failed),
+            (true, false, BuiltinTestOutcome::Passed),
+            (true, true, BuiltinTestOutcome::Passed),
+            (false, false, BuiltinTestOutcome::Failed),
+            (false, true, BuiltinTestOutcome::Cancelled),
         ];
 
-        for (success, code, signal, run_stopped, expected) in cases {
+        for (success, stopped, expected) in cases {
             assert_eq!(
-                suite_outcome(success, code, signal, run_stopped),
+                suite_outcome(success, stopped),
                 expected,
-                "status {success:?}/{code:?}/{signal:?} with run_stopped={run_stopped}"
+                "status {success:?} with stopped={stopped}"
             );
         }
     }
 
+    /// A run that owns the suite records the per-suite stop fact: a suite it
+    /// stopped is cancelled, while a suite it did not stop keeps its own
+    /// status even when that status looks like the interrupted convention.
     #[test]
-    fn a_noninteractive_suite_the_run_stopped_is_cancelled() {
+    fn a_custody_suite_reports_the_stop_the_owning_run_recorded() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
-        // The shell reports the interrupted convention after the stop.
-        let runnable = suite(fixture.path(), "kill -INT $$", BuiltinTargetRuntime::Host);
-        let mut ports = ports(scratch.path());
-        ports.run_stopped = true;
 
-        let results = run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true)
+        let stopped = ports_with_custody(
+            scratch.path(),
+            fixture.path().join("stopped.marker"),
+            crate::HostSuiteOutcome {
+                code: Some(143),
+                stopped: true,
+            },
+        );
+        let runnable = suite(fixture.path(), "printf suite", BuiltinTargetRuntime::Host);
+        let results = run_builtin_test_targets_parallel(&stopped, vec![runnable], 1, true)
             .expect("suite recorded");
         assert_eq!(results[0].outcome, BuiltinTestOutcome::Cancelled);
         assert!(!results[0].success(), "a cancelled suite is not a pass");
 
-        let error = crate::test::render::finalize_builtin_test_outcome(
-            &results,
-            &[],
-            None,
-            &[],
-            false,
-            false,
-            false,
-        )
-        .expect_err("a cancelled suite is not a success");
-        match error {
-            BuiltinError::BuiltinTestNonZero { cancelled, .. } => assert!(
-                cancelled,
-                "an interrupted suite cancels the run, never fails it"
-            ),
-            other => panic!("unexpected error: {other}"),
-        }
+        let failed = ports_with_custody(
+            scratch.path(),
+            fixture.path().join("failed.marker"),
+            crate::HostSuiteOutcome {
+                code: Some(130),
+                stopped: false,
+            },
+        );
+        let runnable = suite(fixture.path(), "printf suite", BuiltinTargetRuntime::Host);
+        let results = run_builtin_test_targets_parallel(&failed, vec![runnable], 1, true)
+            .expect("suite recorded");
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Failed);
+        assert_eq!(results[0].code, Some(130));
+
+        let passed = ports_with_custody(
+            scratch.path(),
+            fixture.path().join("passed.marker"),
+            crate::HostSuiteOutcome {
+                code: Some(0),
+                stopped: false,
+            },
+        );
+        let runnable = suite(fixture.path(), "printf suite", BuiltinTargetRuntime::Host);
+        let results = run_builtin_test_targets_parallel(&passed, vec![runnable], 1, true)
+            .expect("suite recorded");
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Passed);
+        assert!(results[0].success());
     }
 
+    fn ports_with_custody(
+        scratch: &Path,
+        marker: PathBuf,
+        outcome: crate::HostSuiteOutcome,
+    ) -> ScratchPorts {
+        let mut ports = ports(scratch);
+        ports.custody_marker = Some(marker);
+        ports.custody_outcome = outcome;
+        ports
+    }
+
+    /// A suite the built-in spawns itself is not the run's child: nothing the
+    /// run records can say a stop ended it, so a signal death is its own
+    /// failure rather than a cancellation.
     #[test]
-    fn a_noninteractive_suite_killed_by_a_signal_is_cancelled_only_after_a_stop() {
+    fn a_signal_death_of_the_builtins_own_child_is_a_failure() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
         // SIGKILL cannot be caught: the suite dies from the signal itself.
         let runnable = suite(fixture.path(), "kill -KILL $$", BuiltinTargetRuntime::Host);
-        let mut stopped = ports(scratch.path());
-        stopped.run_stopped = true;
 
-        let stopped_results =
-            run_builtin_test_targets_parallel(&stopped, vec![runnable.clone()], 1, true)
-                .expect("suite recorded");
-        assert_eq!(stopped_results[0].outcome, BuiltinTestOutcome::Cancelled);
-        assert!(
-            !stopped_results[0].success(),
-            "a stopped suite is not a pass"
-        );
-
-        // The same status without a run stop is the suite's own failure.
         let results =
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite recorded");
         assert_eq!(results[0].outcome, BuiltinTestOutcome::Failed);
+        assert!(!results[0].success(), "a dead suite is not a pass");
     }
 
     #[test]

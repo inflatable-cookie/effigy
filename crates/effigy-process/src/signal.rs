@@ -44,12 +44,6 @@ pub fn interrupted_signal(signal: i32) -> bool {
     )
 }
 
-/// Whether `code` is the interrupted convention a shell reports for a stop:
-/// `128 + signal`. A process that reports it never chose that status.
-pub fn interrupted_exit_code(code: i32) -> bool {
-    code > 128 && interrupted_signal(code - 128)
-}
-
 pub fn process_is_running(pid: u32) -> bool {
     #[cfg(unix)]
     {

@@ -70,6 +70,38 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
     }
 }
 
+/// The run that owns a cancelled builtin test closes as cancelled; an ordinary
+/// builtin failure still closes as a failed check. A closeout that guessed
+/// `Failed { code: 1 }` would record a cancellation as a failure.
+#[test]
+fn a_builtin_test_error_records_the_outcome_its_run_closes_with() {
+    use effigy_kernel::outcome::WorkloadOutcome;
+
+    let cancelled = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), None)],
+        cancelled: true,
+        rendered: "{}".to_owned(),
+    };
+    assert!(
+        matches!(
+            cancelled.workload_outcome(),
+            WorkloadOutcome::Cancelled { .. }
+        ),
+        "a cancelled builtin test closes its run as cancelled: {:?}",
+        cancelled.workload_outcome()
+    );
+
+    let failed = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), Some(7))],
+        cancelled: false,
+        rendered: "{}".to_owned(),
+    };
+    assert!(matches!(
+        failed.workload_outcome(),
+        WorkloadOutcome::Failed { code: 1 }
+    ));
+}
+
 /// An operator stop is a cancellation, not a failed check: the task carries
 /// the interrupted exit code so durable run records read the same outcome the
 /// text and JSON do, and a plain failure keeps the ordinary exit.

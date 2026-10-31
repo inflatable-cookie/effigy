@@ -73,6 +73,9 @@ impl<'a> RunnerBuiltinPorts<'a> {
 struct SuiteCustody {
     run: Option<TaskRun>,
     label: String,
+    /// The outcome the runner observed for the attempt it ran, recorded when
+    /// the attempt settles.
+    attempt: Option<effigy_kernel::outcome::WorkloadOutcome>,
 }
 
 impl effigy_builtin::HostSuiteCustody for SuiteCustody {
@@ -108,20 +111,26 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
             },
         )
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+        let stopped = exit.stopped;
+        self.attempt = Some(exit.workload);
         Ok(effigy_builtin::HostSuiteOutcome {
             code: Some(exit.code),
+            stopped,
         })
     }
 
-    fn settle(mut self: Box<Self>, succeeded: bool) {
+    fn settle(mut self: Box<Self>, outcome: &effigy_builtin::HostSuiteOutcome) {
         let Some(run) = self.run.take() else {
             return;
         };
-        let workload = if succeeded {
-            effigy_kernel::outcome::WorkloadOutcome::Succeeded
-        } else {
-            effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
-        };
+        // The run records what the runner itself observed for the attempt:
+        // a cancellation stays a cancellation, and a failed suite keeps its
+        // own code.
+        let workload = self.attempt.unwrap_or_else(|| match outcome.code {
+            Some(0) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
+            Some(code) => effigy_kernel::outcome::WorkloadOutcome::Failed { code },
+            None => effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
+        });
         for warning in run.close(workload) {
             eprintln!("warning: {}: {warning}", self.label);
         }
@@ -138,10 +147,6 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
 
     fn custody_holds_host_suites(&self) -> bool {
         self.suite_parent.is_some()
-    }
-
-    fn run_stopped(&self) -> bool {
-        crate::runner::task_engine::stop_recorded()
     }
 
     fn host_suite_env_aliases(
@@ -203,6 +208,7 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         Ok(Some(Box::new(SuiteCustody {
             run: Some(run),
             label: label.to_owned(),
+            attempt: None,
         })))
     }
 

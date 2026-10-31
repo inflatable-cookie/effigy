@@ -301,6 +301,32 @@ impl RunnerError {
         }
     }
 
+    /// The workload outcome this error records for the run that owns it.
+    ///
+    /// A cancellation the error itself names stays a cancellation, a command's
+    /// own exit code becomes the run's result, and everything else is a failed
+    /// check. A run closeout that guessed `Failed { code: 1 }` instead would
+    /// record a cancelled builtin test as a failure.
+    pub fn workload_outcome(&self) -> effigy_kernel::outcome::WorkloadOutcome {
+        use effigy_kernel::outcome::WorkloadOutcome;
+        if matches!(
+            self,
+            RunnerError::BuiltinTestNonZero {
+                cancelled: true,
+                ..
+            }
+        ) {
+            return WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::Requested,
+                signal: None,
+            };
+        }
+        let code = self
+            .task_exit_status()
+            .unwrap_or_else(|| self.process_exit_code());
+        crate::runner::task_engine::workload_for_exit(code)
+    }
+
     /// The kernel's category a person reads for this failure. An admission
     /// refusal keeps the category the kernel read for the run it could not
     /// start; every other failure belongs to one of the three kinds (K4, F16):

@@ -268,9 +268,11 @@ pub(in crate::runner) fn run_remote_with(
         (_, Some(exit)) => exit.code,
         (_, None) => 1,
     };
+    let stopped = matches!(workload, WorkloadOutcome::Cancelled { .. });
     Ok(PlainExit {
         workload,
         code,
+        stopped,
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
@@ -319,9 +321,11 @@ fn own_stop_request(run: &mut TaskRun) -> Option<effigy_kernel::run::Request> {
 }
 
 fn not_run(code: i32, workload: WorkloadOutcome) -> PlainExit {
+    let stopped = matches!(workload, WorkloadOutcome::Cancelled { .. });
     PlainExit {
         code,
         workload,
+        stopped,
         stdout: Vec::new(),
         stderr: Vec::new(),
     }
