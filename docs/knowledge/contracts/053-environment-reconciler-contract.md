@@ -110,8 +110,13 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   outcome; only the sealed workspace route may attribute creation. Complete
   before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
-  explicit image capabilities: container image ID, reference plus stable resolved
-  image-inspect ID, or digest-pinned reference (052 §8.12). Nerdctl's absent one-off
+  explicit image capabilities (052 §8.12): container image ID; reference plus
+  stable resolved image-inspect ID only for IDs created in this gate; digest-pinned
+  reference; or attached reference/config-hash with no resolved container-image ID.
+  Attached reference-only rows must match Compose's config hash for the merged
+  frozen render. A pre-window tag move underneath an attached container is
+  undetectable on this engine: the current lookup is never claimed as that
+  container's actual image (owner ruling, 2026-10-31). Nerdctl's absent one-off
   flag requires actual project/service, name and frozen network corroboration.
   Observed tag moves refuse; same-user retag/restore inside the gate is outside
   the narrowed guarantee (owner ruling, 2026-10-31).
@@ -132,7 +137,11 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;
-  missing evidence is Unknown, never a global NoCreator claim. Retained records
+  missing evidence is Unknown, never a global NoCreator claim. Bare Active
+  publication refuses a reserved generation, including its claiming run; the
+  sanctioned reserved Active route is #506/#512's full commit with guest/serving
+  receipts. #510's native target-binding proof does NOT prove guest workspace-session
+  commit/publication. Retained records
   remain readable after settle (effigy#510, 052 §8.12).
 - **Settlement budget.** Settlement is bounded on its own clock: admission
   makes its window once `Gate(Env)` is held, after a wait that may take ten
@@ -172,7 +181,10 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
   edited image, environment or mount is applied by the next `up` without a
-  `down`. Effigy adds no per-service digest label and no comparison pass. An
+  `down`. Effigy adds no per-service digest label. Attached reference-only image
+  evidence requires a bounded read of Compose's own `config --hash` over the
+  ordered frozen files; this observation is not a second apply. Partial
+  extra-hosts overrides inherit the base service's network declarations. An
   apply failure is an error naming the service and Compose's own output; no
   failure is logged as a warning and continued.
 - **Down** stops host processes, then the backend, publishes `stopped` with a

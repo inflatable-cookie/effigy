@@ -91,9 +91,17 @@ pub(in crate::environment) struct Fake {
     deadlines: Vec<Instant>,
     cancel_on_inventory: Option<CancelToken>,
     inventory_delay: Duration,
+    config_hashes: BTreeMap<String, String>,
+    config_hash_delay: Duration,
 }
 impl Fake {
     pub(in crate::environment) fn new(before: Vec<Workload>, after: Vec<Workload>) -> Self {
+        let config_hashes = before
+            .iter()
+            .chain(&after)
+            .filter_map(|row| row.labels.get("com.docker.compose.service"))
+            .map(|service| (service.clone(), id('d')))
+            .collect();
         Self {
             selection: selection(),
             inventories: [verified(before), verified(after)].into(),
@@ -104,6 +112,8 @@ impl Fake {
             deadlines: Vec::new(),
             cancel_on_inventory: None,
             inventory_delay: Duration::ZERO,
+            config_hashes,
+            config_hash_delay: Duration::ZERO,
         }
     }
 }
@@ -125,6 +135,18 @@ impl EnvironmentBackend for Fake {
         self.inventories
             .pop_front()
             .expect("unexpected inventory read")
+    }
+    fn service_config_hashes_until(
+        &mut self,
+        _: &Path,
+        _: &str,
+        _: &[PathBuf],
+        deadline: Instant,
+    ) -> Observed<BTreeMap<String, String>> {
+        self.deadlines.push(deadline);
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(self.config_hash_delay);
+        verified(self.config_hashes.clone())
     }
     fn image_id_until(&mut self, _: &Path, reference: &str, deadline: Instant) -> Observed<String> {
         self.deadlines.push(deadline);

@@ -1,6 +1,93 @@
 //! Corroborate nerdctl Compose membership when it omits Docker's one-off flag.
 use super::*;
 
+#[derive(Debug, Default)]
+pub(super) struct Effective {
+    networks: serde_yaml::Mapping,
+    services: BTreeMap<String, serde_yaml::Mapping>,
+}
+impl Effective {
+    pub(super) fn include(&mut self, document: &serde_yaml::Value) {
+        if let Some(networks) = document
+            .get("networks")
+            .and_then(serde_yaml::Value::as_mapping)
+        {
+            merge(&mut self.networks, networks);
+        }
+        if let Some(services) = document
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+        {
+            for (name, body) in services {
+                let (Some(name), Some(body)) = (name.as_str(), body.as_mapping()) else {
+                    continue;
+                };
+                let target = self.services.entry(name.into()).or_default();
+                if let Some(mode) = body.get("network_mode") {
+                    target.insert("network_mode".into(), mode.clone());
+                }
+                if let Some(networks) = body.get("networks") {
+                    // Compose network aliases merge as unique mapping keys,
+                    // including the short list spelling. Absent means inherit.
+                    let normalized = match networks.as_sequence() {
+                        Some(values) => serde_yaml::Value::Mapping(
+                            values
+                                .iter()
+                                .cloned()
+                                .map(|name| (name, serde_yaml::Value::Null))
+                                .collect(),
+                        ),
+                        None => networks.clone(),
+                    };
+                    if let (Some(current), Some(incoming)) = (
+                        target
+                            .get_mut("networks")
+                            .and_then(serde_yaml::Value::as_mapping_mut),
+                        normalized.as_mapping(),
+                    ) {
+                        merge(current, incoming);
+                    } else {
+                        target.insert("networks".into(), normalized);
+                    }
+                }
+            }
+        }
+    }
+    pub(super) fn for_service(
+        &self,
+        service: &str,
+        project: &str,
+    ) -> Result<BTreeSet<String>, UnknownReason> {
+        let document = serde_yaml::Value::Mapping(
+            [(
+                "networks".into(),
+                serde_yaml::Value::Mapping(self.networks.clone()),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        declared(
+            &document,
+            &self.services.get(service).cloned().unwrap_or_default(),
+            project,
+        )
+    }
+}
+fn merge(target: &mut serde_yaml::Mapping, incoming: &serde_yaml::Mapping) {
+    for (key, value) in incoming {
+        if let (Some(current), Some(incoming)) = (
+            target
+                .get_mut(key)
+                .and_then(serde_yaml::Value::as_mapping_mut),
+            value.as_mapping(),
+        ) {
+            merge(current, incoming);
+        } else {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 pub(super) fn declared(
     document: &serde_yaml::Value,
     body: &serde_yaml::Mapping,

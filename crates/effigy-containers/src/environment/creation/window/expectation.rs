@@ -35,22 +35,24 @@ impl ExpectedInventory {
                         .as_deref()
                         .is_some_and(|reference| same_reference(reference, &row.image_reference));
                     if image_changed {
-                        // The old container must still match its immutable
-                        // reference identity, even when replacement is allowed.
+                        // A container-attested ID must match its reference lookup.
+                        // For a reference-only predecessor the lookup is only tag
+                        // stability evidence, never its actual container image ID.
                         let resolved = match backend.image_id_until(
                             request.workdir,
                             &row.image_reference,
                             request.deadline,
                         ) {
-                            Observed::Verified(id, _) => id,
-                            _ => return Err(CreationRefusal::ImageMismatch(row.id.clone())),
-                        };
-                        let identity =
-                            ImageIdentity::observe(backend, row, &row.image_reference, &resolved)?;
-                        expected.previous_images.insert(
-                            row.image_reference.clone(),
-                            identity.resolved_id().to_owned(),
-                        );
+                            Observed::Verified(id, _) => exact_image_id(&id),
+                            _ => None,
+                        }
+                        .ok_or_else(|| CreationRefusal::ImageMismatch(row.id.clone()))?;
+                        if exact_image_id(&row.image).is_some_and(|id| id != resolved) {
+                            return Err(CreationRefusal::ImageMismatch(row.id.clone()));
+                        }
+                        expected
+                            .previous_images
+                            .insert(row.image_reference.clone(), resolved);
                     }
                     if service == request.primary_service {
                         // Compose may recreate the workspace for env, mounts,

@@ -22,6 +22,41 @@ use serde::{Deserialize, Serialize};
 use super::backend::{exact_image_id, EnvironmentBackend, Workload};
 use crate::runtime::scope::{COMPOSE_PROJECT_LABEL, PROJECT_LABEL};
 
+fn frozen_config_hashes(
+    backend: &mut dyn EnvironmentBackend,
+    workdir: &std::path::Path,
+    project: &str,
+    files: &[std::path::PathBuf],
+    services: &std::collections::BTreeSet<String>,
+    deadline: std::time::Instant,
+) -> Result<std::collections::BTreeMap<String, String>, CreationRefusal> {
+    if std::time::Instant::now() >= deadline {
+        return Err(CreationRefusal::Unknown(
+            "config hash deadline expired".into(),
+        ));
+    }
+    let hashes = match backend.service_config_hashes_until(workdir, project, files, deadline) {
+        Observed::Verified(hashes, _) => hashes,
+        _ => {
+            return Err(CreationRefusal::Unknown(
+                "frozen Compose config hashes unavailable".into(),
+            ))
+        }
+    };
+    if std::time::Instant::now() >= deadline
+        || hashes
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            != *services
+    {
+        return Err(CreationRefusal::Unknown(
+            "frozen Compose config hashes incomplete or deadline expired".into(),
+        ));
+    }
+    Ok(hashes)
+}
+
 pub const CREATE_EFFECT: &str = "environment:gate-scoped-id-difference";
 
 const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
@@ -29,7 +64,7 @@ const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
 
 pub const CREATION_LOOKBACK: usize = 64;
 
-pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v4";
+pub const CREATION_SCHEMA: &str = "effigy.environment.gate-scoped-creation.v5";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatedContainer {
@@ -83,6 +118,8 @@ pub struct CreationReceipt {
     expected_created: std::collections::BTreeMap<String, Option<String>>,
     workspace_predecessor: Option<String>,
     image_identities: std::collections::BTreeMap<String, ImageIdentity>,
+    reference_resolutions: std::collections::BTreeMap<String, String>,
+    compose_files: Vec<std::path::PathBuf>,
     created: Vec<CreatedContainer>,
     attached: Vec<String>,
 }
@@ -132,6 +169,21 @@ impl CreationReceipt {
                 "project inventory changed after apply".into(),
             ));
         }
+        let hashes =
+            if self.image_identities.values().any(|identity| {
+                identity.capability() == ImageCapability::AttachedReferenceConfigHash
+            }) {
+                frozen_config_hashes(
+                    backend,
+                    &self.workdir,
+                    &self.project,
+                    &self.compose_files,
+                    &self.image_identities.keys().cloned().collect(),
+                    deadline,
+                )?
+            } else {
+                std::collections::BTreeMap::new()
+            };
         for row in current {
             let service = row
                 .labels
@@ -146,11 +198,27 @@ impl CreationReceipt {
                 expected.rendered_reference(),
                 deadline,
             ) {
-                Observed::Verified(id, _) => id,
-                _ => return Err(CreationRefusal::ImageMismatch(row.id.clone())),
+                Observed::Verified(id, _) => exact_image_id(&id),
+                _ => None,
             };
-            let observed =
-                ImageIdentity::observe(backend, &row, expected.rendered_reference(), &resolved)?;
+            if resolved.as_ref()
+                != self
+                    .reference_resolutions
+                    .get(expected.rendered_reference())
+            {
+                return Err(CreationRefusal::ImageMismatch(row.id));
+            }
+            let resolved =
+                resolved.ok_or_else(|| CreationRefusal::ImageMismatch(row.id.clone()))?;
+            let created = self.created_by(&self.project, &row.id).is_some();
+            let observed = ImageIdentity::observe(
+                backend,
+                &row,
+                expected.rendered_reference(),
+                &resolved,
+                created,
+                hashes.get(service).map(String::as_str),
+            )?;
             if &observed != expected {
                 return Err(CreationRefusal::ImageMismatch(row.id));
             }
@@ -300,24 +368,26 @@ impl std::error::Error for CreationRefusal {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RecordedCreation {
-    Attributed {
-        engine: String,
-        context: String,
-        project: String,
-        primary_service: String,
-        generation: u64,
-        observed: Vec<Workload>,
-        workdir: std::path::PathBuf,
-        expected_created: std::collections::BTreeMap<String, Option<String>>,
-        workspace_predecessor: Option<String>,
-        image_identities: std::collections::BTreeMap<String, ImageIdentity>,
-        created: Vec<CreatedContainer>,
-        attached: Vec<String>,
-    },
-    Unproven {
-        project: String,
-        reason: String,
-    },
+    Attributed(Box<AttributedCreation>),
+    Unproven { project: String, reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributedCreation {
+    pub(super) engine: String,
+    pub(super) context: String,
+    pub(super) project: String,
+    pub(super) primary_service: String,
+    pub(super) generation: u64,
+    pub(super) observed: Vec<Workload>,
+    pub(super) workdir: std::path::PathBuf,
+    pub(super) expected_created: std::collections::BTreeMap<String, Option<String>>,
+    pub(super) workspace_predecessor: Option<String>,
+    pub(super) image_identities: std::collections::BTreeMap<String, ImageIdentity>,
+    pub(super) reference_resolutions: std::collections::BTreeMap<String, String>,
+    pub(super) compose_files: Vec<std::path::PathBuf>,
+    pub(super) created: Vec<CreatedContainer>,
+    pub(super) attached: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,30 +399,28 @@ pub struct StoredCreation {
 impl StoredCreation {
     pub fn created(&self) -> &[CreatedContainer] {
         match &self.record {
-            RecordedCreation::Attributed { created, .. } => created,
+            RecordedCreation::Attributed(record) => &record.created,
             RecordedCreation::Unproven { .. } => &[],
         }
     }
 
     pub fn project(&self) -> &str {
         match &self.record {
-            RecordedCreation::Attributed { project, .. } => project,
+            RecordedCreation::Attributed(record) => &record.project,
             RecordedCreation::Unproven { project, .. } => project,
         }
     }
 
     pub fn backend(&self) -> Option<(&str, &str)> {
         match &self.record {
-            RecordedCreation::Attributed {
-                engine, context, ..
-            } => Some((engine, context)),
+            RecordedCreation::Attributed(record) => Some((&record.engine, &record.context)),
             RecordedCreation::Unproven { .. } => None,
         }
     }
 
     pub fn attached(&self) -> &[String] {
         match &self.record {
-            RecordedCreation::Attributed { attached, .. } => attached,
+            RecordedCreation::Attributed(record) => &record.attached,
             RecordedCreation::Unproven { .. } => &[],
         }
     }
@@ -397,36 +465,43 @@ pub(super) fn outcome(
     record: RecordedCreation,
 ) -> CreationOutcome {
     match record {
-        RecordedCreation::Attributed {
-            engine,
-            context,
-            project,
-            primary_service,
-            expected_created,
-            workspace_predecessor,
-            image_identities,
-            created,
-            attached,
-            generation,
-            observed,
-            workdir,
-            ..
-        } => CreationOutcome::Attributed(Box::new(CreationReceipt {
-            environment: environment.clone(),
-            run,
-            project,
-            primary_service,
-            engine,
-            context,
-            expected_created,
-            workspace_predecessor,
-            image_identities,
-            created,
-            attached,
-            generation,
-            observed,
-            workdir,
-        })),
+        RecordedCreation::Attributed(record) => {
+            let AttributedCreation {
+                engine,
+                context,
+                project,
+                primary_service,
+                expected_created,
+                workspace_predecessor,
+                image_identities,
+                reference_resolutions,
+                compose_files,
+                created,
+                attached,
+                generation,
+                observed,
+                workdir,
+                ..
+            } = *record;
+            CreationOutcome::Attributed(Box::new(CreationReceipt {
+                environment: environment.clone(),
+                run,
+                project,
+                primary_service,
+                engine,
+                context,
+                expected_created,
+                workspace_predecessor,
+                image_identities,
+                reference_resolutions,
+                compose_files,
+                created,
+                attached,
+                generation,
+                observed,
+                workdir,
+            }))
+        }
         RecordedCreation::Unproven { project, reason } => {
             CreationOutcome::Unproven { project, reason }
         }
@@ -512,8 +587,9 @@ pub fn created_by(
                 continue;
             }
             match stored.record() {
-                RecordedCreation::Attributed { created, .. } => {
-                    if !created
+                RecordedCreation::Attributed(record) => {
+                    if !record
+                        .created
                         .iter()
                         .any(|container| container.container_id() == container_id)
                     {

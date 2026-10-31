@@ -395,17 +395,23 @@ fn native_phase(
     if bound != identity {
         return Err("native reserved target differs from actual new ID".into());
     }
-    run.activate(&[]).map_err(|error| error.to_string())?;
+    let refused = run
+        .activate(&[])
+        .err()
+        .ok_or("reserved generation incorrectly allowed bare Active publication")?;
+    if !refused
+        .to_string()
+        .contains("reserved by a workspace activation")
+    {
+        return Err(format!("unexpected bare-activate refusal: {refused}"));
+    }
     let phase = serde_json::json!({"project":project,"container_id":row.id,
         "predecessor":predecessor,"creating_run":run.id().to_string(),
         "reserved_generation":reservation.generation().get(),"target_bound":true,
         "image_identities":receipt.image_identities(),"render_digest":render.digest(),
-        "apply_exit":0,"environment_active":true,
+        "apply_exit":0,"reserved_bare_activate_refused":true,"environment_active_proved":false,
         "guest_workspace_session_commit_publication_proved":false});
-    run.finish(true).map_err(|error| error.to_string())?;
-    if !record(&ctx, stack).active() {
-        return Err("native environment did not publish Active".into());
-    }
+    run.finish(false).map_err(|error| error.to_string())?;
     // The fixture never admits a guest workspace session. Close this completed
     // target-only reservation before testing its non-live successor generation.
     reservation

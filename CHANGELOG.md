@@ -293,9 +293,11 @@ During v0.x, MINOR bumps may include breaking changes.
   identical labels inside that window is outside v0.15's guarantee. Unreadable or
   incomplete evidence produces no receipt, and retries never reapply or fabricate
   attribution from a later inventory. Missing journal evidence is Unknown.
-  Colima reference-only container images carry explicit reference/resolved-ID
-  evidence: rendered and observed references must agree, and image-inspect IDs
-  must remain stable before/after apply and binding. Digest-pinned references
+  Newly created Colima containers may carry explicit reference/resolved-ID
+  evidence with matching references and stable pre/post resolution. Attached
+  reference-only rows instead report reference and matching rendered config hash,
+  with no resolved container-image ID: a pre-window tag move is undetectable there.
+  Partial extra-hosts overrides preserve custom service networks. Digest-pinned references
   remain explicit. Missing nerdctl one-off labels require matching Compose
   membership, name and frozen network evidence. Same-user retag/restore inside
   the gate is excluded; detected tag moves refuse.
@@ -306,7 +308,7 @@ During v0.x, MINOR bumps may include breaking changes.
   dependency image-reference replacements and the workspace predecessor. Workspace
   environment, mount and entrypoint edits may recreate at the same image reference:
   exactly one new workspace ID replaces the absent predecessor, while unchanged
-  services stay attached and extra/foreign IDs refuse. The v4 receipt records
+  services stay attached and extra/foreign IDs refuse. The v5 receipt records
   image capabilities and the workspace predecessor separately from required
   creations; container-up JSON exposes the image-identity evidence.
 

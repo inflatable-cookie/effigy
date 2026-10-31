@@ -6,6 +6,8 @@ fn nerdctl_row(byte: char) -> Workload {
     row.image = "docker.io/library/fixture:latest".into();
     row.image_reference = row.image.clone();
     row.labels.remove("com.docker.compose.oneoff");
+    row.labels
+        .insert("com.docker.compose.config-hash".into(), id('d'));
     row.labels.insert("nerdctl/name".into(), row.name.clone());
     row.labels
         .insert("nerdctl/networks".into(), "[\"none\"]".into());
@@ -44,7 +46,7 @@ fn nerdctl_reference_resolution_is_explicit_and_binds_a_reserved_fresh_id() {
         identity.observed_reference(),
         "docker.io/library/fixture:latest"
     );
-    assert_eq!(identity.resolved_id(), image());
+    assert_eq!(identity.resolved_id(), Some(image().as_str()));
     let diagnostic = serde_json::to_value(identity).unwrap();
     assert_eq!(diagnostic["capability"], "reference_resolved_id");
     assert_eq!(diagnostic["resolved_id"], image());
@@ -74,7 +76,7 @@ fn nerdctl_reference_resolution_is_explicit_and_binds_a_reserved_fresh_id() {
 }
 
 #[test]
-fn nerdctl_reserved_non_live_successors_bind_and_publish_active() {
+fn nerdctl_reserved_non_live_successors_bind_and_refuse_bare_active() {
     use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
     let fixture = home();
     let state = root(fixture.path());
@@ -131,9 +133,11 @@ fn nerdctl_reserved_non_live_successors_bind_and_publish_active() {
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
-        run.activate(&[]).unwrap();
-        run.finish(true).unwrap();
-        assert!(record(&ctx, &stack).active());
+        let refusal = run.activate(&[]).unwrap_err();
+        assert!(refusal
+            .to_string()
+            .contains("reserved by a workspace activation"));
+        run.finish(false).unwrap();
         reservation.cancel(&ctx.cx, &state, Wait::FailFast).unwrap();
         previous = Some(row);
     }
@@ -228,4 +232,114 @@ fn nerdctl_tag_moves_reference_mismatch_and_docker_reference_only_still_refuse()
     docker.selection.kind = BackendKind::DockerEngine;
     docker.selection.engine = crate::BackendId::docker_compose();
     assert!(infer(&mut docker, &render).is_err());
+}
+
+#[test]
+fn pre_window_attached_tag_move_never_attributes_the_current_lookup_to_old_container() {
+    // The actual old image X is not observable in nerdctl's reference-only row.
+    // A tag moved X -> Y before preflight; all current lookups stably answer Y.
+    let actual_old_image = format!("sha256:{}", id('a'));
+    let current_lookup = format!("sha256:{}", id('b'));
+    assert_ne!(actual_old_image, current_lookup);
+    let render = nerdctl_render("fixture:latest");
+    let old = nerdctl_row('f');
+    let mut fake = Fake::new(vec![old.clone()], vec![old.clone()]);
+    fake.image_references
+        .insert("fixture:latest".into(), current_lookup.clone());
+    let req = request(&render);
+    let difference = CreationWindow::open(&mut fake, req)
+        .unwrap()
+        .close(&mut fake, req)
+        .unwrap();
+    let identity = &difference.image_identities[PRIMARY];
+    assert_eq!(
+        identity.capability(),
+        ImageCapability::AttachedReferenceConfigHash
+    );
+    assert_eq!(identity.resolved_id(), None);
+    assert_eq!(identity.config_hash(), Some(id('d').as_str()));
+    assert!(!serde_json::to_string(identity)
+        .unwrap()
+        .contains(&current_lookup));
+    assert!(difference.created.is_empty());
+    assert_eq!(
+        difference.attached.as_slice(),
+        std::slice::from_ref(&old.id)
+    );
+    let mut fresh = Fake::new(vec![], vec![nerdctl_row('e')]);
+    fresh
+        .image_references
+        .insert("fixture:latest".into(), current_lookup.clone());
+    let req = request(&render);
+    let difference = CreationWindow::open(&mut fresh, req)
+        .unwrap()
+        .close(&mut fresh, req)
+        .unwrap();
+    assert_eq!(
+        difference.image_identities[PRIMARY].resolved_id(),
+        Some(current_lookup.as_str())
+    );
+}
+
+#[test]
+fn attached_reference_requires_render_matching_config_hash_and_original_deadline() {
+    let render = nerdctl_render("fixture:latest");
+    for expired in [false, true] {
+        let old = nerdctl_row('a');
+        let mut fake = Fake::new(vec![old.clone()], vec![old]);
+        let mut request = request(&render);
+        if expired {
+            request.deadline = Instant::now() + Duration::from_millis(500);
+            fake.config_hash_delay = Duration::from_millis(600);
+        } else {
+            fake.config_hashes.insert(PRIMARY.into(), id('e'));
+        }
+        let window = CreationWindow::open(&mut fake, request).unwrap();
+        assert!(window.close(&mut fake, request).is_err());
+    }
+}
+
+#[test]
+fn custom_network_survives_extra_hosts_only_override_and_ordered_network_names_merge() {
+    for override_name in [false, true] {
+        let mut base: serde_json::Value =
+            serde_json::from_slice(&render(&[PRIMARY]).files()["compose.yml"]).unwrap();
+        base["services"][PRIMARY]["networks"] = serde_json::json!(["custom"]);
+        base["networks"] = serde_json::json!({"custom":{"name":"base-network"}});
+        let mut extra = serde_json::json!({"services":{"workspace":{"extra_hosts":["effigy-host:host-gateway"]}}});
+        if override_name {
+            extra["networks"] = serde_json::json!({"custom":{"name":"override-network"}});
+        }
+        let render = Closure::new(
+            [
+                ("z-base.yml".into(), serde_json::to_vec(&base).unwrap()),
+                (
+                    "a-extra-hosts.yml".into(),
+                    serde_json::to_vec(&extra).unwrap(),
+                ),
+                (
+                    "inputs/environment.json".into(),
+                    serde_json::to_vec(&serde_json::json!({
+                "compose_files":["z-base.yml","a-extra-hosts.yml"]}))
+                    .unwrap(),
+                ),
+            ]
+            .into(),
+        )
+        .unwrap();
+        let mut row = nerdctl_row('a');
+        row.labels.insert(
+            "nerdctl/networks".into(),
+            serde_json::to_string(&[if override_name {
+                "override-network"
+            } else {
+                "base-network"
+            }])
+            .unwrap(),
+        );
+        assert!(infer(&mut Fake::new(vec![], vec![row.clone()]), &render).is_ok());
+        row.labels
+            .insert("nerdctl/networks".into(), "[\"acme-stack_default\"]".into());
+        assert!(infer(&mut Fake::new(vec![], vec![row]), &render).is_err());
+    }
 }

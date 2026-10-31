@@ -7,13 +7,15 @@ pub enum ImageCapability {
     ContainerImageId,
     ReferenceResolvedId,
     DigestReference,
+    AttachedReferenceConfigHash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImageIdentity {
     rendered_reference: String,
     observed_reference: String,
-    resolved_id: String,
+    resolved_id: Option<String>,
+    config_hash: Option<String>,
     capability: ImageCapability,
 }
 
@@ -24,8 +26,21 @@ impl ImageIdentity {
     pub fn observed_reference(&self) -> &str {
         &self.observed_reference
     }
-    pub fn resolved_id(&self) -> &str {
-        &self.resolved_id
+    pub fn resolved_id(&self) -> Option<&str> {
+        self.resolved_id.as_deref()
+    }
+    pub fn config_hash(&self) -> Option<&str> {
+        self.config_hash.as_deref()
+    }
+    pub(super) fn needs_attached_config(
+        backend: &dyn EnvironmentBackend,
+        row: &Workload,
+        created: bool,
+    ) -> bool {
+        !created
+            && backend.selection().kind == super::super::backend::BackendKind::Colima
+            && exact_image_id(&row.image).is_none()
+            && !row.image_reference.contains('@')
     }
     pub fn capability(&self) -> ImageCapability {
         self.capability
@@ -36,6 +51,8 @@ impl ImageIdentity {
         row: &Workload,
         reference: &str,
         resolved_id: &str,
+        created_in_window: bool,
+        rendered_config_hash: Option<&str>,
     ) -> Result<Self, CreationRefusal> {
         if !same_reference(reference, &row.image_reference) {
             return Err(CreationRefusal::ImageMismatch(row.id.clone()));
@@ -53,8 +70,26 @@ impl ImageIdentity {
                     .is_some_and(|(_, digest)| exact_image_id(digest).is_some())
                 {
                     ImageCapability::DigestReference
-                } else {
+                } else if created_in_window {
                     ImageCapability::ReferenceResolvedId
+                } else {
+                    let expected = rendered_config_hash
+                        .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+                        .ok_or_else(|| CreationRefusal::Unknown(
+                            "attached reference-only image requires the frozen Compose config hash".into(),
+                        ))?;
+                    if row
+                        .labels
+                        .get("com.docker.compose.config-hash")
+                        .map(String::as_str)
+                        != Some(expected)
+                    {
+                        return Err(CreationRefusal::ImageMismatch(format!(
+                            "{} config hash differs from render",
+                            row.id
+                        )));
+                    }
+                    ImageCapability::AttachedReferenceConfigHash
                 }
             }
             None => return Err(CreationRefusal::ReferenceOnlyImage(row.id.clone())),
@@ -62,7 +97,13 @@ impl ImageIdentity {
         Ok(Self {
             rendered_reference: reference.into(),
             observed_reference: row.image_reference.clone(),
-            resolved_id,
+            resolved_id: (capability != ImageCapability::AttachedReferenceConfigHash)
+                .then_some(resolved_id),
+            config_hash: if capability == ImageCapability::AttachedReferenceConfigHash {
+                rendered_config_hash.map(str::to_owned)
+            } else {
+                None
+            },
             capability,
         })
     }

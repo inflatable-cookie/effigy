@@ -1098,10 +1098,12 @@ impl<'r> EnvRun<'r> {
                 expected_created,
                 workspace_predecessor,
                 image_identities,
+                reference_resolutions,
+                compose_files,
                 created,
                 attached,
                 observed,
-            }) => RecordedCreation::Attributed {
+            }) => RecordedCreation::Attributed(Box::new(creation::AttributedCreation {
                 engine: selection.engine.as_str().to_owned(),
                 context: selection.context.clone(),
                 project: request.project.to_owned(),
@@ -1112,9 +1114,11 @@ impl<'r> EnvRun<'r> {
                 expected_created,
                 workspace_predecessor,
                 image_identities,
+                reference_resolutions,
+                compose_files,
                 created,
                 attached,
-            },
+            })),
             Err(reason) if request.required => {
                 let message = reason.to_string();
                 let recorded = self

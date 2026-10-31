@@ -88,6 +88,8 @@ pub(crate) struct InventoryDifference {
     pub expected_created: BTreeMap<String, Option<String>>,
     pub workspace_predecessor: Option<String>,
     pub image_identities: BTreeMap<String, ImageIdentity>,
+    pub reference_resolutions: BTreeMap<String, String>,
+    pub compose_files: Vec<std::path::PathBuf>,
     pub created: Vec<CreatedContainer>,
     pub attached: Vec<String>,
     pub observed: Vec<Workload>,
@@ -164,6 +166,24 @@ impl CreationWindow {
             .iter()
             .map(|row| (row.id.to_ascii_lowercase(), row))
             .collect();
+        let hashes = if after.iter().any(|row| {
+            ImageIdentity::needs_attached_config(
+                backend,
+                row,
+                !before.contains_key(&row.id.to_ascii_lowercase()),
+            )
+        }) {
+            frozen_config_hashes(
+                backend,
+                request.workdir,
+                request.project,
+                request.compose_files,
+                &self.declared.keys().cloned().collect(),
+                request.deadline,
+            )?
+        } else {
+            BTreeMap::new()
+        };
         let image_identities: BTreeMap<_, _> = after
             .iter()
             .map(|row| {
@@ -172,8 +192,15 @@ impl CreationWindow {
                     .image
                     .as_deref()
                     .ok_or_else(|| CreationRefusal::ImageMismatch(service.clone()))?;
-                ImageIdentity::observe(backend, row, reference, &images[service])
-                    .map(|identity| (service.clone(), identity))
+                ImageIdentity::observe(
+                    backend,
+                    row,
+                    reference,
+                    &images[service],
+                    !before.contains_key(&row.id.to_ascii_lowercase()),
+                    hashes.get(service).map(String::as_str),
+                )
+                .map(|identity| (service.clone(), identity))
             })
             .collect::<Result<_, _>>()?;
         let mut created = Vec::new();
@@ -206,6 +233,18 @@ impl CreationWindow {
             expected_created: self.expected.created,
             workspace_predecessor: self.expected.workspace_predecessor,
             image_identities,
+            reference_resolutions: self
+                .declared
+                .iter()
+                .map(|(service, expected)| {
+                    expected
+                        .image
+                        .clone()
+                        .map(|reference| (reference, images[service].clone()))
+                        .ok_or_else(|| CreationRefusal::ImageMismatch(service.clone()))
+                })
+                .collect::<Result<_, _>>()?,
+            compose_files: request.compose_files.to_vec(),
             created,
             attached,
             observed: after,
@@ -326,14 +365,18 @@ fn validate(
             .image
             .as_deref()
             .ok_or_else(|| CreationRefusal::ImageMismatch(row.name.clone()))?;
-        if complete || same_reference(&row.image_reference, reference) {
-            ImageIdentity::observe(backend, row, reference, &images[service])?;
-        } else if row.image_reference.is_empty()
-            || (exact_image_id(&row.image).is_none()
-                && !(backend.selection().kind == super::super::backend::BackendKind::Colima
-                    && same_reference(&row.image, &row.image_reference)))
-        {
+        let same = same_reference(&row.image_reference, reference);
+        if row.image_reference.is_empty() || (complete && !same) {
             return Err(CreationRefusal::ImageMismatch(row.name.clone()));
+        }
+        match exact_image_id(&row.image) {
+            Some(id) if same && images.get(service) != Some(&id) => {
+                return Err(CreationRefusal::ImageMismatch(row.name.clone()))
+            }
+            Some(_) => {}
+            None if backend.selection().kind == super::super::backend::BackendKind::Colima
+                && same_reference(&row.image, &row.image_reference) => {}
+            None => return Err(CreationRefusal::ReferenceOnlyImage(row.name.clone())),
         }
     }
     if complete && services.len() != declared.len() {
@@ -381,13 +424,20 @@ fn declared_services(
             .map_err(|error| inconsistent(error.to_string()))
         })
         .transpose()?;
-    for (path, bytes) in render.files() {
-        if selected
-            .as_ref()
-            .is_some_and(|selected| !selected.contains(path))
-        {
-            continue;
-        }
+    let files = match selected {
+        Some(paths) => paths
+            .iter()
+            .map(|path| {
+                render
+                    .files()
+                    .get_key_value(path)
+                    .ok_or_else(|| inconsistent(format!("frozen Compose file {path} is missing")))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        None => render.files().iter().collect(),
+    };
+    let mut networks = network::Effective::default();
+    for (path, bytes) in files {
         let lower = path.to_ascii_lowercase();
         if !(lower.ends_with(".yml") || lower.ends_with(".yaml")) {
             continue;
@@ -397,6 +447,7 @@ fn declared_services(
                 "the admitted render file `{path}` is not Compose YAML: {error}"
             ))
         })?;
+        networks.include(&document);
         let Some(services) = document
             .get("services")
             .and_then(|value| value.as_mapping())
@@ -409,13 +460,6 @@ fn declared_services(
                 continue;
             };
             let service = declared.entry(name.to_owned()).or_default();
-            let networks = network::declared(&document, body, project).ok();
-            if service.networks.is_some() && service.networks != networks {
-                return Err(inconsistent(format!(
-                    "conflicting frozen networks for {name}"
-                )));
-            }
-            service.networks = networks;
             if let Some(labels) = body.get("labels") {
                 for (key, value) in label_pairs(labels)? {
                     if !OWNERSHIP_LABELS.contains(&key.as_str()) {
@@ -446,6 +490,9 @@ fn declared_services(
                 }
             }
         }
+    }
+    for (name, service) in &mut declared {
+        service.networks = networks.for_service(name, project).ok();
     }
     Ok(declared)
 }

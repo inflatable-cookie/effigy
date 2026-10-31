@@ -3844,12 +3844,19 @@ Receipts name the actual backend capability for each service:
 
 - `container_image_id`: the container's immutable `Image` ID matches the frozen
   image-inspect resolution.
-- `reference_resolved_id`: nerdctl provides a reference, not an immutable
-  container-attested ID. Both container reference fields must equal the rendered
-  reference after Docker's familiar-name expansion, and the resolved image-inspect
-  ID must remain unchanged at every observation. The receipt records rendered
-  reference, observed reference and resolved ID; it does not relabel the reference
-  as an immutable container image observation.
+- `reference_resolved_id`: only a new full ID created in this gate window may
+  infer the stable pre/post image-inspect resolution from a nerdctl reference.
+  Both container reference fields must equal the rendered reference after Docker's
+  familiar-name expansion. It is explicitly not a container-attested ID.
+- `attached_reference_config_hash`: an existing reference-only container records
+  its reference and `com.docker.compose.config-hash`, matched against Compose's
+  own `config --hash` over the ordered frozen files. Its image identity has
+  `resolved_id: null`: the tag's current lookup must never be attributed to that
+  container. Independent reference-resolution observations still detect moves
+  during this activation. A tag moved X→Y before activation may leave a running
+  container on X with the same reference/config hash; that move is undetectable
+  on this engine, so the receipt never claims the old container runs Y (owner
+  ruling, 2026-10-31).
 - `digest_reference`: the same exact repository/digest reference is immutable;
   its image-inspect resolution is still recorded and rechecked.
 
@@ -3863,7 +3870,9 @@ The observations verify every row's exact full ID, Compose project/service,
 managed, scope and checkout labels and name. Docker's one-off flag must be false
 when supplied. Nerdctl may omit it only when the actual Compose project/service
 membership and name match and `nerdctl/name` plus the exact `nerdctl/networks`
-list corroborate the frozen network mode/names. Missing or ambiguous name/network
+list corroborate the effective frozen network mode/names. Ordered Compose
+fragments merge network declarations before applying defaults; an extra-hosts-only
+override does not replace a custom network with default. Missing or ambiguous name/network
 corroboration refuses; no label is synthesized. Normal Compose apply, networks,
 volumes and cleanup remain unchanged.
 The post-apply service set must equal the frozen declared set; missing, extra,
@@ -3880,7 +3889,7 @@ No extra service or foreign ID is adopted. Zero-change re-up stays attached.
 This replaces the image-reference-only prediction that refused routine workspace
 configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
 Old references must resolve to the old containers' immutable IDs before and after
-apply. Receipt schema v4 records image capabilities, required new services and the workspace's
+apply. Receipt schema v5 records scoped image capabilities, independent reference lookups, required new services and the workspace's
 pre-apply predecessor separately; earlier receipt schemas are not upgraded.
 Isolated journal-case reproduction uses `effigy test:focused:journal-heavy` with
 `-j 1`, retaining the covering selector's 600-second per-test budget. Image tag
@@ -3909,9 +3918,10 @@ ordinary Compose apply.
 
 The opt-in native Colima fixture transports sealed Compose bytes to a private
 VM directory and compares them byte for byte. Its second authorized window must
-prove positive creator attribution, real reserved `Absent` successor binding and
-`EnvRun.activate` with observed Active environment state, for fresh and same-image
-config-replacement phases. It must record each new ID and creating run, preserve
+prove positive creator attribution and real current-generation reserved `Absent`
+successor binding for fresh and same-image config-replacement phases. It must
+assert that ordinary `EnvRun.activate(&[])` refuses under that reservation;
+reserved Active is available only through the #506/#512 commit/serving route. It must record each new ID and creating run, preserve
 the non-live predecessor rule, and clean only its exact-owned IDs/directories.
 This **does NOT prove guest workspace-session commit/publication**. Native guest
 artifact/locator/serving E2E on Colima, Docker Desktop and Linux Docker belongs to

@@ -667,3 +667,64 @@ fn unreadable_selected_context_refuses_without_launching_a_cli() {
     ));
     assert!(tools.calls("docker").is_empty());
 }
+
+#[test]
+fn frozen_config_hash_read_pins_context_file_order_and_deadline_on_both_backends() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = CreationTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let files = [
+            workdir.join("frozen-base.yml"),
+            workdir.join("frozen-extra-hosts.yml"),
+        ];
+        for file in &files {
+            std::fs::write(file, "services: {}\n").unwrap();
+        }
+        let script = workdir.join("bin").join(tool);
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\nprintf 'app {}\\n'\n",
+                tools.logs.display(),
+                "d".repeat(64)
+            ),
+        )
+        .unwrap();
+        let mut adapter = selected.adapter();
+        let hashes = adapter.service_config_hashes_until(
+            workdir,
+            PROJECT,
+            &files,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        assert!(
+            matches!(hashes,Observed::Verified(ref hashes,_) if hashes.get("app")==Some(&"d".repeat(64)))
+        );
+        let calls = tools.calls(tool);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].contains(&format!(
+            "compose --project-name {PROJECT} -f {} -f {} config --hash *",
+            files[0].display(),
+            files[1].display()
+        )));
+        assert!(calls[0].starts_with(if tool == "colima" {
+            "nerdctl --profile fixture --"
+        } else {
+            "--context default"
+        }));
+        assert!(matches!(
+            adapter.service_config_hashes_until(
+                workdir,
+                PROJECT,
+                &files,
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            ),
+            Observed::Unknown(_)
+        ));
+        assert_eq!(
+            tools.calls(tool).len(),
+            1,
+            "expired hash read launched a command"
+        );
+    }
+}

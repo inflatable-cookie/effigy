@@ -330,10 +330,10 @@ pub trait EnvironmentBackend {
     /// table, read under the caller's absolute deadline (effigy#510).
     ///
     /// A render declares an image *reference*; the engine's image table is the
-    /// only authority that turns it into the exact image id a container created
-    /// from it carries. The creation window binds a container to that exact id,
-    /// so a matching reference that the engine maps to a different image is
-    /// never a receipt. `Verified` carries the engine's own id; `Absent` and
+    /// authority for its current lookup, not the actual image of an existing
+    /// reference-only container. Only a new ID created in this gate may infer
+    /// that lookup as its resolved image identity; attached reference-only rows
+    /// retain reference/config-hash evidence without an actual image-ID claim. `Verified` carries the engine's own id; `Absent` and
     /// `Unknown` refuse the window rather than fall back to the reference alone.
     fn image_id_until(
         &mut self,
@@ -344,6 +344,22 @@ pub trait EnvironmentBackend {
         let _ = (workdir, reference, deadline);
         Observed::Unknown(UnknownReason::ToolUnavailable(
             "this backend cannot bound image inspection to a deadline".to_owned(),
+        ))
+    }
+
+    /// Compose's own hashes for the ordered frozen files, on the caller deadline.
+    /// Required only for an attached reference-only container: a current tag
+    /// lookup is not evidence of the image that container was created from.
+    fn service_config_hashes_until(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        files: &[std::path::PathBuf],
+        deadline: Instant,
+    ) -> Observed<std::collections::BTreeMap<String, String>> {
+        let _ = (workdir, project, files, deadline);
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "this backend cannot observe frozen Compose config hashes".into(),
         ))
     }
 
@@ -423,6 +439,15 @@ macro_rules! compose_adapter {
             ) -> Observed<String> {
                 image_id_until(&self.selection, workdir, reference, Some(deadline))
             }
+            fn service_config_hashes_until(
+                &mut self,
+                workdir: &Path,
+                project: &str,
+                files: &[std::path::PathBuf],
+                deadline: Instant,
+            ) -> Observed<std::collections::BTreeMap<String, String>> {
+                service_config_hashes_until(&self.selection, workdir, project, files, deadline)
+            }
             fn containers_by_id(
                 &mut self,
                 workdir: &Path,
@@ -484,6 +509,68 @@ fn image_id_until(
         },
         Err(error) => Observed::Unknown(read_reason("inspect image", error)),
     }
+}
+
+fn service_config_hashes_until(
+    selection: &BackendSelection,
+    workdir: &Path,
+    project: &str,
+    files: &[std::path::PathBuf],
+    deadline: Instant,
+) -> Observed<std::collections::BTreeMap<String, String>> {
+    if files.is_empty() {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            "no frozen Compose files for config-hash observation".into(),
+        ));
+    }
+    let mut args: Vec<OsString> = vec!["compose".into(), "--project-name".into(), project.into()];
+    for file in files {
+        args.extend(["-f".into(), file.as_os_str().to_owned()]);
+    }
+    args.extend(["config".into(), "--hash".into(), "*".into()]);
+    let (program, args) = match selection.compose_invocation(&args) {
+        Ok(invocation) => invocation,
+        Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    };
+    match capture(
+        workdir,
+        &program,
+        &args,
+        "frozen Compose config hashes",
+        Some(deadline),
+    ) {
+        Ok(output) => match parse_config_hashes(&output.stdout) {
+            Ok(hashes) => Verified::value(hashes, "frozen Compose config hashes"),
+            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error)),
+        },
+        Err(error) => Observed::Unknown(read_reason("frozen Compose config hashes", error)),
+    }
+}
+
+pub(crate) fn parse_config_hashes(
+    bytes: &[u8],
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let mut hashes = std::collections::BTreeMap::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() != 2
+            || fields[1].len() != 64
+            || !fields[1].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("Compose config hash is not one service and one full hash".into());
+        }
+        if hashes
+            .insert(fields[0].to_owned(), fields[1].to_ascii_lowercase())
+            .is_some()
+        {
+            return Err("Compose config hash repeats a service".into());
+        }
+    }
+    if hashes.is_empty() {
+        return Err("Compose config hash listing is empty".into());
+    }
+    Ok(hashes)
 }
 
 /// A small constructor for the one evidence line every exact backend read
@@ -929,9 +1016,26 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        exact_id_rows, exact_image_id, non_empty_lines, parse_image_inspect, unique_ids,
-        ProjectResources, Workload,
+        exact_id_rows, exact_image_id, non_empty_lines, parse_config_hashes, parse_image_inspect,
+        unique_ids, ProjectResources, Workload,
     };
+
+    #[test]
+    fn compose_config_hashes_are_complete_named_full_hashes_without_duplicates() {
+        let hash = "d".repeat(64);
+        assert_eq!(
+            parse_config_hashes(format!("app {hash}\n").as_bytes()).unwrap()["app"],
+            hash
+        );
+        for invalid in [
+            String::new(),
+            "app short".into(),
+            format!("app {hash} extra"),
+            format!("app {hash}\napp {hash}\n"),
+        ] {
+            assert!(parse_config_hashes(invalid.as_bytes()).is_err());
+        }
+    }
 
     /// An image id is the engine's `sha256:` and sixty-four hex digits; a short
     /// id, a reference or an empty value is not one, and the bare spelling is
