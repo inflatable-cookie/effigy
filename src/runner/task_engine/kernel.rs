@@ -607,6 +607,33 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
             },
         );
     }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-crash" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::initiate_then_crash_stdin() {
+                Ok(_) => 0,
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if entry == "__workspace-serving-fixture-compete" {
+        return Some(
+            match crate::runner::workspace_serving_fixture::compete_stdin() {
+                Ok(result) => {
+                    println!("{result}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            },
+        );
+    }
     if !entry.starts_with("__kernel-") {
         return None;
     }

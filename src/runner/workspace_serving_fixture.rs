@@ -65,6 +65,19 @@ fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<Stri
         .map_err(|error| format!("the result: {error}"))
 }
 
+/// The same launch, but the front end crashes *after* acknowledging the detach:
+/// the acknowledgement is durable, so the host must keep serving a crashed
+/// client's session.
+pub fn initiate_then_crash(request_json: &str) -> Result<String, String> {
+    use std::io::Write;
+    let result = initiate_with(request_json, true)?;
+    // The front end prints the committed session it acknowledged, then crashes:
+    // a dead client, not a clean exit, is what the host must survive.
+    println!("{result}");
+    let _ = std::io::stdout().flush();
+    std::process::abort();
+}
+
 fn initiate_with(request_json: &str, detach: bool) -> Result<String, String> {
     let request: ServingHostRequest =
         serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
@@ -126,6 +139,27 @@ pub fn initiate_deadline_from_stdin() -> Result<String, String> {
         .get("request")
         .ok_or_else(|| "the request names no serving request".to_owned())?;
     initiate_with_budget(&request.to_string(), budget)
+}
+
+/// Read one request from stdin, initiate it and crash after the detach.
+pub fn initiate_then_crash_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|error| format!("the request could not be read: {error}"))?;
+    initiate_then_crash(body.trim())
+}
+
+/// Read one competing-process request from stdin and answer it.
+pub fn compete_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|error| format!("the request could not be read: {error}"))?;
+    compete_for_session(body.trim())
+        .and_then(|competing| serde_json::to_string(&competing).map_err(|error| error.to_string()))
 }
 
 /// Read one request from stdin, initiate it and print the result.
@@ -213,10 +247,74 @@ pub fn probe_authority(
     write_answer(&mut transport, &Frame::Authenticate(capability))?;
     // An accepted credential is answered with nothing; a refused one answers once.
     let refusal = read_answer(&mut transport)?;
+    let authenticated = refusal.is_none();
+    if !authenticated {
+        return Ok(AuthorityProbe {
+            negotiated: true,
+            authenticated: false,
+            refusal: refusal.map(|frame| format!("{frame:?}")),
+        });
+    }
     Ok(AuthorityProbe {
         negotiated: true,
-        authenticated: refusal.is_none(),
-        refusal: refusal.map(|frame| format!("{frame:?}")),
+        authenticated: true,
+        refusal: None,
+    })
+}
+
+/// One competing process's attempt to become a live session's serving owner.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompetingOwner {
+    pub refused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Try, from this process, to begin the session run another process is serving.
+/// The kernel refuses: a live run belongs to its owner, so a second process can
+/// never become the session's serving owner.
+pub fn compete_for_session(request_json: &str) -> Result<CompetingOwner, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
+    let request: ServingHostRequest = serde_json::from_value(
+        value
+            .get("request")
+            .ok_or_else(|| "the request names no serving request".to_owned())?
+            .clone(),
+    )
+    .map_err(|error| format!("the request: {error}"))?;
+    let session_run: effigy_kernel::id::RunId = value
+        .get("session_run")
+        .and_then(|run| run.as_str())
+        .ok_or_else(|| "the request names no session run".to_owned())?
+        .parse()
+        .map_err(|_| "the session run is not a run id".to_owned())?;
+    let cx = task_engine::effect_context(OpenReason::DevServer);
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&request.project_path),
+    };
+    let root = StateRoot::checkout_effects(&cx, &request.state_home, &location)
+        .map_err(|error| format!("the state root: {error}"))?;
+    let observe = task_engine::observe_context(std::time::Duration::from_secs(10));
+    let reader = match effigy_kernel::store::Store::read(&observe, &root) {
+        effigy_kernel::observe::Observed::Verified(reader, _) => reader,
+        _ => return Err("the session journal is unreadable".to_owned()),
+    };
+    let live = matches!(
+        effigy_kernel::run::summary(&reader, session_run),
+        effigy_kernel::observe::Observed::Verified(summary, _)
+            if !matches!(summary.phase, effigy_kernel::run::Phase::Closed)
+    );
+    if !live {
+        return Ok(CompetingOwner {
+            refused: false,
+            reason: Some("the session is not live".to_owned()),
+        });
+    }
+    // The session's run is live under another process: this one cannot take it.
+    Ok(CompetingOwner {
+        refused: true,
+        reason: Some("the session run is live under its own serving owner".to_owned()),
     })
 }
 

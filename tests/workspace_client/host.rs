@@ -768,3 +768,121 @@ fn startup_honours_the_callers_deadline() {
     // outlive this test's fixture.
     std::thread::sleep(Duration::from_secs(2));
 }
+
+/// A front end that crashes *after* acknowledging the detach leaves the session
+/// serving: the acknowledgement is durable, so a dead client is not owner loss.
+#[test]
+fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving-post-ack").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = request(&fixture, &project);
+
+    // The initiating process detaches and then aborts (a crash, not an exit).
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("__workspace-serving-fixture-crash")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the initiating process starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(request.to_string().as_bytes())
+        .expect("the request is written");
+    let output = child
+        .wait_with_output()
+        .expect("the initiating process ends");
+    assert!(
+        !output.status.success(),
+        "the front end crashed after the acknowledgement"
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("the front end printed the committed session before it crashed");
+    let supervisor_run = run_of(&result, "supervisor_run");
+    let endpoint = endpoint_of(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+
+    // The host still serves, and the retained authority still answers.
+    let authority = effigy::workspace_serving_fixture::probe_authority(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+        result["published"]["pin"]
+            .as_str()
+            .expect("the published pin"),
+        CAPABILITY,
+        result["published"]["session_run"]
+            .as_str()
+            .expect("the published session run"),
+    )
+    .expect("the retained authority answers after a front-end crash");
+    assert!(
+        authority.negotiated && authority.authenticated,
+        "a crashed client does not end the session: {:?}",
+        authority.refusal
+    );
+
+    // A competing process cannot take the live session's ownership.
+    let competing = effigy::workspace_serving_fixture::compete_for_session(
+        &serde_json::json!({
+            "request": request,
+            "session_run": result["published"]["session_run"],
+        })
+        .to_string(),
+    )
+    .expect("the competing process answers");
+    assert!(
+        competing.refused,
+        "a second process cannot become a live session's owner: {competing:?}"
+    );
+
+    // Stop it through the kernel's own control path; it settles once.
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let supervisor = read_summary(&observe, &root, supervisor_run).expect("the host run");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let stop = Request {
+        id: RunId::new(millis, [0x77; 10]).expect("a request id"),
+        run: supervisor_run,
+        expected: Fence {
+            resource: supervisor
+                .invocation
+                .as_ref()
+                .expect("the host records its invocation")
+                .spec()
+                .owner
+                .clone(),
+            generation: supervisor.generation,
+        },
+        action: RequestAction::Stop,
+    };
+    run::request(&cx, &root, &stop).expect("the stop is recorded");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, supervisor_run).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(Instant::now() < until, "the host did not settle");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let until = Instant::now() + Duration::from_secs(10);
+    while TcpStream::connect_timeout(&endpoint, Duration::from_secs(1)).is_ok() {
+        assert!(
+            Instant::now() < until,
+            "the settled host released its listener"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
