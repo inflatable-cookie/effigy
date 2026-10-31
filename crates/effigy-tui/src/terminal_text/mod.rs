@@ -13,7 +13,7 @@ pub use ingest::{ingest_generation_boundary, ingest_styled_chunk};
 pub use ingest::{ingest_log_payload, push_entry};
 pub use live::take_complete_terminal_bytes;
 pub use live::{render_vt_lines, LiveTerminalBuffer};
-pub use sanitize::{is_expected_shutdown_diagnostic, sanitize_log_text};
+pub use sanitize::sanitize_log_text;
 pub use vt::vt_logs;
 
 #[cfg(test)]

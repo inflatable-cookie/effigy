@@ -33,9 +33,71 @@ pub enum MultiProcessTuiError {
     Control(String),
 }
 
+/// What the supervised session recorded for one entry when it ended. The
+/// session reports the facts it observed; a caller decides what they mean for
+/// its own result (a stopped test suite, for example, is a cancelled check).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEntryState {
+    /// The entry reported a successful exit.
+    Passed,
+    /// The entry reported a non-zero exit, or a final state that proves no
+    /// successful completion (a wait error, no exit at all).
+    Failed { detail: String },
+    /// The session ended the entry: it never reported an exit status of its
+    /// own.
+    Stopped { detail: String },
+    /// The entry never started, so it never reported anything.
+    NotStarted,
+}
+
+impl SessionEntryState {
+    /// The state a session recorded as one text record: `exit=0` or another
+    /// `exit=N`, `signal=N`, `not-tracked`/`not started`, or anything else the
+    /// supervisor reported. A session that keeps a typed record reports that
+    /// record instead, so a stop it caused is never read as a failure.
+    pub fn from_record(record: &str) -> Self {
+        let record = record.trim();
+        if record == "exit=0" {
+            return Self::Passed;
+        }
+        if let Some(signal) = record
+            .strip_prefix("signal=")
+            .and_then(|value| value.parse::<i32>().ok())
+        {
+            // Only a signal a stop sends says the session ended the entry. A
+            // process that died from another one crashed, which is a failure.
+            return if effigy_process::interrupted_signal(signal) {
+                Self::Stopped {
+                    detail: record.to_owned(),
+                }
+            } else {
+                Self::Failed {
+                    detail: record.to_owned(),
+                }
+            };
+        }
+        if record == "not-tracked" || record == "not started" {
+            return Self::NotStarted;
+        }
+        Self::Failed {
+            detail: record.to_owned(),
+        }
+    }
+}
+
+/// One supervised entry's recorded result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEntry {
+    pub name: String,
+    pub state: SessionEntryState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiProcessTuiOutcome {
-    pub non_zero_exits: Vec<(String, String)>,
+    /// Every entry the session supervised, with the outcome it recorded.
+    pub entries: Vec<SessionEntry>,
+    /// The session ended because its operator quit it (or its terminal went
+    /// away), not because the entries finished.
     pub stopped_by_user: bool,
 }
 
@@ -59,7 +121,10 @@ pub trait SessionProcesses {
     fn startup_finished(&self) -> bool;
     fn cancel_startup(&self);
     fn take_startup_error(&self) -> Option<ProcessManagerError>;
-    fn exit_diagnostics(&self) -> Vec<(String, String)>;
+    /// Every supervised entry's final state, as this session recorded it. This
+    /// is the session's one outcome report: the summary renders it and the
+    /// caller projects it, so no caller infers a result from silence.
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)>;
     fn terminate_all_graceful_with_progress(
         &self,
         timeout: std::time::Duration,
@@ -89,8 +154,11 @@ impl SessionProcesses for ProcessSupervisor {
     fn take_startup_error(&self) -> Option<ProcessManagerError> {
         ProcessSupervisor::take_startup_error(self)
     }
-    fn exit_diagnostics(&self) -> Vec<(String, String)> {
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)> {
         ProcessSupervisor::exit_diagnostics(self)
+            .into_iter()
+            .map(|(name, record)| (name, SessionEntryState::from_record(&record)))
+            .collect()
     }
     fn terminate_all_graceful_with_progress(
         &self,
@@ -231,7 +299,6 @@ fn run_session(
     let summary_result = shutdown_and_render_summary(
         &mut runtime.terminal,
         runtime.supervisor.as_ref(),
-        std::mem::take(&mut runtime.state.observed_non_zero),
         &runtime.state.logs,
         &runtime.state.process_started_at,
         &runtime.diagnostics,
@@ -245,7 +312,7 @@ fn run_session(
         let SessionRuntime { terminal, .. } = runtime;
         std::mem::forget(terminal);
     }
-    let non_zero_exits = summary_result?;
+    let entries = summary_result?;
     let stopped_by_user = result?;
     if let Some(result) = before_shutdown {
         result.map_err(MultiProcessTuiError::Control)?;
@@ -257,7 +324,7 @@ fn run_session(
         return Err(MultiProcessTuiError::Process(error));
     }
     Ok(MultiProcessTuiOutcome {
-        non_zero_exits,
+        entries,
         stopped_by_user,
     })
 }

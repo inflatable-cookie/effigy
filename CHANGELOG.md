@@ -1138,6 +1138,27 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- An interactive `effigy test` run that the operator stops can no longer report
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A run the operator stopped is cancelled even
+  when the stop arrived before any suite started, while a suite that reported
+  its own failure keeps that failure: only an exit the stop itself produced
+  (the interrupted `128 + signal`) is attributed to the stop. The same rule
+  applies without a terminal, so an interrupted non-terminal suite is
+  `cancelled` rather than failed; a suite that died from a signal no stop sends
+  (`SIGSEGV`, `SIGABRT`) is a failure, never a cancellation or a pass. A nested
+  helper invocation now keeps its own exit code instead of collapsing to `1`,
+  so a cancelled `effigy test` step is recorded `Cancelled` with code `130` in
+  the durable step record and its caller, and a cancelled QA-group run closes
+  its durable kernel run as `cancelled` instead of `failed`. The session
+  summary no longer renders a signal-terminated process as `OK`.
+
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
 - A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.

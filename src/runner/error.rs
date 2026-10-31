@@ -242,6 +242,7 @@ pub enum RunnerError {
     },
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
+        cancelled: bool,
         rendered: String,
     },
     BuiltinScanNonZero {
@@ -289,6 +290,12 @@ impl RunnerError {
                     .filter(|code| (1..=255).contains(code))
                     .unwrap_or(1)
             }
+            // An operator stop is the interrupted convention (128 + SIGINT),
+            // the same code a cancelled QA-group member records, so text, JSON
+            // and durable run records agree that the run was cancelled.
+            RunnerError::BuiltinTestNonZero {
+                cancelled: true, ..
+            } => 130,
             RunnerError::TaskLockConflict(_) => 75,
             _ => 1,
         }
@@ -965,9 +972,15 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
             B::TaskManifestCompose { path, detail } => Self::TaskManifestCompose { path, detail },
             B::TaskCommandLaunch { command, error } => Self::TaskCommandLaunch { command, error },
             B::TaskLockConflict(details) => Self::TaskLockConflict(details),
-            B::BuiltinTestNonZero { failures, rendered } => {
-                Self::BuiltinTestNonZero { failures, rendered }
-            }
+            B::BuiltinTestNonZero {
+                failures,
+                cancelled,
+                rendered,
+            } => Self::BuiltinTestNonZero {
+                failures,
+                cancelled,
+                rendered,
+            },
             B::BuiltinScanNonZero {
                 finding_count,
                 rendered,

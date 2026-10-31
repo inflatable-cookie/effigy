@@ -32,6 +32,24 @@ pub(super) fn send_kill(child: &mut Child) {
     }
 }
 
+/// Whether `signal` is one a stop sends: a cancellation, not a crash.
+///
+/// Contract 052 names a cancellation by the signal a stop delivered, so a
+/// process that dies from one of these was ended rather than failing on its
+/// own. Any other signal is the process's own crash.
+pub fn interrupted_signal(signal: i32) -> bool {
+    matches!(
+        signal,
+        nix::libc::SIGHUP | nix::libc::SIGINT | nix::libc::SIGTERM | nix::libc::SIGKILL
+    )
+}
+
+/// Whether `code` is the interrupted convention a shell reports for a stop:
+/// `128 + signal`. A process that reports it never chose that status.
+pub fn interrupted_exit_code(code: i32) -> bool {
+    code > 128 && interrupted_signal(code - 128)
+}
+
 pub fn process_is_running(pid: u32) -> bool {
     #[cfg(unix)]
     {
