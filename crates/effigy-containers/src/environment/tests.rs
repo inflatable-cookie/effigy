@@ -76,6 +76,7 @@ mod adapters;
 pub(in crate::environment) mod creation;
 mod faults;
 mod guest_publication;
+mod native_creation;
 
 pub(in crate::environment) const PROJECT: &str = "acme-stack";
 

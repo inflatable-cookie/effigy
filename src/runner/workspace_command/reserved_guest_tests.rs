@@ -94,6 +94,7 @@ impl GuestWorkspace for Guest {
 #[derive(Clone, Copy, Debug)]
 enum Fault {
     None,
+    LongObservationBudget,
     Identity,
     UnknownIdentity,
     Alias,
@@ -313,6 +314,7 @@ home = "/home/vscode"
         let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
             ("PATH", test_path),
             ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
+            ("DOCKER_CONTEXT", "fixture-context".into()),
         ]);
         let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());
@@ -350,7 +352,7 @@ home = "/home/vscode"
             "State":{"Running":true}, "Config":{"Image":"fixture:latest","Labels":labels}
         }])).unwrap()).unwrap();
         let docker = bin.join("docker");
-        std::fs::write(&docker, format!("#!/bin/sh\ncase \" $* \" in\n *' image inspect '*) echo '[{{\"Id\":\"sha256:{}\"}}]' ;;\n *' ps '*) echo {} ;;\n *' inspect '*) cat '{}' ;;\nesac\n", "c".repeat(64), "a1".repeat(32), inspect.display())).unwrap();
+        std::fs::write(&docker, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \" $* \" in\n *' image inspect '*) echo '[{{\"Id\":\"sha256:{}\"}}]' ;;\n *' ps '*) echo {} ;;\n *' inspect '*) cat '{}' ;;\nesac\n", fixture.path().join("docker.calls").display(), "c".repeat(64), "a1".repeat(32), inspect.display())).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(docker, std::fs::Permissions::from_mode(0o755)).unwrap();
         if matches!(fault, Fault::Hybrid) {
@@ -548,6 +550,9 @@ home = "/home/vscode"
             let reobserved_object = object.clone();
             let reobserved_version = version.clone();
             let creating_run = activation.environment_mut().id();
+            let original_deadline = activation.environment_mut().observation_deadline(
+                std::time::Instant::now() + Duration::from_secs(24 * 60 * 60),
+            );
             Ok(ReservedGuestInput {
                 guest: Box::new(Guest(
                     shared.clone(),
@@ -558,6 +563,10 @@ home = "/home/vscode"
                 artifact: &artifact,
                 reobserve: Box::new(move |deadline| {
                     assert!(std::time::Instant::now() < deadline);
+                    assert!(
+                        deadline <= original_deadline,
+                        "callback exceeded the activation deadline"
+                    );
                     Ok((
                         Observed::Verified(
                             vec![TargetCandidate {
@@ -619,7 +628,11 @@ home = "/home/vscode"
                         "ab".repeat(32),
                     ))
                 }),
-                budget: Duration::from_secs(20),
+                budget: if matches!(fault, Fault::LongObservationBudget) {
+                    Duration::from_secs(24 * 60 * 60)
+                } else {
+                    Duration::from_secs(20)
+                },
             })
         };
         let result = match fault {
@@ -629,8 +642,21 @@ home = "/home/vscode"
             Fault::RecoveryDead | Fault::RecoveryUnknown => {
                 recover_fixture(request, observe, shared.clone(), 0, fault)
             }
-            _ => up_prepared(request, || Ok(()), observe),
+            _ => up_prepared(request, &[], observe),
         };
+        if matches!(fault, Fault::None | Fault::LongObservationBudget) {
+            let calls = std::fs::read_to_string(fixture.path().join("docker.calls")).unwrap();
+            let applies = calls
+                .lines()
+                .filter(|line| line.contains(" up -d "))
+                .collect::<Vec<_>>();
+            assert_eq!(applies.len(), 1, "one ordinary Compose apply");
+            assert!(applies[0].starts_with("--context fixture-context compose "));
+            assert!(applies[0].contains("--build --remove-orphans"));
+            for file in &policy.compose_files {
+                assert!(applies[0].contains(file.to_str().unwrap()));
+            }
+        }
         let mut guest = shared.borrow_mut();
         assert_eq!(guest.text("/predecessor").as_deref(), Some("old bytes"));
         if matches!(fault, Fault::Hybrid) {
@@ -641,7 +667,10 @@ home = "/home/vscode"
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
         } else if matches!(
             fault,
-            Fault::None | Fault::Recovery(_) | Fault::RecoveryUnknown
+            Fault::None
+                | Fault::LongObservationBudget
+                | Fault::Recovery(_)
+                | Fault::RecoveryUnknown
         ) {
             let WorkspaceUp::Selected(mut owner) = result.expect("selected") else {
                 panic!("selected owner")
@@ -1045,4 +1074,9 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_callback_keeps_the_original_activation_deadline() {
+    run(Fault::LongObservationBudget);
 }

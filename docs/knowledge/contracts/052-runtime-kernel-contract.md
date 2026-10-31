@@ -3850,9 +3850,19 @@ rechecks that inventory under the gate and refuses a stale reservation before
 binding; the reserved-input boundary reobserves target/platform and the binding
 adapter rechecks the complete project/image inventory immediately before
 `bind_target`. Only this run's created workspace ID can satisfy an absent target;
-a caller-supplied creator run ID is never authority. Attached IDs remain attached. Missing attribution is Unknown, not proof of no creator. Colima
-currently refuses a reference-only container image result; deterministic fixtures
-are not native qualification.
+a caller-supplied creator run ID is never authority. Attached IDs remain attached.
+Missing attribution is Unknown, not proof of no creator. The original activation
+deadline bounds the final observation callback and the pinned backend runs the
+ordinary Compose apply.
+
+The opt-in native Colima fixture transports the sealed Compose bytes to a fresh
+private VM directory, compares them byte for byte, and removes its exact-owned
+container and directory. On the running containerd profile, one successful apply
+returned a mutable image reference and lacked required service evidence; the
+window refused attribution and cleanup completed. This is native refusal
+evidence, not successful Colima attribution qualification. Reference-only image
+results continue to refuse; Docker native qualification needs an available
+engine. Deterministic adapter fixtures do not substitute for native qualification.
 
 ## 9. Authority map
 

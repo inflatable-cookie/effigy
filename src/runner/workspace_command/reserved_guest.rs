@@ -85,9 +85,10 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,
     mut input: ReservedGuestInput<'a>,
 ) -> Result<WorkspacePublication<'a>, EnvError> {
-    let until = Instant::now()
+    let requested = Instant::now()
         .checked_add(input.budget)
         .ok_or_else(|| unavailable("workspace publication deadline overflow"))?;
+    let until = activation.environment_mut().observation_deadline(requested);
     let remaining = || {
         until
             .checked_duration_since(Instant::now())

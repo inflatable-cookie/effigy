@@ -1552,10 +1552,9 @@ pub fn run_backend_invocation(
     run_command_capture_os_with_env(workdir, &program, args, label, env)
 }
 
-/// [`run_backend_invocation`] for a read bounded by the caller's absolute
-/// deadline (effigy#510). A creation window's inventories share one deadline,
-/// so an engine that stops answering fails that read instead of holding the
-/// environment gate open.
+/// [`run_backend_invocation`] bounded by the caller's absolute deadline.
+/// Detached Compose keeps regular-file output custody and retained logs;
+/// observations use bounded capture. Both share the activation's deadline.
 pub fn run_backend_invocation_until(
     workdir: &Path,
     program: &OsStr,
@@ -1564,13 +1563,15 @@ pub fn run_backend_invocation_until(
     env: &[(String, OsString)],
     deadline: Instant,
 ) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return super::process::run_detached_command_with_env_until(
+            workdir, &program, args, label, env, deadline,
+        );
+    }
     super::process::run_command_capture_os_with_env_until(
-        workdir,
-        &program.to_string_lossy(),
-        args,
-        label,
-        env,
-        deadline,
+        workdir, &program, args, label, env, deadline,
     )
 }
 

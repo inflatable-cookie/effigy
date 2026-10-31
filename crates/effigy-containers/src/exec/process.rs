@@ -152,6 +152,60 @@ pub(super) fn run_detached_command_streaming_with_env(
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<Output, ContainerExecError> {
+    run_detached_command_controlled(
+        repo_root,
+        program,
+        args,
+        label,
+        env,
+        DetachedControl {
+            stop_requested,
+            deadline: None,
+        },
+        on_line,
+    )
+}
+
+pub(super) fn run_detached_command_with_env_until(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<Output, ContainerExecError> {
+    run_detached_command_controlled(
+        repo_root,
+        program,
+        args,
+        label,
+        env,
+        DetachedControl {
+            stop_requested: None,
+            deadline: Some(deadline),
+        },
+        &mut |_| {},
+    )
+}
+
+struct DetachedControl<'a> {
+    stop_requested: Option<&'a std::sync::atomic::AtomicBool>,
+    deadline: Option<Instant>,
+}
+
+fn run_detached_command_controlled(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    control: DetachedControl<'_>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<Output, ContainerExecError> {
+    let DetachedControl {
+        stop_requested,
+        deadline,
+    } = control;
     let args = compose_invocation_args(program.as_ref(), args, env)?;
     let record = DetachedOutputRecord::for_invocation(repo_root, &args).map_err(|error| {
         ContainerExecError::Launch {
@@ -176,6 +230,20 @@ pub(super) fn run_detached_command_streaming_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
+    if deadline.is_some_and(|until| Instant::now() >= until) {
+        return Err(timeout_error(label));
+    }
+    #[cfg(unix)]
+    if deadline.is_some() {
+        // SAFETY: only async-signal-safe setpgid runs between fork and exec.
+        // The new group's ID is this child's PID; timeout cleanup signals
+        // only that owned group, never the caller's or another task's group.
+        unsafe {
+            command.pre_exec(|| {
+                setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from)
+            });
+        }
+    }
     let mut child = command
         .spawn()
         .map_err(|error| ContainerExecError::Launch {
@@ -184,6 +252,21 @@ pub(super) fn run_detached_command_streaming_with_env(
         })?;
     let mut offset = 0_u64;
     let status = loop {
+        if deadline.is_some_and(|until| Instant::now() >= until) {
+            terminate_child_process_tree(&mut child);
+            let _ = child.wait();
+            record.report_new_lines(&mut offset, on_line);
+            let _ = record.retain_tail();
+            return Err(ContainerExecError::Failure {
+                command: label.to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: format!(
+                    "[effigy] command timed out; output retained at {}",
+                    record.path.display()
+                ),
+            });
+        }
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
             terminate_child_process_tree(&mut child);
             break child.wait().map_err(|error| ContainerExecError::Launch {
@@ -198,10 +281,14 @@ pub(super) fn run_detached_command_streaming_with_env(
                 thread::sleep(Duration::from_millis(60));
             }
             Err(error) => {
+                if deadline.is_some() {
+                    terminate_child_process_tree(&mut child);
+                    let _ = child.wait();
+                }
                 return Err(ContainerExecError::Launch {
                     command: label.to_owned(),
                     error,
-                })
+                });
             }
         }
     };
@@ -1514,12 +1601,13 @@ print('detached diagnostic',file=sys.stderr)
             "up".into(),
             "-d".into(),
         ];
-        let output = super::super::implementation::run_compose_invocation_capture_with_env(
+        let output = super::super::implementation::run_backend_invocation_until(
             fixture.path(),
             std::ffi::OsStr::new("python3"),
             &args,
             "private detached up",
             &[],
+            Instant::now() + Duration::from_secs(10),
         )
         .expect("production detached adapter completes");
         assert!(output.stdout.is_empty() && output.stderr.is_empty());
@@ -1635,6 +1723,69 @@ while True:
             message.contains("build failed: missing base image"),
             "the failure keeps the backend's own diagnostic: {message}"
         );
+    }
+
+    #[test]
+    fn detached_deadline_reaps_only_the_owned_process_and_retains_regular_file_output() {
+        use super::error_is_timeout;
+        use nix::{sys::signal::kill, unistd::Pid};
+        use std::ffi::OsStr;
+        let fixture = effigy_test_support::Fixture::new("detached-deadline-").unwrap();
+        let script = fixture.path().join("backend.py");
+        fs::write(
+            &script,
+            r#"import json,os,stat,time
+json.dump({'pid':os.getpid(),'regular':stat.S_ISREG(os.fstat(1).st_mode)},open('identity.json','w'))
+print('before deadline',flush=True)
+time.sleep(60)
+"#,
+        )
+        .unwrap();
+        let args = [
+            script.into_os_string(),
+            "-p".into(),
+            "owned-timeout".into(),
+            "up".into(),
+            "-d".into(),
+        ];
+        let error = super::super::implementation::run_backend_invocation_until(
+            fixture.path(),
+            OsStr::new("python3"),
+            &args,
+            "bounded detached up",
+            &[],
+            Instant::now() + Duration::from_secs(2),
+        )
+        .expect_err("timeout refuses apply");
+        assert!(error_is_timeout(&error));
+        let identity: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.path().join("identity.json")).unwrap())
+                .unwrap();
+        assert_eq!(identity["regular"], true);
+        let pid = i32::try_from(identity["pid"].as_i64().unwrap()).unwrap();
+        assert!(
+            kill(Pid::from_raw(pid), None).is_err(),
+            "owned child was not reaped"
+        );
+        let record = fixture
+            .path()
+            .join(".effigy/runtime/logs/owned-timeout.compose.log");
+        assert!(fs::read_to_string(&record)
+            .unwrap()
+            .contains("before deadline"));
+        assert!(error.to_string().contains(record.to_str().unwrap()));
+        fs::remove_file(fixture.path().join("identity.json")).unwrap();
+        let error = super::super::implementation::run_backend_invocation_until(
+            fixture.path(),
+            OsStr::new("python3"),
+            &args,
+            "expired detached up",
+            &[],
+            Instant::now(),
+        )
+        .expect_err("expired caller never spawns");
+        assert!(error_is_timeout(&error));
+        assert!(!fixture.path().join("identity.json").exists());
     }
 
     #[test]

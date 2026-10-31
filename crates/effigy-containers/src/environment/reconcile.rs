@@ -1460,6 +1460,14 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
+    /// Preserve the caller's one absolute budget across external observations.
+    pub fn observation_deadline(&self, requested: Instant) -> Instant {
+        match self.cx.operation().deadline() {
+            Deadline::At(original) => requested.min(original),
+            Deadline::Open(_) => requested,
+        }
+    }
+
     /// Recheck the apply's journalled inventory under its exact claimed
     /// reservation, before the caller binds a target. Missing evidence refuses.
     pub fn recheck_creation(
@@ -1468,10 +1476,7 @@ impl<'r> EnvRun<'r> {
         backend: &mut dyn super::backend::EnvironmentBackend,
         deadline: Instant,
     ) -> Result<super::CreationReceipt, EnvError> {
-        let deadline = match self.cx.operation().deadline() {
-            Deadline::At(original) => deadline.min(original),
-            Deadline::Open(_) => deadline,
-        };
+        let deadline = self.observation_deadline(deadline);
         if reservation.environment() != &self.fence().resource
             || reservation.generation() != self.fence().generation
         {

@@ -102,7 +102,7 @@ pub(in crate::runner) enum WorkspaceUpError {
 /// kernel receipt/lease or claim production channel qualification.
 pub(in crate::runner) fn up<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    compose_env: &[(String, std::ffi::OsString)],
     publish: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
@@ -190,6 +190,9 @@ pub(in crate::runner) fn up<'a>(
     let mut creation = None;
     let result = (|| {
         let backend = super::backend(&policy.repo_root, policy);
+        let (program, args) = backend
+            .compose_invocation(&effigy_containers::compose::compose_up_args(policy))
+            .map_err(EnvError::Backend)?;
         let bringing_up = activation.apply_sealed_with(
             Up {
                 render: policy.render.as_ref().map(|render| &render.closure),
@@ -202,7 +205,18 @@ pub(in crate::runner) fn up<'a>(
             },
             &sealed,
             &preflight,
-            apply,
+            || {
+                effigy_containers::exec::run_backend_invocation_until(
+                    &policy.repo_root,
+                    &program,
+                    &args,
+                    "apply frozen workspace render",
+                    compose_env,
+                    until,
+                )
+                .map(|_| ())
+                .map_err(|error| BackendError::Uncertain(error.to_string()))
+            },
         )?;
         creation = bringing_up.creation;
         // A publication provider cannot turn an incomplete apply observation
@@ -273,7 +287,7 @@ pub(in crate::runner) fn up<'a>(
 /// it does not supply a publication receipt or perform selector writes.
 pub(in crate::runner) fn up_prepared<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    compose_env: &[(String, std::ffi::OsString)],
     observe: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<
@@ -281,7 +295,7 @@ pub(in crate::runner) fn up_prepared<'a>(
         EnvError,
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up(request, apply, |activation| {
+    up(request, compose_env, |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,
