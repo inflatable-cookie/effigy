@@ -25,7 +25,7 @@ pub use backend::{
     EnvironmentBackend, ProjectResources, Workload,
 };
 pub use creation::{
-    CreatedContainer, Creation, CreationEvidence, CreationReceipt, CREATION_WINDOW,
+    CreatedContainer, Creation, CreationEvidence, CreationReceipt, ImageIdSource, CREATION_WINDOW,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use ops::{activate, activate_with, down, reconcile, reset, Applied, Up};
