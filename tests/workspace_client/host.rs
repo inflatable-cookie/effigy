@@ -722,8 +722,8 @@ fn startup_honours_the_callers_deadline() {
     std::fs::create_dir_all(&state_home).expect("state home");
     std::fs::create_dir_all(&project).expect("project");
     let mut request = request(&fixture, &project);
-    // The activation announces only after five seconds.
-    request["activation"]["announce_delay_ms"] = serde_json::json!(5_000);
+    // The activation announces well after the caller's own deadline.
+    request["activation"]["announce_delay_ms"] = serde_json::json!(1_500);
 
     let body = serde_json::json!({ "request": request, "budget_ms": 300_u64 });
     let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
@@ -761,7 +761,10 @@ fn startup_honours_the_callers_deadline() {
         "the caller's 300ms deadline bounded the wait, not the 5s announcement ({reported}ms)"
     );
     assert!(
-        elapsed < Duration::from_secs(5),
+        elapsed < Duration::from_millis(1_500),
         "the caller gave up before the host announced ({elapsed:?})"
     );
+    // The abandoned host settles on owner loss; let it finish so it does not
+    // outlive this test's fixture.
+    std::thread::sleep(Duration::from_secs(2));
 }
