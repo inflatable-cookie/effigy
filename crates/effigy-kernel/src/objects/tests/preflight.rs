@@ -5,7 +5,7 @@
 //! winner, staging is private and crash durable, and a sealed object is exactly
 //! what the publisher later records.
 use super::*;
-use crate::gate::{Gate, GateState};
+use crate::gate::{Gate, GateError, GateState};
 use crate::objects::preflight::{test_hooks, STAGING_PREFIX};
 use crate::objects::{Closure, Objects};
 use std::os::unix::fs::PermissionsExt;
@@ -187,10 +187,12 @@ fn preflight_seal_timeout_never_promotes_after_the_caller_returns() {
     let value = closure("late");
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
     test_hooks::stall_staging(move || {
         let _ = entered_tx.send(());
         // The proof releases this only once the caller has returned.
         let _ = release_rx.recv_timeout(Duration::from_secs(60));
+        let _ = finished_tx.send(());
     });
     let sealed_home = home.path().to_path_buf();
     let sealed_value = value.clone();
@@ -212,20 +214,34 @@ fn preflight_seal_timeout_never_promotes_after_the_caller_returns() {
         "nothing was promoted by the deadline"
     );
     // Only now may the parked helper continue: it has no promotion path, so the
-    // object still cannot appear. It removes its own private tree.
+    // object still cannot appear, and it removes nothing outside the gate.
     let _ = release_tx.send(());
-    assert!(
-        settled_seal_trees(home.path()).is_empty(),
-        "the abandoned helper removed its own private stage"
-    );
+    finished_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the abandoned helper finished its stage");
     assert!(
         !objects_dir(home.path()).join(value.digest()).exists(),
         "no promotion began after the caller returned"
     );
-    // A later seal still publishes the closure.
+    // Its private stage survives as recovery's, never as a canonical object.
+    let abandoned = seal_trees(home.path());
+    assert_eq!(abandoned.len(), 1, "the abandoned stage waits for recovery");
+    let digest_dir = abandoned[0].join(value.digest());
+    assert_eq!(mode(&abandoned[0]), 0o700);
+    assert_eq!(mode(&digest_dir), 0o700);
+    for (path, bytes) in value.files() {
+        let file = digest_dir.join(path);
+        assert_eq!(mode(&file), 0o600, "{} is private", file.display());
+        assert_eq!(std::fs::read(&file).unwrap(), *bytes);
+    }
+    // The next seal recovers it under the objects gate and publishes.
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
+    assert!(
+        seal_trees(home.path()).is_empty(),
+        "recovery removed the abandoned stage"
+    );
 }
 
 #[test]
@@ -259,6 +275,49 @@ fn preflight_seal_fast_path_is_bounded_by_the_same_deadline() {
 
 /// The rename is the caller's, on the caller's thread, while the objects gate it
 /// took is still held: no objects write happens outside that custody.
+/// Acquisition itself is a bounded wait: a held objects gate makes this call
+/// return at its deadline with nothing created, not block behind the holder.
+#[test]
+fn preflight_seal_gate_wait_is_bounded_by_the_deadline() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("busy");
+    let holder_cx = context(EffectClass::Mutate);
+    let holder_root = StateRoot::effects(&holder_cx, home.path()).unwrap();
+    let (held_tx, held_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _guard = crate::objects::lock(&holder_cx, &holder_root).unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(20));
+    });
+    held_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the objects gate is held");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let started = Instant::now();
+    let result = Objects::seal_for_preflight(&cx, &root, &value, soon(80));
+    let waited = started.elapsed();
+    assert!(
+        matches!(
+            result,
+            Err(RunError::Store(StoreError::Gate(ref error)))
+                if matches!(**error, GateError::TimedOut { .. })
+        ),
+        "{result:?}"
+    );
+    assert!(
+        waited < Duration::from_millis(1_000),
+        "the gate wait returned at its deadline: {waited:?}"
+    );
+    let _ = release_tx.send(());
+    holder.join().unwrap();
+    assert!(!objects_dir(home.path()).join(value.digest()).exists());
+    assert!(seal_trees(home.path()).is_empty());
+    // The gate is free again and the seal publishes.
+    assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
+}
+
 #[test]
 fn preflight_seal_promotes_inside_the_objects_gate() {
     let home = tempfile::tempdir().unwrap();
@@ -431,12 +490,34 @@ fn preflight_seal_recovers_abandoned_staging_and_trusts_after_restart() {
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
     assert!(seal_trees(home.path()).is_empty());
-    // Trust is re-verified after the restart, not assumed.
-    let compose = objects_dir(home.path())
-        .join(value.digest())
-        .join("compose.yaml");
+    // Trust is re-verified after the restart, not assumed: a widened mode, an
+    // extra file and an extra empty directory each refuse, and the object is
+    // accepted again once the defect is gone.
+    let dir = objects_dir(home.path()).join(value.digest());
+    let compose = dir.join("compose.yaml");
     std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o640)).unwrap();
-    assert!(seal(&cx, &root, &value).is_err());
+    assert!(
+        seal(&cx, &root, &value).is_err(),
+        "widened mode after restart"
+    );
+    std::fs::set_permissions(&compose, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
+    let stray = dir.join("stray");
+    std::fs::write(&stray, b"unexpected").unwrap();
+    std::fs::set_permissions(&stray, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(
+        seal(&cx, &root, &value).is_err(),
+        "extra file after restart"
+    );
+    std::fs::remove_file(&stray).unwrap();
+    assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
+    private_dir(&dir.join("empty"));
+    assert!(
+        seal(&cx, &root, &value).is_err(),
+        "extra entry after restart"
+    );
+    std::fs::remove_dir(dir.join("empty")).unwrap();
+    assert_eq!(seal(&cx, &root, &value).unwrap(), value.digest());
 }
 
 #[test]

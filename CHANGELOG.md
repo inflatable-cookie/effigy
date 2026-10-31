@@ -505,11 +505,13 @@ During v0.x, MINOR bumps may include breaking changes.
   holds even when a synchronous write, sync or verify stalls, while the
   promotion is the caller's own work under the objects gate it holds for the
   whole call, after one last deadline and cancellation check; a helper that
-  outlives its caller holds no gate and has no promotion path, so nothing is
-  ever promoted after the caller returns. `Objects::publish_desired` then
-  records and reconciles that same trusted object. The kernel's object verifier
-  also refuses an entry the closure digest cannot name, such as an extra empty
-  directory.
+  outlives its caller holds no gate, removes nothing and has no promotion path,
+  so nothing is ever promoted after the caller returns and its private stage is
+  left to the next seal's recovery. The deadline bounds those waits and
+  decisions, not an in-flight filesystem syscall, exactly as `atomic_replace`
+  already assumes. `Objects::publish_desired` then records and reconciles that
+  same trusted object. The kernel's object verifier also refuses an entry the
+  closure digest cannot name, such as an extra empty directory.
 
 ### Changed
 

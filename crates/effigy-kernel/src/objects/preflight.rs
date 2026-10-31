@@ -10,8 +10,19 @@
 //! reports a durable stage and while the caller still holds the objects gate:
 //! a helper can only write inside its private tree, so a helper that outlives
 //! its caller has no promotion path at all. No promotion can therefore begin
-//! after the caller has returned, and no objects write happens outside the gate
-//! this operation took.
+//! after the caller has returned, and no canonical objects write happens
+//! outside the gate this operation took.
+//!
+//! The one interval this cannot close is the instruction boundary between the
+//! last deadline/cancellation check and the `renameat2`/`renameatx_np` call:
+//! a thread descheduled there renames when it runs again, and every in-flight
+//! filesystem syscall (stage write, fsync, rename, or a `renameat_np` blocked
+//! on a stalled filesystem) outlasts any deadline. K8 bounds waits, not
+//! syscalls, exactly as `record::atomic_replace` assumes (its deadline check
+//! precedes its open/write/fsync/rename with no check between). Closing that
+//! interval needs a lease-bound or revocable exclusive move — a rename that
+//! fails once the operation's deadline has passed — which the kernel's gate and
+//! record contracts do not provide; see effigy#509.
 use super::*;
 use crate::ctx::{Capability, Deadline, EffectClass, EffectContext};
 use crate::fs::{FileName, Trust};
@@ -51,10 +62,11 @@ impl Objects {
     /// The deadline bounds every wait: the gate wait, the helper's staging and
     /// verification, and the check immediately before the rename. A helper
     /// still working when the caller returns is abandoned — it holds no gate
-    /// and has no promotion path — and its private tree is removed by that
-    /// helper, or by the next seal's recovery. A stage the caller does not
-    /// promote, because the deadline passed, it was cancelled or the promotion
-    /// failed, is likewise left to that recovery rather than cleaned up late.
+    /// and has no promotion path — and its private tree is left for the next
+    /// seal's recovery, which runs under the gate and stops at its own
+    /// deadline. A stage the caller does not promote, because the deadline
+    /// passed or it was cancelled, is likewise left to that recovery rather
+    /// than cleaned up late.
     pub fn seal_for_preflight(
         cx: &EffectContext,
         root: &StateRoot,
@@ -109,12 +121,10 @@ impl Objects {
                 let closure = closure.clone();
                 let stage_name = stage_name.clone();
                 move || {
-                    let result = stage_object(&cx, &root, &closure, &stage_name);
-                    if sender.send(result).is_err() {
-                        // Nobody is waiting for this seal any more: it is
-                        // abandoned, so its private tree must not outlive it.
-                        remove_stage(&root, &stage_name);
-                    }
+                    // A helper never removes a stage its caller may have
+                    // abandoned: removal is recovery's, under the gate, so no
+                    // staging or objects write ever happens outside custody.
+                    let _ = sender.send(stage_object(&cx, &root, &closure, &stage_name));
                 }
             })
             .map_err(|error| {
@@ -311,18 +321,6 @@ fn recover(staging: &DirFd, deadline: Instant) {
     if removed {
         let _ = staging.sync();
     }
-}
-
-/// Removes one seal's own tree, by the private name only it can hold.
-fn remove_stage(root: &StateRoot, stage_name: &FileName) {
-    let Ok(staging) = root.read_family(Family::Staging) else {
-        return;
-    };
-    let Some(staging) = staging else {
-        return;
-    };
-    let _ = staging.remove_tree(stage_name, Trust::Private, STAGING_DEPTH);
-    let _ = staging.sync();
 }
 
 /// A private name no other seal, process or retry can collide with.

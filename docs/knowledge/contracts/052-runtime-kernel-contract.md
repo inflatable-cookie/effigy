@@ -2418,7 +2418,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree by its sealer or the next seal |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree by the seal that promoted it or the next seal's recovery |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2438,10 +2438,23 @@ content and directories there; the promotion is the caller's own work, on its
 own thread, under that gate and after one last deadline and cancellation check,
 so it is one exclusive no-replace rename and nothing outside the gate ever
 moves an object. A helper that outlives its caller only ever writes inside that
-private tree — it holds no gate and has no promotion path — and the tree is
-removed by the helper itself or by the next seal's recovery, which stops at the
-new caller's deadline. Seal trees never name a run and a run's own staging tree
-is still removed only by its durable settle.
+private tree — it holds no gate, removes nothing and has no promotion path — and
+the tree is removed by the next seal's recovery, which runs under the gate and
+stops at its own caller's deadline. Seal trees never name a run and a run's own
+staging tree is still removed only by its durable settle.
+
+The deadline bounds every *wait* and every *decision* of a preflight seal: the
+objects gate wait, the helper's staging and verification, and the check
+immediately before the rename. It cannot bound a single in-flight filesystem
+syscall, because no such syscall is interruptible — the same limit
+`record::atomic_replace` already has, whose own deadline check precedes its
+open/write/fsync/rename with no check between (K8 bounds waits, not syscalls).
+Two consequences are recorded rather than papered over: a promotion whose last
+check passed can still enter `renameat2`/`renameatx_np` after the instant (the
+instruction boundary between check and syscall), and an abandoned helper can
+finish writing its private tree after its caller returned. Closing the first
+needs a lease-bound or revocable exclusive move, which this contract does not
+provide.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
