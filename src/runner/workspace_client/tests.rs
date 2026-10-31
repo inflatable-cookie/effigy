@@ -2667,8 +2667,6 @@ struct FakePty {
     log: Arc<Mutex<PtyLog>>,
     /// Bytes one write call accepts.
     batch: usize,
-    /// Resizes it refuses with a full queue before accepting one.
-    resize_blocks: usize,
     /// Runs once, after the first write effect returns.
     after_first_write: Option<PtyHook>,
 }
@@ -2678,7 +2676,6 @@ impl FakePty {
         Self {
             log,
             batch: usize::MAX,
-            resize_blocks: 0,
             after_first_write: None,
         }
     }
@@ -2688,11 +2685,6 @@ impl FakePty {
     fn bounded(self, batch: usize, capacity: usize) -> Self {
         self.log.lock().expect("pty log").capacity = capacity;
         Self { batch, ..self }
-    }
-
-    fn refusing_resizes(mut self, blocks: usize) -> Self {
-        self.resize_blocks = blocks;
-        self
     }
 
     /// Run `hook` once, after the first write effect returns: the proof that the
@@ -2725,10 +2717,6 @@ impl TerminalWriter for FakePty {
     fn resize(&mut self, size: TerminalSize) -> io::Result<()> {
         let mut log = self.log.lock().expect("pty log");
         if !log.resize_open {
-            return Err(io::Error::from(io::ErrorKind::WouldBlock));
-        }
-        if self.resize_blocks > 0 {
-            self.resize_blocks -= 1;
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
         log.sizes.push(size);
@@ -3373,14 +3361,18 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-    // The writer refuses its first resizes, as a terminal whose resize queue is
-    // momentarily full does. The owner keeps only the newest size.
+    // The resize handle is closed for the whole burst, as a terminal whose
+    // resize path is momentarily unavailable is. Attempt counts and pump turns
+    // cannot change the result: while the handle is closed the owner holds at
+    // most one size, and the newest one is the only size that can ever be
+    // applied when it opens.
+    log.lock().expect("pty log").resize_open = false;
     custody
         .open(
             &cx,
             run,
             vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone()).refusing_resizes(2)),
+            Box::new(FakePty::new(log.clone())),
         )
         .expect("the run's terminal opens");
 
@@ -3397,28 +3389,30 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     server
         .serve(&mut transport, &cx, &observe, &root, &mut custody)
         .expect("the resize burst is served");
+    // Every frame is queued by now and the closed handle has applied nothing,
+    // however many turns the pump took.
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        sizes(&log).is_empty(),
+        "a closed resize handle applied a size: {:?}",
+        sizes(&log)
+    );
 
+    // Opening the handle applies the newest size, and only the newest: the two
+    // earlier sizes were superseded while it was closed.
+    log.lock().expect("pty log").resize_open = true;
     wait_until("the newest geometry to be applied", || {
         sizes(&log).last() == Some(&size(60, 140))
     });
-    let applied = sizes(&log);
-    assert!(
-        !applied.contains(&size(24, 80)),
-        "a superseded size was applied after a newer one: {applied:?}"
-    );
-    assert!(
-        applied
-            .iter()
-            .all(|size| *size == self::size(50, 120) || *size == self::size(60, 140)),
-        "only the newest sizes reached the writer: {applied:?}"
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        sizes(&log),
+        vec![size(60, 140)],
+        "exactly the newest size reached the writer"
     );
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     assert_eq!(terminal.applied(), Some(size(60, 140)));
-    assert_eq!(
-        terminal.refused(),
-        0,
-        "a full resize queue is not a refusal"
-    );
+    assert_eq!(terminal.refused(), 0, "a closed handle is not a refusal");
 }
 
 #[test]
@@ -4544,13 +4538,15 @@ fn a_refused_resize_never_starves_queued_input() {
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // A resize handle that never accepts: the geometry waits forever, and the
-    // input behind it must still arrive.
+    // input behind it must still arrive. The switch is the test's, so the result
+    // does not depend on how many turns the pump takes.
+    log.lock().expect("pty log").resize_open = false;
     custody
         .open(
             &cx,
             run,
             vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone()).refusing_resizes(usize::MAX)),
+            Box::new(FakePty::new(log.clone())),
         )
         .expect("the run's terminal opens");
     let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
