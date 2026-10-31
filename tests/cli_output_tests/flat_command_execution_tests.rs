@@ -280,3 +280,55 @@ fn every_shadowable_builtin_loses_to_a_same_named_manifest_task() {
         );
     }
 }
+
+/// A built-in step runs as Effigy's own child process, and that nested helper
+/// must keep its own exit code: a cancelled `effigy test` step records the
+/// interruption (130 / `Cancelled`) instead of a generic failure, so the
+/// durable step record and the task result agree with the builtin's own text.
+#[test]
+fn a_cancelled_builtin_test_step_keeps_its_interrupted_code_and_outcome() {
+    let root = temp_workspace("builtin-step-cancelled");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.qa]
+run = [{ task = "test" }]
+
+[test.suites.interrupted]
+run = "kill -INT $$"
+"#,
+    )
+    .expect("write manifest");
+
+    // The step's child resolves its Effigy invocation from this checkout, so
+    // the proof never depends on an installed binary.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(&root)
+        .arg("qa")
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_EXECUTABLE", env!("CARGO_BIN_EXE_effigy"))
+        .output()
+        .expect("run effigy");
+
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "the wrapper keeps the cancelled step's interrupted code: {output:?}"
+    );
+    let payload = parse_stdout_json(&output);
+    let details = &payload["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["exit_code"], 130);
+    let step = &details["steps"][0];
+    assert_eq!(step["exit_code"], 130);
+    assert_eq!(step["outcome"]["Cancelled"]["signal"], 2);
+    assert!(
+        step["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cancelled"),
+        "the step keeps the builtin's own result: {step}"
+    );
+}

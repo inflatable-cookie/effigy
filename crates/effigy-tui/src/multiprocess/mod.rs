@@ -60,9 +60,20 @@ impl SessionEntryState {
         if record == "exit=0" {
             return Self::Passed;
         }
-        if record.starts_with("signal=") {
-            return Self::Stopped {
-                detail: record.to_owned(),
+        if let Some(signal) = record
+            .strip_prefix("signal=")
+            .and_then(|value| value.parse::<i32>().ok())
+        {
+            // Only a signal a stop sends says the session ended the entry. A
+            // process that died from another one crashed, which is a failure.
+            return if effigy_process::interrupted_signal(signal) {
+                Self::Stopped {
+                    detail: record.to_owned(),
+                }
+            } else {
+                Self::Failed {
+                    detail: record.to_owned(),
+                }
             };
         }
         if record == "not-tracked" || record == "not started" {

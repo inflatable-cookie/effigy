@@ -890,15 +890,81 @@ run = "exit 130"
     );
 }
 
+/// A cancelled builtin test run reaches the durable views with the outcome the
+/// builtin itself reported: the member ledger says `cancelled`, the group says
+/// `cancelled`, its kernel run closes as `cancelled`, and the member log keeps
+/// the builtin's own cancellation output.
+#[test]
+fn a_cancelled_builtin_test_reaches_every_durable_view_as_cancelled() {
+    let root = temp_execution_workspace("qa-groups-cancelled-builtin-test");
+    write_manifest(
+        &root,
+        r#"
+[qa.groups.cancels]
+lifecycle = "maintained"
+purpose = "A cancelled builtin test run"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [
+  { id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+  { id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+]
+
+[tasks.ok]
+run = "echo member-ok"
+
+[tasks.suitecheck]
+run = '"$QA_TEST_BIN" test'
+
+[test.suites.interrupted]
+run = "kill -INT $$"
+"#,
+    );
+
+    let run_dir = run_group_and_capture_with_env(
+        root.as_path(),
+        &["tasks", "qa-group", "run", "cancels"],
+        &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
+    );
+    let record: Value = read_run_record(&run_dir);
+    assert_eq!(record["outcome"], "cancelled");
+    assert_eq!(record["members"][0]["state"], "cancelled");
+    assert_eq!(record["members"][0]["exit_code"], 130);
+    assert_eq!(record["members"][1]["state"], "not_started");
+
+    // The member's own log keeps the builtin's cancelled results, so the
+    // durable evidence names the same outcome the text and JSON do.
+    let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
+    assert!(
+        log.contains("cancelled"),
+        "the member log keeps the builtin's cancellation: {log}"
+    );
+
+    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+    let view = read_kernel_run_view(root.as_path(), &run_id);
+    assert_eq!(
+        view["state"], "cancelled",
+        "a cancelled builtin test run closes as cancelled: {view}"
+    );
+}
+
 /// Run the group through the compiled binary, tolerate its failing exit, and
 /// return the finalized run directory.
 fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
+    run_group_and_capture_with_env(root, args, &[])
+}
+
+/// The same run with extra environment for the group's own child processes.
+fn run_group_and_capture_with_env(root: &Path, args: &[&str], envs: &[(&str, &str)]) -> PathBuf {
     let mut command = fixture_command(root);
     command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
     command.env("NO_COLOR", "1");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
     let output = command.output().expect("run group");
     assert!(!output.status.success(), "expected a failing group run");
     let reports = root.join(".effigy/reports/qa-groups");

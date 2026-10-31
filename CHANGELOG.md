@@ -1144,9 +1144,14 @@ During v0.x, MINOR bumps may include breaking changes.
   and a cancelled run exits `130`. A run the operator stopped is cancelled even
   when the stop arrived before any suite started, while a suite that reported
   its own failure keeps that failure: only an exit the stop itself produced
-  (the interrupted `128 + signal`) is attributed to the stop. A cancelled
-  QA-group run now closes its durable kernel run as `cancelled` instead of
-  `failed`, so `effigy run status` and the group record agree. The session
+  (the interrupted `128 + signal`) is attributed to the stop. The same rule
+  applies without a terminal, so an interrupted non-terminal suite is
+  `cancelled` rather than failed; a suite that died from a signal no stop sends
+  (`SIGSEGV`, `SIGABRT`) is a failure, never a cancellation or a pass. A nested
+  helper invocation now keeps its own exit code instead of collapsing to `1`,
+  so a cancelled `effigy test` step is recorded `Cancelled` with code `130` in
+  the durable step record and its caller, and a cancelled QA-group run closes
+  its durable kernel run as `cancelled` instead of `failed`. The session
   summary no longer renders a signal-terminated process as `OK`.
 
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.

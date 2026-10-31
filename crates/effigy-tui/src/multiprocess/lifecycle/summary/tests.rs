@@ -44,14 +44,24 @@ fn a_text_record_projects_every_supervised_entry_honestly() {
 }
 
 #[test]
-fn a_terminated_entry_is_never_reported_as_a_pass() {
-    for record in ["signal=9", "signal=15", "signal=11"] {
+fn only_a_stops_own_signal_is_a_stop() {
+    for record in ["signal=1", "signal=2", "signal=9", "signal=15"] {
         assert_eq!(
             SessionEntryState::from_record(record),
             SessionEntryState::Stopped {
                 detail: record.to_owned()
             },
-            "a signal is a stop, not a pass: {record}"
+            "a stop's own signal is a cancellation: {record}"
+        );
+    }
+    // A crash is the process's own failure, and never a pass either.
+    for record in ["signal=6", "signal=11", "signal=7"] {
+        assert_eq!(
+            SessionEntryState::from_record(record),
+            SessionEntryState::Failed {
+                detail: record.to_owned()
+            },
+            "a crash signal is a failure: {record}"
         );
     }
 }

@@ -296,7 +296,12 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             if let Some(rendered) = err.rendered_output() {
                 let _ = renderer.text(rendered);
                 if suppress_header {
-                    std::process::exit(1);
+                    // A nested helper invocation has already rendered its whole
+                    // answer, so it writes no human block; it still reports the
+                    // error's own exit code. Rewriting it to 1 would make its
+                    // caller record a cancellation (130) or a task's own code
+                    // as a generic failure.
+                    std::process::exit(exit_code);
                 }
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);

@@ -129,6 +129,25 @@ pub(super) fn run_builtin_test_targets_tui(
     })
 }
 
+/// One suite's result from the terminal status of the process that ran it.
+///
+/// A suite a stop ended reports the interrupted convention (contract 052): a
+/// death from one of the stop's own signals, or the `128 + signal` status a
+/// shell substitutes for it. That is a cancellation; every other non-zero
+/// status is the suite's own failure, and a crash signal is a failure too.
+fn suite_outcome(success: bool, code: Option<i32>, signal: Option<i32>) -> BuiltinTestOutcome {
+    if success {
+        return BuiltinTestOutcome::Passed;
+    }
+    let interrupted = signal.is_some_and(effigy_process::interrupted_signal)
+        || code.is_some_and(effigy_process::interrupted_exit_code);
+    if interrupted {
+        BuiltinTestOutcome::Cancelled
+    } else {
+        BuiltinTestOutcome::Failed
+    }
+}
+
 /// One suite's result from the session state the TUI recorded for it.
 ///
 /// The session reports what it observed; this is the only place that decides
@@ -310,11 +329,7 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 runner,
                                 root,
                                 command,
-                                outcome: if status.success() {
-                                    BuiltinTestOutcome::Passed
-                                } else {
-                                    BuiltinTestOutcome::Failed
-                                },
+                                outcome: suite_outcome(status.success(), status.code(), None),
                                 code: status.code(),
                             });
                             continue;
@@ -421,16 +436,19 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 );
                         }
                         let status = wait_result?;
+                        #[cfg(unix)]
+                        let signal = {
+                            use std::os::unix::process::ExitStatusExt;
+                            status.signal()
+                        };
+                        #[cfg(not(unix))]
+                        let signal = None;
                         local.push(BuiltinTestExecResult {
                             name,
                             runner,
                             root,
                             command,
-                            outcome: if status.success() {
-                                BuiltinTestOutcome::Passed
-                            } else {
-                                BuiltinTestOutcome::Failed
-                            },
+                            outcome: suite_outcome(status.success(), status.code(), signal),
                             code: status.code(),
                         });
                     }
@@ -1031,21 +1049,93 @@ mod tests {
         );
     }
 
+    /// The interrupted convention decides a noninteractive suite's outcome: a
+    /// stop's own signal (or its `128 + signal` status) is a cancellation,
+    /// while a crash signal and an ordinary non-zero exit are failures.
     #[test]
-    fn a_cancelled_suite_does_not_project_success() {
+    fn a_noninteractive_suite_outcome_follows_the_interrupted_convention() {
+        let cases = [
+            (true, Some(0), None, BuiltinTestOutcome::Passed),
+            (false, Some(1), None, BuiltinTestOutcome::Failed),
+            (false, Some(7), None, BuiltinTestOutcome::Failed),
+            (false, Some(130), None, BuiltinTestOutcome::Cancelled),
+            (false, Some(143), None, BuiltinTestOutcome::Cancelled),
+            (false, Some(137), None, BuiltinTestOutcome::Cancelled),
+            (false, Some(129), None, BuiltinTestOutcome::Cancelled),
+            (false, Some(139), None, BuiltinTestOutcome::Failed),
+            (false, None, Some(2), BuiltinTestOutcome::Cancelled),
+            (false, None, Some(9), BuiltinTestOutcome::Cancelled),
+            (false, None, Some(15), BuiltinTestOutcome::Cancelled),
+            (false, None, Some(11), BuiltinTestOutcome::Failed),
+            (false, None, None, BuiltinTestOutcome::Failed),
+        ];
+
+        for (success, code, signal, expected) in cases {
+            assert_eq!(
+                suite_outcome(success, code, signal),
+                expected,
+                "status {success:?}/{code:?}/{signal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_noninteractive_suite_the_stop_ended_is_cancelled_not_failed() {
         let fixture = tempfile::tempdir().expect("fixture");
         let scratch = tempfile::tempdir().expect("scratch");
-        let runnable = suite(fixture.path(), "exit 130", BuiltinTargetRuntime::Host);
+        // The shell reports the interrupted convention for its own SIGINT.
+        let runnable = suite(fixture.path(), "kill -INT $$", BuiltinTargetRuntime::Host);
 
         let results =
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite recorded");
-        assert!(
-            !results[0].success(),
-            "exit 130 must not project success: {:?}",
-            results[0]
-        );
-        assert_eq!(results[0].code, Some(130));
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Cancelled);
+        assert!(!results[0].success(), "a cancelled suite is not a pass");
+
+        let error = crate::test::render::finalize_builtin_test_outcome(
+            &results,
+            &[],
+            None,
+            &[],
+            false,
+            false,
+            false,
+        )
+        .expect_err("a cancelled suite is not a success");
+        match error {
+            BuiltinError::BuiltinTestNonZero { cancelled, .. } => assert!(
+                cancelled,
+                "an interrupted suite cancels the run, never fails it"
+            ),
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn a_noninteractive_suite_killed_by_a_signal_is_cancelled() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        // SIGKILL cannot be caught: the suite dies from the signal itself.
+        let runnable = suite(fixture.path(), "kill -KILL $$", BuiltinTargetRuntime::Host);
+
+        let results =
+            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                .expect("suite recorded");
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Cancelled);
+        assert!(!results[0].success(), "a stopped suite is not a pass");
+    }
+
+    #[test]
+    fn an_ordinary_noninteractive_failure_stays_failed() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let runnable = suite(fixture.path(), "exit 7", BuiltinTargetRuntime::Host);
+
+        let results =
+            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                .expect("suite recorded");
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::Failed);
+        assert_eq!(results[0].code, Some(7));
     }
 
     #[test]
