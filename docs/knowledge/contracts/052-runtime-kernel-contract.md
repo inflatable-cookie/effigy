@@ -4542,10 +4542,13 @@ connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
 `ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
 handoff its caller opens entries through. Opening a terminal resumes the run's
 owning handle, so a run this session did not admit has no owner to write for and
-is refused. The first attachment of that run binds the writer for its whole
-life — in the workspace flow the owning client, which admitted the run — so a
-second terminal, a re-attach and the kernel's own replacement of a second
-terminal can never displace it. The connection fences the live attachment it was
+is refused. Only that owning attachment binds the writer, for its whole life: a
+second terminal — the first one to attach included — never claims it, a re-attach
+never displaces it, and the kernel's own replacement of a second terminal cannot
+put one in its place. Because the attachment allowed to queue work and the row
+the pump re-reads before every effect are therefore one attachment, a released
+owning row stops queued work as well as new frames, and nothing is ever queued on
+a second terminal's authority. The connection fences the live attachment it was
 handed, and the
 owner's writer runs on its own pump: the pump re-reads the resumed owning row
 with `Attachment::attached_observed` immediately before every writer effect —
@@ -4568,13 +4571,13 @@ reconnect resumes the retained log at the negotiated cursor or reports the
 rotated range as a `gap`, with no second replay store. `effigy#485` proves those
 behaviours with production-shaped fake writers through the real `Server::serve`
 loop and the merged serving loop, owned by `test:workspace:publication:c`: a
-bound row released under its own terminal (stale) and a repeated attach whose
-replacement the kernel opens (replaced), each refused with zero bytes and zero
-resize while the same bytes through the bound attachment are delivered — the
-reversible failing safety assertion in both directions; the crossing terminal;
-the owner-EOF retirement with no further traffic; the idle drain; the
-write/resize alternation that keeps a full writer from starving geometry; and
-the rotated-prefix gap. The container-up caller that opens one entry per admitted run
+released owning row stopping the work it had queued, and a repeated attach whose
+replacement the kernel opens being refused with zero bytes and zero resize while
+the same frame through the bound owning attachment is delivered — the reversible
+failing safety assertion in both directions; the crossing terminal; the
+owner-EOF retirement with no further traffic; the idle drain; the write/resize
+alternation that keeps a full writer from starving geometry; and the
+rotated-prefix gap. The container-up caller that opens one entry per admitted run
 is effigy#452, and the live child-PTY writer with its two-real-PTY process proof
 is effigy#519: nothing above claims a production terminal binding.
 

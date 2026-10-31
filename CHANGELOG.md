@@ -240,11 +240,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `TerminalWriter` (the child's writer, resize handle and close), and
   `TerminalCustody` serves one `RetainedStreams<WorkspaceTerminal>` per admitted
   run for a session. Input and resize re-read the run's owning attachment with
-  `Attachment::attached_observed` immediately before every effect; the first
-  attachment of a run binds the writer for its whole life, so a second terminal,
-  a re-attach and the kernel's replacement of a second terminal can never
-  displace it, and a bound row that is released or replaced refuses with zero
-  bytes and zero resize. Each
+  `Attachment::attached_observed` immediately before every effect. Only the
+  run's owning attachment binds the writer, for its whole life: a second
+  terminal (the first one to attach included), a re-attach and the kernel's
+  replacement of a second terminal never claim or displace it, nothing is queued
+  on a second terminal's authority, and a released owning row stops the work it
+  had queued as well as new frames, with zero bytes and zero resize. Each
   owner drives its writer from its own pump, which re-reads the run's resumed
   owning row immediately before every writer effect — each partial write, each
   resize — and on every idle tick. Writes and resizes alternate while both have

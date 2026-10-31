@@ -57,7 +57,7 @@ use effigy_kernel::ctx::{EffectContext, ObserveContext};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{self, Attachment, AttachmentId, Session};
+use effigy_kernel::run::{self, Attachment, AttachmentId, Client, Session};
 use effigy_kernel::workspace_channel::{
     Cursors, Refusal, RetainedStreams, StreamChunk, StreamStart, Streams, Terminal, TerminalSize,
 };
@@ -258,25 +258,29 @@ impl WorkspaceTerminal {
         self.shared.lock().applied
     }
 
-    /// Bind the run's terminal to the first attachment of that run that
-    /// attached. The first binding wins for the terminal's whole life, so a
-    /// resumed owner row keeps the writer and neither a second terminal nor a
-    /// replacement attachment can take it over.
+    /// Bind the run's terminal to its **owning** attachment, and to nothing
+    /// else. The first binding wins for the terminal's whole life, so a resumed
+    /// owner row keeps the writer, and a second terminal can never claim it —
+    /// not the first to attach, not a later one and not the kernel's
+    /// replacement of one either.
     ///
-    /// In the workspace flow the owning client is that first attachment: it
-    /// admitted the run and then attached. A second terminal can attach before
-    /// it only in an unusual order, and it types into the same run's writer —
-    /// which is the run's terminal, not the client's. Either way the writer's
-    /// lifetime is the *owning* row's ([`WorkspaceTerminal::open`] resumed it),
-    /// so a second terminal's detach never retires it and owner EOF always does.
+    /// The binding is exactly the row [`WorkspaceTerminal::open`] resumed, so
+    /// the attachment that may queue work and the row the pump re-reads before
+    /// every effect are one attachment. A released owner row therefore stops
+    /// queued work as well as new frames, and nothing can be queued on a
+    /// second terminal's authority.
     pub(crate) fn bind(&mut self, attachment: &Attachment) {
         if self.retired() || self.binding.is_some() {
             return;
         }
-        if attachment.run() != self.run || attachment.session() != self.session {
+        if attachment.run() != self.run
+            || attachment.session() != self.session
+            || attachment.client() != Client::Owner
+            || attachment.id() != self.owner_id
+        {
             return;
         }
-        self.binding = Some(attachment.id());
+        self.binding = Some(self.owner_id);
     }
 
     /// Re-check the owning attachment and wake the pump. The merged serving loop
