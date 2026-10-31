@@ -4570,14 +4570,15 @@ once, again without waiting for connection traffic or for the run's closure. A
 reconnect resumes the retained log at the negotiated cursor or reports the
 rotated range as a `gap`, with no second replay store. `effigy#485` proves those
 behaviours with production-shaped fake writers through the real `Server::serve`
-loop and the merged serving loop, owned by `test:workspace:publication:c`: a
-released owning row stopping the work it had queued, and a repeated attach whose
-replacement the kernel opens being refused with zero bytes and zero resize while
-the same frame through the bound owning attachment is delivered — the reversible
-failing safety assertion in both directions; the crossing terminal; the
-owner-EOF retirement with no further traffic; the idle drain; the write/resize
-alternation that keeps a full writer from starving geometry; and the
-rotated-prefix gap. The container-up caller that opens one entry per admitted run
+loop and the merged serving loop, owned by `test:workspace:publication:c`, for
+**input and resize** on both paths: a released owning row stopping the work it had
+queued (a resize is sent on the same live connection and is never applied), and a
+repeated attach whose replacement the kernel opens being refused with zero bytes
+and zero resize while the same frame through the bound owning attachment is
+delivered — the reversible failing safety assertion in both directions; the
+crossing terminal; the owner-EOF retirement with no further traffic; the idle
+drain; the write/resize alternation that keeps a full writer from starving
+geometry; and the rotated-prefix gap. The container-up caller that opens one entry per admitted run
 is effigy#452, and the live child-PTY writer with its two-real-PTY process proof
 is effigy#519: nothing above claims a production terminal binding.
 
