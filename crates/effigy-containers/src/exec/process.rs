@@ -253,7 +253,7 @@ fn run_detached_command_controlled(
     let mut offset = 0_u64;
     let status = loop {
         if deadline.is_some_and(|until| Instant::now() >= until) {
-            terminate_child_process_tree(&mut child);
+            terminate_unreaped_process_group(&mut child);
             let _ = child.wait();
             record.report_new_lines(&mut offset, on_line);
             let _ = record.retain_tail();
@@ -282,7 +282,7 @@ fn run_detached_command_controlled(
             }
             Err(error) => {
                 if deadline.is_some() {
-                    terminate_child_process_tree(&mut child);
+                    terminate_unreaped_process_group(&mut child);
                     let _ = child.wait();
                 }
                 return Err(ContainerExecError::Launch {
@@ -1162,6 +1162,33 @@ fn spawn_stream_child(
     command.spawn()
 }
 
+/// The finite detached runner has not reaped its leader. Keep that PID
+/// reserved through escalation, even if TERM makes the leader exit before a
+/// descendant. Only ESRCH proves its owned group has disappeared.
+fn terminate_unreaped_process_group(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        if pid <= 0 {
+            return;
+        }
+        let group = Pid::from_raw(-pid);
+        let _ = kill(group, Signal::SIGTERM);
+        let deadline = Instant::now() + Duration::from_millis(800);
+        while Instant::now() < deadline {
+            if matches!(kill(group, None), Err(nix::errno::Errno::ESRCH)) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+        let _ = kill(group, Signal::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 fn terminate_child_process_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
@@ -1732,15 +1759,23 @@ while True:
         use std::ffi::OsStr;
         let fixture = effigy_test_support::Fixture::new("detached-deadline-").unwrap();
         let script = fixture.path().join("backend.py");
-        fs::write(
-            &script,
-            r#"import json,os,stat,time
-json.dump({'pid':os.getpid(),'regular':stat.S_ISREG(os.fstat(1).st_mode)},open('identity.json','w'))
+        fs::write(&script, r#"import json,os,signal,stat,time
+reader,writer=os.pipe()
+child=os.fork()
+if child==0:
+ os.close(reader)
+ signal.signal(signal.SIGTERM,signal.SIG_IGN)
+ os.write(writer,b'ready')
+ os.close(writer)
+ time.sleep(60)
+ os._exit(0)
+os.close(writer)
+assert os.read(reader,5)==b'ready'
+os.close(reader)
+json.dump({'pid':os.getpid(),'group':os.getpgrp(),'descendant':child,'descendant_group':os.getpgid(child),'regular':stat.S_ISREG(os.fstat(1).st_mode)},open('identity.json','w'))
 print('before deadline',flush=True)
 time.sleep(60)
-"#,
-        )
-        .unwrap();
+"#).unwrap();
         let args = [
             script.into_os_string(),
             "-p".into(),
@@ -1761,7 +1796,32 @@ time.sleep(60)
         let identity: serde_json::Value =
             serde_json::from_slice(&fs::read(fixture.path().join("identity.json")).unwrap())
                 .unwrap();
+        let descendant = i32::try_from(identity["descendant"].as_i64().unwrap()).unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while kill(Pid::from_raw(descendant), None).is_ok() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let gone = matches!(
+            kill(Pid::from_raw(descendant), None),
+            Err(nix::errno::Errno::ESRCH)
+        );
+        if !gone
+            && nix::unistd::getpgid(Some(Pid::from_raw(descendant)))
+                .ok()
+                .map(|id| i64::from(id.as_raw()))
+                == identity["group"].as_i64()
+        {
+            // Only this fixture's positively identified descendant is eligible
+            // for emergency cleanup if the production cleanup regresses.
+            let _ = kill(Pid::from_raw(descendant), nix::sys::signal::Signal::SIGKILL);
+        }
+        assert!(
+            gone,
+            "TERM-ignoring descendant survived owned-group escalation"
+        );
         assert_eq!(identity["regular"], true);
+        assert_eq!(identity["group"], identity["pid"]);
+        assert_eq!(identity["descendant_group"], identity["pid"]);
         let pid = i32::try_from(identity["pid"].as_i64().unwrap()).unwrap();
         assert!(
             kill(Pid::from_raw(pid), None).is_err(),
