@@ -1,4 +1,4 @@
-use crate::runner::entrypoints::run_command;
+use crate::runner::run_command;
 use crate::runner::tests::prelude::assert_output_contains_all;
 use crate::runner::tests::prelude::{temp_workspace, write_manifest, write_root_manifest};
 use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};

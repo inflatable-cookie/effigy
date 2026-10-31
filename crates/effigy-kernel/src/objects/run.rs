@@ -2,7 +2,7 @@
 use super::*;
 use crate::ctx::Capability;
 use crate::fs::FileName;
-use crate::objects::{self, Closure, Objects};
+use crate::objects::{self, Closure, Objects, SealedPreflight};
 use crate::root::Family;
 use rusqlite::OptionalExtension;
 
@@ -14,6 +14,53 @@ impl Objects {
     /// desired reference. A crash selects the previous or the complete new
     /// closure. Settle removes abandoned staging and unreferenced publications.
     pub fn publish_desired(run: &mut Run<'_>, closure: &Closure) -> Result<String, RunError> {
+        Self::publish(run, closure, None)
+    }
+    /// Publish exactly the closure a preflight seal verified, taking its private
+    /// verified tree as the source instead of staging the bytes again.
+    ///
+    /// This is the same fenced publisher — one journalled intent, one objects
+    /// gate, one reference transaction — so canonical promotion still happens
+    /// only here, under the caller's `Gate(Env)`, and never in the seal. The
+    /// receipt is re-verified under the gate before it is moved: its digest,
+    /// bytes and every entry's private mode must still be exactly the verified
+    /// inventory it carries, so a private tree altered after sealing never
+    /// becomes canonical. A receipt whose tree
+    /// a completed publication already consumed, or whose tree is gone, costs a
+    /// fresh stage rather than a failure.
+    pub fn publish_sealed_desired(
+        run: &mut Run<'_>,
+        sealed: &SealedPreflight,
+        closure: &Closure,
+    ) -> Result<String, RunError> {
+        // A receipt belongs to the environment activation that owns the render,
+        // and it is consumed only with that environment's gate held: a run's
+        // owner gate is acquired at begin and retained for the run's life, so a
+        // run owned by anything else (or one whose environment gate is no longer
+        // held) can never promote a preflight seal.
+        if run.owner.resource.kind() != crate::id::ResourceKind::Env {
+            return Err(RunError::refused(
+                "a preflight receipt is published only under Gate(Env)",
+            ));
+        }
+        if !run.guard.ids().any(|held| held == &run.owner.resource) {
+            return Err(RunError::refused(
+                "publishing a preflight receipt needs its environment gate",
+            ));
+        }
+        if !sealed.matches(closure) {
+            return Err(RunError::refused(
+                "the preflight seal does not describe this closure",
+            ));
+        }
+        Self::publish(run, closure, Some(sealed))
+    }
+
+    fn publish(
+        run: &mut Run<'_>,
+        closure: &Closure,
+        sealed: Option<&SealedPreflight>,
+    ) -> Result<String, RunError> {
         run.can_effect()?;
         if run.root.is_machine() {
             return Err(RunError::refused(
@@ -43,40 +90,97 @@ impl Objects {
                 .family(Family::Staging)
                 .map_err(StoreError::from)?
                 .expect("created family");
-            run.root.dir().sync().map_err(StoreError::from)?;
-            crate::fault_point!(ObjectStageBefore)?;
-            let stage = staging
-                .child(&run.id.to_string(), crate::fs::Trust::Private, true)
-                .map_err(StoreError::from)?
-                .expect("created staging");
-            crate::fault_point!(ObjectStageCreated)?;
-            if objects.entry(&name).map_err(StoreError::from)?.is_none() {
-                let dir = stage
-                    .child(name.as_str(), crate::fs::Trust::Private, true)
-                    .map_err(StoreError::from)?
-                    .expect("created closure");
-                crate::fault_point!(ObjectSealBefore)?;
-                objects::write(&dir, closure, &run.cx)?;
-                crate::fault_point!(ObjectSealAfter)?;
-                stage.sync().map_err(StoreError::from)?;
-                staging.sync().map_err(StoreError::from)?;
-                crate::fault_point!(ObjectRenameBefore)?;
-                stage
-                    .move_to(&name, &objects, &name)
-                    .map_err(StoreError::from)?;
-                objects.sync().map_err(StoreError::from)?;
-                stage.sync().map_err(StoreError::from)?;
-                crate::fault_point!(ObjectRenameAfter)?;
-            }
             let observe = run
                 .cx
                 .operation()
                 .child(std::time::Duration::from_secs(30))
                 .observe()
                 .map_err(|_| RunError::unavailable("object observation budget"))?;
+            // A preflight receipt names a private, already written tree; it is
+            // consumed here or nowhere.
+            let sealed_tree = match sealed {
+                Some(sealed) => sealed.stage(run.root)?.map(|tree| (sealed, tree)),
+                None => None,
+            };
+            run.root.dir().sync().map_err(StoreError::from)?;
+            if let Some((sealed, tree)) = &sealed_tree {
+                // Verified again under this gate: a private tree altered
+                // after sealing never becomes canonical.
+                let verified = objects::open(tree, closure.digest(), &observe)?;
+                if verified.closure != *closure {
+                    return Err(RunError::broken("the sealed preflight is not this closure"));
+                }
+                // The receipt's inventory pins the bytes *and* the private
+                // modes exactly as they were verified at seal time. A tree
+                // whose bytes still hash the same but whose modes drifted
+                // (a file left 0700, say, which is still private) is not the
+                // sealed artifact and must never become canonical.
+                if verified.inventory != sealed.inventory() {
+                    return Err(RunError::broken("the sealed preflight inventory changed"));
+                }
+                if objects.entry(&name).map_err(StoreError::from)?.is_none() {
+                    crate::fault_point!(ObjectRenameBefore)?;
+                    #[cfg(test)]
+                    crate::objects::preflight::test_hooks::promote_point();
+                    if !tree
+                        .move_to_exclusive(&name, &objects, &name)
+                        .map_err(StoreError::from)?
+                    {
+                        // Another publication won the name; trust only the
+                        // verifier's reading of it.
+                        let winner = objects::open(&objects, closure.digest(), &observe)?;
+                        if winner.closure != *closure {
+                            return Err(RunError::broken("object collision"));
+                        }
+                    }
+                    objects.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameAfter)?;
+                }
+            } else {
+                crate::fault_point!(ObjectStageBefore)?;
+                let stage = staging
+                    .child(&run.id.to_string(), crate::fs::Trust::Private, true)
+                    .map_err(StoreError::from)?
+                    .expect("created staging");
+                crate::fault_point!(ObjectStageCreated)?;
+                if objects.entry(&name).map_err(StoreError::from)?.is_none() {
+                    let dir = stage
+                        .child(name.as_str(), crate::fs::Trust::Private, true)
+                        .map_err(StoreError::from)?
+                        .expect("created closure");
+                    crate::fault_point!(ObjectSealBefore)?;
+                    objects::write(&dir, closure, &run.cx)?;
+                    crate::fault_point!(ObjectSealAfter)?;
+                    stage.sync().map_err(StoreError::from)?;
+                    staging.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameBefore)?;
+                    stage
+                        .move_to(&name, &objects, &name)
+                        .map_err(StoreError::from)?;
+                    objects.sync().map_err(StoreError::from)?;
+                    stage.sync().map_err(StoreError::from)?;
+                    crate::fault_point!(ObjectRenameAfter)?;
+                }
+            }
             let published = objects::open(&objects, closure.digest(), &observe)?;
             if published.closure != *closure {
                 return Err(RunError::broken("object collision"));
+            }
+            if let Some(sealed) = sealed {
+                // Canonical objects, including existing and concurrent winners,
+                // must describe the exact bytes and modes the receipt verified.
+                if published.inventory != sealed.inventory() {
+                    return Err(RunError::broken(
+                        "the canonical preflight inventory changed",
+                    ));
+                }
+            }
+            // The private seal tree is this publication's to remove, under the
+            // gate it holds, whether it was the source or already canonical.
+            if let Some(sealed) = sealed {
+                #[cfg(test)]
+                crate::objects::preflight::test_hooks::consume_point();
+                crate::objects::preflight::consume(&staging, sealed.token())?;
             }
             crate::fault_point!(ObjectPublishBefore)?;
             run.store.transaction(&run.cx, |txn| {
@@ -93,6 +197,13 @@ impl Objects {
             })?;
             crate::fault_point!(ObjectRefAfter)?;
             crate::fault_point!(ObjectPublishAfter)?;
+            // Dead seal trees are reclaimed here, under this publication's
+            // objects gate and after its fenced commit: one provably dead tree
+            // per publication keeps the gate-held critical section bounded, and
+            // recovery is infallible and post-commit so no residue state — an
+            // over-full family, a trust refusal, an I/O error — can turn this
+            // committed publication into a failure.
+            crate::objects::preflight::recover(&staging);
             Ok(closure.digest().to_owned())
         })();
         if result.is_err() {

@@ -76,11 +76,13 @@ fn export_hotkey_writes_clean_transcript_and_closes_overlay() {
     state.show_options = true;
     state.logs.get_mut("api").expect("api logs").extend([
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stderr,
             line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
                 .to_owned(),
         },
         LogEntry {
+            styles: None,
             kind: LogEntryKind::Stdout,
             line: "ready".to_owned(),
         },

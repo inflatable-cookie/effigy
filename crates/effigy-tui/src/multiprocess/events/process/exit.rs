@@ -41,6 +41,7 @@ pub(super) fn handle_exit_event_impl(
         push_entry(
             buffer,
             LogEntry {
+                styles: None,
                 kind: LogEntryKind::Exit,
                 line: sanitize_log_text(&event_item.payload),
             },

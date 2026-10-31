@@ -23,9 +23,13 @@ Preferred widgets:
 - `bullet_list` for evidence/risk/action lists
 - `table` for list/report output
 - `summary` for command-level totals
-- `spinner` for a single long-running phase owned by a renderer call
-- `effigy_ui::steps::step` for progress a person watches as work moves on; see
-  section 6, which is the preferred API for new work
+- `effigy_ui::steps::live_step(source)` and `effigy_ui::steps::finish_line(...)`
+  for progress a person watches as work moves on; see section 6, which is the
+  only API for new work. `Renderer::spinner` and `SpinnerHandle` are removed.
+  `steps::step` and `Step::step` still exist and would still draw a fixed-label
+  bar if called, but they are deprecated lint anchors: `effigy lint:feedback`
+  fails on any use of them, directly or through a wrapper, so a canned label
+  cannot reach a release.
 
 ## 3) Colour and Mode Controls
 
@@ -44,6 +48,12 @@ Precedence:
 1. `NO_COLOR` disables styling.
 2. Otherwise, `EFFIGY_COLOR` applies.
 3. If unset, default is `auto`.
+
+A nested Cargo or Oxide producer Effigy starts inside a managed TUI pane is
+handed that pane's ANSI capability, so it keeps the colour it would have drawn
+on that terminal while its canonical log stays plain. `NO_COLOR`, CI and an
+explicit colour preference still win there too. See
+[guide 012](012-dev-process-manager-tui.md).
 
 Default palette:
 - Effigy uses a Gum-inspired default palette (soft neutral text with a vivid accent), while preserving semantic mappings (`info`, `success`, `warning`, `error`).

@@ -366,6 +366,17 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
             objects,
             switches,
         };
+        // Freeze the one serving value this session will serve with, from the
+        // exact document, committed receipt, switched selection and qualified
+        // locator, before the Env commit and selector switch that follow.
+        let serving = crate::runner::workspace_client::ServingFacts::validated(
+            &document,
+            &publication,
+            &selection,
+            &credential,
+            &channel.locator,
+        )
+        .map_err(EnvError::Kernel)?;
         let receipt = SelectionReceipt::new(
             &plan,
             publication.clone(),
@@ -383,6 +394,7 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
         Ok(WorkspacePublication {
             receipt,
             channel,
+            serving,
             guest: Box::new(reader),
         })
     })();

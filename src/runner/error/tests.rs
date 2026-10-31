@@ -634,3 +634,31 @@ fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
     );
     assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
 }
+
+#[test]
+fn text_command_payload_carries_its_next_action_to_the_json_form() {
+    let error = RunnerError::CommandJsonFailure {
+        rendered: "qa group `ci` needs a planner\nscope: 3 files\nnext: run `effigy qa:plan`\n"
+            .to_owned(),
+    };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "qa group `ci` needs a planner");
+    assert_eq!(human.next_action_text(), Some("run `effigy qa:plan`"));
+    assert_eq!(
+        human.to_json()["next_action"],
+        "run `effigy qa:plan`",
+        "the JSON form must name the action the text form names"
+    );
+    assert!(human.render_text().contains("next: run `effigy qa:plan`"));
+}
+
+#[test]
+fn command_payload_without_an_action_keeps_a_valid_null() {
+    let error = RunnerError::CommandJsonFailure {
+        rendered: serde_json::json!({ "message": "the lock is held", "state": "blocked" })
+            .to_string(),
+    };
+    let json = error.human_error().to_json();
+    assert_eq!(json["what_failed"], "the lock is held");
+    assert!(json["next_action"].is_null());
+}

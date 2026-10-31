@@ -90,6 +90,10 @@ workspace = true
 [features]
 # Engine fault points for run-control proofs; never in a product build.
 fault-injection = ["effigy-kernel/fault-injection"]
+# The disposable activation the workspace-serving process-lifetime proof runs
+# in a detached process. Enables the kernel's fixture-only active-publication
+# transaction; absent from every product build.
+workspace-serving-fixture = ["effigy-kernel/test-support"]
 
 [dependencies]
 base64 = "0.22"

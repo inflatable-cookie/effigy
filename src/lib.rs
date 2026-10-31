@@ -26,6 +26,13 @@
 mod cli;
 pub mod runner;
 
+/// Test-only entry points for the workspace-serving process-lifetime proof
+/// (effigy#507). Compiled only with `workspace-serving-fixture`, which no
+/// product build enables.
+#[cfg(feature = "workspace-serving-fixture")]
+#[doc(hidden)]
+pub use runner::workspace_serving_fixture;
+
 pub use cli::entrypoint::run_and_render_command;
 pub use cli::entrypoint::run_cli;
 pub use cli::execution_context::CliExecutionContext;

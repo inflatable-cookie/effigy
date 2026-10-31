@@ -1,4 +1,4 @@
-use crate::runner::entrypoints::run_command;
+use crate::runner::run_command;
 use crate::runner::tests::prelude::parse_json_output_with_schema_version;
 use effigy_cli::{Command, RhaiArgs, RhaiSubcommand};
 

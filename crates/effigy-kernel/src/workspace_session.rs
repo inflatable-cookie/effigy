@@ -51,11 +51,12 @@ mod tests;
 
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
-    selection_abandoned, selection_recovered, unfinished_selection, AdvertisedLocator,
-    CredentialSelection, GuestObject, GuestSelection, SelectionLiveness, SelectionObjects,
-    SelectionObligation, SelectionReceipt, SelectionState, SelectionSwitchReceipt, SelectorChange,
-    SelectorReadback, SelectorReader, WorkspaceContextDocument, WorkspaceSessionBinding,
-    BINARY_SELECTOR, CONTEXT_SELECTOR, ENTRY_SELECTOR, WORKSPACE_CONTEXT_SCHEMA,
+    committed_selection, selection_abandoned, selection_recovered, unfinished_selection,
+    AdvertisedLocator, CredentialSelection, GuestObject, GuestSelection, SelectionLiveness,
+    SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
+    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader,
+    WorkspaceContextDocument, WorkspaceSessionBinding, BINARY_SELECTOR, CONTEXT_SELECTOR,
+    ENTRY_SELECTOR, WORKSPACE_CONTEXT_SCHEMA,
 };
 pub use serving::{
     ChannelBound, ChannelListener, GuestLocatorChallenge, GuestLocatorEvidence, GuestLocatorTarget,

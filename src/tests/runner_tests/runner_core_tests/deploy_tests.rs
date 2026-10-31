@@ -1,5 +1,5 @@
 use crate::deploy_fixture_support::write_test_deploy_export_provider;
-use crate::runner::entrypoints::run_command;
+use crate::runner::run_command;
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, setup_workspace_app_path_bundle, temp_workspace,
     write_manifest, write_root_manifest,

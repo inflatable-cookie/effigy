@@ -36,6 +36,9 @@ fn supervisor_captures_output_and_exit_events() {
                     }
                 }
                 ProcessEventKind::StdoutChunk | ProcessEventKind::StderrChunk => {}
+                ProcessEventKind::Styled => {
+                    panic!("raw process supervisor emitted a custody style event")
+                }
                 ProcessEventKind::Exit => exits += 1,
             }
             if saw_alpha_out && saw_beta_err && exits >= 2 {

@@ -35,10 +35,15 @@ package, so a `-p` list could miss a wrapper in it. The lint is not an optional
 selector — `validate`, `qa` and `qa:gates` all run it, so the normal validation
 path and the milestone QA path both fail on a reintroduced bare spinner.
 
-- The legacy fixed-label entry points (`steps::step`, `Step::step`,
-  `TimedStep::new`, `exec::phase`) are deprecated anchors. rustc resolves a use
-  through aliases and wrappers before it emits the diagnostic, so the check
-  reports the real call site with the file, the line and the migration.
+- The legacy fixed-label entry points `steps::step` and `Step::step` are the
+  deprecated anchors. rustc resolves a use through aliases and wrappers before
+  it emits the diagnostic, so the check reports the real call site with the
+  file, the line and the migration. No other entry point is deprecated:
+  `TimedStep` is live-only (`TimedStep::live(ProgressSource)`, no fixed-label
+  constructor) and there is no `exec::phase`. The gate's own migration table in
+  `scripts/check-feedback-inventory.py` still carries rows for those two retired
+  names, so a hit on them reports text rather than a shipped spinner; removing
+  those rows is a follow-up, not a change to this rule.
 - There is no allowlist, ceiling or baseline file. Any such use fails, and so
   does an `#[allow(deprecated)]`-style suppression.
 - The spinner crate is owned the same way. `indicatif` may be named in exactly

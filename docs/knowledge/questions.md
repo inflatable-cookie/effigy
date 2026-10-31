@@ -601,6 +601,15 @@ Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
 orders this work after Q-011 simplification; it does not waive the release
 criterion.
 
+Tom's 2026-10-31 creator-attribution amendment keeps the workspace client in
+v0.15 with the narrow, gate-scoped ID-set rule in
+[contract 052](contracts/052-runtime-kernel-contract.md). It forbids adopting a
+container from another checkout, project or stale generation and requires a
+complete before/after exact-ID set under the exclusive environment gate. A
+same-user actor able to create an identically labelled container during that
+window is explicitly outside the v0.15 threat model. This does not qualify a
+backend or waive the native Colima, Docker Desktop and Linux Docker checks.
+
 The complete human-facing feedback ruling also blocks v0.15. Every command
 plane must show the live, subject-named terminal steps and actionable errors
 defined in the product guardrails. Existing feedback work (#312 and #315) is a
@@ -641,6 +650,29 @@ feature is outside the v0.15 pre-QA list and is not a prerequisite of the
 remaining Q-017 live-state progress gate (#467). Queue decision
 `084d2652-2ada-4e28-8bcd-743d7fa85cc3` records the ruling; security lead
 `a52a71e5-8f58-4c9a-a4c7-48c8166fe6aa` owns the later writer design.
+
+Tom confirmed on 2026-10-30 that managed Cargo/Oxide colour is required for
+v0.15, reversing its earlier deferral. Qualification requires a single
+writer-side custody boundary for plain sanitized/redacted host logs and a
+redacted styled live tap, while preserving direct path/offset followers. See
+[the colour boundary ruling](architecture/product-guardrails.md#human-facing-feedback). Tom's same-day cutover ruling permits one
+new-inode quarantine of an untrusted legacy prefix under the settled host
+owner gate, with durable ready provenance for subsequent Effigy reads. The
+Underlay follower remains a presentation reader with inode/offset gap handling;
+it does not enforce ready provenance. Stop/reopen older attached followers:
+POSIX cannot revoke their already-open descriptors.
+The owner clarified that Underlay/direct file reads are presentation, can show
+safe bytes awaiting sync and acknowledge no durability; Effigy-owned readers
+must honor the durable committed extent and hide failed/torn suffixes.
+The manual hold remains
+until combined writer, security, style and bundled follower proof and review.
+On 2026-10-31 the owner approved a bounded boolean `CLAUDE_CODE_*` launcher
+switch namespace instead of expanding exact flag lists. Secret-bearing name
+segments, schema-sensitive declarations and known-secret aliases override it;
+non-boolean and outside unknown values stay Secret. The custody argv guard
+remains unchanged; contract 052 records the complete value-domain boundary.
+
+
 
 ## Q-018: Primary Linux proof environment for v0.15
 

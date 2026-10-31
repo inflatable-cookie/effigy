@@ -469,6 +469,9 @@ pub(in crate::runner) fn logs(
     }
     let prefix = sources.len() > 1;
     let mut offsets = vec![[0u64; 2]; sources.len()];
+    let mut truncated = vec![[false; 2]; sources.len()];
+    let mut partials: Vec<[super::client::FollowedLines; 2]> =
+        sources.iter().map(|_| Default::default()).collect();
     let mut text = String::new();
     loop {
         let mut moved = false;
@@ -479,20 +482,32 @@ pub(in crate::runner) fn logs(
                 else {
                     continue;
                 };
+                let gap = read.from != offsets[index][slot];
+                let failed = read.truncated && !truncated[index][slot];
+                truncated[index][slot] |= read.truncated;
                 offsets[index][slot] = read.from + read.bytes.len() as u64;
-                if read.bytes.is_empty() {
+                if read.bytes.is_empty() && !gap && !failed {
                     continue;
                 }
                 moved = true;
-                let chunk = String::from_utf8_lossy(&read.bytes);
-                let rendered = if prefix {
-                    chunk
-                        .lines()
-                        .map(|line| format!("[{name}] {line}\n"))
-                        .collect::<String>()
+                let chunk = std::str::from_utf8(&read.bytes).ok().filter(|text|
+                    !text.chars().any(|ch| ch.is_control() && ch != '\n'))
+                    .ok_or_else(|| RunnerError::task_invocation("managed output contains invalid plain text; inspect the run before reopening"))?;
+                let mut rendered = if gap && !prefix {
+                    "\n[effigy] output gap: older canonical bytes expired\n".to_owned()
                 } else {
-                    chunk.into_owned()
+                    String::new()
                 };
+                if failed && !prefix {
+                    rendered.push_str(
+                        "\n[effigy] capture truncated: inspect the run before restarting\n",
+                    );
+                }
+                rendered.push_str(&if prefix {
+                    partials[index][slot].render(name, Some(&read), false)
+                } else {
+                    chunk.to_owned()
+                });
                 if follow {
                     let mut out = std::io::stdout().lock();
                     let _ = out.write_all(rendered.as_bytes());
@@ -503,10 +518,31 @@ pub(in crate::runner) fn logs(
             }
         }
         if !follow {
+            if prefix {
+                for (index, (name, _)) in sources.iter().enumerate() {
+                    for partial in &mut partials[index] {
+                        text.push_str(&partial.render(name, None, true));
+                    }
+                }
+            }
             return Ok(text);
         }
         let closed = matches!(record.refresh(), Lookup::Found(record) if record.closed() || record.view.state == "interrupted");
         if closed && !moved {
+            if prefix {
+                let mut out = std::io::stdout().lock();
+                for (index, (name, _)) in sources.iter().enumerate() {
+                    for partial in &mut partials[index] {
+                        out.write_all(partial.render(name, None, true).as_bytes())
+                            .map_err(|e| {
+                                RunnerError::task_invocation(format!("managed log output: {e}"))
+                            })?;
+                    }
+                }
+                out.flush().map_err(|e| {
+                    RunnerError::task_invocation(format!("managed log output: {e}"))
+                })?;
+            }
             return Ok(String::new());
         }
         if !moved {

@@ -151,6 +151,7 @@ pub(in crate::runner) fn run_managed_task(
                 args: &preflight.runtime_args_exec.passthrough,
                 key: run_key,
                 admission: selection.task.admission,
+                workspace_admission: None,
                 cwd: Some(&preflight.invocation_cwd),
             })?;
             let result = run_workspace_with_repo_root_and_cleanup_override(
@@ -665,7 +666,7 @@ fn session_tabs(
             // A host process belongs to the environment, not to a workload's
             // exit policy: its lifecycle is the environment's.
             shutdown_on_exit: false,
-            source: TabSource::HostProcess(host),
+            source: TabSource::HostProcess(Box::new(host)),
         });
     }
     for process in processes {
@@ -2100,6 +2101,7 @@ working_dir = "/workspace"
     fn host(name: &str) -> HostProcessTab {
         HostProcessTab {
             name: name.to_owned(),
+            identity: None,
             log: std::path::PathBuf::from(format!("/repo/.effigy/{name}.log")),
             listener_state: None,
             restart: HostProcessRestart::Never,

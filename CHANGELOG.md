@@ -6,14 +6,63 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-Known limits: Environment-owned host processes write their child's raw stdout and stderr
-directly to `.effigy/runtime/host-processes/.../<process>.log`. A secret echoed
-by the child can appear in that log. This direct-log behavior predates
-v0.15; the new custody output sanitizer does not cover this path. ANSI colour
-forcing and plain-log projection for managed TUI panes are deferred to v0.16
-until the host-log writer has a safe secret-handling boundary.
-
 ### Security
+
+- Host-process children use custody-owned output pipes instead of inheriting
+  raw log descriptors. Their merged output is sanitized and redacted before
+  append to the existing plain follower path; failed appends stop capture
+  fanout rather than acknowledge unwritten output. Schema-sensitive and
+  unclassified application-specific inherited environment values are passed
+  to custody as secrets. At the first proven stopped boundary, an untrusted
+  legacy host log is retained in private quarantine and replaced at the same
+  path with a fresh canonical inode and durable provenance. Stop and reopen
+  pre-upgrade followers after upgrading; already-open descriptors cannot be
+  revoked. The bundled Underlay follower resets on inode change even when the
+  replacement is larger than its previous byte offset.
+  Effigy readers honor a durable committed extent and hide failed or torn
+  appends; a poisoned log refuses restart for explicit operator recovery.
+  Direct file/Underlay presentation reads may show a safe line before sync
+  that is later lost on crash; they do not acknowledge durability.
+- Managed panes consume redacted typed style spans from a bounded tap after
+  successful plain append. Managed Standard output remains merged plain text
+  in its canonical stdout log; plain and JSON readers use those bytes directly.
+  Text followers bound partial lines and report expired-byte gaps without
+  joining text across them.
+  Host status uses owner/generation records rather than child log markers,
+  and clears readiness when a listener becomes unavailable.
+  A bounded generation drain gap resets terminal framing and reports truncation
+  while preserving the declared restart policy and merged secret lookahead.
+  Approved launcher boolean switches no longer cause spurious secret-in-argv
+  refusals; schema-sensitive values, secret-bearing keys and unclassified
+  environment values remain protected.
+  Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
+  explicit colour preferences, NO_COLOR and CI.
+- Workspace publication now freezes one typed serving value (host negotiation, session
+  fence, TLS pin, host checkout and the narrow enrolment secret) from the strict v2
+  document, the committed selection receipt and the session-owned qualified channel,
+  and cross-checks every one of those equalities before the environment commit and the
+  selector switch. A document, receipt, selection or locator that disagree refuse
+  publication instead of serving a connection under mismatched facts; a serving owner
+  retains the value for the session's life and its debug output redacts the secret.
+
+- A workspace channel reservation now reaches exactly the run it reserved: the
+  dispatcher's `AdmissionTicket` travels unchanged through the engine supervisor into
+  the task run, which admits it with `Run::begin_admitted` under the ticket's own id and
+  never mints, swaps or re-begins one. Engine-internal, standalone, nested, caller-keyed
+  and shared-lock run shapes refuse a ticket before any effect instead of admitting a
+  second run; ordinary runs keep their existing admission path.
+
+- A container-mode guest reads host authority credentials only after the pinned
+  peer verified: the client checks the context's server pin and negotiates the
+  protocol first, then presents a capability or the enrolment credential whose
+  bytes must match the digest the strict context pins. A mispinned peer receives
+  no handshake and causes no credential read.
+- Container-mode guest-local reads are served from the one strict v2 workspace
+  context the host publishes: task lists, source pins, version and checkout
+  reads come from that document and its pinned checkouts, and a guest selects it
+  only after independently observing its own container identity. v1 context
+  bytes refuse instead of being reinterpreted, and a local read admits nothing
+  and enrols nothing.
 
 - Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
 
@@ -41,6 +90,12 @@ until the host-log writer has a safe secret-handling boundary.
   captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+- Bump `rustls-webpki` 0.103.15 → 0.103.16 and `webpki-root-certs` 1.0.9 →
+  1.0.10, clearing RUSTSEC-2026-0382 and RUSTSEC-2026-0383 in every TLS path
+  Effigy ships (the workspace host channel and the gateway). Lockfile-only:
+  no API, behaviour or configuration change. These were the versions the
+  `check:supply-chain` (`cargo deny`) gate refused on `main`, which is what
+  bounced unrelated work until the bump landed.
 
 ### Breaking
 
@@ -180,6 +235,58 @@ until the host-log writer has a safe secret-handling boundary.
   documents the proven steps.
 
 ### Added
+
+- **A workspace session's custody can live in a detached process.** A serving
+  host supervisor starts before the session run is adopted or the listener
+  exists, performs the activation in its own process, announces the committed
+  session over the kernel's bounded engine-event channel, and then keeps that
+  same run, listener, key, grant book and admitted clients while it serves and
+  settles exactly once. The initiating command only launches it and reads the
+  result: an absent acknowledgement is an error, an unacknowledged detach is the
+  kernel's owner-loss path, and no dropped local owner is reported as success.
+  The container-up producer stays #452's (`ContainerUp` refuses by name in this
+  head); the process-lifetime proof runs the same launcher with the disposable
+  activation the `workspace-serving-fixture` feature compiles in, so it proves
+  process custody and not container-mode preparation. One session serves through
+  one owner: a second launch for a session whose listener is already live refuses
+  at the kernel boundary, and the claim is released only when that launch stops
+  or settles. An unacknowledged detach is the kernel's owner-loss path, which
+  stops serving and settles instead of claiming the session.
+
+- **A workspace terminal keeps its own capability, and a session's service has
+  recovery, down and retirement seams.** A guest capability is now stored per
+  client (`/run/effigy/client/capabilities/<client>`, 0600 in a 0700 directory,
+  named by `EFFIGY_WORKSPACE_CLIENT_ID` or the process's own id) instead of one
+  shared file, so no terminal can present or overwrite another's authority; the
+  capability an enrolment mints is kept once the host accepts it, and a record
+  from another session generation is never presented, and the entry that opens
+  the first terminal can stage that terminal's own 0600 record in guest-private
+  storage so it never re-enrols. A session's custody may only hand off when its
+  durable selection is *switched* (every selector and object read back at its
+  committed value): a pending or abandoned commit refuses before anything is
+  adopted. `recover_before_service`
+  completes a Pending selection through the kernel's own `recover_selection`
+  before custody serves (completed, still unproven or disproven, with only
+  positive evidence completing it), `ServiceOwner::down` answers a down with the
+  kernel's own coordination (naming only this session's children, refusing a
+  foreign holder), and `ServiceOwner::retire_for` names why a session ended
+  while taking the same single release and settle.
+
+- **A committed workspace session's service outlives the call that selected it.**
+  `workspace_client::supervisor` binds the container-up handoff to a durable
+  owner: `ServingHandoff` accepts only the committed selected session (the
+  launch must have published exactly the lease its `SelectionReceipt` froze,
+  for that session, with its key still in custody) and moves the adopted
+  supervisor, prepared listener, validated facts and admitted clients into
+  `ServiceOwner`, which keeps them across the selecting call's return and
+  serves until the session stops, its owner is lost or its custody refuses.
+  `ServiceOwner::retire` stops the listener, wipes the key and settles the
+  session through its own close transaction exactly once; an interrupted
+  handoff closes its prepared candidate and reports it instead of claiming
+  custody, and `discover` names the environment's session, its durable phase
+  and any unfinished commit's lease from the checkout journal alone, so a
+  recovery or down driver in another command finds the same session with no
+  process-local registry.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
@@ -473,9 +580,74 @@ until the host-log writer has a safe secret-handling boundary.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
+- **A container render can be sealed and verified before it is applied, then
+  published by the one fenced publisher.** `effigy_kernel::objects::
+  Objects::seal_for_preflight` hands the frozen closure to one helper that mints
+  a random token, locks an owner lease (`preflight-<token>.lock`) *before*
+  creating `state/staging/preflight-<token>/` (`O_EXCL`/0600, synced content and
+  directories), verifies the tree with the kernel's closure verifier inside the
+  caller's deadline, and returns a typed `SealedPreflight` receipt (digest, token,
+  verified-at, byte/mode inventory). The calling thread performs no filesystem
+  work, takes no gate and publishes nothing: a helper that outlives its caller
+  can only write its own leased private tree, and a later call cannot race or
+  remove a live lease. `Objects::publish_sealed_desired` is the existing fenced
+  publisher consuming that receipt — same intent, objects gate and reference
+  transaction — re-verifying the tree under the gate, moving it with one
+  exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
+  than replacing), verifying any concurrent winner in full against the
+  receipt's bytes, digest and per-entry private modes (including existing
+  canonical objects and consumed-receipt replay), refusing any altered seal
+  still present even when canonical bytes already exist, and reclaiming one
+  provably dead seal artifact per publication after its own fenced commit. The
+  staging token records the minting process's pid and incarnation before any
+  file exists, so a live helper is never raced even between creating its lease
+  and locking it, and a crash in that instant leaves a lease a later publication
+  provably reclaims instead of accumulating. Otherwise removal needs positive
+  proof — an absent lease, or one that can be acquired; a lease that cannot be
+  opened or inspected leaves the tree untouched.
+  Receipt consumption is refused unless the run is owned by an environment and
+  its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  that authority. Recovery is infallible and post-commit, so residue can never
+  turn a committed publication into a failure. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical.
+  The kernel's object verifier also refuses an entry the closure digest cannot
+  name, such as an extra empty directory.
 
 ### Changed
 
+- **A container-mode guest runs Effigy through its published context and the one
+  host channel.** Static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) are answered locally from the immutable context generation and
+  never open a connection or write anything. Every command with host authority
+  is classified and sent as one typed channel request that the host re-resolves,
+  gates and journals; a host refusal is returned as an error and never falls
+  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
+  is refused in a guest because it would run a task without host authority.
+  Until a guest transport, a guest-local container observation and a published
+  session generation land, host authority reports itself unavailable with the
+  specific missing fact named, and local reads keep working.
+
+- **The workspace channel checks its pinned host identity before it speaks.**
+  A guest client compares the server identity the context pinned against the
+  identity its transport verified before writing a single byte, so a mispinned
+  peer receives no hello, version, digest or capability. A connection that dies
+  before answering is replayed under the same request id, an attach is resumed
+  by that id at the cursor the client actually consumed, and a gap never
+  advances it.
+
+- **The frozen workspace activation hands its channel to a serving owner.** The
+  environment's committed session run, listener, key and advertised locator
+  move into one owner that adopts the run durably, serves accepted connections
+  through the kernel dispatcher, and stops the listener and wipes the key on
+  stop, drop or settlement. A prepared channel published for another session is
+  refused, not served.
+
+- **A workspace session's serving custody ends when its run closes.** The
+  custody row recorded when the session run is adopted is deleted in the same
+  journal transaction that closes the run, so a settled session is no longer an
+  owner and no stale custody survives it. A crash before the close keeps the
+  row, so a successor still finds the recorded owner.
 - **No command plane shows a canned progress label.** The Q-017 live-state
   rule is now a required lint gate rather than a migration list. A task-run
   step names its ordinal, the exact child step it waits on and the elapsed
@@ -511,6 +683,18 @@ until the host-log writer has a safe secret-handling boundary.
   thing it awaits instead of a runtime report that never comes. Each site's
   disposition is recorded in
   [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed pane keeps the colour its captured child would have drawn, and its
+  captured byte stream stays plain.** A nested Cargo or Oxide producer whose
+  output Effigy captures through its custody writer receives the initiating
+  pane's ANSI capability and keeps its colour in the pane, while that captured
+  log and every `--json`, doctor, status and error reader keep sanitized plain
+  text and never interpret terminal controls. `NO_COLOR`, CI and an explicit
+  colour preference still win, and a pane without ANSI support, or one whose
+  style window expired, renders plain text. This is a statement about the
+  captured stream only: output a child writes through a descriptor it inherited,
+  instead of through that writer, is outside it, and securing that direct log
+  path is open lead `a52a71e5`, not a v0.15 claim. See
+  [guide 012](docs/guides/012-dev-process-manager-tui.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while
@@ -681,6 +865,11 @@ until the host-log writer has a safe secret-handling boundary.
   first publishes, and the second adopts that checkout when it matches the pin.
   A published checkout at another revision fails the second run and is left
   untouched. Where the checkout lands does not change.
+- **A text-only command failure carries its next action in `--json`.** A
+  failure whose payload is text, not a JSON object, now puts its `next:` line in
+  `error.human.next_action`, the same action the text form prints. Its
+  `what_failed` is the payload's first line, not a generic `json output
+  available` sentence. A failure with no action keeps `next_action: null`.
 - **Bundle source steps name what they do, and warnings stay off `--json`.** A
   local `path` source reads `snapshotting local bundle <name>` and
   `snapshotted local bundle <name>`, not a fetch. Each source's step ends once,
@@ -1028,6 +1217,30 @@ until the host-log writer has a safe secret-handling boundary.
 
 - Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
   before handoff and authenticates the bytes launched through that entry.
+
+- `effigy gateway setup` settles on Linux after it installs the low-port
+  capability. The installed `effigy` then carries
+  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
+  exec: the kernel clears the process's dumpable attribute, and
+  `/proc/<pid>/environ` refuses the operator's own reads. Two kernel rules did
+  it: the secure exec cleared the anchor's dumpable attribute, and the ptrace
+  access check grants a read only when the reader's permitted capabilities
+  cover the target's, which an unprivileged operator never does. The group
+  anchor re-execs that same image, so custody could no longer read the anchor's
+  nonce, refused to signal it, and the setup run timed out in settle with the
+  process group still held by an anchor nobody could verify. The anchor now
+  drops every capability it inherited and restores the ordinary dumpable state
+  at entry, then verifies both — it runs no workload code, needs no capability
+  and holds no secret beyond the nonce the contract asks it to expose — so the
+  recorded generation, group and nonce still prove identity before any signal,
+  while the work it belongs to keeps its own capabilities and low-port bind.
+  A settle that still cannot finish now names the effect's own sequence, the
+  redacted label its intent recorded and the recorded custody reason instead of
+  only the elapsed wait, and `gateway setup` reports those entries when cleanup
+  is incomplete — including when the last open effect is the one that stayed
+  unresolved and no later effect can carry its reason. Every setup adapter
+  child also records which program it runs, so two identically labelled setup
+  commands stay attributable.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy

@@ -96,6 +96,20 @@ fn main() {
         probe_fixture::run(entry, &args, router.root_cancel());
         return;
     }
+    if entry == "__kernel-anchor" {
+        // The anchor's image is the run's own executable, and an image that
+        // carries a file capability or a setuid bit is a secure exec: the
+        // kernel clears `dumpable`, so `/proc/<pid>/environ` refuses the
+        // operator's own reads. The installed `effigy` carries
+        // `cap_net_bind_service` for the low-port gateway, so a Linux gateway
+        // setup anchor is exactly such an image (effigy#476). Model that
+        // post-exec state here; the anchor's own entry must prove it can still
+        // be read as the group's evidence.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::prctl(libc::PR_SET_DUMPABLE, 0);
+        }
+    }
     if entry.starts_with("__kernel-") {
         let result = engine_entry(
             entry,
@@ -413,12 +427,28 @@ fn main() {
             ],
             ..spec(home)
         }
+    } else if entry == "anchor-gone-orphan" {
+        ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            ..spec(home)
+        }
     } else {
         spec(home)
     };
     let mut child = Custody::spawn(&mut run, workload, &cx).unwrap();
-    if entry == "inline-orphan" {
+    if matches!(entry, "inline-orphan" | "anchor-gone-orphan") {
         child.wait(&op);
+    }
+    if entry == "anchor-gone-orphan" {
+        std::fs::write(
+            home.join("anchor.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "process": child.identity(),
+                "anchor": child.anchor(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     std::fs::write(
@@ -428,7 +458,7 @@ fn main() {
     .unwrap();
     std::fs::write(home.join("ready"), b"ready").unwrap();
     loop {
-        if entry == "inline-orphan" {
+        if matches!(entry, "inline-orphan" | "anchor-gone-orphan") {
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }
@@ -592,9 +622,30 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
         }
     };
     session.admitted(&mut run)?;
-    session
-        .capture_output(&run, vec![b"engine-secret".to_vec()])
-        .map_err(RunError::from)?;
+    let secrets = if std::env::var_os("FIXTURE_CAPTURE_EXHAUSTED").is_some() {
+        (0x20u8..=0x7e).map(|byte| vec![byte]).collect()
+    } else {
+        vec![b"engine-secret".to_vec()]
+    };
+    let capture = || session.capture_output(&mut run, secrets);
+    #[cfg(feature = "fault-injection")]
+    let captured = if let Ok(point) = std::env::var("FIXTURE_CAPTURE_SETUP_FAULT") {
+        effigy_kernel::fault_injection::with_hook(
+            move |seen| {
+                if seen == point {
+                    Err(std::io::Error::from_raw_os_error(libc::ENOSPC))
+                } else {
+                    Ok(())
+                }
+            },
+            capture,
+        )
+    } else {
+        capture()
+    };
+    #[cfg(not(feature = "fault-injection"))]
+    let captured = capture();
+    captured.map_err(RunError::from)?;
     println!(
         "engine output engine-secret cwd={} env={}",
         std::env::current_dir().unwrap().display(),

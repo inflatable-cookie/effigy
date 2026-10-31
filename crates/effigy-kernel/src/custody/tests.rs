@@ -524,6 +524,147 @@ fn kernel_nonce_is_observed_from_real_spawn_environment() {
     );
 }
 
+#[test]
+fn styled_pty_eof_preserves_safe_colour_and_completes_capture() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf '\\033[32mcolour\\033[0m\\n'; printf '%s\\n' \"$TOKEN\"".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Secret(SecretValue::new(b"pty-capture-private".to_vec()).unwrap()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Styled { pty: true },
+            label: "styled PTY".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert_eq!(report.capture, CaptureState::Complete, "{report:?}");
+    assert_eq!(child.tail(), b"colour\n[REDACTED]\n");
+    let styles = child.take_styled_output();
+    assert!(!styles.truncated);
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .any(|span| span.text.contains("colour") && span.style != Default::default()));
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .filter(|span| span.text.contains("REDACTED"))
+        .all(|span| span.style == Default::default()));
+}
+
+#[test]
+fn styled_capture_replacement_exhaustion_does_not_stop_the_workload() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let secret = (0x20u8..=0x7e).collect::<Vec<_>>();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf 'safe setup output\\n'; exit 0".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Secret(SecretValue::new(secret).unwrap()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Styled { pty: false },
+            label: "capture disabled".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert!(matches!(report.capture, CaptureState::Truncated(_)));
+    assert!(child.tail().is_empty() && child.take_output().is_empty());
+}
+
+#[test]
+fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut spec = inv().spec().clone();
+    spec.owner = ResourceId::host_process(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "web",
+        "dev",
+        "app",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let options = |n| BeginOpts {
+        id: RunId::new(1, [n; 10]).unwrap(),
+        wait: crate::gate::Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: executable(),
+            placement: crate::supervise::Placement::Inline,
+        }),
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut prior =
+        Run::begin(&cx, &root, &invocation, options(11), &cleanup, &mut Strict).unwrap();
+    let path = home.path().join("app.log");
+    let raw = b"\x1b[31mlegacy-owner-secret\n";
+    std::fs::write(&path, raw).unwrap();
+    assert!(Run::begin(&cx, &root, &invocation, options(12), &cleanup, &mut Strict).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), raw);
+    assert!(MergedLog::identity(&path).is_err());
+    assert!(!home.path().join(".legacy-host-logs").exists());
+    prior
+        .finish(crate::outcome::WorkloadOutcome::Succeeded)
+        .unwrap();
+    prior.settle(&cleanup, &mut Strict).unwrap();
+    let mut replacement =
+        Run::begin(&cx, &root, &invocation, options(13), &cleanup, &mut Strict).unwrap();
+    let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
+    assert!(std::fs::read(&path).unwrap().is_empty());
+    assert!(MergedLog::identity(&path).is_ok());
+    replacement
+        .finish(crate::outcome::WorkloadOutcome::Succeeded)
+        .unwrap();
+    replacement.settle(&cleanup, &mut Strict).unwrap();
+}
+
 /// A stop never inherits the budget its caller minted earlier. A supervisor
 /// mints its cleanup budget when its run begins, so a workload that outlives
 /// that budget would otherwise be reported as "group closure unverified" with
@@ -782,6 +923,112 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             assert!(!survived);
         }
     }
+}
+
+/// The verifier's cells (effigy#476): only the recorded generation, the
+/// recorded group membership and the readable nonce prove an anchor. A changed
+/// generation (a reused pid), a changed group, a changed nonce and an exited or
+/// reaped anchor all refuse, and a refusal never signals the recorded process.
+/// The inaccessible-nonce cell is the capability-secure-exec shape, proved by
+/// `custody_settles_two_setup_probes_from_a_capability_bearing_image` and the
+/// native packet rather than by a fixture this host can stage.
+#[test]
+fn anchor_verifier_cells_refuse_unproven_state_and_never_signal() {
+    use crate::ident::{ProcessStartIdentity, ProcessState};
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "trap '' TERM; /bin/sleep 30".into(),
+        ],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "verifier cells".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "verifier-cells", cx.operation(), &image, None, None).unwrap();
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let r = ProcessReceipt {
+        identity: fixture_identity(child.pid),
+        pgid: child.pid,
+        nonce: "verifier-cells".into(),
+        grace_millis: 10,
+    };
+    let _fixture = AnchorFixture(vec![r.identity.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+
+    // Present: the recorded anchor is proven.
+    assert!(
+        anchor::verified(&r, &anchor),
+        "the live recorded anchor is proven"
+    );
+    // Changed generation: the same pid with another start identity is a reused
+    // pid, never the process the receipt recorded.
+    let mut reused = anchor.clone();
+    reused.start = match &anchor.start {
+        ProcessStartIdentity::LinuxTicks(ticks) => ProcessStartIdentity::LinuxTicks(ticks + 1),
+        ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds,
+        } => ProcessStartIdentity::MacOs {
+            seconds: *seconds,
+            microseconds: microseconds + 1,
+        },
+    };
+    assert!(
+        !anchor::verified(&r, &reused),
+        "a reused pid is not the recorded anchor"
+    );
+    // Changed group: the anchor's kernel group must be the recorded one.
+    let mut wrong_group = r.clone();
+    wrong_group.pgid = anchor.pid;
+    assert!(
+        !anchor::verified(&wrong_group, &anchor),
+        "a changed recorded group is not proof"
+    );
+    // Changed nonce: a different (or unreadable) nonce is not proof, and the
+    // refusal must not signal the process it could not prove.
+    let mut wrong_nonce = r.clone();
+    wrong_nonce.nonce = "another-run:9".into();
+    assert!(!anchor::verified(&wrong_nonce, &anchor));
+    assert!(matches!(
+        anchor::signal(&wrong_nonce, &anchor, libc::SIGKILL),
+        Observed::Unknown(_)
+    ));
+    assert!(
+        matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+        ),
+        "a refused signal left the anchor alone"
+    );
+    // Exited, then reaped: neither state is proof of anything.
+    assert!(matches!(
+        platform::numeric(anchor.pid, false, libc::SIGTERM),
+        Observed::Verified(..)
+    ));
+    wait(|| {
+        !matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+        )
+    });
+    assert!(
+        !anchor::verified(&r, &anchor),
+        "an exited anchor is not proof"
+    );
+    wait(|| matches!(crate::ident::process_state(anchor.pid), Observed::Absent(_)));
+    assert!(
+        !anchor::verified(&r, &anchor),
+        "a reaped anchor is not proof"
+    );
 }
 
 /// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite
@@ -1291,6 +1538,7 @@ impl FakeCapture {
             receipt,
             anchor: None,
             logs,
+            canonical_output: None,
             output: VecDeque::new(),
             streams: [VecDeque::new(), VecDeque::new()],
             queue_max: 4096,
@@ -1307,6 +1555,7 @@ impl FakeCapture {
             terminal: None,
             pty: false,
             registration: None,
+            capture_eof_sent: false,
         };
         Self {
             root,
@@ -1321,13 +1570,25 @@ impl FakeCapture {
     }
     /// The merged stream's EOF, which is the only flush the pipeline takes.
     fn close(&self) {
-        lock(&self.core).sink(0, &[], true);
+        let mut core = lock(&self.core);
+        core.sink(0, &[], true);
+        if let Some(output) = &core.canonical_output {
+            let _ = output.finish();
+        }
     }
     fn tail(&self) -> Vec<u8> {
-        lock(&self.core).tail.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return output.tail();
+        }
+        core.tail.iter().copied().collect()
     }
     fn merged(&self) -> Vec<u8> {
-        lock(&self.core).output.iter().copied().collect()
+        let core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return output.take_output();
+        }
+        core.output.iter().copied().collect()
     }
     fn streams(&self) -> (Vec<u8>, Vec<u8>) {
         let core = lock(&self.core);
@@ -1338,7 +1599,10 @@ impl FakeCapture {
     }
     /// The capture state a stop report reads.
     fn capture(&self) -> CaptureState {
-        lock(&self.core).capture.clone()
+        let core = lock(&self.core);
+        core.canonical_output
+            .as_ref()
+            .map_or_else(|| core.capture.clone(), CanonicalOutput::capture_state)
     }
     /// The bounded stderr excerpt a settle or doctor report quotes.
     fn excerpt(&self) -> String {
@@ -2060,4 +2324,387 @@ fn redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with() {
     capture.feed(Stream::Stdout, b"name\tvalue\n");
     capture.close();
     assert_eq!(&capture.tail()[..], b"name\tvalue\n");
+}
+
+#[test]
+fn merged_log_is_plain_redacted_and_committed_before_fanout() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![b"supersecret".to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
+    }
+    capture.feed(STD, b"\x1b[32mready\x1b[0m\r\nsuper\x1b[");
+    capture.feed(ERR, b"31msecret\x1b]title");
+    capture.feed(STD, b"\x07\n");
+    capture.close();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes, b"ready\n[REDACTED]\n");
+    assert_eq!(capture.merged(), bytes);
+    assert_eq!(capture.tail(), bytes);
+    assert_eq!(
+        MergedLog::identity(&path).unwrap().length,
+        bytes.len() as u64
+    );
+}
+
+#[test]
+fn timed_out_drain_resets_terminal_framing_and_preserves_restart_redaction() {
+    for partial in [
+        b"super\x1b[".as_slice(),
+        b"super\x1b]unfinished".as_slice(),
+        b"super\r".as_slice(),
+        b"super\xc3".as_slice(),
+    ] {
+        let cx = cx();
+        let capture = FakeCapture::new(home(), &cx, vec![]);
+        let path = capture._home.path().join("canonical.log");
+        let output = CanonicalOutput::with_secrets(
+            MergedLog::prepare_test(&path).unwrap(),
+            vec![b"supersecret".to_vec()],
+            4096,
+            4096,
+        )
+        .unwrap();
+        lock(&capture.core).canonical_output = Some(output.clone());
+        capture.feed(STD, b"safe\n");
+        capture.feed(STD, partial);
+        lock(&capture.core).abandon_capture("drain deadline");
+        let successor = FakeCapture::new(home(), &cx, vec![]);
+        lock(&successor.core).canonical_output = Some(output.clone());
+        let next = ProcessSpec {
+            argv: vec!["/bin/true".into()],
+            cwd: capture._home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::ZERO,
+            lifetime: Lifetime::Finite(Duration::from_secs(1)),
+            terminal: Terminal::None,
+            label: "successor".into(),
+        };
+        assert!(output.validate(&next).is_ok());
+        assert!(!output.is_failed());
+        successor.feed(ERR, b"secret\nnext generation\n");
+        successor.close();
+        assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+        assert!(matches!(output.capture_state(), CaptureState::Truncated(_)));
+        assert!(!output.is_failed());
+        let read = MergedLog::read_plain(&path, None, 0, 4096).unwrap();
+        assert_eq!(read.bytes, b"safe\n[REDACTED]\nnext generation\n");
+        assert_eq!(capture.merged(), read.bytes);
+        assert!(output.take_styled_output().truncated);
+    }
+}
+
+#[test]
+fn a_truncated_host_generation_can_spawn_a_safe_real_successor() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let path = home.path().join("canonical.log");
+    let output = CanonicalOutput::with_secrets(
+        MergedLog::prepare_test(&path).unwrap(),
+        vec![b"supersecret".to_vec()],
+        4096,
+        4096,
+    )
+    .unwrap();
+    let spec = |script: &str| ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        cwd: home.path().into(),
+        env: BTreeMap::from([(
+            "TOKEN".into(),
+            EnvValue::Secret(SecretValue::new(b"supersecret".to_vec()).unwrap()),
+        )]),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Open(OpenReason::DevServer),
+        terminal: Terminal::None,
+        label: "host generation".into(),
+    };
+    let mut first = Custody::spawn_logged_auxiliary(
+        &mut run,
+        spec("printf 'safe\\nsuper\\033]unfinished'; exec /bin/sleep 60"),
+        &cx,
+        output.clone(),
+    )
+    .unwrap();
+    wait(|| {
+        lock(&first.core).poll();
+        output.tail() == b"safe\n"
+    });
+    // Deterministic drain-deadline boundary: close the generation's owned
+    // descriptors while its parser still holds OSC and its redactor `super`.
+    lock(&first.core).abandon_capture("drain deadline");
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let first_report = first.stop(&cleanup);
+    if let Some(exit) = first_report.leader.verified() {
+        first.complete(&mut run, *exit).unwrap();
+    }
+    assert!(matches!(first_report.capture, CaptureState::Truncated(_)));
+    assert!(!output.is_failed());
+    let mut next = Custody::spawn_logged_auxiliary(
+        &mut run,
+        spec("printf 'secret\\nnext generation\\n'"),
+        &cx,
+        output.clone(),
+    )
+    .unwrap();
+    let exit = next.wait(cx.operation()).verified().copied();
+    let next_report = next.stop(&cleanup);
+    if let Some(exit) = exit {
+        next.complete(&mut run, exit).unwrap();
+    }
+    output.finish().unwrap();
+    run.settle(&cleanup, &mut Strict).unwrap();
+    assert_eq!(exit, Some(Exit { code: 0 }));
+    assert!(matches!(
+        first_report.group,
+        Observed::Verified(..) | Observed::Absent(_)
+    ));
+    assert!(matches!(
+        next_report.group,
+        Observed::Verified(..) | Observed::Absent(_)
+    ));
+    assert!(matches!(output.capture_state(), CaptureState::Truncated(_)));
+    assert_eq!(
+        MergedLog::read_plain(&path, None, 0, 4096).unwrap().bytes,
+        b"safe\n[REDACTED]\nnext generation\n"
+    );
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn managed_journal_readers_never_surface_a_failed_inflight_append() {
+    use crate::fault::{self, Fault, Point};
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            fault::hook(None);
+            fault::arm(None);
+        }
+    }
+    for point in [
+        Point::CaptureSync,
+        Point::CaptureCommitAfterPublish,
+        Point::CapturePendingRemoval,
+    ] {
+        let cx = cx();
+        let capture = FakeCapture::new(home(), &cx, vec![]);
+        {
+            let mut core = lock(&capture.core);
+            let log = core.logs[0].take().unwrap();
+            core.canonical_output =
+                Some(CanonicalOutput::for_run(log, vec![], cx.operation().limits()).unwrap());
+        }
+        capture.feed(STD, b"before\n");
+        let root = capture.root.clone();
+        let observed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = observed.clone();
+        let _reset = Reset;
+        fault::hook(Some(Box::new(move |at| {
+            if at == Point::CaptureSync {
+                seen.set(true);
+                let read = crate::run::read_log(
+                    &self::cx().operation().observe().unwrap(),
+                    &root,
+                    id(),
+                    1,
+                    Stream::Stdout,
+                    0,
+                    4096,
+                );
+                if let Observed::Verified(read, _) = read {
+                    assert_eq!(read.bytes, b"before\n");
+                }
+            }
+        })));
+        fault::arm_point(point, Fault::Enospc);
+        capture.feed(STD, b"unacknowledged\n");
+        let fired = fault::fired();
+        fault::hook(None);
+        fault::arm(None);
+        assert!(fired && observed.get());
+        assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+        assert_eq!(capture.log(&cx, STD), b"before\n");
+        assert_eq!(capture.merged(), b"before\n");
+    }
+}
+
+#[test]
+fn merged_append_failure_withholds_all_capture_fanout() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
+    }
+    crate::fault::arm_point(
+        crate::fault::Point::CaptureWrite,
+        crate::fault::Fault::Enospc,
+    );
+    capture.feed(STD, b"must not acknowledge\n");
+    crate::fault::arm(None);
+    // The destination stays failed even if the filesystem would now accept
+    // the next chunk; no holes or duplicated retries enter live capture.
+    capture.feed(ERR, b"must not resume\n");
+    capture.close();
+    assert_eq!(std::fs::read(&path).unwrap(), b"");
+    assert!(capture.merged().is_empty());
+    assert!(capture.tail().is_empty());
+    let (stdout, stderr) = capture.streams();
+    assert!(stdout.is_empty() && stderr.is_empty());
+    assert!(matches!(capture.capture(), CaptureState::Truncated(_)));
+    assert_eq!(MergedLog::identity(&path).unwrap().length, 0);
+}
+
+#[test]
+fn writer_styles_are_redacted_and_masked_ranges_lose_style() {
+    use effigy_core::terminal_text::Style;
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![b"supersecret".to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
+    }
+    for byte in b"\x1b[32mready\x1b[31m super\x1b[1msecret\x1b[0m caf\xc3\xa9\n" {
+        capture.feed(STD, &[*byte]);
+    }
+    capture.close();
+    let core = lock(&capture.core);
+    let styles = core.canonical_output.as_ref().unwrap().take_styled_output();
+    let spans: Vec<_> = styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .collect();
+    let visible: String = spans.iter().map(|span| span.text.as_str()).collect();
+    assert_eq!(visible, "ready [REDACTED] café\n");
+    assert_eq!(visible.as_bytes(), std::fs::read(&path).unwrap());
+    assert!(spans
+        .iter()
+        .any(|span| span.text.contains('r') && span.style != Style::default()));
+    let masked: String = spans
+        .iter()
+        .filter(|span| span.style == Style::default())
+        .map(|span| span.text.as_str())
+        .collect();
+    assert!(masked.contains("[REDACTED]"));
+}
+
+#[test]
+fn every_durable_plain_prefix_is_complete_utf8() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    let path = capture._home.path().join("canonical.log");
+    {
+        let mut core = lock(&capture.core);
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec!["x�".as_bytes().to_vec()],
+                4096,
+                4096,
+            )
+            .unwrap(),
+        );
+    }
+    for byte in "xé is visible and safe\n".as_bytes() {
+        capture.feed(STD, &[*byte]);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(std::str::from_utf8(&bytes).is_ok());
+        assert!(!String::from_utf8_lossy(&bytes).contains("x�"));
+    }
+    capture.close();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        "xé is visible and safe\n".as_bytes()
+    );
+}
+
+#[test]
+fn unrelated_live_lines_do_not_wait_for_long_secret_lookahead() {
+    let mut redactor = Redactor::new(vec![vec![b'x'; 4096]]);
+    assert_eq!(redactor.push(b"server ready\n", false), b"server ready\n");
+    assert!(redactor.push(b"xxx", false).is_empty());
+    assert_eq!(redactor.push(b"!\n", false), b"xxx!\n");
+}
+
+#[test]
+fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() {
+    let cx = cx();
+    let capture = FakeCapture::new(home(), &cx, vec![]);
+    {
+        let mut core = lock(&capture.core);
+        core.canonical_output = Some(
+            CanonicalOutput::for_run(
+                core.logs[0].take().unwrap(),
+                vec![b"supersecret".to_vec()],
+                cx.operation().limits(),
+            )
+            .unwrap(),
+        );
+    }
+    capture.feed(STD, b"\x1b[32mready\x1b[0m super");
+    capture.feed(ERR, "secret\nété\n".as_bytes());
+    capture.close();
+    let expected = "ready [REDACTED]\nété\n".as_bytes();
+    assert_eq!(capture.log(&cx, STD), expected);
+    assert!(capture.log(&cx, ERR).is_empty());
+    assert_eq!(capture.merged(), expected);
+    assert_eq!(capture.tail(), expected);
+    assert_eq!(capture.excerpt().as_bytes(), expected);
+    let observe = cx.operation().observe().unwrap();
+    let mut offset = 0;
+    let mut seen = Vec::new();
+    while offset < expected.len() as u64 {
+        let Observed::Verified(read, _) =
+            crate::run::read_log(&observe, &capture.root, id(), 1, STD, offset, 3)
+        else {
+            panic!("plain read failed");
+        };
+        assert!(!read.bytes.is_empty());
+        assert!(std::str::from_utf8(&read.bytes).is_ok());
+        offset = read.from + read.bytes.len() as u64;
+        seen.extend(read.bytes);
+    }
+    assert_eq!(seen, expected);
+    let spans = crate::custody::read_styles(&capture.root, id(), 1, 0, expected);
+    assert_eq!(
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+            .as_bytes(),
+        expected
+    );
+    assert!(spans
+        .iter()
+        .any(|span| span.text.contains("ready") && span.style != Default::default()));
 }

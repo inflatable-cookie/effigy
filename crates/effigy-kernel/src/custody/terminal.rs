@@ -28,6 +28,9 @@
 //! them joins the halves before redaction, which is the frame a display could
 //! show.
 
+use super::OutputTag;
+use effigy_core::terminal_text::{style::apply_sgr, Style};
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum State {
     /// Visible text: only bytes a terminal prints pass.
@@ -62,6 +65,9 @@ pub(crate) struct TerminalSanitizer {
     utf8: Vec<u8>,
     tag: u8,
     scalar: u32,
+    style: Style,
+    sgr: String,
+    sgr_overflow: bool,
 }
 
 impl TerminalSanitizer {
@@ -75,6 +81,12 @@ impl TerminalSanitizer {
     /// completed by later output, and the machine starts from ground if the
     /// core is fed again.
     pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+        self.push_styled(bytes, eof)
+            .into_iter()
+            .map(|(tag, byte)| (tag.stream, byte))
+            .collect()
+    }
+    pub(super) fn push_styled(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(OutputTag, u8)> {
         let mut out = Vec::with_capacity(bytes.len());
         for &(tag, byte) in bytes {
             // A dropped lone CR says nothing about the byte after it, so that
@@ -104,8 +116,20 @@ impl TerminalSanitizer {
                     },
                     State::CarriageReturn => match byte {
                         b'\n' => {
-                            out.push((tag, b'\r'));
-                            out.push((tag, b'\n'));
+                            out.push((
+                                OutputTag {
+                                    stream: tag,
+                                    style: self.style,
+                                },
+                                b'\r',
+                            ));
+                            out.push((
+                                OutputTag {
+                                    stream: tag,
+                                    style: self.style,
+                                },
+                                b'\n',
+                            ));
                             State::Ground
                         }
                         // Fail closed: the CR is gone and the byte is re-read.
@@ -115,7 +139,11 @@ impl TerminalSanitizer {
                         }
                     },
                     State::Escape => match byte {
-                        b'[' => State::Csi,
+                        b'[' => {
+                            self.sgr.clear();
+                            self.sgr_overflow = false;
+                            State::Csi
+                        }
                         b']' => State::Osc,
                         b'P' | b'X' | b'^' | b'_' => State::String,
                         0x20..=0x2f => State::EscapeIntermediate,
@@ -130,9 +158,22 @@ impl TerminalSanitizer {
                     },
                     State::Csi => match byte {
                         // Parameter and intermediate bytes continue it.
-                        0x20..=0x3f => State::Csi,
+                        0x20..=0x3f => {
+                            if self.sgr.len() < 128 {
+                                self.sgr.push(char::from(byte));
+                            } else {
+                                self.sgr_overflow = true;
+                            }
+                            State::Csi
+                        }
                         // One final byte ends it, whether well formed or not.
-                        0x40..=0x7e => State::Ground,
+                        0x40..=0x7e => {
+                            if byte == b'm' && !self.sgr_overflow {
+                                self.style = apply_sgr(self.style, &self.sgr, Style::default());
+                            }
+                            self.sgr.clear();
+                            State::Ground
+                        }
                         // CAN and SUB abort it; anything else is malformed.
                         // The byte is dropped either way, so a split secret
                         // rejoins in the redactor's frame.
@@ -164,19 +205,26 @@ impl TerminalSanitizer {
             // no later read can complete it into visible text.
             self.drop_utf8();
             self.state = State::Ground;
+            self.style = Style::default();
         }
         out
     }
 
     /// One byte of ordinary text: printable ASCII passes, a control is dropped,
     /// and a multi-byte character is validated before any of it is emitted.
-    fn ground(&mut self, tag: u8, byte: u8, out: &mut Vec<(u8, u8)>) -> State {
+    fn ground(&mut self, tag: u8, byte: u8, out: &mut Vec<(OutputTag, u8)>) -> State {
         match byte {
             0x1b => State::Escape,
             0x0d => State::CarriageReturn,
             // LF keeps the output's line structure.
             0x0a => {
-                out.push((tag, byte));
+                out.push((
+                    OutputTag {
+                        stream: tag,
+                        style: self.style,
+                    },
+                    byte,
+                ));
                 State::Ground
             }
             // Every other C0 control — TAB included, which a renderer shifts
@@ -192,7 +240,13 @@ impl TerminalSanitizer {
             // beyond U+10FFFF is not text.
             0x80..=0xc1 | 0xf5..=0xff => State::Ground,
             _ => {
-                out.push((tag, byte));
+                out.push((
+                    OutputTag {
+                        stream: tag,
+                        style: self.style,
+                    },
+                    byte,
+                ));
                 State::Ground
             }
         }
@@ -212,7 +266,7 @@ impl TerminalSanitizer {
     }
 
     /// Emit a valid sequence, or drop it when it is malformed or a C1 control.
-    fn finish_utf8(&mut self, out: &mut Vec<(u8, u8)>) {
+    fn finish_utf8(&mut self, out: &mut Vec<(OutputTag, u8)>) {
         let scalar = self.scalar;
         let complete = match self.utf8.len() {
             2 => scalar >= 0x80,
@@ -225,7 +279,15 @@ impl TerminalSanitizer {
         let text = complete && !(0x80..=0x9f).contains(&scalar);
         if text {
             let tag = self.tag;
-            out.extend(self.utf8.iter().map(|byte| (tag, *byte)));
+            out.extend(self.utf8.iter().map(|byte| {
+                (
+                    OutputTag {
+                        stream: tag,
+                        style: self.style,
+                    },
+                    *byte,
+                )
+            }));
         }
         self.drop_utf8();
     }

@@ -36,6 +36,28 @@ pub use terminal::{
 };
 
 pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
+/// Disposable-fixture support: record one environment's own `active`
+/// publication exactly as an activation commit does, through the same fence
+/// check and the same transaction, so a process-lifetime proof can admit a
+/// session run without a container activation.
+///
+/// This is never part of an ordinary build (`test-support` is off by default),
+/// and it adds no authority: it writes the row the activation itself writes, for
+/// the exact owner fence it is given, and refuses when that fence disagrees with
+/// the journal.
+#[cfg(feature = "test-support")]
+pub fn publish_active_for_fixture(
+    cx: &crate::ctx::EffectContext,
+    root: &crate::root::StateRoot,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    let mut store = crate::store::Store::open(cx, root)?;
+    store.transaction(cx, |txn| {
+        attachments::check_activation_fence(txn.conn(), owner)?;
+        attachments::publish_active_state(txn, owner)
+    })
+}
+
 pub use attachments::{
     unfinished_guest_binary, AttachMode, AttachmentTicket, Attachments, GuestBinaryTicket,
     GuestPublicationReceipt, GuestPublicationTicket, Holder, Liveness, TransitionPermit,
@@ -369,6 +391,10 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
+    /// The session's one live listener claim, when this run is a workspace
+    /// session. A second launch for the same session refuses instead of opening
+    /// a second listener and key under one session's custody.
+    session_launch: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl std::fmt::Debug for Run<'_> {
@@ -684,6 +710,7 @@ impl<'a> Run<'a> {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
+                session_launch: Default::default(),
             };
             previous.settle_recovering(
                 &cleanup,
@@ -743,6 +770,7 @@ impl<'a> Run<'a> {
             checkout_custody: None,
             ancestor_closure: None,
             processes: Default::default(),
+            session_launch: Default::default(),
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
@@ -780,6 +808,30 @@ impl<'a> Run<'a> {
     /// workspace session yields one, so a listener and key are always launched
     /// for the detached session owner itself, never for a binding a caller
     /// assembled or for an environment run.
+    /// Claim the session's one live listener for this run.
+    ///
+    /// A workspace session has exactly one listener and key: a second launch for
+    /// a session whose listener is already live refuses here, so one session can
+    /// never serve through two owners. The claim is released when the launch
+    /// stops or its run settles.
+    pub(crate) fn claim_session_launch(
+        &self,
+    ) -> Result<
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        crate::workspace_session::ServingRefusal,
+    > {
+        use std::sync::atomic::Ordering;
+        let mut slot = self.session_launch.borrow_mut();
+        if let Some(existing) = slot.as_ref() {
+            if existing.load(Ordering::SeqCst) {
+                return Err(crate::workspace_session::ServingRefusal::AlreadyPublished);
+            }
+        }
+        let claim = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        *slot = Some(claim.clone());
+        Ok(claim)
+    }
+
     pub fn session_owner(&mut self) -> Result<crate::workspace_session::SessionOwner, RunError> {
         self.can_effect()?;
         if self.owner.resource.kind() != crate::id::ResourceKind::Task {
@@ -877,6 +929,19 @@ impl<'a> Run<'a> {
             return Ok(None);
         }
         crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits).map(Some)
+    }
+    /// The reserved capture-failure effect is owned by the kernel, never an
+    /// engine-provided kind. It survives missing/unusable output files.
+    pub(crate) fn record_capture_failure(&mut self, reason: &'static str) -> Result<(), RunError> {
+        self.verify_custody()?;
+        let ticket = self.intend_inner(EffectSpec {
+            target: self.fence().clone(),
+            kind: "kernel:capture-truncated".into(),
+            payload: serde_json::json!({"version":1,"sequence":crate::supervise::OUTPUT_SEQUENCE,"reason":reason}),
+            settlement: Settlement::Retain,
+            required: false,
+        })?;
+        self.applied(&ticket, serde_json::json!({"truncated":true}))
     }
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {

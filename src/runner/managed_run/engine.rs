@@ -259,6 +259,8 @@ pub(in crate::runner) fn own<T>(
         mut session,
         payload,
     } = owner;
+    let ansi_front = matches!(payload.front, super::wire::Front::Tui);
+    let _front = crate::runner::managed_color::enter(ansi_front);
     let mut run = match TaskRun::begin_detached(TaskRunRequest {
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
@@ -270,6 +272,7 @@ pub(in crate::runner) fn own<T>(
         args: &plan.args,
         key: None,
         admission: plan.admission,
+        workspace_admission: session.admission().cloned(),
         cwd: Some(&plan.cwd),
     }) {
         Ok(run) => run,
@@ -292,8 +295,15 @@ pub(in crate::runner) fn own<T>(
         .filter(|value| !value.is_empty())
         .map(|value| value.as_bytes().to_vec())
         .collect();
-    if let Err(error) = session.capture_output(&*run.run_mut()?, secrets) {
-        eprintln!("warning: run output is not logged: {error}");
+    if session
+        .capture_output(&mut *run.run_mut()?, secrets)
+        .is_err()
+    {
+        let message = "the managed run cannot establish safe output descriptors or record capture truncation; no setup or workload was started";
+        session.refused(Category::Unavailable, message);
+        let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
+        warn(&warnings);
+        return Err(RunnerError::task_invocation(message));
     }
     println!(
         "[managed] `{}` (profile `{}`): run {} supervised by pid {}",
@@ -328,6 +338,7 @@ pub(in crate::runner) fn own<T>(
         container_repo_root: plan.container_repo_root.clone(),
         watch: None,
         terminal: payload.terminal,
+        ansi_front,
         lost_while_blocked: false,
         health: None,
     };
@@ -354,6 +365,7 @@ struct Owner {
     /// owner runs itself (a setup step, a process setup).
     watch: Option<OwnerWatch>,
     terminal: Option<(u16, u16)>,
+    ansi_front: bool,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
     /// `health_wait` routes still to answer once every workload has started.
@@ -454,6 +466,7 @@ impl Owner {
             // and the phase's own progress both borrow this owner.
             let watch = self.watch.take();
             let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
+            let ansi_front = self.ansi_front;
             let mut progress = |counts: Option<(u32, u32)>| {
                 if let Some((healthy, total)) = counts {
                     self.waits.environment_progress(healthy, total);
@@ -470,8 +483,14 @@ impl Owner {
                     }
                 }
             };
-            let brought_up =
-                environment::bring_up(run, environment, &plan.token, &mut stop, &mut progress);
+            let brought_up = environment::bring_up(
+                run,
+                environment,
+                &plan.token,
+                ansi_front,
+                &mut stop,
+                &mut progress,
+            );
             self.watch = watch;
             match brought_up {
                 Ok(()) => {
@@ -744,6 +763,7 @@ impl Owner {
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
         let mut env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
+        crate::runner::managed_color::apply(&mut env, self.ansi_front);
         let pending_secret = crate::runner::managed_secrets::prepare(
             run,
             &workload.spec.env,
@@ -757,10 +777,8 @@ impl Owner {
             env,
             grace: GRACE,
             lifetime: Lifetime::Open(OpenReason::DevServer),
-            terminal: if workload.spec.pty {
-                Terminal::Pty
-            } else {
-                Terminal::None
+            terminal: Terminal::Styled {
+                pty: workload.spec.pty,
             },
             label: workload.spec.name.clone(),
         };
@@ -1064,17 +1082,7 @@ impl Owner {
                 (
                     workload.spec.name.clone(),
                     code,
-                    workload
-                        .tail
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .rev()
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join(" | "),
+                    bounded_plain_tail(&workload.tail, 4096),
                 )
             })
             .collect::<Vec<_>>();
@@ -1235,6 +1243,7 @@ fn describe(cause: &StopCause) -> String {
             "the owning client went away (terminal closed or client killed)".to_owned()
         }
         StopCause::Signal(signal) => format!("the supervisor received signal {signal}"),
+        StopCause::ListenerFailed => "the session listener failed".to_owned(),
     }
 }
 
@@ -1296,6 +1305,16 @@ pub(in crate::runner) fn workload_env(
                 .map(|(key, value)| (key.clone(), EnvOverride::Secret(value.clone()))),
         )
         .collect()
+}
+
+/// A contiguous suffix, with no whitespace conversion or line regrouping after
+/// custody redaction. The kernel tail already starts at a scalar boundary.
+fn bounded_plain_tail(text: &str, max: usize) -> String {
+    let mut start = text.len().saturating_sub(max);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
 }
 
 #[cfg(test)]
