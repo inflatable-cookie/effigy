@@ -865,6 +865,17 @@ than inventing them:
   address. Until an owner observes the
   address actually reachable from the guest for a default-configured profile,
   such a Colima workspace cannot publish through the reserved path.
+* **A gate-free, deadline-bounded render materialization for preflight.** The
+  predecessor hash comparison needs the plan's frozen render closure at its final
+  content-addressed path before the one apply publishes it. Every existing owner
+  put is unusable from the gated recheck: `policy::render::prepare` and
+  `prepare_resolved` acquire `Gate(Env)`, publish desired state, and use their own
+  fixed operation budget rather than the publication's one deadline. Until an
+  owner provides `policy::render::materialize_render_for_preflight(policy,
+  deadline)` — private staging, atomic no-replace promotion into
+  `objects/<closure digest>/`, no gate, no desired-state mutation, nothing promoted
+  after the deadline — a running predecessor refuses the recheck unless the render
+  was already published by an earlier activation.
 * **A container's creator — still blocking the fresh-target path (pending
   effigy#508).** No owner records
   "this run created container X": the engine's apply effect names the engine,

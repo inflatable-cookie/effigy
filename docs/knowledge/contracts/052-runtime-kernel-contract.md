@@ -3026,16 +3026,16 @@ invokes **under the activation gate immediately before the one Compose apply**: 
 re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
 that disappeared all refuse. The pre-decision read alone cannot see any of that.
-The intended hash is computed from the frozen closure even before reconcile
-publishes it: the preflight publishes that closure through the kernel owner's own
-publication contract (`effigy_containers::publish_render`), so the bytes are staged
-in the kernel's private staging directory and promoted atomically into the
-content-addressed object directory with the exact final path and digest and
-no-replace writes — never a hand-rolled object, never a read-then-rename
-replacement, and never an abandonable worker that could promote bytes after the
-caller stopped waiting (an expired budget publishes nothing, and the final
-publisher then accepts the same object unchanged); ownership resolution
-(canonicalization plus the scope-token read) is bounded by the deadline;
+The intended hash needs the frozen closure at its final content-addressed path,
+and the preflight must not put it there: the only owners that materialize a render
+(`policy::render::prepare`/`prepare_resolved`) acquire `Gate(Env)` — which the gated
+recheck cannot do — publish desired state, and run on a fixed budget rather than
+the publication's one deadline. So the preflight **reads** an already-published
+render (every closure file at its final path with the exact frozen bytes) and
+otherwise refuses, naming the missing owner signature
+(`policy::render::materialize_render_for_preflight(policy, deadline)`). Ownership
+resolution (canonicalization plus the scope-token read) is bounded by the
+deadline;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`
 materialisation the decision and the published context share.

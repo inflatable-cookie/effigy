@@ -58,7 +58,6 @@ pub use policy::model::{
     EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, SharedRender,
     SharedServiceBinding,
 };
-pub use policy::render::publish_render;
 pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,

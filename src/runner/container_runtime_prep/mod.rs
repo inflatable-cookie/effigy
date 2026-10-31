@@ -900,7 +900,7 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     // published this closure, materialize the exact frozen bytes at the exact paths
     // the apply will use (content-addressed, so the apply finds them present), all
     // on the publication's bounded worker.
-    if let Err(refusal) = publish_render_for_preflight(policy, deadline) {
+    if let Err(refusal) = require_published_render(policy, deadline) {
         return match refusal {
             BoundedReadRefusal::TimedOut => Observed::Unknown(UnknownReason::TimedOut {
                 phase: "workspace render preflight".into(),
@@ -972,43 +972,80 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     )
 }
 
-/// Publish one policy's frozen render through the kernel owner before Compose
-/// hashes it.
+/// The owner API this preflight needs and no owner provides.
 ///
-/// `compose config --hash` can only describe a render it can read, and the one
-/// apply publishes this closure through reconcile. Rather than writing objects
-/// itself, the preflight uses the kernel's own publication contract
-/// (`effigy_containers::publish_render`): the closure is staged in the kernel's
-/// private staging directory and promoted atomically into its content-addressed
-/// object directory, with the exact final path and digest and no-replace writes.
-/// Nothing runs on an abandonable worker: the publication is synchronous and
-/// either completes whole or not at all, so a publication that outlives the
-/// deadline cannot be promoted later by a worker the caller stopped waiting for.
-fn publish_render_for_preflight(
+/// `compose config --hash` can only describe a render Compose can read, so a
+/// preflight that runs before the one apply needs the plan's frozen closure at its
+/// final content-addressed path. Both existing ways to get it there are unusable
+/// here: `policy::render::prepare`/`prepare_resolved` acquire the environment's
+/// owner gate (so they cannot run inside the activation gate the recheck runs
+/// under) and publish the desired render (desired state must not change during a
+/// preflight), and their operation context is a fixed budget rather than the
+/// publication's one deadline. Writing the objects here by hand is exactly the
+/// unsafe staging this correction removed. So the preflight only *reads* an
+/// already-published render and otherwise refuses, naming the missing signature.
+pub(in crate::runner) const MISSING_RENDER_PREFLIGHT_OWNER: &str =
+    "a gate-free, deadline-bounded owner that materializes one frozen render closure read-only — \
+     private staging, atomic no-replace promotion into objects/<closure digest>/, no Gate(Env), no \
+     desired-state mutation, nothing promoted after the deadline \
+     (`policy::render::materialize_render_for_preflight(policy, deadline) -> \
+     Result<(), ContainerPolicyError>`)";
+
+/// Require this policy's frozen render to be published already.
+///
+/// Reads only: no gate, no writes, no desired state. Every closure file must
+/// already be at its final path with the exact frozen bytes, which is what the one
+/// apply will read; anything else refuses with the missing owner signature rather
+/// than creating an object.
+fn require_published_render(
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
 ) -> Result<(), BoundedReadRefusal> {
-    let remaining = || {
-        deadline
-            .checked_duration_since(Instant::now())
-            .filter(|remaining| !remaining.is_zero())
-    };
-    // An expired budget publishes nothing.
-    remaining().ok_or(BoundedReadRefusal::TimedOut)?;
-    if policy.render.is_none() {
+    let Some(render) = policy.render.as_ref() else {
         return Err(BoundedReadRefusal::Unavailable(
-            "the workspace render has no frozen closure to publish for the preflight".into(),
+            "the workspace render has no frozen closure to hash".into(),
         ));
-    }
-    effigy_containers::publish_render(policy).map_err(|error| {
-        BoundedReadRefusal::Unavailable(format!(
-            "the render could not be published for the preflight: {error}"
-        ))
-    })?;
-    // The publication is complete and correct, but a spent budget still refuses
-    // rather than reading the hash past the deadline.
-    remaining().ok_or(BoundedReadRefusal::TimedOut)?;
-    Ok(())
+    };
+    let owned_path = render.path.clone();
+    let owned_files: Vec<(String, Vec<u8>)> = render
+        .closure
+        .files()
+        .iter()
+        .map(|(relative, bytes)| (relative.clone(), bytes.clone()))
+        .collect();
+    let missing = MISSING_RENDER_PREFLIGHT_OWNER;
+    crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "workspace-render-preflight-read",
+        deadline,
+        move || {
+            for (relative, bytes) in owned_files {
+                let path = owned_path.join(&relative);
+                match std::fs::read(&path) {
+                    Ok(existing) if existing == bytes => continue,
+                    Ok(_) => {
+                        return Err(RunnerError::task_invocation(format!(
+                            "the render object `{}` holds other bytes than this closure",
+                            path.display()
+                        )))
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(RunnerError::task_invocation(format!(
+                            "the frozen render is not published at `{}`, and publishing it here \
+                             would need {missing}",
+                            path.display()
+                        )))
+                    }
+                    Err(error) => {
+                        return Err(RunnerError::task_invocation(format!(
+                            "cannot read the render object `{}`: {error}",
+                            path.display()
+                        )))
+                    }
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 /// The service -> config-hash map one rendered policy produces.

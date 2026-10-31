@@ -1272,12 +1272,12 @@ fn the_inspected_config_hash_needs_a_service_and_a_hash() {
     assert!(super::inspected_config_hash(b"not json").is_err());
 }
 
-/// The preflight must publish the frozen render through the kernel owner, not by
-/// writing objects itself: exact final path and digest, private modes, atomic and
-/// no-replace, and the kernel publisher then accepts the same object unchanged.
+/// The preflight may only read an already-published render. An unpublished one
+/// refuses with the missing owner signature, acquires no gate and writes nothing.
 #[test]
-fn the_preflight_publishes_the_frozen_render_through_the_kernel_owner() {
-    let fixture = effigy_test_support::Fixture::new("effigy-preflight-render-").expect("fixture");
+fn an_unpublished_render_refuses_the_preflight_instead_of_publishing_it() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-preflight-unpublished-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     fs::create_dir_all(&checkout).expect("checkout");
@@ -1301,78 +1301,32 @@ fn the_preflight_publishes_the_frozen_render_through_the_kernel_owner() {
             "the render is unpublished before the preflight"
         );
 
-        super::publish_render_for_preflight(
+        let refusal = super::require_published_render(
             &policy,
             std::time::Instant::now() + std::time::Duration::from_secs(30),
-        )
-        .expect("the kernel owner publishes the frozen closure");
-
-        // Exact final path, exact frozen bytes, private modes (the kernel's own
-        // staging/publication contract, not umask-derived).
-        use std::os::unix::fs::PermissionsExt;
-        for (relative, bytes) in render.closure.files() {
-            let path = render.path.join(relative);
-            assert_eq!(
-                fs::read(&path).expect("published object"),
-                *bytes,
-                "the published object holds the frozen bytes: {}",
-                path.display()
-            );
-            let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
-            assert_eq!(
-                mode,
-                0o600,
-                "published objects are private: {}",
-                path.display()
-            );
-        }
-        let directory_mode = fs::metadata(&render.path)
-            .expect("render directory")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert!(
-            directory_mode & 0o077 == 0,
-            "the render directory is private, got {directory_mode:o}"
         );
-        // No staging residue: the kernel's staging directory is not left behind
-        // under the object directory.
-        let mut leftovers = Vec::new();
-        for entry in fs::read_dir(&render.path).expect("render directory") {
-            let path = entry.expect("entry").path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("preflight") || name.contains("tmp"))
-            {
-                leftovers.push(path);
-            }
-        }
-        assert!(leftovers.is_empty(), "no partial staging: {leftovers:?}");
-
-        // The final publisher (the reconcile/apply path) accepts the very same
-        // object: content-addressed, so nothing is rewritten or replaced.
-        let read_all = || {
-            render
-                .closure
-                .files()
-                .keys()
-                .map(|relative| fs::read(render.path.join(relative)).expect("bytes"))
-                .collect::<Vec<_>>()
+        let reason = match refusal {
+            Err(super::BoundedReadRefusal::Unavailable(reason)) => reason,
+            other => panic!("an unpublished render must refuse: {other:?}"),
         };
-        let before = read_all();
-        effigy_containers::publish_render(&policy)
-            .expect("the kernel publisher accepts it unchanged");
-        let after = read_all();
-        assert_eq!(before, after, "publication never replaces the object");
+
+        assert!(
+            reason.contains("materialize_render_for_preflight"),
+            "the refusal names the missing owner signature: {reason}"
+        );
+        assert!(
+            !render.path.exists(),
+            "the preflight writes no object at all"
+        );
     });
 }
 
-/// An expired budget publishes nothing at all: the preflight refuses before it
-/// reaches the kernel publisher.
+/// Once the render is published through the kernel owner (the reconcile/apply
+/// path), the same read succeeds and the preflight hashes exactly those bytes.
 #[test]
-fn an_expired_preflight_budget_publishes_no_object() {
-    let fixture = effigy_test_support::Fixture::new("effigy-preflight-expired-").expect("fixture");
+fn a_published_render_is_accepted_for_the_preflight_unchanged() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-preflight-published-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     fs::create_dir_all(&checkout).expect("checkout");
@@ -1391,17 +1345,65 @@ fn an_expired_preflight_budget_publishes_no_object() {
     effigy_containers::with_test_effigy_home(&home, || {
         let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
         let render = policy.render.as_ref().expect("render");
+        // Publish it the way the apply does: the kernel's own Prepare publication.
+        let published = effigy_containers::policy::render::prepare_resolved(&policy)
+            .expect("kernel publication of the frozen render");
+        assert_eq!(
+            published
+                .render
+                .as_ref()
+                .map(|render| render.closure.digest()),
+            Some(render.closure.digest()),
+            "the kernel publishes this very closure"
+        );
+
+        super::require_published_render(
+            &policy,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("the published render is readable");
+
+        // Exactly the frozen bytes, private modes, and no staging residue.
+        use std::os::unix::fs::PermissionsExt;
+        for (relative, bytes) in render.closure.files() {
+            let path = render.path.join(relative);
+            assert_eq!(fs::read(&path).expect("published object"), *bytes);
+            assert_eq!(
+                fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+                0o600,
+                "published objects are private: {}",
+                path.display()
+            );
+        }
+        let mut residue = Vec::new();
+        for entry in fs::read_dir(&render.path).expect("render directory") {
+            let path = entry.expect("entry").path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("tmp") || name.contains("preflight"))
+            {
+                residue.push(path);
+            }
+        }
+        assert!(residue.is_empty(), "no partial staging: {residue:?}");
+
+        // A render object holding other bytes still refuses.
+        let first = render
+            .closure
+            .files()
+            .keys()
+            .next()
+            .expect("one render file")
+            .clone();
+        fs::write(render.path.join(&first), b"other bytes").expect("tamper");
         assert!(
-            super::publish_render_for_preflight(
+            super::require_published_render(
                 &policy,
-                std::time::Instant::now() - std::time::Duration::from_secs(1),
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
             )
             .is_err(),
-            "an expired budget refuses"
-        );
-        assert!(
-            !render.path.exists(),
-            "an expired preflight publishes nothing"
+            "a differing object refuses"
         );
     });
 }
