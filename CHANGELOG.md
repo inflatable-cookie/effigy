@@ -201,6 +201,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **The environment backend answers "which run created this container?" with a
+  receipt or with nothing.** `EnvironmentBackend::created_by(project,
+  container_id)` returns `Verified(run)` only from a backend's own creator
+  record for that exact full container id, `Absent(NoCreator { .. })` when a
+  backend that keeps such records holds none (another actor's container, a
+  replacement, or an id a failed apply never created), and
+  `Unknown(NoBackendRecord(..))` when the backend has no such record at all. A
+  creation timestamp, an inventory that was empty before an apply and populated
+  after it, matching Compose project, service and name labels, and a
+  caller-supplied run id are not evidence — a competing Compose actor creates
+  all of them — so no receipt is built from observation. Neither Docker
+  Engine/Docker Desktop nor containerd records which client created a
+  container: both adapters answer `Unknown(NoBackendRecord)` naming the missing
+  API, without issuing a backend command, so a fresh target still cannot be
+  attributed to a run. Kernel `UnknownReason` gains `NoBackendRecord` and
+  `AbsenceProof` gains `NoCreator`.
+
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
 - **A workspace activation is decided, selected and served by one owner.**

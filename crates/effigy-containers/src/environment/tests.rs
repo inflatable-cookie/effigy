@@ -75,6 +75,7 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 mod adapters;
 mod faults;
 mod guest_publication;
+mod receipt;
 
 const PROJECT: &str = "acme-stack";
 
@@ -298,6 +299,9 @@ impl EnvironmentBackend for Fake {
     }
     fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
         panic!("strict fake: unmodelled inventory of `{project}`")
+    }
+    fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
+        panic!("strict fake: unmodelled creator record for `{container_id}` in `{project}`")
     }
 }
 

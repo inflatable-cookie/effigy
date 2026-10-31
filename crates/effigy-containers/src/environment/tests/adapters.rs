@@ -121,17 +121,7 @@ fn colima_adapter_targets_only_its_profile() {
 #[test]
 fn docker_adapter_targets_only_the_docker_cli() {
     let tools = FakeTools::install();
-    let selection = BackendSelection {
-        kind: if cfg!(target_os = "macos") {
-            BackendKind::DockerDesktop
-        } else {
-            BackendKind::DockerEngine
-        },
-        engine: crate::BackendId::docker_compose(),
-        context: "default".into(),
-        reason: BackendReason::UserPreference,
-    };
-    let rows = exercise(selection, &tools);
+    let rows = exercise(docker_selection(), &tools);
     assert_eq!(
         tools.calls("docker"),
         [
@@ -196,5 +186,53 @@ fn selection_reasons_follow_policy_precedence() {
     match backend {
         Some(backend) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", backend),
         None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+    }
+}
+
+/// effigy#508: neither adapter can name the run that created a container, and
+/// neither pretends it can. The attempt issues no backend command at all —
+/// "observe the project and infer" is exactly the receipt this seam refuses to
+/// mint — and the reason names the engine and the missing API.
+#[test]
+fn no_adapter_mints_a_creator_receipt_from_observation() {
+    let tools = FakeTools::install();
+    for (mut adapter, tool) in [
+        (selection().adapter(), "colima"),
+        (docker_selection().adapter(), "docker"),
+    ] {
+        match adapter.created_by(PROJECT, ID) {
+            Observed::Unknown(UnknownReason::NoBackendRecord(detail)) => {
+                assert!(
+                    detail.contains("keeps no record of which client created a container"),
+                    "{detail}"
+                );
+                assert!(
+                    detail.contains(adapter.selection().kind.label()),
+                    "{detail}"
+                );
+                assert!(detail.contains(ID), "{detail}");
+                assert!(detail.contains(PROJECT), "{detail}");
+            }
+            other => panic!("{tool} adapter answered a creator question: {other:?}"),
+        }
+    }
+    assert!(
+        tools.calls("colima").is_empty() && tools.calls("docker").is_empty(),
+        "a creator question reached the backend: {:?} {:?}",
+        tools.calls("colima"),
+        tools.calls("docker")
+    );
+}
+
+fn docker_selection() -> BackendSelection {
+    BackendSelection {
+        kind: if cfg!(target_os = "macos") {
+            BackendKind::DockerDesktop
+        } else {
+            BackendKind::DockerEngine
+        },
+        engine: crate::BackendId::docker_compose(),
+        context: "default".into(),
+        reason: BackendReason::UserPreference,
     }
 }

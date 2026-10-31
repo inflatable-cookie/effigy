@@ -426,6 +426,7 @@ fn unknown_label(reason: &UnknownReason) -> &'static str {
         UnknownReason::Untrusted(_) => "untrusted",
         UnknownReason::HostAuthorityRequired => "host-authority-required",
         UnknownReason::StoreUnreadable(_) => "store-unreadable",
+        UnknownReason::NoBackendRecord(_) => "no-backend-record",
     }
 }
 

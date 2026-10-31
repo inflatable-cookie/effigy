@@ -1979,6 +1979,9 @@ pub enum AbsenceProof {
     NoGateInode, GateFreeRunClosed, BootChanged { recorded: String, current: String },
     NoSuchProcess { pid: u32 }, StartIdentityDiffers { pid: u32 }, GroupEmpty { pgid: u32 },
     NotInInventory { inventory: InventoryRef }, ContainerGone { id: FullContainerId },
+    // A backend that keeps creator records holds none for this exact container
+    // in this project: no run's create produced it (effigy#508).
+    NoCreator { creator: CreatorRef },
 }
 
 pub enum UnknownReason {
@@ -1990,6 +1993,10 @@ pub enum UnknownReason {
     ToolUnavailable(String), Unparsable(String), Inconsistent(String),
     GuardUnavailable, Injected, Untrusted(String), HostAuthorityRequired,
     StoreUnreadable(String),
+    // The backend keeps no record that can answer this: the API does not exist,
+    // so a retry cannot change the answer. The detail names the missing API
+    // (effigy#508).
+    NoBackendRecord(String),
 }
 
 pub trait Probe {
@@ -2029,6 +2036,14 @@ all produce an `ObserveContext`; Observe commands get nothing else.
 | Processes | `probe_process`: an adapter-declared, non-mutating command, under a probe guard | `Custody::spawn`, a `Run`, a journal entry, a terminal |
 | Network | `connect`: local TCP connect, HTTP `GET` or `HEAD` without a body, Unix control sockets, DNS to the gateway; targets come from the resolved invocation, the store or endpoint claims; bounded response and per-attempt deadline | source acquisition (fetch, clone, pull), any other method, any target not derived from Effigy state |
 | Files and state | read-only opens; gate probes | any write, gate acquisition, store transaction |
+
+`NoCreator { .. }` is the proof from a backend that keeps creator records
+when none names the observed container — its `CreatorRef` names the project
+and the exact full container id the record was asked about — and
+`NoBackendRecord` is the honest answer when the backend has no such record at
+all: absent API surface, not a transient failure. Neither is ever a reason to
+substitute a weaker fact for the one asked about, and only `Verified` carries a
+value a caller may act on.
 
 Probe custody. The observer is the probe's parent and primary owner. One
 `__kernel-probe-guard` per observing process (the same binary, in its own

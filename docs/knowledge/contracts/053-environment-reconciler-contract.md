@@ -198,12 +198,45 @@ task-started stack is held again. An ensure never demotes persistence.
 ## 6. Backend seam
 
 `EnvironmentBackend` is the seam ("reconcile this environment from its
-render", Q-004): `reconcile`, `stop` and an exact-identity `inventory`.
+render", Q-004): `reconcile`, `stop`, an exact-identity `inventory` and the
+creation receipt of §6.1.
 `ColimaBackend` runs `colima nerdctl --profile <profile> -- compose …`;
 `DockerBackend` runs the host `docker` CLI on its resolved context (Docker
 Desktop on macOS, Docker Engine on Linux). An Apple Containers adapter
 implements the same trait; it must pass the strict-fake adapter suite and
 052 §5.10 before it is selectable.
+
+### 6.1 Creation receipts (effigy#508)
+
+`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>` is
+the seam a caller uses to attribute a fresh container to the run whose apply
+created it. `Verified(run)` is a backend's own creator record for that exact
+full container id in that project; `Absent(NoCreator { .. })` is a backend
+that keeps creator records and holds none for the container (another actor's
+container, a replacement, or an id a failed apply never created);
+`Unknown(NoBackendRecord(..))` is a backend with no such record, and its reason
+names the missing API. Only `Verified` is a receipt, and the caller compares
+the run with its own activation before attributing anything.
+
+A creation timestamp, an inventory that was empty before an apply and populated
+after it, Compose's own project, service and name labels, and a run id the
+caller supplies are not evidence: a competing Compose actor creates all of
+them. The seam therefore never builds a receipt from observation, and neither
+adapter issues a backend command to answer: there is nothing to observe.
+
+Both adapters answer `Unknown(NoBackendRecord)`. Neither Docker Engine, Docker
+Desktop nor containerd records *which client* created a container: `inspect`
+and `compose ps` expose the id, name, creation time and labels, and the event
+streams name an actor id and its labels, never a creating client. The one
+authenticated creation fact is the `Id` in the engine's create response, which
+is returned to the client that issued the create — here the Compose CLI that
+performs the environment's single apply. Effigy never sees that response, and
+`docker compose up` reports creation as a human progress line naming the
+container, with no id and no machine-readable form (`up` has no `--format` or
+JSON output). A receipt therefore needs one of the two things this seam does
+not have: a Compose apply that returns the ids it created, or creation issued
+by Effigy itself through the engine API. Until one exists a fresh target cannot
+be attributed to a run, and a caller must refuse it rather than infer it.
 
 The engine and its precedence are one resolver,
 `effigy_containers::backend::exact_backend` (effigy#230). Highest first:
@@ -340,6 +373,7 @@ a projection, never authority (effigy#458).
 | --- | --- |
 | Record, stopped publication, apply-run attach, exempt permit | `test:kernel:environment` |
 | Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down and reset, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters | `test:containers:environment` |
+| Backend creation receipt: the exact-id creator record for the creating run, a competing creator, a replacement, an id another project created, an unreadable record, a failed apply and a retry; both adapters refuse without a backend call and name the engine and the missing API | `test:containers:environment` |
 | Runner cutover: lifecycle, task activation, managed runs, handover, deferral, builder recovery | `test:environment:runner` |
 | Busy refusal diagnostics: the live exact-gate holder, terminal and successor observations, unreadable identity, the original wait deadline, explicit unknown/absent record semantics, held-by and journal-contention controls, with no backend call | `test:environment:busy-diagnostics` (the one-sentence refusal in `runner::environment::tests` and the refusal-command test) |
 | One apply: `up -d --remove-orphans` from task preparation, and a compose failure reported as an error | `test:containers:mount-prepare`, `test:containers:generations:callers` |

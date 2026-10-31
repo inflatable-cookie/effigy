@@ -67,14 +67,45 @@ pub enum AbsenceProof {
     GateFreeRunClosed,
     NoStateRoot,
     NoStore,
-    NoFile { name: String },
-    NoRow { table: String },
-    BootChanged { recorded: String, current: String },
-    NoSuchProcess { pid: u32 },
-    StartIdentityDiffers { pid: u32 },
-    GroupEmpty { pgid: u32 },
-    NotInInventory { inventory: InventoryRef },
-    ContainerGone { id: String },
+    NoFile {
+        name: String,
+    },
+    NoRow {
+        table: String,
+    },
+    BootChanged {
+        recorded: String,
+        current: String,
+    },
+    NoSuchProcess {
+        pid: u32,
+    },
+    StartIdentityDiffers {
+        pid: u32,
+    },
+    GroupEmpty {
+        pgid: u32,
+    },
+    NotInInventory {
+        inventory: InventoryRef,
+    },
+    ContainerGone {
+        id: String,
+    },
+    /// The backend's own creator record holds no row for this exact container
+    /// in this project: no run's create produced it. It is the proof a backend
+    /// that records creators gives for another actor's container and for a
+    /// replacement, never a receipt (effigy#508).
+    NoCreator {
+        creator: CreatorRef,
+    },
+}
+/// The exact container, in its project, a backend's creator record was asked
+/// about (effigy#508).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatorRef {
+    pub project: String,
+    pub container_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryRef {
@@ -104,6 +135,11 @@ pub enum UnknownReason {
     Untrusted(String),
     HostAuthorityRequired,
     StoreUnreadable(String),
+    /// The backend keeps no record that can answer this: the API that would
+    /// carry the fact does not exist, so a retry cannot change the answer. The
+    /// detail names the missing API. It is never a reason to substitute a
+    /// weaker fact for the one asked about (effigy#508).
+    NoBackendRecord(String),
 }
 
 /// What the kernel could not prove, what that means, and the next step.
@@ -152,6 +188,10 @@ impl std::fmt::Display for UnknownReason {
                 f,
                 "could not tell: the store is unreadable ({detail}); run `effigy doctor` to inspect the state root"
             ),
+            Self::NoBackendRecord(detail) => write!(
+                f,
+                "could not tell: the backend keeps no record that answers this ({detail}); the API it would need does not exist, so a retry cannot change it"
+            ),
         }
     }
 }
@@ -180,6 +220,11 @@ impl std::fmt::Display for AbsenceProof {
                 f.write_str("the process is not in the runtime inventory")
             }
             Self::ContainerGone { id } => write!(f, "container `{id}` no longer exists"),
+            Self::NoCreator { creator } => write!(
+                f,
+                "the backend's creator record names no run for container `{}` in project `{}`",
+                creator.container_id, creator.project
+            ),
         }
     }
 }

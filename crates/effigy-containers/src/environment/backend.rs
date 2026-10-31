@@ -11,6 +11,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use effigy_kernel::id::RunId;
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::store::BackendMetadata;
 use effigy_manifest::ManifestContainerDriver;
@@ -292,6 +293,23 @@ pub trait EnvironmentBackend {
     fn selection(&self) -> &BackendSelection;
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
+    /// The run whose one Compose apply created `container_id` in `project`, as
+    /// this backend's own creator record proves it (effigy#508).
+    ///
+    /// `Verified(run)` is the only answer a caller may treat as a creation
+    /// receipt, and it must name the run whose apply the backend saw create
+    /// *this exact full container id*. Every weaker fact is a fact a competing
+    /// Compose actor reproduces — a creation timestamp, an inventory that was
+    /// empty before and is populated after, Compose's own project and service
+    /// labels, and a run id the caller supplies — so a backend that answered
+    /// from those would hand the caller another actor's container.
+    ///
+    /// `Absent(AbsenceProof::NoCreator { .. })` is the proof a backend that
+    /// keeps creator records gives when none names this container: another
+    /// actor's container, a replacement, or an id a failed apply never
+    /// created. `Unknown` means the backend has no such record at all, and its
+    /// reason names the missing API.
+    fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId>;
 }
 
 /// Colima: `colima nerdctl --profile <profile> -- compose …`.
@@ -327,11 +345,36 @@ macro_rules! compose_adapter {
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
+            fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
+                created_by(&self.selection, project, container_id)
+            }
         }
     };
 }
 compose_adapter!(ColimaBackend);
 compose_adapter!(DockerBackend);
+
+/// The creator receipt a Compose adapter can honestly give: none (effigy#508).
+///
+/// Neither engine Effigy targets records *who* created a container. `inspect`
+/// and `compose ps` expose the id, name, creation time and labels; the event
+/// streams name the actor's id and labels; neither names a creating client.
+/// The one authenticated fact is the `Id` in the engine's create response,
+/// which goes to the client that issued the create — here the Compose CLI that
+/// performs the environment's single apply, whose own creation report is a
+/// human progress line naming the container, not an id it received. So this
+/// adapter cannot distinguish this run's apply from a competing actor's
+/// identical project, service and labels, and says exactly that instead of
+/// minting a receipt from what it can observe.
+fn created_by(selection: &BackendSelection, project: &str, container_id: &str) -> Observed<RunId> {
+    Observed::Unknown(UnknownReason::NoBackendRecord(format!(
+        "{} keeps no record of which client created a container, so `{container_id}` in project \
+         `{project}` cannot be attributed to the run whose apply created it: creation goes through \
+         the Compose CLI, and the new container's id exists only in the engine's create response to \
+         that CLI",
+        selection.kind.label()
+    )))
+}
 
 fn inventory(
     selection: &BackendSelection,

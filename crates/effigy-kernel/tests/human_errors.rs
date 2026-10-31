@@ -269,6 +269,39 @@ fn an_untrusted_state_root_names_the_path_and_the_retry() {
     );
 }
 
+/// effigy#508: a backend that keeps no creator record says so, names what it
+/// cannot answer, and never reads as corruption or as the absence of an owner.
+#[test]
+fn a_missing_backend_record_names_the_answer_it_cannot_give() {
+    let reason = UnknownReason::NoBackendRecord(
+        "Docker Engine keeps no record of which client created a container".to_owned(),
+    );
+    assert_eq!(
+        reason.to_string(),
+        "could not tell: the backend keeps no record that answers this (Docker Engine keeps no \
+         record of which client created a container); the API it would need does not exist, so a \
+         retry cannot change it"
+    );
+    assert!(!reason.to_string().contains("corrupt"));
+}
+
+/// The other honest answer: the backend keeps creator records and none names
+/// this container, so no run's create produced it (effigy#508).
+#[test]
+fn a_creator_record_without_a_row_names_the_container_and_its_project() {
+    let absent = effigy_kernel::observe::AbsenceProof::NoCreator {
+        creator: effigy_kernel::observe::CreatorRef {
+            project: "acme-stack".to_owned(),
+            container_id: "3f6a1d0c7b9e".to_owned(),
+        },
+    };
+    assert_eq!(
+        absent.to_string(),
+        "the backend's creator record names no run for container `3f6a1d0c7b9e` in project \
+         `acme-stack`"
+    );
+}
+
 #[test]
 fn a_workload_outcome_says_how_it_ended() {
     use effigy_kernel::outcome::WorkloadOutcome;
