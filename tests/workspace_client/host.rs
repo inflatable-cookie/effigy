@@ -782,6 +782,10 @@ fn an_unrecorded_switch_is_refused_not_served() {
             }
         }
     }
+    // A settled run still has a supervisor leaving its own process; that is the
+    // writer the fixture's directory removal must not race.
+    effigy_test_support::process::wait_kernel_helpers(&project)
+        .expect("the refused supervisor's processes leave");
 }
 
 /// A competing second owner for one session refuses inside the detached process,
@@ -855,6 +859,16 @@ fn a_competing_owner_is_refused_inside_the_detached_process() {
 /// The startup result is bounded by the caller's own deadline, not by an
 /// internal one: a host that announces late makes the caller give up when it
 /// asked to, and the refusal says so.
+///
+/// The caller's budget has to be larger than this machine's fixed startup cost
+/// — spawning the front end, opening the journal and admitting the supervisor —
+/// or the proof measures fork/exec instead of the deadline. Measured without
+/// contention that cost is ~1.1s (context 257ms, journal 140ms, executable
+/// 18ms, supervisor admission 672ms), and several seconds under host load. The
+/// budget therefore bounds the whole startup (the fixture front end gives it to
+/// the launch as well as the announcement wait), and the announcement delay is
+/// set far above it, so "gave up before the host announced" is decided by the
+/// caller's own `deadline=` report and not by spawn cost.
 #[test]
 fn startup_honours_the_callers_deadline() {
     let fixture = effigy_test_support::Fixture::new("workspace-serving-deadline").expect("fixture");
@@ -863,10 +877,12 @@ fn startup_honours_the_callers_deadline() {
     std::fs::create_dir_all(&state_home).expect("state home");
     std::fs::create_dir_all(&project).expect("project");
     let mut request = request(&fixture, &project);
-    // The activation announces well after the caller's own deadline.
-    request["activation"]["announce_delay_ms"] = serde_json::json!(1_500);
+    const BUDGET_MS: u64 = 1_000;
+    // The activation announces long after the caller's own deadline.
+    const ANNOUNCE_MS: u64 = 5_000;
+    request["activation"]["announce_delay_ms"] = serde_json::json!(ANNOUNCE_MS);
 
-    let body = serde_json::json!({ "request": request, "budget_ms": 300_u64 });
+    let body = serde_json::json!({ "request": request, "budget_ms": BUDGET_MS });
     let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("__workspace-serving-fixture-deadline")
         .stdin(Stdio::piped())
@@ -897,17 +913,26 @@ fn startup_honours_the_callers_deadline() {
         .and_then(|text| text.split("ms").next())
         .and_then(|text| text.parse::<u128>().ok())
         .expect("the refusal reports the deadline it honoured");
+    // The caller gave the host its own budget and no more: an inner, longer
+    // deadline would report more, and a shorter one would report less.
     assert!(
-        reported < 3_000,
-        "the caller's 300ms deadline bounded the wait, not the 5s announcement ({reported}ms)"
+        reported >= u128::from(BUDGET_MS),
+        "the caller's {BUDGET_MS}ms deadline was not given in full ({reported}ms)"
     );
     assert!(
-        elapsed < Duration::from_millis(1_500),
+        reported < u128::from(ANNOUNCE_MS),
+        "the caller's {BUDGET_MS}ms deadline bounded the wait, not the {ANNOUNCE_MS}ms \
+         announcement ({reported}ms)"
+    );
+    assert!(
+        elapsed < Duration::from_millis(ANNOUNCE_MS),
         "the caller gave up before the host announced ({elapsed:?})"
     );
     // The abandoned host settles on owner loss; let it finish so it does not
     // outlive this test's fixture.
     std::thread::sleep(Duration::from_secs(2));
+    effigy_test_support::process::wait_kernel_helpers(&project)
+        .expect("the abandoned host settles");
 }
 
 /// A front end that crashes *after* acknowledging the detach leaves the session
@@ -1070,9 +1095,34 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
         "an interrupted handoff claims no committed session"
     );
 
-    // The dropped owner's host settles, then the same checkout admits a fresh
-    // host: the interrupted handoff left nothing that blocks recovery.
-    std::thread::sleep(Duration::from_secs(2));
+    // The dropped owner's host settles on owner loss, and only then does the
+    // same checkout admit a fresh host: the interrupted handoff left nothing
+    // that blocks recovery. The settle is not instantaneous, so the proof waits
+    // for the run the dropped front end named — its settle and then its recorded
+    // processes leaving, which is what releases the checkout's serving gate —
+    // instead of sleeping long enough to usually be true.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let interrupted = stderr
+        .split("supervisor_run=")
+        .nth(1)
+        .and_then(|text| text.trim().parse::<RunId>().ok())
+        .expect("the interrupted front end names the supervisor run it lost");
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, interrupted).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(
+            Instant::now() < until,
+            "the interrupted handoff's host did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    effigy_test_support::process::wait_kernel_helpers(&project)
+        .expect("the interrupted handoff's host leaves no writer behind");
     let recovered = initiate("__workspace-serving-fixture", &request);
     let endpoint = endpoint_of(
         recovered["published"]["endpoint"]
@@ -1083,9 +1133,6 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
         TcpStream::connect_timeout(&endpoint, Duration::from_secs(5)).is_ok(),
         "a successor serves after an interrupted handoff"
     );
-    let cx = effects();
-    let observe = observation();
-    let root = state_root(&cx, &state_home, &project);
     let supervisor_run = run_of(&recovered, "supervisor_run");
     let supervisor = read_summary(&observe, &root, supervisor_run).expect("the successor run");
     let millis = std::time::SystemTime::now()
@@ -1237,6 +1284,13 @@ fn client_identity_of(env: &[(&str, &str)]) -> String {
 /// A contender that cannot launch, or that actually becomes a second host, is NOT
 /// a refusal: only the kernel's own owner-gate refusal may pass the contention
 /// proof, so these two cases must fail it.
+///
+/// The two cases are two different checkouts on purpose. The kernel's serving
+/// gate is keyed by the checkout a launch serves, and an admitted contender's
+/// host keeps that gate until it has finished leaving; a second contender on the
+/// same checkout would be answered by the first one's gate and the proof would
+/// read that as a second-owner refusal. A separate checkout, and a separate
+/// journal under it, is what keeps the launcher-failure case about the launcher.
 #[test]
 fn a_contender_that_is_not_refused_by_the_owner_gate_is_not_a_refusal() {
     let fixture =
@@ -1258,7 +1312,13 @@ fn a_contender_that_is_not_refused_by_the_owner_gate_is_not_a_refusal() {
 
     // A contender whose launcher cannot even open the journal is not a refusal
     // either: an unavailable launcher proves nothing about ownership.
-    let mut broken = request.clone();
+    let broken_fixture =
+        effigy_test_support::Fixture::new("workspace-serving-contender-broken").expect("fixture");
+    let broken_project = broken_fixture.path().join("project");
+    std::fs::create_dir_all(&broken_project).expect("broken contender project");
+    let mut broken = request(&broken_fixture, &broken_project);
+    // Its own checkout, so no live owner of the first checkout can answer for it.
+    broken["checkout"] = serde_json::json!(vec![0x5au8; 16]);
     broken["state_home"] = serde_json::json!("/nonexistent-effigy-state-home");
     let failed = detached_contender(&broken);
     assert_eq!(

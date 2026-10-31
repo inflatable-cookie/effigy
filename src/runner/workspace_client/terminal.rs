@@ -467,19 +467,33 @@ fn pump(
         if !wants_write && !wants_resize {
             // An idle turn still reads the owning row, so owner EOF retires the
             // writer with no traffic and no connection turn to wait for.
-            if !owner_live(&owner, &observe, &root) {
-                retire(&shared, writer.as_mut());
-                return;
+            match owner_liveness(&owner, &observe, &root) {
+                Liveness::Live | Liveness::Unknown => {}
+                Liveness::Gone => {
+                    retire(&shared, writer.as_mut());
+                    return;
+                }
             }
             if !wait(&shared) {
                 return;
             }
             continue;
         }
-        // Exactly one effect, with the owning row read immediately before it.
-        if !owner_live(&owner, &observe, &root) {
-            retire(&shared, writer.as_mut());
-            return;
+        // Exactly one effect, with the owning row read immediately before it. A
+        // row that cannot be read is not a released row: the effect waits for a
+        // later turn rather than closing a live terminal on a transient read.
+        match owner_liveness(&owner, &observe, &root) {
+            Liveness::Live => {}
+            Liveness::Gone => {
+                retire(&shared, writer.as_mut());
+                return;
+            }
+            Liveness::Unknown => {
+                if !wait(&shared) {
+                    return;
+                }
+                continue;
+            }
         }
         let step = match (wants_write, wants_resize) {
             (true, true) if prefer_resize => resize_once(&shared, writer.as_mut()),
@@ -507,9 +521,26 @@ fn pump(
     }
 }
 
-/// Whether the run's owning attachment is still attached, read now.
-fn owner_live(owner: &Attachment, observe: &ObserveContext, root: &StateRoot) -> bool {
-    matches!(owner.attached_observed(observe, root), Ok(true))
+/// What the run's owning attachment's lifetime read says now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    /// Still attached: an effect may proceed.
+    Live,
+    /// The row is gone: the owning client's stream ended, or the run closed.
+    Gone,
+    /// The read itself failed. That is not evidence of release — a supervisor
+    /// recovering from a `.irn` append holds `Busy` for a while — so it retires
+    /// nothing and simply tries again on a later tick.
+    Unknown,
+}
+
+/// Read the run's owning attachment lifetime now.
+fn owner_liveness(owner: &Attachment, observe: &ObserveContext, root: &StateRoot) -> Liveness {
+    match owner.attached_observed(observe, root) {
+        Ok(true) => Liveness::Live,
+        Ok(false) => Liveness::Gone,
+        Err(_) => Liveness::Unknown,
+    }
 }
 
 /// Wait for new work or the next tick. `false` means the owner is gone.

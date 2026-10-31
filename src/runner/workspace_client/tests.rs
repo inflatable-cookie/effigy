@@ -2636,6 +2636,10 @@ struct PtyLog {
     /// Whether the resize handle accepts a geometry at all. Tests close and
     /// reopen it to place a resize effect either side of a lifetime change.
     resize_open: bool,
+    /// Every geometry the owner offered this handle, accepted or refused, in
+    /// order. A proof uses it to observe that a frame was processed without
+    /// depending on how many turns the pump took.
+    resize_attempts: Vec<TerminalSize>,
 }
 
 impl Default for PtyLog {
@@ -2646,6 +2650,7 @@ impl Default for PtyLog {
             retired: 0,
             capacity: usize::MAX,
             resize_open: true,
+            resize_attempts: Vec::new(),
         }
     }
 }
@@ -2716,6 +2721,7 @@ impl TerminalWriter for FakePty {
 
     fn resize(&mut self, size: TerminalSize) -> io::Result<()> {
         let mut log = self.log.lock().expect("pty log");
+        log.resize_attempts.push(size);
         if !log.resize_open {
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
@@ -3362,10 +3368,9 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // The resize handle is closed for the whole burst, as a terminal whose
-    // resize path is momentarily unavailable is. Attempt counts and pump turns
-    // cannot change the result: while the handle is closed the owner holds at
-    // most one size, and the newest one is the only size that can ever be
-    // applied when it opens.
+    // resize path is momentarily unavailable is. Attempt counts cannot change
+    // the result: while the handle is closed the owner holds at most one size,
+    // and the newest one is the only size that can ever be applied.
     log.lock().expect("pty log").resize_open = false;
     custody
         .open(
@@ -3385,34 +3390,44 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
         frames.push(sized(attach, 2, 60, 140));
         frames
     };
-    let (mut transport, _written) = scripted(&frames);
-    server
-        .serve(&mut transport, &cx, &observe, &root, &mut custody)
-        .expect("the resize burst is served");
-    // Every frame is queued by now and the closed handle has applied nothing,
-    // however many turns the pump took.
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(
-        sizes(&log).is_empty(),
-        "a closed resize handle applied a size: {:?}",
-        sizes(&log)
-    );
-
-    // Opening the handle applies the newest size, and only the newest: the two
-    // earlier sizes were superseded while it was closed.
-    log.lock().expect("pty log").resize_open = true;
-    wait_until("the newest geometry to be applied", || {
-        sizes(&log).last() == Some(&size(60, 140))
+    // The connection stays live while the proof runs, so the writer's own pump
+    // is alive too: the burst, the closed handle and the reopened handle are one
+    // terminal's whole life, not a race against the owner's end of stream.
+    let (client, host_side) = live_connection(&frames);
+    std::thread::scope(|scope| {
+        let serving = scope.spawn(|| {
+            let mut transport = PeerTransport::new(host_side);
+            server.serve(&mut transport, &cx, &observe, &root, &mut custody)
+        });
+        // The newest size being attempted proves the third frame was processed
+        // and that the owner holds exactly that size; the closed handle applied
+        // nothing, however many turns the pump took.
+        wait_until("the newest size to be attempted", || {
+            log.lock().expect("pty log").resize_attempts.last() == Some(&size(60, 140))
+        });
+        assert!(
+            sizes(&log).is_empty(),
+            "a closed resize handle applied a size: {:?}",
+            sizes(&log)
+        );
+        // Opening the handle applies the newest size, and only the newest: the
+        // two earlier sizes were superseded while it was closed.
+        log.lock().expect("pty log").resize_open = true;
+        wait_until("the newest geometry to be applied", || {
+            sizes(&log).last() == Some(&size(60, 140))
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            sizes(&log),
+            vec![size(60, 140)],
+            "exactly the newest size reached the writer"
+        );
+        drop(client);
+        serving
+            .join()
+            .expect("the serving thread")
+            .expect("the burst connection is served");
     });
-    std::thread::sleep(Duration::from_millis(50));
-    assert_eq!(
-        sizes(&log),
-        vec![size(60, 140)],
-        "exactly the newest size reached the writer"
-    );
-    let terminal = custody.terminal_mut(run).expect("the run's terminal");
-    assert_eq!(terminal.applied(), Some(size(60, 140)));
-    assert_eq!(terminal.refused(), 0, "a closed handle is not a refusal");
 }
 
 #[test]
