@@ -305,12 +305,24 @@ pub(super) fn run_builtin_test_targets_parallel(
                     if let Some(mut custody) = custody {
                         // The suite stays in this run's process group, so
                         // custody still settles it.
-                        let suite = custody
+                        let suite = match custody
                             .run(&execution_command, &root, &host_env, capture_output)
-                            .map_err(|error| BuiltinError::TaskCommandLaunch {
-                                command: execution_command.clone(),
-                                error: std::io::Error::other(error.to_string()),
-                            })?;
+                        {
+                            Ok(suite) => suite,
+                            Err(error) => {
+                                // The attempt never reported: close its run as
+                                // a failed attempt before the outer run
+                                // concludes.
+                                custody.settle(&crate::HostSuiteOutcome {
+                                    code: None,
+                                    stopped: false,
+                                });
+                                return Err(BuiltinError::TaskCommandLaunch {
+                                    command: execution_command.clone(),
+                                    error: std::io::Error::other(error.to_string()),
+                                });
+                            }
+                        };
                         // The attempt's own outcome is recorded and its whole
                         // process group stopped here, before the run that owns
                         // the scratch directory concludes. The record is what
