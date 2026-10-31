@@ -333,15 +333,16 @@ impl EnvironmentBackend for Fake {
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("strict fake: unmodelled creator record for `{container_id}` in `{project}`")
     }
-    /// This fake's inventories are always empty, so no candidate container ever
-    /// needs an image id resolved.
-    fn image_id_until(
-        &mut self,
-        _: &Path,
-        reference: &str,
-        _: std::time::Instant,
-    ) -> Observed<String> {
-        panic!("strict fake: unmodelled image table entry for `{reference}`")
+    /// This fake's inventories are always empty, so no container is ever
+    /// attributed; the image table still answers every declared reference with
+    /// one stable synthetic id, because the window resolves the render's
+    /// references on both sides of the apply whatever the project holds. These
+    /// proofs are about transitions, not image identity.
+    fn image_id_until(&mut self, _: &Path, _: &str, _: std::time::Instant) -> Observed<String> {
+        Observed::Verified(
+            format!("sha256:{}", "0f".repeat(32)),
+            Evidence::new("fake image table".to_owned(), None).expect("evidence"),
+        )
     }
 }
 

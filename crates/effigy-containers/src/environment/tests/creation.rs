@@ -11,6 +11,7 @@
 //! timed-out window and a retry.
 
 use super::*;
+use crate::environment::creation::ImageIdSource;
 use effigy_kernel::gate::Wait;
 use effigy_kernel::objects::Closure;
 
@@ -99,14 +100,17 @@ fn when(mut workload: Workload, created: &str) -> Workload {
 }
 
 /// A strict fake backend that replays the window's inventories in order, and
-/// answers its image table from the references the proofs declare.
+/// answers its image table from a scripted sequence.
 struct Inventories {
     selection: BackendSelection,
     queued: VecDeque<Observed<Vec<Workload>>>,
     reads: Rc<RefCell<Vec<String>>>,
-    /// The image table: reference spellings the backend resolves, and their
-    /// exact image ids.
-    images: BTreeMap<String, Observed<String>>,
+    /// Scripted image-table answers in read order. The window resolves every
+    /// declared reference once immediately before the apply and once
+    /// immediately after it, so a proof that scripts two answers for one
+    /// reference moves the tag inside the window. Exhausted means the reference
+    /// keeps answering `IMAGE_ID`, which is the ordinary stable case.
+    image_answers: VecDeque<Observed<String>>,
     image_reads: Rc<RefCell<Vec<String>>>,
 }
 
@@ -116,16 +120,7 @@ impl Inventories {
             selection: selection(),
             queued: VecDeque::new(),
             reads: Rc::new(RefCell::new(Vec::new())),
-            images: BTreeMap::from([
-                (
-                    IMAGE.to_owned(),
-                    Observed::Verified(IMAGE_ID.to_owned(), evidence()),
-                ),
-                (
-                    QUALIFIED_IMAGE.to_owned(),
-                    Observed::Verified(IMAGE_ID.to_owned(), evidence()),
-                ),
-            ]),
+            image_answers: VecDeque::new(),
             image_reads: Rc::new(RefCell::new(Vec::new())),
         }
     }
@@ -142,9 +137,10 @@ impl Inventories {
         self
     }
 
-    /// Replace what this backend's image table answers for one reference.
-    fn image(&mut self, reference: &str, answer: Observed<String>) -> &mut Self {
-        self.images.insert(reference.to_owned(), answer);
+    /// The image table's next answers, in read order; a value keeps answering
+    /// itself so a proof can script only the reading it cares about.
+    fn images(&mut self, answers: impl IntoIterator<Item = Observed<String>>) -> &mut Self {
+        self.image_answers.extend(answers);
         self
     }
 
@@ -179,9 +175,9 @@ impl EnvironmentBackend for Inventories {
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("a proof does not ask the raw backend about `{container_id}` in `{project}`")
     }
-    /// The window's image-table read, answered from the scripted table. An
-    /// unscripted reference is a mistake in the proof, not a fact: this fake
-    /// refuses it loudly, exactly as it refuses an unmodelled inventory read.
+    /// The window's image-table read, answered from the scripted sequence: the
+    /// last scripted answer repeats, and an empty sequence answers the stable
+    /// `IMAGE_ID`.
     fn image_id_until(
         &mut self,
         _: &Path,
@@ -189,10 +185,13 @@ impl EnvironmentBackend for Inventories {
         _: std::time::Instant,
     ) -> Observed<String> {
         self.image_reads.borrow_mut().push(reference.to_owned());
-        self.images
-            .get(reference)
-            .cloned()
-            .unwrap_or_else(|| panic!("the proof did not script the image table for `{reference}`"))
+        match self.image_answers.pop_front() {
+            Some(answer) => {
+                self.image_answers.push_back(answer.clone());
+                answer
+            }
+            None => Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        }
     }
 }
 
@@ -202,7 +201,7 @@ fn window(
     backend: &mut Inventories,
     apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> (Creation, RunId, EnvRef) {
-    let render = render(&["app", "db"]);
+    let render = render(&["app"]);
     window_with(backend, Some(&render), apply)
 }
 
@@ -246,7 +245,8 @@ fn a_fresh_create_names_the_exact_containers_this_apply_created() {
     backend
         .then(Vec::new())
         .then(vec![row(PROJECT, FRESH, "app"), row(PROJECT, DB, "db")]);
-    let (creation, run, environment) = window(&mut backend, || Ok(()));
+    let render = render(&["app", "db"]);
+    let (creation, run, environment) = window_with(&mut backend, Some(&render), || Ok(()));
     assert_eq!(backend.reads(), [PROJECT, PROJECT]);
     let receipt = creation.receipt().expect("a completed window is a receipt");
     assert_eq!(receipt.run(), run);
@@ -315,7 +315,8 @@ fn a_partial_recreate_names_only_the_replaced_container() {
     backend
         .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")])
         .then(vec![row(PROJECT, FRESH, "app"), row(PROJECT, DB, "db")]);
-    let (creation, run, _environment) = window(&mut backend, || Ok(()));
+    let render = render(&["app", "db"]);
+    let (creation, run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
     let receipt = creation.receipt().expect("a completed window is a receipt");
     assert_eq!(
         receipt
@@ -490,25 +491,22 @@ fn a_fully_qualified_spelling_of_the_declared_image_is_accepted() {
     );
 }
 
-/// The reference is not the image, and it is mutable. A tag moved after the
-/// container was created leaves the container carrying the render's own
-/// reference while running a different image — a retag, a rebuilt tag, or an
-/// actor's `docker run` of another image under the same name. The container's
-/// engine-reported id is the immutable fact, so it must equal the id the
-/// render's reference resolves to *now*: here the reference matches and the ids
-/// disagree, and the window refuses. This is the same-reference retag case.
+/// The reference is not the image. A tag moved before a container was created
+/// leaves the container reporting the render's own reference while running a
+/// different image — a retag, a rebuilt tag, or an actor's `docker run` of
+/// another image under the same name. The container's engine-reported id is the
+/// immutable fact (Docker), so it must equal the id the render's reference names
+/// on this backend: here the reference matches and the ids disagree.
 #[test]
-fn a_same_reference_retag_with_a_different_image_id_refuses_the_window() {
+fn a_container_whose_engine_reported_id_differs_from_the_render_refuses_the_window() {
     let mut backend = Inventories::new();
     let mut mismatched = row(PROJECT, FRESH, "app");
-    // The reference the render declares, exactly as Compose records it...
     mismatched.image_reference = QUALIFIED_IMAGE.to_owned();
-    // ...and an image the render does not declare.
     mismatched.image = OTHER_IMAGE_ID.to_owned();
     backend.then(Vec::new()).then(vec![mismatched]);
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
     let report = format!("was created from image id `{OTHER_IMAGE_ID}`");
-    let expected = format!("resolves to image id `{IMAGE_ID}`");
+    let expected = format!("resolved to image id `{IMAGE_ID}`");
     assert!(
         matches!(
             &creation,
@@ -523,34 +521,28 @@ fn a_same_reference_retag_with_a_different_image_id_refuses_the_window() {
     ));
 }
 
-/// A backend that reports the container's image only as a reference (nerdctl)
-/// cannot bind an image id at all: the reference is mutable, so resolving it
-/// after the apply says where the tag points now, not which image this container
-/// was created from — a retag inside the window would be invisible. The window
-/// refuses and names the missing engine API instead of accepting the reference
-/// as a stand-in for the id, and it does not even spend an image-table read on
-/// the container's own reference.
+/// A tag that moves inside the window refuses, whatever the container reports:
+/// the render's reference resolved to one exact id before the apply and another
+/// after it, so "the image the render declares" is not one image across the
+/// window and nothing may be bound to it. This is the retag inside the window.
 #[test]
-fn a_container_that_reports_only_a_reference_refuses_the_window() {
+fn a_reference_retagged_across_the_apply_refuses_the_window() {
     let mut backend = Inventories::new();
-    let mut reference_only = row(PROJECT, FRESH, "app");
-    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
-    reference_only.image = QUALIFIED_IMAGE.to_owned();
-    backend.then(Vec::new()).then(vec![reference_only]);
+    backend.images([
+        Observed::Verified(IMAGE_ID.to_owned(), evidence()),
+        Observed::Verified(OTHER_IMAGE_ID.to_owned(), evidence()),
+    ]);
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
     let (creation, _run, _environment) = window(&mut backend, || Ok(()));
-    assert_eq!(
-        backend.image_reads(),
-        [IMAGE],
-        "only the render's declared reference is resolved; the container's own reference is never a binding"
+    let moved = format!(
+        "moved inside this window: it resolved to image id `{IMAGE_ID}` before the apply and `{OTHER_IMAGE_ID}` after it"
     );
-    let reference = format!("reports image `{QUALIFIED_IMAGE}`");
     assert!(
         matches!(
             &creation,
-            Creation::Unproven(UnknownReason::Inconsistent(detail))
-                if detail.contains(&reference)
-                    && detail.contains("no immutable image id")
-                    && detail.contains("retag")
+            Creation::Unproven(UnknownReason::Inconsistent(detail)) if detail.contains(&moved)
         ),
         "{creation:?}"
     );
@@ -560,18 +552,162 @@ fn a_container_that_reports_only_a_reference_refuses_the_window() {
     ));
 }
 
+/// A reference the backend cannot resolve before the apply refuses the window:
+/// without both readings there is no stable id to bind, and the reference alone
+/// is not the image a container runs.
+#[test]
+fn a_render_image_missing_before_the_apply_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend.images([Observed::Unknown(UnknownReason::Inconsistent(
+        "the image inspect of `postgres:16` answered no image before the apply".to_owned(),
+    ))]);
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("answered no image before the apply")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// nerdctl reports only a reference (the engine exposes no container image id),
+/// so the bind is the render's declared reference resolved on this backend
+/// immediately before and after the apply, stable across the window, with the
+/// container reporting that same reference. The receipt records that reading as
+/// `ResolvedByReference`, never as an engine-returned container image id.
+#[test]
+fn a_reference_resolved_stably_across_the_apply_binds_as_resolved_by_reference() {
+    let mut backend = Inventories::new();
+    let mut reference_only = row(PROJECT, FRESH, "app");
+    reference_only.image_reference = QUALIFIED_IMAGE.to_owned();
+    reference_only.image = QUALIFIED_IMAGE.to_owned();
+    backend.then(Vec::new()).then(vec![reference_only]);
+    let (creation, run, _environment) = window(&mut backend, || Ok(()));
+    let receipt = creation.receipt().expect("a completed window is a receipt");
+    let created = receipt.for_service("app").expect("app was created");
+    assert_eq!(
+        created.image_id(),
+        IMAGE_ID,
+        "the bound id is the reference resolved across the window"
+    );
+    assert_eq!(
+        created.image_id_source(),
+        ImageIdSource::ResolvedByReference,
+        "recorded as resolved by reference, not as an engine-returned container id"
+    );
+    assert_eq!(
+        creation.created_by(PROJECT, FRESH).verified().copied(),
+        Some(run)
+    );
+    assert_eq!(
+        backend.image_reads(),
+        [IMAGE, IMAGE, QUALIFIED_IMAGE],
+        "the declared reference is read before and after the apply, then the container's reference"
+    );
+}
+
+/// A container that reports another image reference than the render declares
+/// was not created from the render's image, even when the id it resolves to
+/// happens to match.
+#[test]
+fn a_container_reporting_another_image_reference_refuses_the_window() {
+    let mut backend = Inventories::new();
+    let mut switched = row(PROJECT, FRESH, "app");
+    switched.image = "docker.io/library/postgres:17".to_owned();
+    backend.then(Vec::new()).then(vec![switched]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("docker.io/library/postgres:17")
+                    && detail.contains("was not created from the render's image")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// The created set is exact or the window proves nothing: after the apply the
+/// project must hold one container for every service the render declares. A
+/// declared service with no container means the apply did not converge on the
+/// render, so no receipt is minted — even when every container that *is* there
+/// looks right.
+#[test]
+fn a_declared_service_with_no_container_after_the_apply_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend
+        .then(Vec::new())
+        .then(vec![row(PROJECT, FRESH, "app")]);
+    let render = render(&["app", "db"]);
+    let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("service `db` has no container after the apply")
+        ),
+        "{creation:?}"
+    );
+    assert!(matches!(
+        creation.created_by(PROJECT, FRESH),
+        Observed::Unknown(UnknownReason::Inconsistent(_))
+    ));
+}
+
+/// A container for a service the render does not declare is a target the apply
+/// did not converge on, whether or not it appeared in this window, so the
+/// project no longer holds exactly the render's services and the window refuses.
+#[test]
+fn an_extra_container_the_render_does_not_declare_refuses_the_window() {
+    let mut backend = Inventories::new();
+    backend
+        .then(vec![row(PROJECT, OLD, "app")])
+        .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")]);
+    let (creation, _run, _environment) = window(&mut backend, || Ok(()));
+    assert!(
+        matches!(
+            &creation,
+            Creation::Unproven(UnknownReason::Inconsistent(detail))
+                if detail.contains("service `db` of container")
+                    && detail.contains("is not a service the admitted render declares")
+        ),
+        "{creation:?}"
+    );
+}
+
+/// An unchanged re-up that attaches every declared service proves no creation
+/// and names every pre-existing id as attached.
+#[test]
+fn an_attached_set_that_covers_the_render_names_no_created_id() {
+    let mut backend = Inventories::new();
+    backend
+        .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")])
+        .then(vec![row(PROJECT, OLD, "app"), row(PROJECT, DB, "db")]);
+    let render = render(&["app", "db"]);
+    let (creation, _run, _environment) = window_with(&mut backend, Some(&render), || Ok(()));
+    let receipt = creation.receipt().expect("a completed window is a receipt");
+    assert!(receipt.created().is_empty(), "{:?}", receipt.created());
+    assert_eq!(
+        receipt.attached(),
+        [OLD.to_owned(), DB.to_owned()],
+        "attached ids come back sorted"
+    );
+}
+
 /// An image table that cannot answer for the render's own reference refuses the
 /// window: without the exact image id there is nothing to bind, and the
 /// reference alone is not the image a container runs.
 #[test]
 fn an_image_the_backend_cannot_resolve_refuses_the_window() {
     let mut backend = Inventories::new();
-    backend.image(
-        IMAGE,
-        Observed::Unknown(UnknownReason::Inconsistent(
-            "the image inspect of `postgres:16` answered nothing".to_owned(),
-        )),
-    );
+    backend.images([Observed::Unknown(UnknownReason::Inconsistent(
+        "the image inspect of `postgres:16` answered nothing".to_owned(),
+    ))]);
     backend
         .then(Vec::new())
         .then(vec![row(PROJECT, FRESH, "app")]);
@@ -593,7 +729,7 @@ fn an_image_the_backend_cannot_resolve_refuses_the_window() {
 fn an_image_inspect_answer_that_is_not_an_exact_image_id_refuses_the_window() {
     for answer in ["postgres:16", "0123456789abcdef", "", "sha256:xyz"] {
         let mut backend = Inventories::new();
-        backend.image(IMAGE, Observed::Verified(answer.to_owned(), evidence()));
+        backend.images([Observed::Verified(answer.to_owned(), evidence())]);
         backend
             .then(Vec::new())
             .then(vec![row(PROJECT, FRESH, "app")]);

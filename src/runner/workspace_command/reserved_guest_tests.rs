@@ -736,15 +736,21 @@ impl effigy_containers::environment::EnvironmentBackend for NoEngine {
     fn created_by(&mut self, project: &str, container_id: &str) -> Observed<RunId> {
         panic!("unmodelled creator question for `{container_id}` in `{project}`")
     }
-    /// These proofs apply nothing, so no candidate container is ever read and
-    /// no image id is ever asked for.
+    /// These proofs apply nothing and the project stays empty, so no container
+    /// is ever attributed. The window still resolves the render's declared
+    /// references on both sides of the apply, so this backend answers one stable
+    /// synthetic id rather than modelling an image table it does not have.
     fn image_id_until(
         &mut self,
         _: &std::path::Path,
-        reference: &str,
+        _: &str,
         _: std::time::Instant,
     ) -> Observed<String> {
-        panic!("unmodelled image table question for `{reference}`")
+        Observed::Verified(
+            format!("sha256:{}", "0f".repeat(32)),
+            effigy_kernel::observe::Evidence::new("no-engine image table".into(), None)
+                .expect("evidence"),
+        )
     }
 }
 

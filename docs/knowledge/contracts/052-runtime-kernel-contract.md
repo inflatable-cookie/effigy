@@ -3508,42 +3508,51 @@ container id listed once, and the inspect must answer exactly those ids once
 each, before and after; a short, duplicated, missing or additional row makes the
 read `Unknown`.
 
+**The created set is exact.** After the apply the project must hold exactly the
+services the admitted render declares, one container each: an extra container
+(any container whose service the render does not declare, or a one-off), a
+declared service with no container, and two containers for one service each
+refuse the window. So the created ids are not merely non-empty — they are the
+complete set of targets this apply converged on, and every other id in the
+project is attached and was present before.
+
 A container whose id is absent before and present after appeared inside that
 window; each such candidate must match the **admitted render's own declared
 values** for its service — `com.docker.compose.project`, Effigy's
 `com.docker.compose.service`, `com.effigy.managed`, `.project`, `.scope` and
 `.checkout` labels and image reference exactly as the render declares them (a
 short and a fully-qualified spelling of one reference agree; nothing else does),
-a service the render declares, the **exact image id** that reference resolves to
-in the applying backend's own image table, and a `Created` stamp no older than
-the apply start. A render that declares one bound value twice with different
-values refuses, and an apply with no admitted render refuses too: the container's
-own labels are compared with the render and are never the expectation. An id
-present before is adopted and is never `created_by` this run.
+a service the render declares, the **exact image id** that reference names on
+the applying backend, and a `Created` stamp no older than the apply start. A
+render that declares one bound value twice with different values refuses, and an
+apply with no admitted render refuses too: the container's own labels are
+compared with the render and are never the expectation. An id present before is
+adopted and is never `created_by` this run.
 
-The **image id** is bound, not just the reference, and only an id the engine
-reports *for the container* counts. The window reads `image inspect` for the
-render's declared reference under the same deadline and requires the container's
-own reported image id to equal it. That id is immutable and belongs to that
-container, so a tag moved after the container was created makes the two disagree
-and refuses — a retagged or rebuilt tag, or another actor's container of a
-different image under the same name, is not this run's target. A reference the
-container reports is **not** that fact: it is mutable, so resolving it after the
-apply says where the tag points now, not which image the container was created
-from, and a retag inside the window would be invisible. Docker's `Image` is an
-exact id and binds. nerdctl's `Image`/`Config.Image` is the reference and the
-container record exposes no image id at all (`inspect`, `inspect --mode=native`
-and `ps --format json` all carry only the reference), so the window **refuses**
-rather than bind through that reference and names the missing engine API: a
-fresh nerdctl target gets no creation receipt, which is the honest answer until
-an engine reports a container's immutable image identity. An `image inspect`
-that answers nothing, more than one image, or anything that is not an exact
-image id refuses the whole window.
+**The image id, bounded.** The window resolves every declared reference to an
+exact image id with `image inspect` under the same deadline — once immediately
+before the one apply and once immediately after it — and requires the two
+readings to be the same id. A tag that moved inside the window, an image missing
+on either side, or an incomplete or timed-out read refuses. A Docker container
+reports its own `Image` as an exact id, and that immutable container id must
+equal it (`Reported`). nerdctl reports `Image`/`Config.Image` as a reference and
+exposes no image id for a container at all (`inspect`, `inspect --mode=native`
+and `ps --format json` carry only the reference, verified against a native
+disposable trace), so there the bind is the render's reference resolved on the
+same backend on both sides of the apply, with the container required to report
+that same reference (`ResolvedByReference`). That reading is recorded as
+*resolved by reference, stable across the window* and is **never** presented as
+an engine-returned container image id: a tag that moves and moves back inside the
+window is beyond what either engine reports. Closing that needs an engine that
+reports a container's immutable image identity — the Effigy-owned engine-create
+path, not this window. An `image inspect` that answers nothing, more than one
+image, or anything that is not an exact image id refuses the whole window.
 
-**Refusals.** The run publishes no receipt — and no weaker one — when a service
-identity is missing or duplicated, a label, image reference or image id
-disagrees, a container reports no immutable image id, a creation stamp precedes
-the apply, either inventory is incomplete or times out, the apply failed or is
+**Refusals.** The run publishes no receipt — and no weaker one — when the
+project after the apply does not hold exactly the render's services once each, a
+label, image reference or image id disagrees, a tag moved inside the window, a
+container reports no image identity, a creation stamp precedes the apply, either
+inventory or image read is incomplete or times out, the apply failed or is
 unproven, or the window is otherwise partial. A crash or retry
 leaves the earlier attempt with no receipt, and the retry's own complete window
 is the only one that names containers.
@@ -3562,8 +3571,9 @@ only reads.
 
 **Receipt rule.** `CreationReceipt` binds the environment, the run, the engine
 and context, the project, the apply's start and completion, the exact full ids
-it created with their service, exact image id and image reference, the ids it
-adopted, and the inventory evidence it read. It has no public constructor and exposes
+it created with their service, exact image id and how that id was learned
+(`ImageIdSource`: `Reported` or `ResolvedByReference`) and image reference, the
+ids it adopted, and the inventory and image evidence it read. It has no public constructor and exposes
 read-only accessors; only the gated window builds one, so a caller cannot pair
 its own run id with someone else's container. A caller may attribute a fresh
 target only when the receipt's `created_by(project, container_id)` is
@@ -3573,9 +3583,16 @@ that failed) both refuse. A timestamp, a before/after absence, matching labels,
 a container's self-reported labels or a caller-supplied run id alone is never a
 receipt.
 
-**Pending operator ruling.** This section's foreign-actor exclusion is not
-consistent with §8.11's "a foreign creation is never adopted as this
-activation's target" invariant, and the material decision is with the operator.
+**Pending operator ruling.** Two decisions are with the operator, and this
+section is proposed wording pending confirmation, not a policy change:
+
+1. This section's foreign-actor exclusion is not consistent with §8.11's "a
+   foreign creation is never adopted as this activation's target" invariant.
+2. The `ResolvedByReference` image bind above was authorised provisionally by
+   the supervisor on 2026-10-31 (bounded Option C, owner image-observation
+   ruling): it is the strongest reading nerdctl supports, not an engine-returned
+   container image id.
+
 This section states what the bounded window proves; it does not amend, weaken or
 discharge that invariant, no merge hold is released, and the fresh-target path
 stays refused until the ruling lands.

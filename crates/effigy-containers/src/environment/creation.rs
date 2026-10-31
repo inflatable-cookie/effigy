@@ -16,33 +16,39 @@
 //!   ids once each;
 //! * it records the apply's start and its own successful outcome;
 //! * it takes the same inventory again immediately after the apply;
+//! * the project after the apply holds **exactly** the services the render
+//!   declares, one container each: an extra container, a missing service or two
+//!   containers for one service refuses, so the created set is complete rather
+//!   than merely non-empty;
 //! * a container absent before and present after appeared inside this window,
 //!   and must then match the **admitted render's own declared values** for its
 //!   service: Effigy's managed, project, scope and checkout labels exactly as
 //!   the render declares them, a service the render declares, the image
 //!   reference the render declares, the **exact image id** that reference
-//!   resolves to on the applying backend, and a `Created` stamp no older than
-//!   the apply start. Anything else refuses, and the run publishes no receipt.
+//!   names on the applying backend, and a `Created` stamp no older than the
+//!   apply start. Anything else refuses, and the run publishes no receipt.
 //!
 //! **The image id.** The render declares a reference (`postgres:16`); the
 //! backend's image table is the only authority that turns it into an image id,
-//! so the window resolves the render's reference inside its own deadline and
-//! requires the container's **own engine-reported image id** to be that exact
-//! id. Only an id the engine reports *for the container* will do: it is
-//! immutable and belongs to that container, so a tag moved after the container
-//! was created makes the two disagree and the window refuse.
+//! so the window resolves every declared reference inside its own deadline,
+//! **immediately before and immediately after** the one apply, and requires the
+//! two readings to be the same id. A tag that moved inside the window, an image
+//! that is missing on either side, or an incomplete or timed-out read refuses.
 //!
-//! A reference the container reports is not that fact. A reference is mutable:
-//! resolving it after the apply says which image the tag points at *now*, not
-//! which image the container was created from, so a retag inside the window is
-//! invisible. Docker reports `Image` as an exact id and binds; nerdctl reports
-//! `Image`/`Config.Image` as the reference and exposes the image id nowhere in
-//! the container record (`inspect`, `inspect --mode=native` and `ps --format
-//! json` all carry only the reference), so this window **refuses** a container
-//! whose reported image identity is not an exact id and names the missing
-//! engine API instead of minting a receipt from a mutable reference. That leaves
-//! nerdctl fresh targets without a receipt: an honest absence, not a weaker
-//! claim.
+//! The container's own identity is then compared with that id. Docker reports
+//! the container's `Image` as an exact image id, and that id — immutable, and
+//! the container's own — must equal it (`ImageIdSource::Reported`). nerdctl
+//! reports `Image`/`Config.Image` as a reference and exposes the image id
+//! nowhere in the container record (`inspect`, `inspect --mode=native` and
+//! `ps --format json` all carry only the reference, traced in the fixtures), so
+//! there the bind is the render's reference resolved on the same backend on
+//! both sides of the apply, with the container's reported reference required to
+//! be that same reference (`ImageIdSource::ResolvedByReference`). That second
+//! reading is recorded as *resolved by reference, stable across the window* and
+//! is never described as an engine-returned container image id: a tag that moves
+//! and moves back inside the window is beyond what either engine reports, which
+//! is the bounded limit this provisional ruling accepts (supervisor, 2026-10-31,
+//! pending Tom's confirmation).
 //!
 //! **Threat boundary** (contract 052 §8.12): this excludes a foreign process
 //! that deliberately creates a container carrying Effigy's own managed,
@@ -88,6 +94,21 @@ const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, 
 /// stays bounded by the run's own budget (K8).
 pub const CREATION_WINDOW: Duration = Duration::from_secs(30 * 60);
 
+/// How the window bound a created container to an image id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageIdSource {
+    /// The engine reported the container's own image id (Docker's `Image`).
+    /// The id belongs to that container and is immutable.
+    Reported,
+    /// The engine reports only a reference for the container (nerdctl), so the
+    /// id is the render's declared reference resolved on this same backend
+    /// immediately before and after the apply, stable across the window, with
+    /// the container reporting that same reference. It is **not** an
+    /// engine-returned container image id: a tag that moves and moves back
+    /// inside the window is beyond what the engine reports.
+    ResolvedByReference,
+}
+
 /// One container the window proved this run's apply created.
 ///
 /// It is read-only outside this module: only the gated window that took the
@@ -98,6 +119,7 @@ pub struct CreatedContainer {
     service: String,
     image: String,
     image_id: String,
+    image_id_source: ImageIdSource,
     image_reference: String,
     created: String,
 }
@@ -120,10 +142,16 @@ impl CreatedContainer {
         &self.image
     }
 
-    /// The exact image id the engine reported **for this container**, which the
-    /// admitted render's declared reference resolves to on the applying backend.
+    /// The exact image id this container was bound to: the id the admitted
+    /// render's declared reference names on the applying backend, stable across
+    /// the window (see [`ImageIdSource`] for how it was learned).
     pub fn image_id(&self) -> &str {
         &self.image_id
+    }
+
+    /// How the window learned the container's image id (see [`ImageIdSource`]).
+    pub fn image_id_source(&self) -> ImageIdSource {
+        self.image_id_source
     }
 
     /// The image reference Compose created the container from
@@ -452,24 +480,31 @@ pub(super) enum ApplyOutcome {
     Uncertain(String),
 }
 
-/// One gated apply's open window: the inventory it opened with, the render it
-/// binds and the apply start it recorded.
+/// One gated apply's open window: the inventory it opened with, the render's
+/// own declarations, the image ids it resolved before the apply, and the apply
+/// start it recorded.
 pub(super) struct CreationWindow<'a> {
     backend: &'a mut dyn EnvironmentBackend,
     workdir: &'a Path,
     selection: &'a BackendSelection,
     project: &'a str,
-    render: Option<&'a Closure>,
     environment: ResourceId,
     run: RunId,
     deadline: Instant,
     before: Observed<Vec<Workload>>,
+    /// The admitted render's declarations, or why they cannot be read. Parsed
+    /// before the apply because the window resolves the image references it
+    /// declares on both sides of the one apply.
+    declared: Option<Result<BTreeMap<String, DeclaredService>, UnknownReason>>,
+    /// Every declared reference's exact image id immediately before the apply.
+    before_images: Option<Result<BTreeMap<String, String>, UnknownReason>>,
     apply_started: String,
     apply_started_at: DateTime<Utc>,
 }
 
 impl<'a> CreationWindow<'a> {
-    /// Take the inventory immediately before the apply and record its start.
+    /// Take the inventory and the declared references' image ids immediately
+    /// before the apply, and record its start.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn open(
         backend: &'a mut dyn EnvironmentBackend,
@@ -482,34 +517,47 @@ impl<'a> CreationWindow<'a> {
         deadline: Instant,
     ) -> Self {
         let before = backend.inventory_until(workdir, project, deadline);
+        // The render's declared references are resolved on this side of the
+        // apply too: the bind needs the tag's exact image id before *and* after
+        // it, so a tag that moves inside the window cannot pass.
+        let declared = render.map(declared_services);
+        let before_images = match declared.as_ref() {
+            Some(Ok(declared)) => Some(resolve_declared_images(
+                backend, workdir, deadline, declared,
+            )),
+            _ => None,
+        };
         let started = Utc::now();
         Self {
             backend,
             workdir,
             selection,
             project,
-            render,
             environment,
             run,
             deadline,
             before,
+            declared,
+            before_images,
             apply_started: stamp(started),
             apply_started_at: started,
         }
     }
 
-    /// Take the inventory immediately after the apply and build the receipt.
+    /// Take the inventory and the image ids immediately after the apply, then
+    /// build the receipt.
     pub(super) fn close(self, outcome: ApplyOutcome) -> Creation {
         let Self {
             backend,
             workdir,
             selection,
             project,
-            render,
             environment,
             run,
             deadline,
             before,
+            declared,
+            before_images,
             apply_started,
             apply_started_at,
         } = self;
@@ -540,7 +588,7 @@ impl<'a> CreationWindow<'a> {
             }
             Observed::Unknown(reason) => return Creation::Unproven(reason),
         };
-        let Some(render) = render else {
+        let Some(declared) = declared else {
             // No admitted render means no exact expected values for scope,
             // checkout, service or image, and the window refuses rather than
             // trust what a container reports about itself.
@@ -548,8 +596,22 @@ impl<'a> CreationWindow<'a> {
                 "the apply of run {run} has no admitted render, so no service, label or image expectation can be bound"
             )));
         };
-        let declared = match declared_services(render) {
+        let declared = match declared {
             Ok(declared) => declared,
+            Err(reason) => return Creation::Unproven(reason),
+        };
+        let before_images = match before_images {
+            Some(Ok(images)) => images,
+            Some(Err(reason)) => return Creation::Unproven(reason),
+            None => {
+                return Creation::Unproven(UnknownReason::Inconsistent(format!(
+                    "the apply of run {run} has no admitted render, so no image id could be resolved before it"
+                )))
+            }
+        };
+        let mut after_images = match resolve_declared_images(backend, workdir, deadline, &declared)
+        {
+            Ok(images) => images,
             Err(reason) => return Creation::Unproven(reason),
         };
         match receipt(
@@ -561,6 +623,8 @@ impl<'a> CreationWindow<'a> {
             run,
             project,
             &declared,
+            &before_images,
+            &mut after_images,
             &before,
             &after,
             &apply_started,
@@ -584,6 +648,8 @@ fn receipt(
     run: RunId,
     project: &str,
     declared: &BTreeMap<String, DeclaredService>,
+    before_images: &BTreeMap<String, String>,
+    after_images: &mut BTreeMap<String, String>,
     before: &[Workload],
     after: &[Workload],
     apply_started: &str,
@@ -603,25 +669,15 @@ fn receipt(
         }
     }
     let before_ids: BTreeSet<&str> = before.iter().map(|row| row.id.as_str()).collect();
-    let mut attached: Vec<String> = after
-        .iter()
-        .filter(|row| before_ids.contains(row.id.as_str()))
-        .map(|row| row.id.clone())
-        .collect();
-    attached.sort();
-    // Only an id absent before the apply and present after it appeared inside
-    // this window. Everything else was adopted and is never created here.
-    let candidates: Vec<&Workload> = after
-        .iter()
-        .filter(|row| !before_ids.contains(row.id.as_str()))
-        .collect();
-    let mut created: Vec<CreatedContainer> = Vec::with_capacity(candidates.len());
-    let mut services: BTreeSet<String> = BTreeSet::new();
-    // One image-table read per distinct declared reference: only the render's
-    // own references need resolving, because a container's identity must come
-    // from the engine, never from a reference it reports.
-    let mut images: BTreeMap<String, String> = BTreeMap::new();
-    for row in candidates {
+
+    // The created set is exact or the window proves nothing: after the apply
+    // the project holds exactly one container for every service the render
+    // declares, and none for anything else. An extra container is a target the
+    // apply did not converge on, a missing service means it did not converge,
+    // and two containers for one service are an ambiguity the window cannot
+    // attribute.
+    let mut after_by_service: BTreeMap<&str, Vec<&Workload>> = BTreeMap::new();
+    for row in after {
         let service = row
             .labels
             .get(COMPOSE_SERVICE_LABEL)
@@ -629,7 +685,7 @@ fn receipt(
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 inconsistent(format!(
-                    "container `{}` appeared in this window without a Compose service identity",
+                    "container `{}` in the inventory after the apply has no Compose service identity, so it is not a target the render declares",
                     row.id
                 ))
             })?;
@@ -643,6 +699,49 @@ fn receipt(
                 row.id
             )));
         }
+        if !declared.contains_key(service) {
+            return Err(inconsistent(format!(
+                "service `{service}` of container `{}` is not a service the admitted render declares, so the project holds a target this window did not expect",
+                row.id
+            )));
+        }
+        after_by_service.entry(service).or_default().push(row);
+    }
+    for service in declared.keys() {
+        match after_by_service.get(service.as_str()).map(Vec::len) {
+            Some(1) => {}
+            Some(count) => {
+                return Err(inconsistent(format!(
+                    "service `{service}` has {count} containers after the apply while the render declares exactly one target for it"
+                )))
+            }
+            None => {
+                return Err(inconsistent(format!(
+                    "service `{service}` has no container after the apply, so the project does not hold exactly the services the admitted render declares"
+                )))
+            }
+        }
+    }
+
+    let mut attached: Vec<String> = after
+        .iter()
+        .filter(|row| before_ids.contains(row.id.as_str()))
+        .map(|row| row.id.clone())
+        .collect();
+    attached.sort();
+    // Only an id absent before the apply and present after it appeared inside
+    // this window. Everything else was adopted and is never created here.
+    let candidates: Vec<&Workload> = after
+        .iter()
+        .filter(|row| !before_ids.contains(row.id.as_str()))
+        .collect();
+    let mut created: Vec<CreatedContainer> = Vec::with_capacity(candidates.len());
+    for row in candidates {
+        let service = row
+            .labels
+            .get(COMPOSE_SERVICE_LABEL)
+            .map(|value| value.trim())
+            .unwrap_or_default();
         // The render is the authority for every expected value below. A
         // container's own labels are only ever compared with it, never trusted.
         let expected = declared.get(service).ok_or_else(|| {
@@ -678,38 +777,38 @@ fn receipt(
                 row.id, row.image_reference
             )));
         }
-        // The reference is not the image: the backend's own image table turns
-        // the render's declared reference into the exact image id this
-        // container must carry, and the id the engine reports *for the
-        // container* — an immutable fact about that container, never a
-        // reference it happens to carry — must be that exact id.
+        // The exact image id the render's reference names on this backend,
+        // required to be the same immediately before and after the apply.
         let expected_image_id =
-            resolved_image_id(backend, workdir, deadline, &mut images, expected_image)?;
+            stable_image_id(service, expected_image, before_images, after_images)?;
         let reported_image = row.image.trim();
         if reported_image.is_empty() {
             return Err(inconsistent(format!(
-                "container `{}` created in this window reports no image id",
+                "container `{}` created in this window reports no image identity",
                 row.id
             )));
         }
-        // A reference the container reports is mutable: resolving it after the
-        // apply says where the tag points now, not which image this container
-        // was created from, so a retag inside the window would be invisible.
-        // Only an engine-reported id binds; otherwise the window refuses and
-        // names the missing engine API rather than mint a receipt from a
-        // mutable reference.
-        let actual_image_id = exact_image_id(reported_image).ok_or_else(|| {
-            inconsistent(format!(
-                "container `{}` reports image `{reported_image}` and {} exposes no immutable image id for it: \
-                 `inspect`, `inspect --mode=native` and `ps --format json` carry only the mutable reference, so a retag \
-                 inside this window would be invisible and the container cannot be bound to the render's image id `{expected_image_id}`",
-                row.id,
-                selection.kind.label()
-            ))
-        })?;
+        let (actual_image_id, image_id_source) = match exact_image_id(reported_image) {
+            // Docker: the engine reports the container's own immutable id.
+            Some(id) => (id, ImageIdSource::Reported),
+            // nerdctl: the engine reports only a reference, so the bind is the
+            // render's reference resolved on this same backend across the
+            // window, with the container required to report that reference.
+            None => {
+                if !reference_matches(expected_image, reported_image) {
+                    return Err(inconsistent(format!(
+                        "container `{}` reports image `{reported_image}` while the admitted render declares `{expected_image}` for service `{service}`, so it was not created from the render's image",
+                        row.id
+                    )));
+                }
+                let id =
+                    resolved_image_id(backend, workdir, deadline, after_images, reported_image)?;
+                (id, ImageIdSource::ResolvedByReference)
+            }
+        };
         if actual_image_id != expected_image_id {
             return Err(inconsistent(format!(
-                "container `{}` was created from image id `{actual_image_id}` while the admitted render declares `{expected_image}` for service `{service}`, which resolves to image id `{expected_image_id}` on this backend",
+                "container `{}` was created from image id `{actual_image_id}` while the admitted render declares `{expected_image}` for service `{service}`, which resolved to image id `{expected_image_id}` inside this window",
                 row.id
             )));
         }
@@ -726,30 +825,12 @@ fn receipt(
                 stamp(created_at)
             )));
         }
-        // One container per service: a second container for the service the
-        // candidate names is either a duplicate the window cannot attribute or
-        // a recreate that did not finish.
-        let sharing = after
-            .iter()
-            .filter(|other| {
-                other.labels.get(COMPOSE_SERVICE_LABEL) == row.labels.get(COMPOSE_SERVICE_LABEL)
-            })
-            .count();
-        if sharing != 1 {
-            return Err(inconsistent(format!(
-                "service `{service}` has {sharing} containers after the apply; a creation window names exactly one"
-            )));
-        }
-        if !services.insert(service.to_owned()) {
-            return Err(inconsistent(format!(
-                "two containers created in this window name service `{service}`"
-            )));
-        }
         created.push(CreatedContainer {
             container_id: row.id.clone(),
             service: service.to_owned(),
             image: row.image.clone(),
             image_id: actual_image_id,
+            image_id_source,
             image_reference: row.image_reference.clone(),
             created: row.created.clone(),
         });
@@ -771,7 +852,7 @@ fn receipt(
         attached,
         evidence: CreationEvidence {
             source: format!(
-                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}, bound to the admitted render, with the exact image ids resolved on the same backend",
+                "backend inventory of project `{project}` on {} (context `{}`) immediately before and after the one environment:apply of run {run}, bound to the admitted render, whose declared image references were resolved on the same backend immediately before and after that apply",
                 selection.kind.label(),
                 selection.context
             ),
@@ -815,6 +896,58 @@ fn resolved_image_id(
     };
     resolved.insert(reference.to_owned(), id.clone());
     Ok(id)
+}
+
+/// Every declared reference's exact image id, read once at this point in the
+/// window.
+///
+/// The window runs this immediately before the apply and again immediately
+/// after it: a tag that names a different image on the two sides has moved
+/// inside the window, and nothing the container reports can be bound to it.
+fn resolve_declared_images(
+    backend: &mut dyn EnvironmentBackend,
+    workdir: &Path,
+    deadline: Instant,
+    declared: &BTreeMap<String, DeclaredService>,
+) -> Result<BTreeMap<String, String>, UnknownReason> {
+    let mut resolved = BTreeMap::new();
+    for service in declared.values() {
+        let Some(image) = &service.image else {
+            continue;
+        };
+        resolved_image_id(backend, workdir, deadline, &mut resolved, image)?;
+    }
+    Ok(resolved)
+}
+
+/// The exact image id a service's declared reference names, required to be the
+/// same immediately before and after the apply.
+///
+/// A reference that resolved to one id before the apply and another after it
+/// moved inside the window, so no container can be bound to "the image the
+/// render declares": the window refuses and names both readings.
+fn stable_image_id(
+    service: &str,
+    declared_image: &str,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Result<String, UnknownReason> {
+    let before_id = before.get(declared_image).ok_or_else(|| {
+        inconsistent(format!(
+            "the image `{declared_image}` the admitted render declares for service `{service}` resolved to no image id before the apply"
+        ))
+    })?;
+    let after_id = after.get(declared_image).ok_or_else(|| {
+        inconsistent(format!(
+            "the image `{declared_image}` the admitted render declares for service `{service}` resolved to no image id after the apply"
+        ))
+    })?;
+    if before_id != after_id {
+        return Err(inconsistent(format!(
+            "the tag `{declared_image}` of service `{service}` moved inside this window: it resolved to image id `{before_id}` before the apply and `{after_id}` after it"
+        )));
+    }
+    Ok(before_id.clone())
 }
 
 /// Whether the container's image reference is the render's declared one.
@@ -964,21 +1097,22 @@ mod tests {
 
     /// A native trace, not a fake: the container below was created by
     /// `colima nerdctl --profile effigy -- compose -p … -f - up -d` on the
-    /// machine this task ran on (project `effigy-508-img-8004725814`, image
+    /// machine this task ran on (project `effigy-508-v4-8292789880`, image
     /// `alpine:3.19`), captured with `nerdctl inspect` and `nerdctl image
     /// inspect`, then removed.
     ///
     /// The engine's own bytes are the finding: nerdctl reports the container's
     /// image as a reference in `Image`/`Config.Image` and exposes no image id
-    /// for the container at all (the committed fixture has no `ImageID`, and no
-    /// field of the container record carries a digest), while `nerdctl image
-    /// inspect` on the same reference does answer an exact id. A reference is mutable, so resolving
-    /// it after the apply cannot prove which image the container was created
-    /// from — a retag inside the window would be invisible. The window therefore
-    /// refuses this real container and names the missing engine API, instead of
-    /// binding it to the id the tag happens to point at now.
+    /// for the container at all (no `ImageID`, and no field of the container
+    /// record carries a digest), while `nerdctl image inspect` on that same
+    /// reference answers one exact id both immediately before and immediately
+    /// after the apply. So the bind a nerdctl container can honestly support is
+    /// the render's declared reference resolved on this backend and stable
+    /// across the window, with the container reporting that reference — which
+    /// this proof takes from the real bytes and records as
+    /// `ResolvedByReference`, never as an engine-returned container image id.
     #[test]
-    fn a_native_nerdctl_container_cannot_bind_an_image_id_from_a_mutable_reference() {
+    fn a_native_nerdctl_container_binds_to_its_reference_resolved_stably_across_the_apply() {
         let rows = parse_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-compose.inspect.json"
@@ -992,15 +1126,13 @@ mod tests {
         );
         assert_eq!(
             row.image_reference, "docker.io/library/alpine:3.19",
-            "`Config.Image` is the same mutable reference"
+            "`Config.Image` is the same reference"
         );
         assert!(
             super::exact_image_id(&row.image).is_none(),
             "the reference is not an image id, so the container carries none"
         );
-        // The image table *can* answer an exact id for the reference — which is
-        // exactly why an id resolved through it cannot be attributed to the
-        // container: it says where the tag points now.
+        // The image table answered the same exact id before and after the apply.
         let image_id = parse_image_inspect(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/environment/colima-nerdctl-alpine-3.19.image.inspect.json"
@@ -1010,6 +1142,7 @@ mod tests {
             image_id, "sha256:6cf065f724d522cbb3e1898559cd88f015db8a1a4210d2d048a0853b69b57ba9",
             "the engine's own image id for alpine:3.19"
         );
+        let images = BTreeMap::from([("alpine:3.19".to_owned(), image_id.clone())]);
         let project = row.labels[PROJECT_LABEL].clone();
         let declared = BTreeMap::from([(
             "app".to_owned(),
@@ -1017,7 +1150,7 @@ mod tests {
                 labels: BTreeMap::from([
                     (MANAGED_LABEL.to_owned(), "true".to_owned()),
                     (PROJECT_LABEL.to_owned(), project.clone()),
-                    (SCOPE_LABEL.to_owned(), "508imgtrace".to_owned()),
+                    (SCOPE_LABEL.to_owned(), "508v4".to_owned()),
                     (
                         CHECKOUT_LABEL.to_owned(),
                         row.labels[CHECKOUT_LABEL].clone(),
@@ -1026,17 +1159,18 @@ mod tests {
                 image: Some("alpine:3.19".to_owned()),
             },
         )]);
-        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:28:00Z")
+        let started = chrono::DateTime::parse_from_rfc3339("2026-10-31T05:04:00Z")
             .expect("start")
             .with_timezone(&chrono::Utc);
-        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T04:29:00Z")
+        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-31T05:05:00Z")
             .expect("completion")
             .with_timezone(&chrono::Utc);
+        let mut after_images = images.clone();
         let mut backend = NativeImages {
             selection: selection(),
-            image_id,
+            image_id: image_id.clone(),
         };
-        let refused = super::receipt(
+        let receipt = super::receipt(
             &mut backend,
             Path::new("/fixtures/checkout"),
             Instant::now() + CREATION_WINDOW,
@@ -1045,26 +1179,39 @@ mod tests {
             effigy_kernel::id::RunId::new(1_760_000_000_000, [1; 10]).expect("run"),
             &project,
             &declared,
+            &images,
+            &mut after_images,
             &[],
             &rows,
-            "2026-10-31T04:28:00.000000000Z",
+            "2026-10-31T05:04:00.000000000Z",
             started,
             completed,
         )
-        .expect_err("a mutable reference is never an image id bind");
-        match refused {
-            effigy_kernel::observe::UnknownReason::Inconsistent(detail) => {
-                assert!(
-                    detail.contains("docker.io/library/alpine:3.19")
-                        && detail.contains("no immutable image id"),
-                    "{detail}"
-                );
-                assert!(
-                    detail.contains("retag"),
-                    "the refusal names the retag the reference cannot see: {detail}"
-                );
-            }
-            other => panic!("the window published `{other}` instead of refusing"),
-        }
+        .expect("the native container binds to its reference resolved across the window");
+        assert_eq!(receipt.created().len(), 1);
+        let created = &receipt.created()[0];
+        assert_eq!(created.container_id(), row.id);
+        assert_eq!(created.service(), "app");
+        assert_eq!(
+            created.image_reference(),
+            "docker.io/library/alpine:3.19",
+            "Compose records the resolved reference"
+        );
+        assert_eq!(
+            created.image(),
+            "docker.io/library/alpine:3.19",
+            "nerdctl reports the reference in `Image`"
+        );
+        assert_eq!(
+            created.image_id(),
+            image_id,
+            "the bound id is the reference resolved stably across the apply"
+        );
+        assert_eq!(
+            created.image_id_source(),
+            super::ImageIdSource::ResolvedByReference,
+            "recorded as resolved by reference, never as an engine-returned container id"
+        );
+        assert_eq!(created.created(), "2026-10-31T05:04:10.522659842Z");
     }
 }
