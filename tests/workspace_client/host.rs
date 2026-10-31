@@ -506,6 +506,18 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
                 "the session run names owner loss itself: {}",
                 summary_names(&session)
             );
+            // The detached host run names the SAME cause the session run does.
+            assert!(
+                matches!(
+                    host.as_ref().and_then(|summary| summary.workload.clone()),
+                    Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                        cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                        signal: None
+                    })
+                ),
+                "the detached host run names owner loss as well: {}",
+                summary_names(&host)
+            );
             break;
         }
         assert!(
