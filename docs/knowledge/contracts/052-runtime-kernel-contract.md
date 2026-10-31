@@ -1100,6 +1100,23 @@ with stdin on a terminal keeps it for the same reason: it takes that terminal's
 foreground lease. With stdin off a terminal there is no lease to take and the
 group is isolated like any other captured route. A PTY route already created its
 own session before this, and keeps taking its controlling terminal.
+
+Ruling (2026-10-31, Effigy Supervisor with the Oxide Supervisor): the eligible
+group's own session and the anchor's retirement with its group are the accepted
+fixes (effigy#520). What follows from them is narrow and does not change this
+contract's evidence rules: a pinned nested Oxide diagnostic against
+`proof:supervisor:qualify:diagnostic` still closes `UNCLOSED` with
+`census uncertain: N unvalidated rows`, that result is history, and it supplies no
+11/11 qualification and no census claim for this change. The remaining rows are
+the Oxide supervisor's own ancestor chain (Effigy runner, payload leader,
+sentinel, supervisor): those identities exist before the supervisor starts and are
+therefore not Effigy descendants it leaked. Oxide owns that separately, with a
+startup positive `(pid, start)` record of its ancestor chain excluded from its
+post-leader census and every other unreadable identity still `Unknown`; until
+that rule is qualified, Oxide natives run direct rather than under this wrapper.
+Nothing here licenses Effigy or any harness to drop an unexplained row: K6 still
+requires an empty group for closure, an unreadable process is still `Unknown`,
+and a killed-but-unreaped process is not closure.
 Before acknowledging the barrier, the blocked child forks an anchor inside
 its already-created process group (and its session for a PTY). A transient
 intermediate child reparents the anchor and is reaped before workload exec,
