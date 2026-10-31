@@ -559,6 +559,10 @@ pub(in crate::runner) struct ReservedPublicationPlan {
     deadline: PublicationDeadline,
     backend_label: String,
     render_digest: String,
+    /// The preflight live-compatibility evidence, frozen. The gated recheck must
+    /// observe exactly this value: a container that appeared, disappeared or was
+    /// replaced in between is a different fact, not a renewal of this one.
+    predecessor: PredecessorCompatibility,
 }
 
 impl std::fmt::Debug for ReservedPublicationPlan {
@@ -603,6 +607,12 @@ impl ReservedPublicationPlan {
     /// already have published exactly this one.
     pub(in crate::runner) fn render_digest(&self) -> &str {
         &self.render_digest
+    }
+
+    /// The frozen preflight live-compatibility evidence. The gated recheck must
+    /// observe exactly this value.
+    pub(in crate::runner) fn predecessor(&self) -> &PredecessorCompatibility {
+        &self.predecessor
     }
 
     /// The two frozen digests, for a test that must hand-build a decision no
@@ -746,7 +756,7 @@ pub(in crate::runner) fn plan(
     // Before anything applies: a container already running for this project is a
     // live predecessor, and this apply may recreate it. Only live Compose config
     // hashes prove the render cannot, so the guard asks the backend.
-    verify_live_predecessor(&local.policy, deadline, observation)?;
+    let predecessor = verify_live_predecessor(&local.policy, deadline, observation)?;
     deadline.remaining()?;
     Ok(Some(ReservedPublicationPlan {
         selected,
@@ -759,6 +769,7 @@ pub(in crate::runner) fn plan(
         deadline,
         backend_label: local.backend_label,
         render_digest: local.render_digest,
+        predecessor: predecessor.compatibility,
     }))
 }
 
@@ -770,13 +781,18 @@ pub(in crate::runner) fn plan(
 /// predecessor.
 #[derive(Debug)]
 pub(in crate::runner) struct PredecessorRecheck {
-    compared: usize,
+    compatibility: PredecessorCompatibility,
 }
 
 impl PredecessorRecheck {
     /// How many live containers were compared against the render's own hashes.
     pub(in crate::runner) fn compared(&self) -> usize {
-        self.compared
+        self.compatibility.compared()
+    }
+
+    /// The exact live facts this recheck verified.
+    pub(in crate::runner) fn compatibility(&self) -> &PredecessorCompatibility {
+        &self.compatibility
     }
 }
 
@@ -797,9 +813,7 @@ fn verify_live_predecessor(
         "workspace live predecessor",
     )?;
     deadline.remaining()?;
-    Ok(PredecessorRecheck {
-        compared: compatibility.compared(),
-    })
+    Ok(PredecessorRecheck { compatibility })
 }
 
 /// The budgeted recheck #452 invokes **under the activation gate, immediately
@@ -814,7 +828,35 @@ pub(in crate::runner) fn recheck_live_predecessor(
     plan: &ReservedPublicationPlan,
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<PredecessorRecheck, EnvError> {
-    verify_live_predecessor(&plan.policy, plan.deadline, observation)
+    let recheck = verify_live_predecessor(&plan.policy, plan.deadline, observation)?;
+    // The recheck must observe exactly the preflight facts. Two individually
+    // valid observations of different containers, or a container that appeared or
+    // disappeared since preflight, are a changed world: the frozen evidence no
+    // longer describes the stack this apply would protect.
+    if recheck.compatibility != plan.predecessor {
+        return Err(refused(format!(
+            "the live workspace predecessor changed between preflight and the gated recheck \
+             ({} before, {} now); stop what changed it and retry",
+            describe_compatibility(&plan.predecessor),
+            describe_compatibility(&recheck.compatibility),
+        )));
+    }
+    Ok(recheck)
+}
+
+fn describe_compatibility(compatibility: &PredecessorCompatibility) -> String {
+    match compatibility {
+        PredecessorCompatibility::NoPredecessor => "none running".to_owned(),
+        PredecessorCompatibility::Matches(containers) => format!(
+            "{} container(s) [{}]",
+            containers.len(),
+            containers
+                .iter()
+                .map(|(id, hash)| format!("{id}:{hash}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// Everything planning computes from local files, computed on one bounded worker.

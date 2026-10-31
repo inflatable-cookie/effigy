@@ -837,30 +837,103 @@ fn an_unbudgeted_live_predecessor_refuses() {
 }
 
 #[test]
-fn the_gated_recheck_refuses_a_predecessor_replaced_after_preflight() {
-    let observation = observation_checkout("predecessor-replaced");
+fn the_gated_recheck_refuses_two_valid_observations_of_different_containers() {
+    let observation = observation_checkout("predecessor-different-id");
     let artifact = produced_artifact(&observation.root, host_family());
-    let mut backend =
-        FakeBackend::colima().with_predecessor(matching_predecessor("0123456789abcdef"));
+    let mut backend = FakeBackend::colima().with_predecessor(PredecessorCompatibility::Matches(
+        vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())],
+    ));
     backend.artifact = Observed::Verified(artifact, evidence());
     let policy = rendered_policy(&observation.root);
     let plan = planned_in_home(&observation, &policy, &mut backend);
 
-    // Between the pre-decision read and the gated recheck a competing actor
-    // replaced the container: the recheck sees another full id / another hash.
-    backend.predecessor = Observed::Unknown(UnknownReason::Inconsistent(
-        "the live predecessor ownership or identity changed".into(),
-    ));
+    // Both observations are individually valid: a live container created from a
+    // compatible hash. They name different containers, so the world changed.
+    backend.predecessor = Observed::Verified(
+        PredecessorCompatibility::Matches(vec![(
+            OTHER_CONTAINER_ID.to_owned(),
+            "aaa111".to_owned(),
+        )]),
+        evidence(),
+    );
     let error = recheck_live_predecessor(&plan, &mut backend)
-        .expect_err("the gated recheck must refuse a replaced predecessor")
+        .expect_err("two different container ids are not the same predecessor")
         .to_string();
 
-    assert!(error.contains("predecessor is unknown"), "{error}");
+    assert!(error.contains("changed between preflight"), "{error}");
+}
 
-    // And the same recheck passes while the live stack still matches the render.
-    backend.predecessor = Observed::Verified(matching_predecessor("0123456789abcdef"), evidence());
+#[test]
+fn the_gated_recheck_refuses_a_predecessor_that_appeared_after_preflight() {
+    let observation = observation_checkout("predecessor-appeared");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+    assert_eq!(plan.predecessor, PredecessorCompatibility::NoPredecessor);
+
+    backend.predecessor = Observed::Verified(
+        PredecessorCompatibility::Matches(vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())]),
+        evidence(),
+    );
+    let error = recheck_live_predecessor(&plan, &mut backend)
+        .expect_err("absence becoming presence is a changed world")
+        .to_string();
+
+    assert!(error.contains("changed between preflight"), "{error}");
+}
+
+#[test]
+fn the_gated_recheck_refuses_a_predecessor_that_disappeared_after_preflight() {
+    let observation = observation_checkout("predecessor-disappeared");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima().with_predecessor(PredecessorCompatibility::Matches(
+        vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())],
+    ));
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+
+    backend.predecessor = Observed::Verified(PredecessorCompatibility::NoPredecessor, evidence());
+    let error = recheck_live_predecessor(&plan, &mut backend)
+        .expect_err("presence becoming absence is a changed world")
+        .to_string();
+
+    assert!(error.contains("changed between preflight"), "{error}");
+}
+
+#[test]
+fn the_gated_recheck_accepts_the_same_two_observations() {
+    let observation = observation_checkout("predecessor-same-twice");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima().with_predecessor(PredecessorCompatibility::Matches(
+        vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())],
+    ));
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+
+    backend.predecessor = Observed::Verified(
+        PredecessorCompatibility::Matches(vec![(CONTAINER_ID.to_owned(), "aaa111".to_owned())]),
+        evidence(),
+    );
     let verified = recheck_live_predecessor(&plan, &mut backend).expect("unchanged live stack");
     assert_eq!(verified.compared(), 1);
+    assert_eq!(verified.compatibility(), &plan.predecessor);
+}
+
+#[test]
+fn an_unchanged_absent_predecessor_still_rechecks() {
+    let observation = observation_checkout("predecessor-absent-twice");
+    let artifact = produced_artifact(&observation.root, host_family());
+    let mut backend = FakeBackend::colima();
+    backend.artifact = Observed::Verified(artifact, evidence());
+    let policy = rendered_policy(&observation.root);
+    let plan = planned_in_home(&observation, &policy, &mut backend);
+
+    let verified = recheck_live_predecessor(&plan, &mut backend).expect("still nothing running");
+    assert_eq!(verified.compared(), 0);
 }
 
 // ------------------------------------------------------- post-apply observation

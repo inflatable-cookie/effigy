@@ -803,6 +803,8 @@ fn parse_image_platform(image_inspect: &[u8]) -> Result<ObservedImagePlatform, S
     })
 }
 
+use crate::runner::workspace_command::provisioning::BoundedReadRefusal;
+
 /// What proves that applying one rendered policy cannot recreate a live
 /// predecessor of this environment.
 ///
@@ -847,6 +849,29 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
 
     let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
+    // Ownership resolution canonicalizes the checkout and reads its scope token:
+    // both are filesystem work that can stall, so it runs on the publication's
+    // bounded worker and an expired budget is unknown, never a held caller.
+    let owned_root = repo_root.to_path_buf();
+    let owned_policy = policy.clone();
+    let ownership = match crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "workspace-predecessor-ownership",
+        deadline,
+        move || {
+            effigy_containers::exec::OwnershipContext::resolve(&owned_root, &owned_policy)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        },
+    ) {
+        Ok(ownership) => ownership,
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::TimedOut) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "predecessor ownership".into(),
+            })
+        }
+        Err(crate::runner::workspace_command::provisioning::BoundedReadRefusal::Unavailable(
+            reason,
+        )) => return unknown(format!("the checkout's ownership is unproven: {reason}")),
+    };
     let rows = match effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
         policy,
@@ -871,6 +896,18 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
             Evidence::new("project inventory".into(), None).expect("fixed evidence"),
         );
     }
+    // Compose can only hash the render it can read. Before the one apply has
+    // published this closure, materialize the exact frozen bytes at the exact paths
+    // the apply will use (content-addressed, so the apply finds them present), all
+    // on the publication's bounded worker.
+    if let Err(refusal) = materialize_render_for_preflight(repo_root, policy, deadline) {
+        return match refusal {
+            BoundedReadRefusal::TimedOut => Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace render preflight".into(),
+            }),
+            BoundedReadRefusal::Unavailable(reason) => unknown(reason),
+        };
+    }
     let intended = match compose_service_config_hashes(repo_root, policy, deadline) {
         Ok(hashes) => hashes,
         Err(error) => {
@@ -878,10 +915,6 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
                 "this backend cannot report the render's Compose config hashes: {error}"
             ));
         }
-    };
-    let ownership = match effigy_containers::exec::OwnershipContext::resolve(repo_root, policy) {
-        Ok(ownership) => ownership,
-        Err(error) => return unknown(format!("the checkout's ownership is unproven: {error}")),
     };
     let mut compared = Vec::new();
     for row in running {
@@ -930,10 +963,91 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
         }
         compared.push((verified.id().to_owned(), live_hash));
     }
+    // Listing order is not evidence: two reads of the same stack must compare
+    // equal, so the frozen facts are ordered by container id.
+    compared.sort();
     Observed::Verified(
         PredecessorCompatibility::Matches(compared),
         Evidence::new("Compose config hash".into(), None).expect("fixed evidence"),
     )
+}
+
+/// Where one render's frozen closure must exist before Compose can hash it.
+///
+/// `policy.compose_files` already point into the render's content-addressed
+/// publication directory, which the one apply publishes through reconcile. A
+/// pre-apply backend computation therefore materializes the exact frozen bytes
+/// there first: same bytes, same relative paths, same project directory, so the
+/// hash describes the render the apply will actually run.
+fn materialize_render_for_preflight(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> Result<(), BoundedReadRefusal> {
+    let owned_root = repo_root.to_path_buf();
+    let owned_policy = policy.clone();
+    crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "workspace-render-preflight",
+        deadline,
+        move || materialize_render(&owned_root, &owned_policy),
+    )
+}
+
+fn materialize_render(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let Some(render) = policy.render.as_ref() else {
+        return Err(RunnerError::task_invocation(
+            "the workspace render has no frozen closure to exercise",
+        ));
+    };
+    let _ = repo_root;
+    for (relative, bytes) in render.closure.files() {
+        let path = render.path.join(relative);
+        match std::fs::read(&path) {
+            Ok(existing) if existing == *bytes => continue,
+            Ok(_) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "the render object `{}` already holds other bytes; the preflight never \
+                     replaces a published object",
+                    path.display()
+                )))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "cannot read the render object `{}`: {error}",
+                    path.display()
+                )))
+            }
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot create the render object directory `{}`: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        // Content-addressed and private: a temporary file in the same directory,
+        // renamed into place, so a concurrent reader sees one whole object.
+        let temporary = path.with_extension(format!("preflight-{}", std::process::id()));
+        std::fs::write(&temporary, bytes).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot stage the render object `{}`: {error}",
+                temporary.display()
+            ))
+        })?;
+        std::fs::rename(&temporary, &path).map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            RunnerError::task_invocation(format!(
+                "cannot publish the render object `{}`: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// The service -> config-hash map one rendered policy produces.

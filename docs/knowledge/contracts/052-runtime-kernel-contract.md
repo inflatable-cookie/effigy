@@ -3020,10 +3020,17 @@ predecessor** unless the live stack's own Compose config hashes equal the ones t
 render produces — the environment record's historical `desired` digest is *not*
 live evidence, a changed container id or hash refuses, and a backend that cannot
 report `compose config --hash` refuses rather than assuming compatibility. The same
-comparison is exposed as `recheck_live_predecessor(plan, observation)`, a budgeted
-typed recheck the caller invokes **under the activation gate immediately before the
-one Compose apply**, because the pre-decision read alone cannot see a container
-created, replaced or reconfigured in between;
+comparison is frozen in the plan (including "nothing running") and exposed as
+`recheck_live_predecessor(plan, observation)`, a budgeted typed recheck the caller
+invokes **under the activation gate immediately before the one Compose apply**: it
+re-observes and requires the *exact* frozen facts, so two individually valid
+observations of different containers, a container that appeared, and a container
+that disappeared all refuse. The pre-decision read alone cannot see any of that.
+The intended hash is computed from the frozen closure even before reconcile
+publishes it, by materializing that closure's exact bytes at the exact paths the
+apply reads (content-addressed, so the apply finds them present, and a differing
+object is never replaced), on the same bounded worker; ownership resolution
+(canonicalization plus the scope-token read) is bounded the same way;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`
 materialisation the decision and the published context share.
