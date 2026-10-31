@@ -23,9 +23,12 @@ Preferred widgets:
 - `bullet_list` for evidence/risk/action lists
 - `table` for list/report output
 - `summary` for command-level totals
-- `spinner` for a single long-running phase owned by a renderer call
-- `effigy_ui::steps::step` for progress a person watches as work moves on; see
-  section 6, which is the preferred API for new work
+- `effigy_ui::steps::live_step(source)` and `effigy_ui::steps::finish_line(...)`
+  for progress a person watches as work moves on; see section 6, which is the
+  only API for new work. The fixed-label spinner is gone —
+  `Renderer::spinner`, `SpinnerHandle` and `steps::step` no longer draw
+  anything, and `effigy lint:feedback` fails any site that builds one, directly
+  or through a wrapper.
 
 ## 3) Colour and Mode Controls
 
