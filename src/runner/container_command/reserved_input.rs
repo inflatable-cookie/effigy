@@ -62,7 +62,7 @@ use effigy_kernel::workspace_session::{
 
 use crate::runner::container_runtime_prep::{
     observed_image_platform, observed_predecessor_compatibility, ObservedImagePlatform,
-    PredecessorCompatibility,
+    PredecessorCompatibility, PredecessorObservation,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::workspace_client::context::{
@@ -181,7 +181,7 @@ pub(in crate::runner) trait ReservedBackendObservation {
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorCompatibility>;
+    ) -> Observed<PredecessorObservation>;
     /// The host-verified full container id of the primary service.
     fn binding(
         &mut self,
@@ -339,7 +339,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
-    ) -> Observed<PredecessorCompatibility> {
+    ) -> Observed<PredecessorObservation> {
         observed_predecessor_compatibility(policy.repo_root.as_path(), policy, deadline.at())
     }
 
@@ -779,9 +779,29 @@ pub(in crate::runner) fn plan(
 /// against the render's own Compose config hashes, so a caller can hold it as the
 /// proof that the one apply it is about to perform cannot recreate a live
 /// predecessor.
-#[derive(Debug)]
 pub(in crate::runner) struct PredecessorRecheck {
     compatibility: PredecessorCompatibility,
+    /// The verified seal this recheck produced. #452 publishes this exact receipt
+    /// with `EnvRun::publish_sealed_desired` under the gate, on the one apply.
+    seal: Option<crate::runner::container_runtime_prep::SealedRender>,
+}
+
+impl std::fmt::Debug for PredecessorRecheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PredecessorRecheck")
+            .field("compatibility", &self.compatibility)
+            .field("sealed", &self.seal.is_some())
+            .finish()
+    }
+}
+
+impl PredecessorRecheck {
+    /// The retained preflight seal, for the gated publication.
+    pub(in crate::runner) fn seal(
+        &self,
+    ) -> Option<&crate::runner::container_runtime_prep::SealedRender> {
+        self.seal.as_ref()
+    }
 }
 
 impl PredecessorRecheck {
@@ -808,12 +828,15 @@ fn verify_live_predecessor(
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<PredecessorRecheck, EnvError> {
     deadline.remaining()?;
-    let compatibility = verified(
+    let observed = verified(
         observation.predecessor(policy, deadline),
         "workspace live predecessor",
     )?;
     deadline.remaining()?;
-    Ok(PredecessorRecheck { compatibility })
+    Ok(PredecessorRecheck {
+        compatibility: observed.compatibility,
+        seal: observed.seal,
+    })
 }
 
 /// The budgeted recheck #452 invokes **under the activation gate, immediately

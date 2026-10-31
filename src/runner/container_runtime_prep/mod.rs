@@ -841,11 +841,18 @@ impl PredecessorCompatibility {
 /// Interpolation is not replayed: the hash is computed from the frozen rendered
 /// closure and the project, so a service config that depends on apply-time
 /// environment values can differ and refuses, which is the safe direction.
+pub(in crate::runner) struct PredecessorObservation {
+    pub(in crate::runner) compatibility: PredecessorCompatibility,
+    /// The verified receipt this observation sealed, retained for the one apply's
+    /// gated publication. The caller publishes it and nothing else.
+    pub(in crate::runner) seal: Option<SealedRender>,
+}
+
 pub(in crate::runner) fn observed_predecessor_compatibility(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     deadline: Instant,
-) -> effigy_kernel::observe::Observed<PredecessorCompatibility> {
+) -> effigy_kernel::observe::Observed<PredecessorObservation> {
     use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
 
     let unknown = |reason: String| Observed::Unknown(UnknownReason::Inconsistent(reason));
@@ -892,7 +899,10 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
         .collect::<Vec<_>>();
     if running.is_empty() {
         return Observed::Verified(
-            PredecessorCompatibility::NoPredecessor,
+            PredecessorObservation {
+                compatibility: PredecessorCompatibility::NoPredecessor,
+                seal: None,
+            },
             Evidence::new("project inventory".into(), None).expect("fixed evidence"),
         );
     }
@@ -968,7 +978,10 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
     // equal, so the frozen facts are ordered by container id.
     compared.sort();
     Observed::Verified(
-        PredecessorCompatibility::Matches(compared),
+        PredecessorObservation {
+            compatibility: PredecessorCompatibility::Matches(compared),
+            seal: Some(sealed),
+        },
         Evidence::new("Compose config hash".into(), None).expect("fixed evidence"),
     )
 }
@@ -1069,7 +1082,8 @@ fn seal_render_for_preflight(
     // The receipt names no canonical object; its private tree follows the
     // documented layout `staging/preflight-<token>/<digest>`. A wrong guess is
     // fail-closed: Compose cannot read it, so the guard refuses.
-    let sealed_root = root
+    let sealed_root = effigy_containers::environment::state_root(&cx, policy.repo_root.as_path())
+        .map_err(|error| BoundedReadRefusal::Unavailable(format!("{error}")))?
         .state_directory()
         .path()
         .join("staging")
