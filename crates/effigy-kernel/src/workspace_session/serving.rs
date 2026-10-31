@@ -580,9 +580,7 @@ impl SessionLaunch {
         }
         // One session has one listener and key: a second launch for a session
         // whose listener is already live refuses here instead of opening another.
-        let claim = session_run
-            .claim_session_launch()
-            .map_err(|refusal| refusal)?;
+        let claim = session_run.claim_session_launch()?;
         let state = std::sync::Arc::new(std::sync::Mutex::new(LaunchState {
             held: Some(Held {
                 listener: Some(listener),
@@ -912,6 +910,15 @@ impl SessionLaunch {
     /// is the only path that does, so a superseded session keeps its listener
     /// until its own settlement.
     pub fn release(self) {
+        release_state(&self.state);
+    }
+}
+
+impl Drop for SessionLaunch {
+    fn drop(&mut self) {
+        // A launch that is dropped without an explicit stop still gives the
+        // session back: its listener, key and one-owner claim are released, so a
+        // superseded or failed preparation never blocks the session's next one.
         release_state(&self.state);
     }
 }
