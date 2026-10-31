@@ -63,6 +63,7 @@ pub struct CreationReceipt {
     environment: ResourceId,
     run: RunId,
     project: String,
+    primary_service: String,
     engine: String,
     context: String,
     generation: u64,
@@ -73,6 +74,19 @@ pub struct CreationReceipt {
 }
 
 impl CreationReceipt {
+    pub fn workspace_id(&self) -> Option<&str> {
+        self.observed
+            .iter()
+            .find(|row| {
+                row.labels.get(COMPOSE_SERVICE_LABEL).map(String::as_str)
+                    == Some(self.primary_service.as_str())
+            })
+            .map(|row| row.id.as_str())
+    }
+
+    pub fn primary_service(&self) -> &str {
+        &self.primary_service
+    }
     /// Re-observe the complete attributed/attached inventory under the same
     /// activation gate. This receipt is still an inference scoped to that gate.
     pub fn reobserve(
@@ -89,11 +103,12 @@ impl CreationReceipt {
         }
         let mut current = match backend.inventory_until(&self.workdir, &self.project, deadline) {
             Observed::Verified(rows, _) => rows,
-            other => {
+            Observed::Absent(proof) => {
                 return Err(CreationRefusal::Unknown(format!(
-                    "inventory unavailable: {other:?}"
+                    "inventory unavailable: {proof}"
                 )))
             }
+            Observed::Unknown(reason) => return Err(CreationRefusal::Unknown(reason.to_string())),
         };
         let mut expected = self.observed.clone();
         current.sort_by(|left, right| left.id.cmp(&right.id));
@@ -179,6 +194,7 @@ pub struct CreationRequest<'a> {
     pub primary_service: &'a str,
     pub render: Option<&'a effigy_kernel::objects::Closure>,
     pub deadline: std::time::Instant,
+    pub(crate) required: bool,
     pub preflight: Option<&'a CreationPreflight>,
     pub compose_files: &'a [std::path::PathBuf],
 }
@@ -200,7 +216,7 @@ impl std::fmt::Display for CreationRefusal {
         match self {
             Self::Missing(detail) => write!(
                 f,
-                "the create response named a container the engine did not answer for: {detail}"
+                "the inventory did not answer the exact requested ID set: {detail}"
             ),
             Self::DuplicateService(service) => write!(
                 f,
@@ -303,7 +319,7 @@ impl StoredCreation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreationOutcome {
-    Attributed(CreationReceipt),
+    Attributed(Box<CreationReceipt>),
     Unproven { project: String, reason: String },
 }
 
@@ -340,16 +356,18 @@ pub(super) fn outcome(
             engine,
             context,
             project,
+            primary_service,
             created,
             attached,
             generation,
             observed,
             workdir,
             ..
-        } => CreationOutcome::Attributed(CreationReceipt {
+        } => CreationOutcome::Attributed(Box::new(CreationReceipt {
             environment: environment.clone(),
             run,
             project,
+            primary_service,
             engine,
             context,
             created,
@@ -357,7 +375,7 @@ pub(super) fn outcome(
             generation,
             observed,
             workdir,
-        }),
+        })),
         RecordedCreation::Unproven { project, reason } => {
             CreationOutcome::Unproven { project, reason }
         }
@@ -467,7 +485,7 @@ pub fn created_by(
         }
     }
     if let Some(reason) = unproven {
-        return Observed::Unknown(UnknownReason::NoBackendRecord(reason));
+        return Observed::Unknown(UnknownReason::Inconsistent(reason));
     }
     if let Some(run) = found {
         return Observed::Verified(
@@ -476,7 +494,7 @@ pub fn created_by(
                 .expect("fixed evidence"),
         );
     }
-    Observed::Unknown(UnknownReason::NoBackendRecord(
+    Observed::Unknown(UnknownReason::Inconsistent(
         "no gate-scoped attribution for this exact ID in the bounded journal history".into(),
     ))
 }

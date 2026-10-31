@@ -138,18 +138,26 @@ pub(in crate::runner) fn up<'a>(
         ))
     })?;
     let backend = super::backend(&policy.repo_root, policy);
+    let until = match ctx.cx.operation().deadline() {
+        effigy_kernel::ctx::Deadline::At(until) => until,
+        effigy_kernel::ctx::Deadline::Open(_) => {
+            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
+        }
+    };
+    let mut preflight_request = Up {
+        render: Some(&closure.closure),
+        project: &policy.project_name,
+        backend: &backend,
+        retention: request.retention,
+        workdir: &policy.repo_root,
+        primary_service: &policy.primary_service,
+        compose_files: &policy.compose_files,
+    }
+    .creation_request();
+    preflight_request.deadline = until;
     let preflight = effigy_containers::environment::CreationPreflight::observe(
         backend.adapter().as_mut(),
-        Up {
-            render: Some(&closure.closure),
-            project: &policy.project_name,
-            backend: &backend,
-            retention: request.retention,
-            workdir: &policy.repo_root,
-            primary_service: &policy.primary_service,
-            compose_files: &policy.compose_files,
-        }
-        .creation_request(),
+        preflight_request,
     )
     .map_err(|error| {
         owner_error(EnvError::Backend(BackendError::NotStarted(
@@ -160,7 +168,7 @@ pub(in crate::runner) fn up<'a>(
         &ctx.cx,
         ctx.root,
         &closure.closure,
-        std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET,
+        until,
     )
     .map_err(|error| owner_error(EnvError::Kernel(error)))?;
     let mut activation = match WorkspaceActivation::begin(
@@ -203,7 +211,7 @@ pub(in crate::runner) fn up<'a>(
         activation.environment_mut().recheck_creation(
             &reservation,
             backend.adapter().as_mut(),
-            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET,
+            until,
         )?;
 
         // The provider binds the apply's exact target/platform and stages the

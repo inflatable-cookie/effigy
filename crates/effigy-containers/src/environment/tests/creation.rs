@@ -33,7 +33,7 @@ fn labels() -> BTreeMap<String, String> {
     .map(|(k, v)| (k.into(), v.into()))
     .collect()
 }
-fn row(service: &str, byte: char) -> Workload {
+pub(in crate::environment) fn row(service: &str, byte: char) -> Workload {
     let mut labels = labels();
     labels.insert("com.docker.compose.project".into(), PROJECT.into());
     labels.insert("com.docker.compose.service".into(), service.into());
@@ -48,7 +48,7 @@ fn row(service: &str, byte: char) -> Workload {
         image_reference: "fixture:latest".into(),
     }
 }
-fn render(services: &[&str]) -> Closure {
+pub(in crate::environment) fn render(services: &[&str]) -> Closure {
     let services: BTreeMap<_, _> = services
         .iter()
         .map(|name| {
@@ -68,7 +68,7 @@ fn render(services: &[&str]) -> Closure {
     )
     .unwrap()
 }
-fn request(render: &Closure) -> CreationRequest<'_> {
+pub(in crate::environment) fn request(render: &Closure) -> CreationRequest<'_> {
     CreationRequest {
         workdir: Path::new("."),
         project: PROJECT,
@@ -76,22 +76,30 @@ fn request(render: &Closure) -> CreationRequest<'_> {
         compose_files: &[],
         render: Some(render),
         preflight: None,
+        required: true,
         deadline: Instant::now() + Duration::from_secs(30),
     }
 }
-struct Fake {
+#[derive(Debug)]
+pub(in crate::environment) struct Fake {
     selection: BackendSelection,
     inventories: VecDeque<Observed<Vec<Workload>>>,
     images: VecDeque<Observed<String>>,
     reads: usize,
+    deadlines: Vec<Instant>,
+    cancel_on_inventory: Option<CancelToken>,
+    inventory_delay: Duration,
 }
 impl Fake {
-    fn new(before: Vec<Workload>, after: Vec<Workload>) -> Self {
+    pub(in crate::environment) fn new(before: Vec<Workload>, after: Vec<Workload>) -> Self {
         Self {
             selection: selection(),
             inventories: [verified(before), verified(after)].into(),
             images: VecDeque::new(),
             reads: 0,
+            deadlines: Vec::new(),
+            cancel_on_inventory: None,
+            inventory_delay: Duration::ZERO,
         }
     }
 }
@@ -104,12 +112,18 @@ impl EnvironmentBackend for Fake {
     }
     fn inventory_until(&mut self, _: &Path, _: &str, deadline: Instant) -> Observed<Vec<Workload>> {
         self.reads += 1;
+        self.deadlines.push(deadline);
         assert!(Instant::now() < deadline);
+        if let Some(cancel) = self.cancel_on_inventory.take() {
+            cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
+        }
+        std::thread::sleep(self.inventory_delay);
         self.inventories
             .pop_front()
             .expect("unexpected inventory read")
     }
     fn image_id_until(&mut self, _: &Path, _: &str, deadline: Instant) -> Observed<String> {
+        self.deadlines.push(deadline);
         assert!(Instant::now() < deadline);
         self.images.pop_front().unwrap_or_else(|| verified(image()))
     }
@@ -239,24 +253,24 @@ fn journal_retry_never_reapplies_or_fabricates_a_later_receipt() {
         }
         let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
         let mut applies = 0;
-        let first = run
-            .create_with(&mut fake, &selection(), request(&render), || {
-                applies += 1;
-                Ok(())
-            })
-            .unwrap();
+        let first = run.create_with(&mut fake, &selection(), request(&render), || {
+            applies += 1;
+            Ok(())
+        });
         let reads = fake.reads;
-        assert_eq!(first.receipt().is_some(), readable);
-        let second = run
-            .create_with(&mut fake, &selection(), request(&render), || {
-                applies += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(first, second);
+        assert_eq!(first.is_ok(), readable);
+        let second = run.create_with(&mut fake, &selection(), request(&render), || {
+            applies += 1;
+            Ok(())
+        });
+        if readable {
+            assert_eq!(first.unwrap(), second.unwrap());
+        } else {
+            assert!(second.is_err());
+        }
         assert_eq!(applies, 1);
         assert_eq!(fake.reads, reads);
-        run.finish(true).unwrap();
+        run.finish(readable).unwrap();
     }
     assert!(matches!(
         created_by(&ctx.observe(), ctx.root, &stack.resource, PROJECT, &id('f')),
@@ -412,4 +426,365 @@ fn cancellation_during_apply_never_returns_a_receipt() {
         })
         .is_err());
     let _ = run.finish(false);
+}
+
+fn fresh_reservation(
+    ctx: &EnvContext<'_>,
+    stack: &EnvRef,
+) -> effigy_kernel::workspace_session::WorkspaceActivationReservation {
+    use effigy_kernel::workspace_session::*;
+    let inputs = PublishInputs {
+        artifact: ArtifactEvidence::Unselected {
+            image_reference: "fixture:latest".into(),
+            backend: "fixture".into(),
+        },
+        selection: effigy_kernel::id::Digest::of(b"selection"),
+        inputs_digest: effigy_kernel::id::Digest::of(b"inputs"),
+        target: TargetEvidence::Absent {
+            project: PROJECT.into(),
+            backend: "fixture".into(),
+        },
+        platform: None,
+        guest: Some(GuestContextInputs {
+            version: "0.15.0".into(),
+            protocol: 1,
+            host_user: "1000".into(),
+            checkout_id: stack.checkout.text(),
+            environment_resource: stack.resource.name().to_string(),
+            profile: "fixture".into(),
+            runtime: None,
+            vm_type: None,
+            routes: vec![],
+            sources: vec![],
+            paths: GuestPaths {
+                host_checkout: "/checkout".into(),
+                guest_checkout: "/workspace".into(),
+                workdir: "/workspace".into(),
+                user: "1000".into(),
+                home: "/home/worker".into(),
+            },
+        }),
+    };
+    match WorkspaceActivationReservation::decide(
+        &ctx.cx,
+        ctx.root,
+        &stack.resource,
+        &inputs,
+        Wait::FailFast,
+    )
+    .unwrap()
+    {
+        ActivationDecision::Activate(reservation) => *reservation,
+        _ => panic!("fresh reservation"),
+    }
+}
+
+#[test]
+fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_dependency_ids() {
+    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    for attached in [false, true] {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let render = render(&[PRIMARY, "database"]);
+        let reservation = fresh_reservation(&ctx, &stack);
+        let mut run =
+            EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
+                .unwrap();
+        let after = vec![row(PRIMARY, 'a'), row("database", 'b')];
+        let before = if attached { after.clone() } else { vec![] };
+        let mut fake = Fake::new(before, after);
+        run.create_with(&mut fake, &selection(), request(&render), || Ok(()))
+            .unwrap();
+        let candidate = |byte| {
+            verified(vec![TargetCandidate {
+                identity: ContainerIdentity {
+                    container_id: id(byte),
+                    vm_boot_id: "boot".into(),
+                    backend: "fixture".into(),
+                },
+                project: PROJECT.into(),
+                created_by: Some(run.id()),
+            }])
+        };
+        let dependency = candidate('b');
+        let workspace = candidate('a');
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a'), row("database", 'b')]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(run
+            .bind_target_observing(&reservation, dependency, &mut fake, deadline)
+            .is_err());
+        assert_eq!(
+            run.bind_target_observing(&reservation, workspace, &mut fake, deadline)
+                .is_ok(),
+            !attached
+        );
+        let _ = run.finish(false);
+    }
+}
+
+#[test]
+fn invalid_pre_inventory_refuses_before_the_one_apply() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    fake.inventories[0] = unknown();
+    let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    assert!(run
+        .create_with(&mut fake, &selection(), request(&render), || panic!(
+            "invalid precondition launched Compose"
+        ))
+        .is_err());
+    assert!(run
+        .create_with(&mut fake, &selection(), request(&render), || panic!(
+            "retry launched Compose"
+        ))
+        .is_err());
+    let _ = run.finish(false);
+}
+
+/// Process death releases the actual flock, with no generation rewrite. A
+/// journalled receipt remains history, never authority for a successor's target.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn attributed_apply_crash_releases_gate_without_fabricating_a_successor_receipt() {
+    use effigy_kernel::fault_injection::with_hook;
+    use effigy_kernel::gate::{Gate, GateState};
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::os::unix::process::ExitStatusExt;
+    const CHILD: &str = "EFFIGY_510_CREATION_CRASH";
+    const DIRECTORY: &str = "EFFIGY_510_CREATION_DIRECTORY";
+    if let Ok(boundary) = std::env::var(CHILD) {
+        let directory = PathBuf::from(std::env::var_os(DIRECTORY).unwrap());
+        let state = root(&directory);
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let render = render(&[PRIMARY]);
+        let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+        std::fs::write(directory.join("identity.json"), serde_json::to_vec(&serde_json::json!({"run": run.id().to_string(), "generation":run.fence().generation.get()})).unwrap()).unwrap();
+        let pause_directory = directory.clone();
+        let pause = move || {
+            std::fs::write(pause_directory.join("paused"), b"ready").unwrap();
+            loop {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+        let hook_boundary = boundary.clone();
+        with_hook(
+            move |point| {
+                if point == hook_boundary {
+                    pause();
+                }
+                Ok(())
+            },
+            || {
+                run.create_with(&mut fake, &selection(), request(&render), || {
+                    use std::io::Write;
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(directory.join("apply-count"))
+                        .unwrap()
+                        .write_all(b"apply\n")
+                        .unwrap();
+                    std::fs::write(
+                        directory.join("engine-row.json"),
+                        serde_json::to_vec(&row(PRIMARY, 'a')).unwrap(),
+                    )
+                    .unwrap();
+                    if boundary == "during" {
+                        std::fs::write(directory.join("paused"), b"ready").unwrap();
+                        loop {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                    Ok(())
+                })
+            },
+        )
+        .unwrap();
+        panic!("crash boundary was not reached");
+    }
+    for boundary in ["during", "EnvBackendAfter", "AppliedBefore", "AppliedAfter"] {
+        let fixture = home();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "environment::tests::creation::attributed_apply_crash_releases_gate_without_fabricating_a_successor_receipt", "--nocapture"])
+            .env(CHILD, boundary).env(DIRECTORY, fixture.path())
+            .current_dir(fixture.path()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn_owned().unwrap();
+        std::fs::write(fixture.path().join("child.pid"), child.id().to_string()).unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while !fixture.path().join("paused").exists() {
+            assert!(
+                Instant::now() < until,
+                "owned crash child did not reach {boundary}"
+            );
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "owned crash child exited before {boundary}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        assert!(matches!(
+            Gate::probe(&ctx.observe(), &state, &stack.resource),
+            Observed::Verified(GateState::Held(_), _)
+        ));
+        child.kill().unwrap();
+        let exit = child.wait().unwrap();
+        std::fs::write(fixture.path().join("child.exit"), exit.to_string()).unwrap();
+        assert_eq!(exit.signal(), Some(9));
+        assert!(matches!(
+            Gate::probe(&ctx.observe(), &state, &stack.resource),
+            Observed::Verified(GateState::Free, _)
+        ));
+        let identity: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture.path().join("identity.json")).unwrap())
+                .unwrap();
+        let run_id = identity["run"].as_str().unwrap().parse::<RunId>().unwrap();
+        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        assert_eq!(
+            reader
+                .resource(&stack.resource)
+                .verified()
+                .unwrap()
+                .generation
+                .get(),
+            identity["generation"].as_u64().unwrap(),
+            "gate release is not simulated by advancing generation"
+        );
+        let effects = effigy_kernel::run::effects(&reader, run_id)
+            .verified()
+            .unwrap()
+            .clone();
+        let effect = effects
+            .iter()
+            .find(|effect| effect.spec.kind == crate::environment::CREATE_EFFECT)
+            .unwrap();
+        if boundary == "AppliedAfter" {
+            assert!(
+                effect.receipt.is_some(),
+                "the completed receipt remains historical evidence"
+            );
+        } else {
+            assert!(
+                effect.receipt.is_none(),
+                "crash fabricated an attributed receipt"
+            );
+        }
+        drop(reader);
+        if let Ok(mut successor) = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast) {
+            // A retry of the dead activation's journal cannot be transplanted
+            // into this new run. Its inventory begins with the existing ID.
+            let existing: Workload = serde_json::from_slice(
+                &std::fs::read(fixture.path().join("engine-row.json")).unwrap(),
+            )
+            .unwrap();
+            let mut fake = Fake::new(vec![existing.clone()], vec![existing]);
+            let render = render(&[PRIMARY]);
+            let outcome = successor
+                .create_with(&mut fake, &selection(), request(&render), || Ok(()))
+                .unwrap();
+            assert!(outcome.created_ids().is_empty());
+            assert_eq!(outcome.receipt().unwrap().attached(), [id('a')]);
+            let _ = successor.finish(false);
+        }
+        assert_eq!(
+            std::fs::read_to_string(fixture.path().join("apply-count")).unwrap(),
+            "apply\n",
+            "crashed activation executed its apply more than once"
+        );
+    }
+}
+
+#[test]
+fn cancellation_or_expiry_during_pre_observation_never_launches_apply() {
+    for cancel_during_read in [true, false] {
+        let fixture = home();
+        let state = root(fixture.path());
+        let cancel = CancelToken::default();
+        let ctx = EnvContext::new(&state, cancel.clone()).unwrap();
+        let stack = env("stack");
+        let render = render(&[PRIMARY]);
+        let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+        let mut requested = request(&render);
+        if cancel_during_read {
+            fake.cancel_on_inventory = Some(cancel);
+        } else {
+            fake.inventory_delay = Duration::from_millis(40);
+            requested.deadline = Instant::now() + Duration::from_millis(20);
+        }
+        let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+        if !cancel_during_read {
+            requested.deadline = Instant::now() + Duration::from_millis(20);
+        }
+        assert!(run
+            .create_with(&mut fake, &selection(), requested, || panic!(
+                "stale pre-observation launched Compose"
+            ))
+            .is_err());
+        let _ = run.finish(false);
+    }
+}
+
+#[test]
+fn target_recheck_never_renews_the_callers_original_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let reservation = fresh_reservation(&ctx, &stack);
+    let mut run =
+        EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation).unwrap();
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    run.create_with(&mut fake, &selection(), request(&render), || Ok(()))
+        .unwrap();
+    fake.deadlines.clear();
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    let effigy_kernel::ctx::Deadline::At(original) = ctx.cx.operation().deadline() else {
+        panic!("bounded caller")
+    };
+    run.recheck_creation(&reservation, &mut fake, original + Duration::from_secs(60))
+        .unwrap();
+    assert!(!fake.deadlines.is_empty());
+    assert!(fake.deadlines.iter().all(|deadline| *deadline <= original));
+    let _ = run.finish(false);
+}
+
+#[test]
+fn ordinary_unsealed_apply_never_mints_a_weaker_workspace_receipt() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut requested = request(&render);
+    requested.required = false;
+    let mut applies = 0;
+    let outcome = run
+        .create_with(&mut fake, &selection(), requested, || {
+            applies += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert!(outcome.receipt().is_none());
+    assert!(outcome.unproven().is_some());
+    assert_eq!(applies, 1);
+    assert_eq!(fake.reads, 0);
+    run.finish(true).unwrap();
 }

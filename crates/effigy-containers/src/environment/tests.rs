@@ -73,11 +73,11 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 }
 
 mod adapters;
-mod creation;
+pub(in crate::environment) mod creation;
 mod faults;
 mod guest_publication;
 
-const PROJECT: &str = "acme-stack";
+pub(in crate::environment) const PROJECT: &str = "acme-stack";
 
 pub(super) fn home() -> effigy_test_support::Fixture {
     effigy_test_support::Fixture::new("effigy-environment-").expect("private home")
@@ -339,6 +339,7 @@ pub(super) fn create_request() -> crate::environment::CreationRequest<'static> {
         compose_files: &[],
         render: None,
         preflight: None,
+        required: false,
         deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
     }
 }

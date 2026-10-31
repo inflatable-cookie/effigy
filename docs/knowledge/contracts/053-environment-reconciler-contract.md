@@ -105,7 +105,9 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   manufactured success (R5).
 - **Creation inference.** A bring-up journals
   `environment:gate-scoped-id-difference` with the same permit, gate, retention
-  and one caller deadline. Complete before/after project inventories bind exact
+  and one caller deadline. Ordinary unsealed applies produce an explicit unproven
+  outcome; only the sealed workspace route may attribute creation. Complete
+  before/after project inventories bind exact
   full IDs to frozen service, project, managed, scope and checkout labels and
   immutable image identities. The post-apply service set must equal the frozen
   set; new IDs are created and pre-existing IDs stay attached. The record is

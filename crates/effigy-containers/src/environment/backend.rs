@@ -164,8 +164,16 @@ impl BackendSelection {
     }
 
     /// The program and arguments for one Compose invocation on this backend.
-    pub fn compose_invocation(&self, compose_args: &[OsString]) -> (OsString, Vec<OsString>) {
-        match self.kind {
+    pub fn compose_invocation(
+        &self,
+        compose_args: &[OsString],
+    ) -> Result<(OsString, Vec<OsString>), BackendError> {
+        if self.context.trim().is_empty() {
+            return Err(BackendError::NotStarted(
+                "the selected backend context is unreadable".into(),
+            ));
+        }
+        Ok(match self.kind {
             BackendKind::Colima => {
                 let mut args = vec![
                     OsString::from("nerdctl"),
@@ -176,10 +184,11 @@ impl BackendSelection {
                 args.extend(compose_args.iter().cloned());
                 (OsString::from("colima"), args)
             }
-            BackendKind::DockerDesktop | BackendKind::DockerEngine => {
-                (OsString::from("docker"), compose_args.to_vec())
-            }
-        }
+            BackendKind::DockerDesktop | BackendKind::DockerEngine => (
+                OsString::from("docker"),
+                docker_args(&self.context, compose_args),
+            ),
+        })
     }
 }
 
@@ -223,7 +232,8 @@ fn selection_for(engine: BackendId, profile: &str, reason: BackendReason) -> Bac
                     .ok()
                     .filter(|value| !value.trim().is_empty())
             })
-            .unwrap_or_else(|| "default".to_owned());
+            .or_else(crate::exec::docker_config_current_context)
+            .unwrap_or_default();
         BackendSelection {
             kind: docker_kind(),
             engine,
@@ -444,7 +454,7 @@ fn containers_by_id(
     let mut inspect = vec![OsString::from("inspect")];
     inspect.extend(ids.iter().map(OsString::from));
     let (program, args) = runtime_invocation(selection, &inspect);
-    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect created", &[]) {
+    match capture(workdir, &program, &args, "inspect by id", None) {
         Ok(output) => match parse_inspect(&output.stdout).and_then(|rows| exact_id_rows(ids, rows))
         {
             Ok(rows) => Verified::rows(rows, "backend inspect by id"),
@@ -643,11 +653,41 @@ fn inventory_until(
     match capture(workdir, &program, &args, "inspect project", deadline) {
         Ok(output) => {
             match parse_inspect(&output.stdout).and_then(|rows| exact_id_rows(&ids, rows)) {
-                Ok(rows) => Observed::Verified(
-                    rows,
-                    effigy_kernel::observe::Evidence::new("backend inspect".into(), None)
-                        .expect("fixed evidence"),
-                ),
+                Ok(rows) => {
+                    let (program, args) = runtime_invocation(selection, &ps);
+                    let closing = match capture(
+                        workdir,
+                        &program,
+                        &args,
+                        "recheck project membership",
+                        deadline,
+                    ) {
+                        Ok(output) => String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .map(str::trim)
+                            .filter(|line| !line.is_empty())
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>(),
+                        Err(error) => {
+                            return Observed::Unknown(read_reason(
+                                "recheck project membership",
+                                error,
+                            ))
+                        }
+                    };
+                    if unique_ids(&closing).is_err()
+                        || ids
+                            .iter()
+                            .map(|id| id.to_ascii_lowercase())
+                            .collect::<std::collections::BTreeSet<_>>()
+                            != closing.iter().map(|id| id.to_ascii_lowercase()).collect()
+                    {
+                        return Observed::Unknown(UnknownReason::Inconsistent(
+                            "project membership changed during inspection".into(),
+                        ));
+                    }
+                    Verified::rows(rows, "backend stable project inventory")
+                }
                 Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
             }
         }
@@ -664,6 +704,18 @@ fn capture(
     label: &str,
     deadline: Option<Instant>,
 ) -> Result<std::process::Output, crate::exec::ContainerExecError> {
+    if args.windows(2).any(|pair| {
+        (pair[0] == "--context" || pair[0] == "--profile" || pair[0] == "--host")
+            && pair[1].is_empty()
+    }) {
+        return Err(crate::exec::ContainerExecError::Launch {
+            command: label.into(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the selected backend context is unreadable",
+            ),
+        });
+    }
     match deadline {
         Some(deadline) => {
             crate::exec::run_backend_invocation_until(workdir, program, args, label, &[], deadline)
@@ -771,8 +823,7 @@ fn count_project_rows(
     ]
     .map(OsString::from);
     let (program, args) = runtime_invocation(selection, &args);
-    let output =
-        crate::exec::run_backend_invocation(workdir, &program, &args, "list project rows", &[])?;
+    let output = capture(workdir, &program, &args, "list project rows", None)?;
     Ok(non_empty_lines(&output.stdout))
 }
 
@@ -781,6 +832,16 @@ fn non_empty_lines(bytes: &[u8]) -> usize {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .count()
+}
+
+fn docker_args(context: &str, tail: &[OsString]) -> Vec<OsString> {
+    let endpoint = context.contains("://") || context.starts_with('/');
+    let mut args = vec![
+        OsString::from(if endpoint { "--host" } else { "--context" }),
+        OsString::from(context),
+    ];
+    args.extend_from_slice(tail);
+    args
 }
 
 fn runtime_invocation(
@@ -798,9 +859,10 @@ fn runtime_invocation(
             args.extend(tail.iter().cloned());
             (OsString::from("colima"), args)
         }
-        BackendKind::DockerDesktop | BackendKind::DockerEngine => {
-            (OsString::from("docker"), tail.to_vec())
-        }
+        BackendKind::DockerDesktop | BackendKind::DockerEngine => (
+            OsString::from("docker"),
+            docker_args(&selection.context, tail),
+        ),
     }
 }
 
@@ -935,7 +997,7 @@ mod tests {
         }
     }
 
-    /// The create response's ids are distinct full ids, and the engine answers
+    /// Requested IDs are distinct full IDs, and the engine answers
     /// exactly them, once each: a missing, extra, repeated or short answer is
     /// never a partial success.
     #[test]

@@ -1090,9 +1090,9 @@ fn annotate_environment_record(
         if let Some(creation) = creation {
             let object = environment.as_object_mut().expect("object");
             match creation.unproven() {
-                // Exactly the ids this activation's own engine create named. An
-                // unattributed apply reports no ids and says why, because it
-                // proves nothing either way (effigy#510).
+                // Only a complete gate-scoped inference reports created IDs.
+                // Ordinary unsealed applies and uncertain observations say why
+                // they provide no workspace attribution (effigy#510).
                 Some(reason) => {
                     object.insert(
                         "creation_unproven".to_owned(),

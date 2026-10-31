@@ -103,6 +103,7 @@ fn colima_adapter_targets_only_its_profile() {
                 "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),
             format!("nerdctl --profile fixture -- inspect {ID}"),
+            format!("nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
         ]
     );
     assert!(
@@ -136,9 +137,10 @@ fn docker_adapter_targets_only_the_docker_cli() {
         tools.calls("docker"),
         [
             format!(
-                "ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
+                "--context default ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),
-            format!("inspect {ID}"),
+            format!("--context default inspect {ID}"),
+            format!("--context default ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"),
         ]
     );
     assert!(
@@ -315,11 +317,11 @@ fn docker_selection() -> BackendSelection {
     }
 }
 
-/// The created container is read back by the exact name the create report
-/// printed, on the selected backend only, and the image id it runs is resolved
+/// The container is read back by its exact full ID on the selected backend
+/// only, and the image ID it runs is resolved
 /// on that same backend.
 #[test]
-fn a_created_container_is_read_back_by_name_on_both_backends() {
+fn a_container_is_read_back_by_full_id_on_both_backends() {
     for (label, selection, tool) in [
         ("colima", selection(), "colima"),
         ("docker", docker_selection(), "docker"),
@@ -479,4 +481,164 @@ fn inspection_is_bounded_by_the_callers_deadline() {
         ));
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
+}
+
+/// A new project member between listing and inspection invalidates the entire
+/// inventory, including a foreign container whose ownership labels are wrong.
+#[test]
+fn concurrent_project_membership_change_refuses_both_adapters() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let marker = workdir.join("listed-once");
+        std::fs::write(tools.bin.join(tool), format!(
+            "#!/bin/sh\ncase \" $* \" in\n *' ps '*) echo {ID}; if test -f '{}'; then echo {}; else touch '{}'; fi ;;\n *' inspect '*) cat '{}' ;;\nesac\n",
+            marker.display(), "d".repeat(64), marker.display(), workdir.join("inspect.json").display()
+        )).unwrap();
+        let mut backend = selected.adapter();
+        assert!(matches!(
+            backend.inventory_until(
+                workdir,
+                PROJECT,
+                std::time::Instant::now() + std::time::Duration::from_secs(10)
+            ),
+            Observed::Unknown(_)
+        ));
+    }
+}
+
+#[test]
+fn docker_context_and_endpoint_are_explicit_on_apply_and_observation() {
+    let tools = CreationTools::install();
+    let workdir = tools.logs.parent().unwrap();
+    for (context, flag) in [
+        ("named-fixture", "--context"),
+        ("unix:///fixture.sock", "--host"),
+    ] {
+        let mut selected = docker_selection();
+        selected.context = context.into();
+        let (_, argv) = selected
+            .compose_invocation(&["compose".into(), "up".into(), "-d".into()])
+            .unwrap();
+        assert_eq!(argv[0], flag);
+        assert_eq!(argv[1], context);
+        assert!(matches!(
+            selected.adapter().image_id_until(
+                workdir,
+                "fixture:latest",
+                std::time::Instant::now() + std::time::Duration::from_secs(10)
+            ),
+            Observed::Verified(_, _)
+        ));
+        assert!(tools
+            .calls("docker")
+            .iter()
+            .any(|call| call.starts_with(&format!("{flag} {context} image inspect"))));
+    }
+}
+
+/// Exercise the complete sealed before/apply/after protocol through each CLI
+/// adapter, rather than accepting a fake's preassembled Workload directly.
+#[test]
+fn sealed_id_difference_uses_both_cli_adapters_and_refuses_reference_only_container_images() {
+    use crate::environment::creation::{CreationPreflight, CreationRequest};
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        for reference_only in [false, true] {
+            let tools = CreationTools::install();
+            let workdir = tools.logs.parent().unwrap();
+            let created = workdir.join("created");
+            let program = workdir.join("bin").join(tool);
+            std::fs::write(&program, format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{tool}'\ncase \" $* \" in\n *' compose up -d '*) touch '{}' ;;\n *' image inspect '*) cat '{}' ;;\n *' ps '*) if test -f '{}'; then echo {ID}; fi ;;\n *' inspect '*) cat '{}' ;;\nesac\nexit 0\n",
+                tools.logs.display(), created.display(), tools.image.display(), created.display(), tools.inspect.display()
+            )).unwrap();
+            if reference_only {
+                let mut rows: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&tools.inspect).unwrap()).unwrap();
+                rows[0]["Image"] = "fixture:latest".into();
+                std::fs::write(&tools.inspect, serde_json::to_vec(&rows).unwrap()).unwrap();
+            }
+            let labels = serde_json::json!({
+                "com.effigy.managed":"true", "com.effigy.project":PROJECT,
+                "com.effigy.scope":"4677bfcb81da18054ef32e71aa3f3c29", "com.effigy.checkout":"/checkout"
+            });
+            let render = Closure::new([("compose.yml".into(), serde_json::to_vec(&serde_json::json!({"services":{"app":{"image":"fixture:latest","labels":labels}}})).unwrap())].into_iter().collect()).unwrap();
+            let state = root(workdir);
+            let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let stack = env("stack");
+            let mut adapter = selected.adapter();
+            let request = CreationRequest {
+                workdir,
+                project: PROJECT,
+                primary_service: "app",
+                compose_files: &[],
+                render: Some(&render),
+                preflight: None,
+                required: true,
+                deadline: std::time::Instant::now() + std::time::Duration::from_secs(20),
+            };
+            let preflight = CreationPreflight::observe(adapter.as_mut(), request).unwrap();
+            let seal = effigy_kernel::objects::Objects::seal_for_preflight(
+                &ctx.cx,
+                &state,
+                &render,
+                request.deadline,
+            )
+            .unwrap();
+            let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+            run.publish_sealed_desired(&seal, &render).unwrap();
+            let request = CreationRequest {
+                preflight: Some(&preflight),
+                ..request
+            };
+            let (program, argv) = selected
+                .compose_invocation(&["compose".into(), "up".into(), "-d".into()])
+                .unwrap();
+            let outcome = run.create_with(adapter.as_mut(), &selected, request, || {
+                crate::exec::run_backend_invocation(workdir, &program, &argv, "fixture apply", &[])
+                    .map(|_| ())
+                    .map_err(|error| BackendError::Uncertain(error.to_string()))
+            });
+            assert_eq!(outcome.is_ok(), !reference_only, "{tool}: {outcome:?}");
+            if !reference_only {
+                let outcome = outcome.unwrap();
+                let receipt = outcome.receipt().unwrap();
+                assert_eq!(receipt.created_ids().collect::<Vec<_>>(), [ID]);
+                receipt
+                    .reobserve(adapter.as_mut(), request.deadline)
+                    .unwrap();
+            }
+            assert_eq!(
+                tools
+                    .calls(tool)
+                    .iter()
+                    .filter(|call| call.contains("compose up -d"))
+                    .count(),
+                1
+            );
+            run.finish(!reference_only).unwrap();
+        }
+    }
+}
+
+#[test]
+fn unreadable_selected_context_refuses_without_launching_a_cli() {
+    let tools = CreationTools::install();
+    let workdir = tools.logs.parent().unwrap();
+    let mut selected = docker_selection();
+    selected.context.clear();
+    assert!(selected
+        .compose_invocation(&["compose".into(), "up".into()])
+        .is_err());
+    let mut backend = selected.adapter();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    assert!(matches!(
+        backend.inventory_until(workdir, PROJECT, deadline),
+        Observed::Unknown(_)
+    ));
+    assert!(matches!(
+        backend.image_id_until(workdir, "fixture:latest", deadline),
+        Observed::Unknown(_)
+    ));
+    assert!(tools.calls("docker").is_empty());
 }

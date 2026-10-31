@@ -399,12 +399,16 @@ impl Draft {
             files.insert(names[&path].clone(), bytes);
         }
         files.insert("inputs/manifest.toml".into(), manifest.as_bytes().to_vec());
+        let frozen_backend = crate::environment::select_backend(&policy.repo_root, policy);
         files.insert(
             "inputs/environment.json".into(),
             serde_json::to_vec(&serde_json::json!({
                 "repo_root":policy.repo_root,"name":policy.name,"profile":policy.profile,
                 "project_name":policy.project_name,"primary_service":policy.primary_service,
+                "compose_files":policy.compose_files.iter().map(|path| names[path].clone()).collect::<Vec<_>>(),
                 "backend":backend_name(backend),
+                "backend_id":frozen_backend.engine.as_str(),
+                "backend_context":frozen_backend.context,
             }))
             .map_err(error)?,
         );

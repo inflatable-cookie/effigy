@@ -191,10 +191,9 @@ fn evidence() -> effigy_kernel::observe::Evidence {
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
     repo_root: PathBuf,
-    /// What this bring-up's create recorded: a receipt sealed to its own
-    /// environment run, or the explicit absence of attribution when the backend
-    /// keeps no engine create response (effigy#510). `None` when the environment
-    /// was held and no apply ran.
+    /// The apply's creation evidence. Ordinary unsealed applies report an
+    /// unproven outcome; only the sealed workspace route can attribute IDs.
+    /// `None` when the environment was held and no apply ran.
     pub(in crate::runner) creation: Option<CreationOutcome>,
 }
 

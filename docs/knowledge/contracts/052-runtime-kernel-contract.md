@@ -3835,12 +3835,22 @@ only IDs absent before and present after can enter the created set. Image tag
 moves, reference-only container image identity, partial or failed apply, unknown
 journal state, expired deadlines, cancellation and gate loss grant no receipt.
 
+The sealed render records its exact Compose file inventory and order, backend
+ID and context in `inputs/environment.json`. Only those materialized files are
+Compose inputs; captured source fragments are not additional Compose documents.
+The owner verifies the checkout token, frozen metadata and input paths before
+apply. Ordinary unsealed container applies carry an explicit unproven outcome;
+they cannot mint this receipt. Missing managed/scope labels refuse workspace
+attribution, including environments configured to share runtime identity.
+
 The environment effect is `environment:gate-scoped-id-difference`. Its result
 retains the complete observed inventory and the reservation's environment
 generation. Retry reads this result without another apply. The publication owner
 rechecks that inventory under the gate and refuses a stale reservation before
-binding; the reserved-input boundary reobserves target/platform immediately before
-`bind_target`. Missing attribution is Unknown, not proof of no creator. Colima
+binding; the reserved-input boundary reobserves target/platform and the binding
+adapter rechecks the complete project/image inventory immediately before
+`bind_target`. Only this run's created workspace ID can satisfy an absent target;
+a caller-supplied creator run ID is never authority. Attached IDs remain attached. Missing attribution is Unknown, not proof of no creator. Colima
 currently refuses a reference-only container image result; deterministic fixtures
 are not native qualification.
 

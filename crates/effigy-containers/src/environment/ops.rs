@@ -25,7 +25,7 @@ pub struct Up<'a> {
     pub project: &'a str,
     pub backend: &'a BackendSelection,
     pub retention: Retention,
-    /// The checkout the engine create and its read-back run from.
+    /// The checkout the apply and its observations run from.
     pub workdir: &'a std::path::Path,
     /// The service the environment's declared workspace runs the guest binary
     /// in: the one container this activation must attribute (effigy#510).
@@ -34,10 +34,10 @@ pub struct Up<'a> {
     pub compose_files: &'a [std::path::PathBuf],
 }
 
-impl Up<'_> {
-    /// What one activation's engine create needs: the checkout, the project,
+impl<'a> Up<'a> {
+    /// What one apply observation needs: the checkout, the project,
     /// the workspace service and the render that declares it.
-    pub fn creation_request(&self) -> CreationRequest<'_> {
+    pub fn creation_request(&self) -> CreationRequest<'a> {
         CreationRequest {
             workdir: self.workdir,
             project: self.project,
@@ -45,6 +45,7 @@ impl Up<'_> {
             compose_files: self.compose_files,
             render: self.render,
             preflight: None,
+            required: false,
             deadline: Instant::now() + super::reconcile::RUN_BUDGET,
         }
     }
@@ -118,6 +119,7 @@ pub(super) fn reconcile_in(
         match sealed {
             Some((sealed, _)) => {
                 run.publish_sealed_desired(sealed, closure)?;
+                run.verify_compose_inputs(closure, request.compose_files, request.workdir)?;
             }
             None => {
                 run.publish_desired(closure)?;
@@ -154,6 +156,7 @@ pub(super) fn reconcile_in(
     let mut adapter = request.backend.adapter();
     let mut creation_request = request.creation_request();
     creation_request.preflight = sealed.map(|(_, preflight)| preflight);
+    creation_request.required = sealed.is_some();
     let creation = run.create_with(adapter.as_mut(), request.backend, creation_request, apply)?;
     Ok(BringUp {
         applied: match unreadable {

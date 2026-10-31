@@ -25,6 +25,39 @@ impl CreationPreflight {
         let render = request
             .render
             .ok_or_else(|| CreationRefusal::Unknown("preflight has no frozen render".into()))?;
+        if let Some(metadata) = render.files().get("inputs/environment.json") {
+            let metadata: serde_json::Value = serde_json::from_slice(metadata)
+                .map_err(|error| CreationRefusal::Unknown(error.to_string()))?;
+            if metadata
+                .get("project_name")
+                .and_then(|value| value.as_str())
+                != Some(request.project)
+                || metadata
+                    .get("primary_service")
+                    .and_then(|value| value.as_str())
+                    != Some(request.primary_service)
+                || metadata
+                    .get("repo_root")
+                    .and_then(|value| value.as_str())
+                    .map(std::path::Path::new)
+                    != Some(request.workdir)
+            {
+                return Err(CreationRefusal::Unknown(
+                    "workspace identity differs from the frozen render".into(),
+                ));
+            }
+            if metadata.get("backend_id").and_then(|value| value.as_str())
+                != Some(backend.selection().engine.as_str())
+                || metadata
+                    .get("backend_context")
+                    .and_then(|value| value.as_str())
+                    != Some(backend.selection().context.as_str())
+            {
+                return Err(CreationRefusal::Unknown(
+                    "backend identity differs from the frozen render".into(),
+                ));
+            }
+        }
         let declared = declared_services(render)
             .map_err(|error| CreationRefusal::Unknown(error.to_string()))?;
         let images = images(backend, request, &declared)?;
@@ -214,9 +247,16 @@ fn validate(
             || row
                 .labels
                 .get(COMPOSE_ONEOFF_LABEL)
-                .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                .is_none_or(|value| !value.eq_ignore_ascii_case("false"))
         {
             return Err(CreationRefusal::Service(row.name.clone()));
+        }
+        if expected.labels.get(MANAGED_LABEL).map(String::as_str) != Some("true")
+            || expected.labels.get(PROJECT_LABEL).map(String::as_str) != Some(request.project)
+        {
+            return Err(CreationRefusal::Service(
+                "frozen ownership is not this managed project".into(),
+            ));
         }
         for label in OWNERSHIP_LABELS {
             let value = expected
@@ -275,7 +315,25 @@ struct DeclaredService {
 /// one the apply used.
 fn declared_services(render: &Closure) -> Result<BTreeMap<String, DeclaredService>, UnknownReason> {
     let mut declared: BTreeMap<String, DeclaredService> = BTreeMap::new();
+    let selected: Option<Vec<String>> = render
+        .files()
+        .get("inputs/environment.json")
+        .map(|metadata| {
+            let metadata: serde_json::Value = serde_json::from_slice(metadata)
+                .map_err(|error| inconsistent(error.to_string()))?;
+            serde_json::from_value(metadata.get("compose_files").cloned().ok_or_else(|| {
+                inconsistent("frozen render has no Compose file inventory".into())
+            })?)
+            .map_err(|error| inconsistent(error.to_string()))
+        })
+        .transpose()?;
     for (path, bytes) in render.files() {
+        if selected
+            .as_ref()
+            .is_some_and(|selected| !selected.contains(path))
+        {
+            continue;
+        }
         let lower = path.to_ascii_lowercase();
         if !(lower.ends_with(".yml") || lower.ends_with(".yaml")) {
             continue;
