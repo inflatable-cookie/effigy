@@ -674,6 +674,14 @@ During v0.x, MINOR bumps may include breaking changes.
   thing it awaits instead of a runtime report that never comes. Each site's
   disposition is recorded in
   [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
+- **A managed pane keeps the colour its child would have drawn, and its log stays
+  plain.** A nested Cargo or Oxide producer receives the initiating pane's ANSI
+  capability and keeps its colour in the pane, while the canonical log,
+  `--json`, doctor, status and error readers keep sanitized plain text and never
+  interpret terminal controls. `NO_COLOR`, CI and an explicit colour preference
+  still win, and a pane without ANSI support, or one whose style window expired,
+  renders plain text. See
+  [guide 012](docs/guides/012-dev-process-manager-tui.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
   instead of a generic waiting spinner: `front [waiting: api starting]` while

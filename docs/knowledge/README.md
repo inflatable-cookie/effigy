@@ -10,9 +10,9 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Live progress sites and the feedback lint gate | [Live progress sites](architecture/036-live-progress-sites.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
 | Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
-| Runtime kernel (specified; workspace-session kernel interface implemented, client and transport not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
+| Runtime kernel (session kernel, guest client, pinned TLS transport, host channel seam and serving owner implemented; the production activation caller, the wider guest Observe surface and backend/consumer qualification are not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
-| Releases (config, `status` and `--plan` implemented; the Run is not) | [Release platform contract](contracts/054-release-platform-contract.md) |
+| Releases (config, `status`, `--plan` and the Run with checkpoints and receipts implemented for `tag` and `task` targets; native publish providers are v0.16) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
 | Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
 | Cargo routing and its recorded exceptions | [Cargo routes](cargo-routes.md) |

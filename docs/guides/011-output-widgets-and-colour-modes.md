@@ -45,6 +45,12 @@ Precedence:
 2. Otherwise, `EFFIGY_COLOR` applies.
 3. If unset, default is `auto`.
 
+A nested Cargo or Oxide producer Effigy starts inside a managed TUI pane is
+handed that pane's ANSI capability, so it keeps the colour it would have drawn
+on that terminal while its canonical log stays plain. `NO_COLOR`, CI and an
+explicit colour preference still win there too. See
+[guide 012](012-dev-process-manager-tui.md).
+
 Default palette:
 - Effigy uses a Gum-inspired default palette (soft neutral text with a vivid accent), while preserving semantic mappings (`info`, `success`, `warning`, `error`).
 
