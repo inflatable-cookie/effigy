@@ -109,6 +109,14 @@ pub(crate) struct DisposableActivation {
     pub(crate) capability: String,
     /// The TLS accept budget for the session's private listener.
     pub(crate) tls_budget_ms: u64,
+    /// Stop the listener immediately after announcing it, so the supervisor's
+    /// own loop meets the terminal refusal and must retire the session.
+    #[serde(default)]
+    pub(crate) fail_listener: bool,
+    /// A distinct environment name for a disposable host that shares a journal
+    /// with an earlier one, so each host activates its own generation.
+    #[serde(default)]
+    pub(crate) environment_suffix: String,
 }
 
 /// What one serving host announced to its front end: the committed session it
@@ -501,8 +509,14 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     session.event(event);
 
     let owner_lost = || watch.as_ref().map(|watch| watch.lost()).unwrap_or(false);
+    // Every way out of the loop retires the custody, so no path can leave the
+    // session's listener, key or run behind: a control failure is a listener
+    // failure for this purpose, not an early return.
     let end = loop {
-        let control = session.control(&mut run, &[])?;
+        let control = match session.control(&mut run, &[]) {
+            Ok(control) => control,
+            Err(_) => break RetirementCause::ListenerFailed,
+        };
         if control.stop.is_some() {
             break RetirementCause::Stopped;
         }
@@ -521,7 +535,24 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     };
 
     let cleanup = cleanup_budget();
-    let retired: Retired = service.retire_for(end, &cleanup, &mut adapter)?;
+    let retired: Retired = match service.retire_for(end, &cleanup, &mut adapter) {
+        Ok(retired) => retired,
+        Err(error) => {
+            // The release is already made (the retire stops the listener and
+            // wipes the key first); report the kernel's settle failure instead
+            // of closing this run as if the session had settled.
+            let _ = run.interrupt(
+                &cleanup,
+                WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                    signal: None,
+                },
+            );
+            let _ = run.settle(&cleanup, &mut adapter);
+            session.refused_message(error.category(), error.to_string());
+            return Err(error);
+        }
+    };
     match retired.cause {
         RetirementCause::Stopped | RetirementCause::Down | RetirementCause::Settled => {
             run.finish(WorkloadOutcome::Succeeded)?

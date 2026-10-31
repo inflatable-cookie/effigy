@@ -120,6 +120,22 @@ fn request(fixture: &effigy_test_support::Fixture, project: &std::path::Path) ->
     })
 }
 
+/// The same request with the disposable activation's listener stopped right
+/// after it is announced, so the supervisor's own loop meets a terminal refusal.
+fn failing_listener(request: &serde_json::Value) -> serde_json::Value {
+    let mut request = request.clone();
+    request["activation"]["fail_listener"] = serde_json::json!(true);
+    request
+}
+
+/// The same request for a host that shares a journal with an earlier one: its
+/// own environment generation, so it activates a distinct environment.
+fn successor(request: &serde_json::Value) -> serde_json::Value {
+    let mut request = request.clone();
+    request["activation"]["environment_suffix"] = serde_json::json!("recovery");
+    request
+}
+
 /// Run one initiating front end to completion, in its own process, and read the
 /// result it printed. `entry` selects the acknowledging or the abandoning mode.
 fn initiate(entry: &str, request: &serde_json::Value) -> serde_json::Value {
@@ -386,6 +402,153 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
             Instant::now() < until,
             "an owner-lost host released its listener"
         );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A listener failure retires the session exactly once instead of leaving it
+/// behind: the supervisor's own loop sees the terminal refusal, releases the
+/// custody and settles both runs.
+#[test]
+fn a_listener_failure_retires_the_session_once() {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving-failed").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = failing_listener(&request(&fixture, &project));
+
+    let result = initiate("__workspace-serving-fixture", &request);
+    let supervisor_run = run_of(&result, "supervisor_run");
+    let session_run = run_of(&result["published"], "session_run");
+    let endpoint = endpoint_of(
+        result["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let until = Instant::now() + Duration::from_secs(60);
+    loop {
+        let host = read_summary(&observe, &root, supervisor_run);
+        let session = read_summary(&observe, &root, session_run);
+        if matches!(
+            host.as_ref().map(|summary| summary.phase),
+            Some(Phase::Closed)
+        ) && matches!(
+            session.as_ref().map(|summary| summary.phase),
+            Some(Phase::Closed)
+        ) {
+            assert_eq!(
+                host.as_ref().and_then(|summary| summary.cleanup_complete),
+                Some(true),
+                "a listener-failure settle reports complete cleanup"
+            );
+            assert_eq!(
+                session
+                    .as_ref()
+                    .and_then(|summary| summary.cleanup_complete),
+                Some(true),
+                "the session it served reports complete cleanup"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "a listener failure left the session serving"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let until = Instant::now() + Duration::from_secs(10);
+    while TcpStream::connect_timeout(&endpoint, Duration::from_secs(1)).is_ok() {
+        assert!(
+            Instant::now() < until,
+            "a retired session released its listener"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// After an unacknowledged front end was settled, the same checkout admits a
+/// fresh host: the crash left no duplicate owner, and the successor serves. The
+/// two sessions are distinct runs, so nothing was resurrected.
+#[test]
+fn a_settled_crash_is_recovered_by_a_fresh_host() {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving-recovery").expect("fixture");
+    let state_home = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state_home).expect("state home");
+    std::fs::create_dir_all(&project).expect("project");
+    let request = request(&fixture, &project);
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+
+    // The crashed front end settles its host.
+    let crashed = initiate("__workspace-serving-fixture-abandon", &request);
+    let crashed_run = run_of(&crashed, "supervisor_run");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, crashed_run).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(Instant::now() < until, "the crashed host did not settle");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The successor starts, announces and serves in its own process.
+    let recovered = initiate("__workspace-serving-fixture", &successor(&request));
+    let successor_run = run_of(&recovered, "supervisor_run");
+    let successor_session = run_of(&recovered["published"], "session_run");
+    assert_ne!(
+        successor_run, crashed_run,
+        "recovery admits a new run, never the settled one"
+    );
+    let crashed_session = run_of(&crashed["published"], "session_run");
+    assert_ne!(
+        successor_session, crashed_session,
+        "a resolved crash is never resurrected from a fresh key"
+    );
+    let endpoint = endpoint_of(
+        recovered["published"]["endpoint"]
+            .as_str()
+            .expect("the published endpoint"),
+    );
+    assert!(
+        TcpStream::connect_timeout(&endpoint, Duration::from_secs(5)).is_ok(),
+        "the successor serves after the crashed host settled"
+    );
+
+    // Stop the successor through the kernel's own control path.
+    let supervisor = read_summary(&observe, &root, successor_run).expect("the successor run");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let stop = Request {
+        id: RunId::new(millis, [0x55; 10]).expect("a request id"),
+        run: successor_run,
+        expected: Fence {
+            resource: supervisor
+                .invocation
+                .as_ref()
+                .expect("the successor records its invocation")
+                .spec()
+                .owner
+                .clone(),
+            generation: supervisor.generation,
+        },
+        action: RequestAction::Stop,
+    };
+    run::request(&cx, &root, &stop).expect("the successor's stop is recorded");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        read_summary(&observe, &root, successor_run).map(|summary| summary.phase),
+        Some(Phase::Closed)
+    ) {
+        assert!(Instant::now() < until, "the successor did not settle");
         std::thread::sleep(Duration::from_millis(50));
     }
 }

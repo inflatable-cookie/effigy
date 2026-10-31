@@ -84,8 +84,20 @@ fn checkout(request: &ServingHostRequest) -> effigy_kernel::id::CheckoutId {
     )
 }
 
-fn environment_invocation(request: &ServingHostRequest) -> Result<ResolvedInvocation, RunError> {
-    let environment = super::serving_host::environment_resource(request)?;
+fn environment_name(request: &ServingHostRequest, disposable: &DisposableActivation) -> String {
+    if disposable.environment_suffix.is_empty() {
+        request.environment.clone()
+    } else {
+        format!("{}-{}", request.environment, disposable.environment_suffix)
+    }
+}
+
+fn environment_invocation(
+    request: &ServingHostRequest,
+    name: &str,
+) -> Result<ResolvedInvocation, RunError> {
+    let environment = effigy_kernel::id::ResourceId::environment(checkout(request), name)
+        .map_err(|error| RunError::refused(format!("the fixture environment: {error}")))?;
     let task = TaskId::new(
         checkout(request),
         "",
@@ -225,14 +237,16 @@ pub(crate) fn activate<'r>(
 ) -> Result<ServiceOwner<'r>, RunError> {
     let cleanup = cleanup_budget();
     let mut adapter = ServingSettlement;
-    let environment = super::serving_host::environment_resource(request)?;
+    let name = environment_name(request, disposable);
+    let environment = effigy_kernel::id::ResourceId::environment(checkout(request), &name)
+        .map_err(|error| RunError::refused(format!("the fixture environment: {error}")))?;
     let fence = Fence {
         resource: environment,
         generation: Generation::new(1),
     };
     // The environment's own run creates its row; the fixture then records the
     // same `active` publication an activation commit writes for this fence.
-    let environment_invocation = environment_invocation(request)?;
+    let environment_invocation = environment_invocation(request, &name)?;
     let environment_run = Run::begin(
         cx,
         root,
@@ -299,6 +313,17 @@ pub(crate) fn activate<'r>(
         .map_err(|error| RunError::refused(format!("the fixture publication: {error}")))?;
     let lease = bound.lease().clone();
     let _ = endpoint;
+    // The same switched-selection fence the production handoff applies. A
+    // disposable activation has no durable obligation by construction (that is
+    // why this variant exists only in a fixture build); the switchable fact it
+    // can have is the one the kernel requires before anything serves — a bound,
+    // qualified launch that published exactly this session's lease, which
+    // `ServiceOwner::retained` re-checks.
+    if let Err(refusal) = super::supervisor::committed_state(
+        effigy_kernel::workspace_session::SelectionState::Switched,
+    ) {
+        return Err(RunError::refused(refusal.to_string()));
+    }
     let server = serving_server(request, disposable, &session, pin, root)?;
     let owner = ServingOwner::new(
         supervisor,
@@ -309,6 +334,12 @@ pub(crate) fn activate<'r>(
         Arc::new(observe.clone()),
         root,
     );
-    ServiceOwner::retained(owner, session, lease)
-        .map_err(|error| RunError::refused(format!("the fixture custody: {error}")))
+    let mut service = ServiceOwner::retained(owner, session, lease)
+        .map_err(|error| RunError::refused(format!("the fixture custody: {error}")))?;
+    if disposable.fail_listener {
+        // Fault injection through the production loop: the custody's listener is
+        // stopped under the owner, so its next turn is a terminal refusal.
+        service.stop();
+    }
+    Ok(service)
 }
