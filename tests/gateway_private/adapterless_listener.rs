@@ -228,6 +228,70 @@ fn terminate_recorded_listener_children(fixture_root: &Path) {
     }
 }
 
+/// Every `gateway.identity` record under `dir`: the daemon PID with the boot and
+/// start identity Effigy wrote for it. Reads state only; nothing is signalled.
+fn recorded_gateway_daemons(dir: &Path, found: &mut Vec<RecordedListenerChild>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == ".git") {
+                continue;
+            }
+            recorded_gateway_daemons(&path, found);
+        } else if path
+            .file_name()
+            .is_some_and(|name| name == "gateway.identity")
+        {
+            let Some(record) = fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            else {
+                continue;
+            };
+            let (Some(pid), Some(boot)) =
+                (record["pid"].as_u64(), record["boot_identity"].as_str())
+            else {
+                continue;
+            };
+            let Ok(start) =
+                serde_json::from_value::<GatewayStartIdentity>(record["start_identity"].clone())
+            else {
+                continue;
+            };
+            found.push(RecordedListenerChild {
+                pid: pid as u32,
+                boot: boot.to_owned(),
+                start,
+            });
+        }
+    }
+}
+
+/// Signal the recorded gateway daemons that still hold their recorded identity,
+/// and their process groups, under the fixture root. Same identity rule as the
+/// listener children: a reused PID or changed boot is left alone.
+fn terminate_recorded_gateway_daemons(fixture_root: &Path) {
+    let mut daemons = Vec::new();
+    recorded_gateway_daemons(fixture_root, &mut daemons);
+    for daemon in daemons {
+        let Ok(live) = read_live_process_identity(daemon.pid) else {
+            continue;
+        };
+        if live.boot_identity != daemon.boot || live.start_identity != daemon.start {
+            continue;
+        }
+        let pid = nix::unistd::Pid::from_raw(daemon.pid as i32);
+        eprintln!(
+            "adapterless fixture stopped gateway daemon {} and its group",
+            daemon.pid
+        );
+        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+    }
+}
+
 /// The fixture directory goes away when this struct's `fixture` field drops,
 /// which is after this `Drop`. Stopping the daemon while its private root still
 /// exists is what keeps a suite sweep from finding an orphaned gateway; the
@@ -255,6 +319,9 @@ impl Drop for AdapterlessSetup {
         if let Err(error) = status {
             eprintln!("adapterless fixture could not stop its private gateway: {error}");
         }
+        // `down` can leave a daemon behind when its PID record is damaged, so
+        // the recorded daemon identity gets the same owned-identity sweep.
+        terminate_recorded_gateway_daemons(self.fixture.path());
     }
 }
 
@@ -1115,4 +1182,141 @@ fn managed_host_listener_adapter_env_is_supplied_and_the_report_is_never_read() 
         !report_path.exists(),
         "a stopped generation leaves no adapter report behind: {report_path:?}"
     );
+}
+
+/// A plain sleeper in its own process group, standing in for a listener
+/// generation the proof started. The test keeps its `Child`, so the exit status
+/// is reaped here and no zombie hides a survivor.
+fn spawn_owned_sleeper() -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    Command::new("sleep")
+        .arg("300")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn owned sleeper")
+}
+
+/// Record `child` in the listener state layout the fixture reads, with the
+/// identity the live process reports unless `start` overrides it.
+fn record_listener_child(
+    checkout: &Path,
+    child: &std::process::Child,
+    start: Option<GatewayStartIdentity>,
+) {
+    let live = read_live_process_identity(child.id()).expect("live identity of the sleeper");
+    let start = start.unwrap_or(live.start_identity);
+    let state = serde_json::json!({
+        "child_pid": child.id(),
+        "child_boot_identity": live.boot_identity,
+        "child_start_identity": start,
+    });
+    let dir = checkout.join(".effigy/runtime/host-processes/web/cleanup");
+    fs::create_dir_all(&dir).expect("listener state directory");
+    fs::write(dir.join("web.listener.json"), state.to_string()).expect("listener state");
+}
+
+/// Runs the same sweeps `AdapterlessSetup::drop` runs, so a panicking proof
+/// reaches the same cleanup on unwind.
+struct SurvivorSweep<'a>(&'a Path);
+
+impl Drop for SurvivorSweep<'_> {
+    fn drop(&mut self) {
+        terminate_recorded_listener_children(self.0);
+        terminate_recorded_gateway_daemons(self.0);
+    }
+}
+
+/// Failure path: a proof that panics after its generation is recorded must
+/// leave no descendant. The sleeper's PID, PGID and identity are logged so the
+/// evidence names the exact process that was stopped.
+#[test]
+fn managed_host_adapterless_cleanup_stops_a_recorded_survivor_when_the_proof_panics() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-cleanup");
+    fs::create_dir(&checkout).expect("cleanup checkout");
+    let mut child = spawn_owned_sleeper();
+    record_listener_child(&checkout, &child, None);
+    let mut daemon = spawn_owned_sleeper();
+    record_gateway_daemon(fixture.path(), &daemon);
+    for (role, proc) in [("listener child", &child), ("gateway daemon", &daemon)] {
+        let pid = proc.id();
+        let pgid = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid as i32)))
+            .expect("sleeper process group");
+        eprintln!("cleanup proof: {role} pid {pid} pgid {pgid}");
+        assert_eq!(pgid.as_raw() as u32, pid, "the {role} leads its own group");
+    }
+
+    let root = fixture.path().to_path_buf();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _sweep = SurvivorSweep(&root);
+        panic!("deliberate proof failure after the generation was recorded");
+    }));
+    assert!(unwound.is_err(), "the deliberate failure must unwind");
+
+    // SIGKILL is delivered before the sweep returns, but the kernel may take a
+    // moment to finish the exit, so poll for the reaped status briefly.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    for proc in [&mut child, &mut daemon] {
+        let status = loop {
+            if let Some(status) = proc.try_wait().expect("reap the sleeper") {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the unwinding sweep must stop every recorded sleeper"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&status),
+            Some(9),
+            "the sleeper ended by the sweep's SIGKILL: {status:?}"
+        );
+    }
+}
+
+/// Record `child` as a gateway daemon in the `gateway.identity` layout the
+/// private gateway writes.
+fn record_gateway_daemon(root: &Path, child: &std::process::Child) {
+    let live = read_live_process_identity(child.id()).expect("live identity of the daemon");
+    let record = serde_json::json!({
+        "format_version": 1,
+        "pid": child.id(),
+        "boot_identity": live.boot_identity,
+        "start_identity": live.start_identity,
+    });
+    let dir = root.join("private-gateway");
+    fs::create_dir_all(&dir).expect("private gateway state directory");
+    fs::write(dir.join("gateway.identity"), record.to_string()).expect("gateway identity");
+}
+
+/// Owned identity: a recorded PID whose live start identity no longer matches
+/// is someone else's process. The sweep must leave it running.
+#[test]
+fn managed_host_adapterless_cleanup_leaves_a_reused_pid_alone() {
+    let fixture = managed_host_fixture();
+    let checkout = fixture.path().join("checkout-reused");
+    fs::create_dir(&checkout).expect("reused checkout");
+    let mut child = spawn_owned_sleeper();
+    let live = read_live_process_identity(child.id()).expect("live identity of the sleeper");
+    let stale = match live.start_identity {
+        GatewayStartIdentity::Linux { .. } => GatewayStartIdentity::Linux { start_ticks: 0 },
+        GatewayStartIdentity::Macos { .. } => GatewayStartIdentity::Macos {
+            start_seconds: 0,
+            start_microseconds: 0,
+        },
+    };
+    record_listener_child(&checkout, &child, Some(stale));
+
+    terminate_recorded_listener_children(fixture.path());
+
+    assert!(
+        child.try_wait().expect("poll the sleeper").is_none(),
+        "a PID with a different start identity is not this fixture's process"
+    );
+    child.kill().expect("stop our own sleeper");
+    child.wait().expect("reap our own sleeper");
 }
