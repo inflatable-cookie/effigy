@@ -982,6 +982,8 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
 /// `Objects::publish_sealed_desired` under `Gate(Env)` can make those bytes
 /// canonical.
 pub(in crate::runner) struct SealedRender {
+    // Read by the handoff accessors below; the one apply consumes the receipt.
+    #[allow(dead_code)]
     /// The kernel's verified receipt. Retaining it keeps the private tree leased
     /// for as long as this value lives, and it is the only thing the approved
     /// publisher (`Objects::publish_sealed_desired`) will promote.
@@ -994,6 +996,7 @@ pub(in crate::runner) struct SealedRender {
     root: PathBuf,
 }
 
+#[allow(dead_code)] // The consuming caller (#452) reads these in its gated apply.
 impl SealedRender {
     /// The kernel receipt this preflight verified. The caller publishes it with
     /// `Objects::publish_sealed_desired` under `Gate(Env)`, on the one apply.
