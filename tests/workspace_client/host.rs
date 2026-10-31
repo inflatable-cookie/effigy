@@ -95,6 +95,10 @@ fn summary_names(summary: &Option<run::RunSummary>) -> &'static str {
         .and_then(|summary| summary.workload.as_ref())
     {
         Some(effigy_kernel::outcome::WorkloadOutcome::Succeeded) => "succeeded",
+        Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+            cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+            ..
+        }) => "cancelled:listener-failed",
         Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }) => "cancelled",
         Some(effigy_kernel::outcome::WorkloadOutcome::Failed { .. }) => "failed",
         Some(effigy_kernel::outcome::WorkloadOutcome::NotStarted) => "not-started",
@@ -461,12 +465,17 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
                 Some(true),
                 "an owner-loss settle reports complete cleanup"
             );
-            // Reported, not claimed: the session run's settled outcome is
-            // recorded in the PR, because `Run::interrupt` before
-            // `ServingOwner`'s settle does not carry the named cause into the
-            // settled outcome for a session run (see the task report).
-            eprintln!(
-                "session-run settled outcome after owner loss: {}",
+            assert!(
+                matches!(
+                    session
+                        .as_ref()
+                        .and_then(|summary| summary.workload.clone()),
+                    Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                        cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                        signal: None
+                    })
+                ),
+                "the session run names owner loss itself: {}",
                 summary_names(&session)
             );
             break;

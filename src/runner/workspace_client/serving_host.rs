@@ -572,11 +572,17 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             Ok(control) => control,
             Err(_) => break RetirementCause::ListenerFailed,
         };
-        if control.stop.is_some() {
-            break RetirementCause::Stopped;
-        }
+        // The kernel's own stop request can *be* the owner loss (its owning pipe
+        // ended), so the cause is read from the request rather than assumed, and
+        // a live owner check decides before a plain stop does.
+        let reported = control.stop;
         if owner_lost() && !session.detached() {
             break RetirementCause::OwnerLost;
+        }
+        match reported {
+            Some(effigy_kernel::ctx::StopCause::OwnerLost) => break RetirementCause::OwnerLost,
+            Some(_) => break RetirementCause::Stopped,
+            None => {}
         }
         match serve_turn(
             &mut service,

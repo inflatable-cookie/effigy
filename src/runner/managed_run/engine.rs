@@ -1236,6 +1236,7 @@ fn describe(cause: &StopCause) -> String {
             "the owning client went away (terminal closed or client killed)".to_owned()
         }
         StopCause::Signal(signal) => format!("the supervisor received signal {signal}"),
+        StopCause::ListenerFailed => "the session listener failed".to_owned(),
     }
 }
 

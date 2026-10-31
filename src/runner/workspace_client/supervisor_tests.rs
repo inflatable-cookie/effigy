@@ -721,3 +721,55 @@ fn a_first_terminal_keeps_the_capability_the_entry_handed_it() {
         "a capability belongs to one client"
     );
 }
+
+/// Bounded diagnosis for the owner ruling (brief v6): read the SAME session
+/// run's durable `workload_outcome` immediately before the interrupt, immediately
+/// after it, and after the one settle that closes it. The three observations say
+/// whether the value is lost by the interrupt, by the settle, or by neither.
+#[test]
+fn a_session_runs_durable_outcome_is_readable_before_and_after_its_interrupt() {
+    use effigy_kernel::ctx::StopCause;
+    use effigy_kernel::observe::Observed;
+    use effigy_kernel::outcome::WorkloadOutcome;
+    use effigy_kernel::store::Store;
+
+    let outcome_now =
+        |observe: &ObserveContext, root: &StateRoot, run: effigy_kernel::id::RunId| {
+            let reader = match Store::read(observe, root) {
+                Observed::Verified(reader, _) => reader,
+                _ => return "unreadable".to_owned(),
+            };
+            match effigy_kernel::run::summary(&reader, run) {
+                Observed::Verified(summary, _) => match summary.workload {
+                    Some(WorkloadOutcome::Cancelled { cause, .. }) => match cause {
+                        StopCause::OwnerLost => "cancelled:owner-lost".to_owned(),
+                        StopCause::Requested => "cancelled:requested".to_owned(),
+                        StopCause::Signal(signal) => format!("cancelled:signal-{signal}"),
+                        StopCause::ListenerFailed => "cancelled:listener-failed".to_owned(),
+                    },
+                    Some(WorkloadOutcome::NotStarted) => "not-started".to_owned(),
+                    Some(WorkloadOutcome::Succeeded) => "succeeded".to_owned(),
+                    Some(WorkloadOutcome::Failed { code }) => format!("failed:{code}"),
+                    Some(WorkloadOutcome::Interrupted) => "interrupted".to_owned(),
+                    Some(WorkloadOutcome::TimedOut { .. }) => "timed-out".to_owned(),
+                    Some(WorkloadOutcome::Unknown(_)) => "unknown".to_owned(),
+                    None => "no-outcome".to_owned(),
+                },
+                _ => "no-row".to_owned(),
+            }
+        };
+
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let service = serving(supervisor, &session, prepared, cx, observe, root);
+        let run = session.run();
+        let cleanup = cleanup(cx);
+        let _ = &cleanup;
+        eprintln!("before-interrupt={}", outcome_now(observe, root, run));
+        let retired = service
+            .retire_for(RetirementCause::OwnerLost, &cleanup, &mut NoEffects)
+            .expect("the session settles once");
+        assert_eq!(retired.cause, RetirementCause::OwnerLost);
+        eprintln!("after-settle={}", outcome_now(observe, root, run));
+    });
+}

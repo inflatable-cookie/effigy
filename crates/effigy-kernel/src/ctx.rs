@@ -32,6 +32,9 @@ pub enum StopCause {
     Signal(i32),
     Requested,
     OwnerLost,
+    /// The session's own listener ended: a custody failure, never an owner's
+    /// request. Additive so a settled session names what actually happened.
+    ListenerFailed,
 }
 
 /// First cancellation wins; clones share cancellation without global state.
@@ -86,6 +89,7 @@ impl std::fmt::Display for StopCause {
             Self::Signal(signal) => write!(f, "{}", crate::human::signal_name(*signal)),
             Self::Requested => f.write_str("a stop request"),
             Self::OwnerLost => f.write_str("the owning process exiting"),
+            Self::ListenerFailed => f.write_str("the session listener failing"),
         }
     }
 }

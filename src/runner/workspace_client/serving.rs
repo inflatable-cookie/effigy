@@ -420,7 +420,7 @@ where
             }
             RetirementCause::ListenerFailed => {
                 Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
-                    cause: effigy_kernel::ctx::StopCause::Requested,
+                    cause: effigy_kernel::ctx::StopCause::ListenerFailed,
                     signal: None,
                 })
             }
