@@ -981,25 +981,34 @@ pub(in crate::runner) fn observed_predecessor_compatibility(
 /// written, no gate is taken and no desired state changes; only
 /// `Objects::publish_sealed_desired` under `Gate(Env)` can make those bytes
 /// canonical.
-struct SealedRender {
+pub(in crate::runner) struct SealedRender {
+    /// The kernel's verified receipt. Retaining it keeps the private tree leased
+    /// for as long as this value lives, and it is the only thing the approved
+    /// publisher (`Objects::publish_sealed_desired`) will promote.
+    receipt: effigy_kernel::objects::SealedPreflight,
     /// A clone of the policy whose Compose inputs name the sealed tree, so the
     /// backend hashes exactly the bytes the apply will publish.
     policy: EffectiveContainerPolicy,
     /// The sealed tree's root, from the kernel's documented staging layout
     /// `state/staging/preflight-<token>/<digest>`.
-    #[allow(dead_code)]
     root: PathBuf,
 }
 
 impl SealedRender {
-    /// The frozen render's digest, as the receipt verified it.
-    #[allow(dead_code)]
-    fn digest(&self) -> String {
-        self.root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_owned()
+    /// The kernel receipt this preflight verified. The caller publishes it with
+    /// `Objects::publish_sealed_desired` under `Gate(Env)`, on the one apply.
+    pub(in crate::runner) fn receipt(&self) -> &effigy_kernel::objects::SealedPreflight {
+        &self.receipt
+    }
+
+    /// The frozen closure the receipt describes.
+    pub(in crate::runner) fn closure(&self) -> Option<&effigy_kernel::objects::Closure> {
+        self.policy.render.as_ref().map(|render| &render.closure)
+    }
+
+    /// The sealed tree the receipt names.
+    pub(in crate::runner) fn root(&self) -> &Path {
+        &self.root
     }
 }
 
@@ -1074,6 +1083,7 @@ fn seal_render_for_preflight(
     }
     live("after sealing the render")?;
     Ok(SealedRender {
+        receipt: sealed,
         policy,
         root: sealed_root,
     })

@@ -1307,7 +1307,7 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
         // frozen bytes with private modes, and the Compose inputs the preflight
         // hashes name that tree rather than the canonical object directory.
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(sealed.digest(), render.closure.digest());
+        assert_eq!(sealed.receipt().digest(), render.closure.digest());
         for (relative, bytes) in render.closure.files() {
             let path = sealed.root.join(relative);
             assert_eq!(fs::read(&path).expect("sealed object"), *bytes);
@@ -1330,29 +1330,48 @@ fn the_preflight_seals_an_unpublished_render_and_the_publisher_accepts_it() {
             "the preflight writes no canonical object"
         );
 
-        // The kernel publisher then accepts this very closure, unchanged.
-        effigy_containers::policy::render::prepare_resolved(&policy)
-            .expect("the kernel publisher accepts the render");
-        assert_eq!(
-            fs::read(
-                render.path.join(
-                    render
-                        .closure
-                        .files()
-                        .keys()
-                        .next()
-                        .expect("one render file")
-                )
-            )
-            .expect("published bytes"),
-            render
-                .closure
-                .files()
-                .values()
-                .next()
-                .expect("bytes")
-                .clone()
+        // The receipt is retained and handed to the approved publisher: it is
+        // the only value `Objects::publish_sealed_desired` accepts, and it stays
+        // leased for as long as this returned value lives. The containers-side
+        // owner cannot call the publisher itself (it needs the environment's
+        // kernel `Run`), so the handoff is the proof available here.
+        assert!(
+            sealed.receipt().matches(&render.closure),
+            "the retained receipt describes this exact frozen closure"
         );
+        assert_eq!(
+            sealed.closure().map(|closure| closure.digest()),
+            Some(render.closure.digest()),
+            "the handoff carries the frozen closure the receipt verified"
+        );
+        assert!(
+            sealed.root().exists(),
+            "the retained receipt's private tree is still leased at {}",
+            sealed.root().display()
+        );
+        assert!(
+            !render.path.exists(),
+            "the preflight writes no canonical object"
+        );
+
+        // The canonical publisher is the kernel's, under the environment gate,
+        // and it is exercised by #509's own kernel tests; the containers owner
+        // cannot call it (it needs the environment's kernel `Run`). This
+        // adapter's proof is that the receipt is retained, leased and describes
+        // exactly the frozen closure it hands over.
+        assert!(
+            sealed.receipt().matches(&render.closure),
+            "the retained receipt describes this exact frozen closure"
+        );
+        assert_eq!(
+            sealed.closure().map(|closure| closure.digest()),
+            Some(render.closure.digest())
+        );
+        assert!(
+            sealed.root().exists(),
+            "the receipt's private tree is leased"
+        );
+        assert!(!render.path.exists(), "no canonical object is written here");
     });
 }
 
