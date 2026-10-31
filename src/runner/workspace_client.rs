@@ -143,22 +143,39 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
     // issued, and two separate terminals are two clients even when they share a
     // login session. A terminal with no controlling tty falls back to its session;
     // with neither, the client is refused by name rather than sharing a file.
-    terminal_client_identity(controlling_terminal(), current_session())
+    let terminal = controlling_terminal();
+    let identity = terminal
+        .as_ref()
+        .map(|(name, device, inode)| (name.as_str(), *device, *inode));
+    terminal_client_identity(identity, current_session())
 }
 
 /// The identity one terminal's commands share: its controlling terminal when it
 /// has one, else its session, else a refusal.
 ///
-/// The terminal is identified by the *device* `/dev/tty` resolves to, not by an
-/// input descriptor: redirecting stdin (or stdout or stderr) leaves it unchanged,
-/// so every command in one terminal keeps the same identity, and two terminals
-/// are two devices and so two clients.
+/// The terminal is named by the *device* its controlling terminal actually is -
+/// `ttyname` of `/dev/tty` - and only falls back to the device numbers when the
+/// platform will not name it. A name is what distinguishes two terminals: several
+/// pty pairs can report the same `st_dev`/`st_ino`, so the numbers alone would let
+/// two terminals share one capability file. Redirecting stdin (or stdout or
+/// stderr) never changes either, because the answer comes from the controlling
+/// terminal, not from a descriptor.
 pub(crate) fn terminal_client_identity(
-    terminal: Option<(u64, u64)>,
+    terminal: Option<(&str, u64, u64)>,
     session: libc::pid_t,
 ) -> Result<String, RunnerError> {
-    if let Some((device, inode)) = terminal {
-        return Ok(format!("tty-{device:x}-{inode:x}"));
+    if let Some((name, device, inode)) = terminal {
+        if let Some(name) = std::path::Path::new(name)
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Ok(format!("tty-{name}"));
+            }
+        }
+        if device != 0 && inode != 0 {
+            return Ok(format!("tty-{device:x}-{inode:x}"));
+        }
     }
     if session >= 0 {
         return Ok(format!("terminal-{session}"));
@@ -170,13 +187,11 @@ pub(crate) fn terminal_client_identity(
     ))
 }
 
-/// The controlling terminal of this process, as its device and inode numbers.
-///
-/// `/dev/tty` is the process's controlling terminal whatever its descriptors
-/// point at, so a redirected stdin, stdout or stderr cannot change the answer.
-fn controlling_terminal() -> Option<(u64, u64)> {
+/// The controlling terminal of this process: its device name when the platform
+/// will give one, and its device and inode numbers.
+fn controlling_terminal() -> Option<(String, u64, u64)> {
     // SAFETY: open a fixed path with no flags that could take ownership of the
-    // terminal, and read the opened file's own metadata.
+    // terminal, then read that file's own name and metadata.
     let fd = unsafe {
         libc::open(
             c"/dev/tty".as_ptr(),
@@ -186,6 +201,16 @@ fn controlling_terminal() -> Option<(u64, u64)> {
     if fd < 0 {
         return None;
     }
+    let mut name = vec![0u8; 1024];
+    // SAFETY: ttyname_r writes at most name.len() bytes into the buffer for the
+    // open descriptor and retains no pointer.
+    let named = unsafe { libc::ttyname_r(fd, name.as_mut_ptr() as *mut libc::c_char, name.len()) };
+    let path = if named == 0 {
+        let end = name.iter().position(|byte| *byte == 0).unwrap_or(0);
+        String::from_utf8_lossy(&name[..end]).into_owned()
+    } else {
+        String::new()
+    };
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
     // SAFETY: fstat writes into the zeroed struct for the open descriptor.
     let result = unsafe { libc::fstat(fd, &mut stat) };
@@ -196,10 +221,10 @@ fn controlling_terminal() -> Option<(u64, u64)> {
     }
     let device = stat.st_dev as u64;
     let inode = stat.st_ino as u64;
-    if device == 0 || inode == 0 {
+    if path.is_empty() && (device == 0 || inode == 0) {
         return None;
     }
-    Some((device, inode))
+    Some((path, device, inode))
 }
 
 /// This process's session id, or a negative value when unavailable.

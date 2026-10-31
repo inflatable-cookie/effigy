@@ -415,9 +415,17 @@ pub fn client_identity() -> Result<String, String> {
     crate::runner::workspace_client::client_id().map_err(|error| error.to_string())
 }
 
-/// The identity a terminal at `tty` (or one with only a session) resolves. Kept
-/// behind the fixture feature so the terminal boundary is provable without a pty.
-pub fn terminal_identity(terminal: Option<(u64, u64)>, session: i64) -> Result<String, String> {
+/// The identity one controlling terminal (name plus device numbers) or one
+/// session-only client resolves. Kept behind the fixture feature so the terminal
+/// boundary is provable without a pty.
+pub fn terminal_identity(
+    name: Option<&str>,
+    device: u64,
+    inode: u64,
+    session: i64,
+) -> Result<String, String> {
+    let terminal = (name.is_some() || device != 0 || inode != 0)
+        .then(|| (name.unwrap_or_default(), device, inode));
     crate::runner::workspace_client::terminal_client_identity(terminal, session as libc::pid_t)
         .map_err(|error| error.to_string())
 }
