@@ -110,9 +110,14 @@ fn initiate_with(request_json: &str, detach: bool) -> Result<String, String> {
     let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
     let mut host = serving_host::start(&cx, &root, &request, &executable)
         .map_err(|error| format!("the launch: {error}"))?;
+    // A refused front end still leaves its supervisor settling in its own
+    // process; name that run so a proof can wait for the settle.
+    let supervisor_run = host.run();
     let published = host
         .await_serving(&cx, Duration::from_secs(120))
-        .map_err(|error| format!("the startup result: {error}"))?;
+        .map_err(|error| {
+            format!("the startup result: {error} (supervisor_run={supervisor_run})")
+        })?;
     let supervisor_run = if detach {
         host.detach(&cx)
             .map_err(|error| format!("the detach: {error}"))?

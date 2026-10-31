@@ -3957,7 +3957,7 @@ recorded contract change.
 | Counting | per file and construct, by a syntax-aware scanner, not a text grep; `#[cfg(test)]` items and `tests/` trees are reported separately and not gated |
 | Baseline | `config/kernel-ratchet.json`, created when the gate activates |
 | Gate | fails when a count rises or a new file and construct pair appears; also fails when a count falls without the baseline being lowered in the same change |
-| Accounted boundaries | `crates/effigy-containers/src/exec/process.rs` keeps one detached-invocation spawn (`std.process.Command.spawn`, 3) so `container up` can read the runtime's progress while it runs. It replaced the blocking `.status()` wait for that same invocation (`std.process.Command.status` 1 → 0), so no capability was added, only made observable (effigy#313). |
+| Accounted boundaries | `crates/effigy-containers/src/exec/process.rs` keeps one detached-invocation spawn (`std.process.Command.spawn`, 3) so `container up` can read the runtime's progress while it runs. It replaced the blocking `.status()` wait for that same invocation (`std.process.Command.status` 1 → 0), so no capability was added, only made observable (effigy#313). `crates/effigy-core/src/worktree_scope.rs` removes its own private staged sibling after a hard-link publish (`std::fs::remove_file` 1, effigy#501); no reader consults that sibling. |
 | Done | every product count is zero (lane "done when") |
 
 ### 12.5 Per-primitive obligations

@@ -757,12 +757,30 @@ fn an_unrecorded_switch_is_refused_not_served() {
             || stderr.contains("has not switched and been read back"),
         "the refusal names the missing switch: {stderr}"
     );
-    // The refused host exits on its own; let it finish before the fixture's
-    // journal directory is cleaned up.
-    let until = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(50));
-        break;
+    // The refused front end drops its host, which is owner loss: the detached
+    // supervisor settles in its own process. Wait for that settle before the
+    // fixture's journal directory is removed.
+    let run = stderr
+        .split("supervisor_run=")
+        .nth(1)
+        .and_then(|text| text.split(')').next())
+        .and_then(|text| text.parse::<RunId>().ok())
+        .expect("the refusal names its supervisor run");
+    let cx = effects();
+    let observe = observation();
+    let root = state_root(&cx, &state_home, &project);
+    let until = Instant::now() + Duration::from_secs(60);
+    loop {
+        match read_summary(&observe, &root, run) {
+            Some(summary) if summary.phase == Phase::Closed => break,
+            _ => {
+                assert!(
+                    Instant::now() < until,
+                    "the refused supervisor did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
     }
 }
 
