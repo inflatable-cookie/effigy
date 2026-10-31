@@ -168,11 +168,19 @@ fn detached_contender(request: &serde_json::Value) -> serde_json::Value {
     let output = child
         .wait_with_output()
         .expect("the contender process ends");
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
-        serde_json::json!({
-            "refused": true,
-            "reason": String::from_utf8_lossy(&output.stderr).to_string(),
-        })
+    // The proof only counts a contender that really ran and answered in the
+    // documented shape: a launch failure, a timeout, a decode error or any other
+    // process failure fails the proof instead of reading as a refusal.
+    assert!(
+        output.status.success(),
+        "the contender process must succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "the contender answered no readable result ({error}): {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
     })
 }
 
@@ -1101,11 +1109,14 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
     );
     // A command with no declared client and no terminal has no identity at all, so
     // it can neither read nor write a shared capability record.
+    // All three streams redirected: no descriptor is a terminal, so the command
+    // has no terminal identity at all (an inherited stderr would still be one).
     let bare = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("__workspace-serving-fixture-client")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env_remove("EFFIGY_WORKSPACE_CLIENT_ID")
         .output()
         .expect("the command process runs");
     assert!(

@@ -118,8 +118,9 @@ fn client_capability_path(client: &str) -> String {
 }
 
 /// The client this process acts for: the id the entry that opened its terminal
-/// exported, or this process's own id when it exported none. Anything that is
-/// not a plain name is refused before it can name a path.
+/// exported, or the terminal device one of this command's own descriptors points
+/// at. Anything that is not a plain name is refused before it can name a path,
+/// and a command with no terminal and no declared client has no identity.
 pub(crate) fn client_id() -> Result<String, RunnerError> {
     if let Some(declared) = std::env::var_os(CLIENT_ID_ENV) {
         let declared = declared.to_string_lossy();
@@ -138,12 +139,11 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
         return Ok(declared.into_owned());
     }
     // A terminal that was not opened by an entry still gets its own file rather
-    // than a shared one. Its identity is the terminal itself — the controlling
-    // tty — so every command in one terminal reuses the capability the first was
-    // issued, and two separate terminals are two clients even when they share a
-    // login session. A terminal with no controlling tty falls back to its session;
-    // with neither, the client is refused by name rather than sharing a file.
-    terminal_client_identity(None, current_session())
+    // than a shared one: the identity is the terminal DEVICE one of this
+    // command's own standard descriptors points at, so every command in one
+    // terminal reuses the capability the first was issued and a separate terminal
+    // is a separate client. A command with no terminal is refused by name.
+    terminal_client_identity(descriptor_terminal_device(), current_session())
 }
 
 /// The identity one terminal's commands share: the terminal DEVICE its own
@@ -154,10 +154,9 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
 ///
 /// The device number (`st_rdev`) is the one fact that identifies an individual
 /// terminal: every pty slave in a session can report the same filesystem inode and
-/// the same `ttyname` answer, while the device number is unique to the terminal.
-/// A command's own descriptors are asked first, so two independent pty pairs are
-/// two clients even when their controlling terminal is shared; `/dev/tty` is the
-/// fallback for a command whose descriptors are all redirected.
+/// the same `ttyname` answer, and `/dev/tty` has been measured answering the same
+/// device for distinct terminals, while a pty's own device number is unique to it.
+/// Only a descriptor is trusted, so nothing is inferred and nothing is shared.
 pub(crate) fn terminal_client_identity(
     terminal: Option<u64>,
     session: libc::pid_t,
@@ -184,12 +183,18 @@ pub(crate) fn terminal_client_identity(
 /// that identifies the individual terminal.
 fn descriptor_terminal_device() -> Option<u64> {
     for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        // SAFETY: isatty only inspects the descriptor's own terminal state.
+        if unsafe { libc::isatty(fd) } != 1 {
+            // A pipe, a file or `/dev/null` is a character device to fstat but
+            // not a terminal; only a terminal may name a client.
+            continue;
+        }
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
         // SAFETY: fstat writes into the zeroed struct for a borrowed descriptor.
         if unsafe { libc::fstat(fd, &mut stat) } != 0 {
             continue;
         }
-        if stat.st_rdev != 0 && (stat.st_mode & libc::S_IFMT) == libc::S_IFCHR {
+        if stat.st_rdev != 0 {
             return Some(stat.st_rdev as u64);
         }
     }
