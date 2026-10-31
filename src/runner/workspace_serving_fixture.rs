@@ -417,12 +417,9 @@ pub fn client_identity() -> Result<String, String> {
 
 /// The identity a terminal at `tty` (or one with only a session) resolves. Kept
 /// behind the fixture feature so the terminal boundary is provable without a pty.
-pub fn terminal_identity(tty: Option<&str>, session: i64) -> Result<String, String> {
-    crate::runner::workspace_client::terminal_client_identity(
-        tty.map(std::path::Path::new),
-        session as libc::pid_t,
-    )
-    .map_err(|error| error.to_string())
+pub fn terminal_identity(terminal: Option<(u64, u64)>, session: i64) -> Result<String, String> {
+    crate::runner::workspace_client::terminal_client_identity(terminal, session as libc::pid_t)
+        .map_err(|error| error.to_string())
 }
 
 /// Print this process's client identity.

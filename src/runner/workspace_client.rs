@@ -143,50 +143,63 @@ pub(crate) fn client_id() -> Result<String, RunnerError> {
     // issued, and two separate terminals are two clients even when they share a
     // login session. A terminal with no controlling tty falls back to its session;
     // with neither, the client is refused by name rather than sharing a file.
-    terminal_client_identity(controlling_terminal().as_deref(), current_session())
+    terminal_client_identity(controlling_terminal(), current_session())
 }
 
-/// The identity one terminal's commands share: its controlling tty when it has
-/// one, else its session, else a refusal.
+/// The identity one terminal's commands share: its controlling terminal when it
+/// has one, else its session, else a refusal.
+///
+/// The terminal is identified by the *device* `/dev/tty` resolves to, not by an
+/// input descriptor: redirecting stdin (or stdout or stderr) leaves it unchanged,
+/// so every command in one terminal keeps the same identity, and two terminals
+/// are two devices and so two clients.
 pub(crate) fn terminal_client_identity(
-    tty: Option<&std::path::Path>,
+    terminal: Option<(u64, u64)>,
     session: libc::pid_t,
 ) -> Result<String, RunnerError> {
-    if let Some(tty) = tty {
-        if let Some(name) = tty.file_name().and_then(|name| name.to_str()) {
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()) {
-                return Ok(format!("tty-{name}"));
-            }
-        }
+    if let Some((device, inode)) = terminal {
+        return Ok(format!("tty-{device:x}-{inode:x}"));
     }
     if session >= 0 {
         return Ok(format!("terminal-{session}"));
     }
     Err(RunnerError::task_invocation(
-        "this terminal has no controlling tty and no session identity; a capability is stored \
-         per terminal, so none is stored here - open the terminal with `effigy workspace` or run \
-         the command on the host",
+        "this process has no controlling terminal and no session identity; a capability is \
+         stored per terminal, so none is stored here - open the terminal with `effigy workspace` \
+         or run the command on the host",
     ))
 }
 
-/// The controlling terminal of this process, when it has one.
-fn controlling_terminal() -> Option<std::path::PathBuf> {
-    let mut buffer = vec![0u8; 1024];
-    // SAFETY: ttyname_r writes at most buffer.len() bytes for the fd and does not
-    // retain the pointer.
-    let result = unsafe {
-        libc::ttyname_r(
-            libc::STDIN_FILENO,
-            buffer.as_mut_ptr() as *mut libc::c_char,
-            buffer.len(),
+/// The controlling terminal of this process, as its device and inode numbers.
+///
+/// `/dev/tty` is the process's controlling terminal whatever its descriptors
+/// point at, so a redirected stdin, stdout or stderr cannot change the answer.
+fn controlling_terminal() -> Option<(u64, u64)> {
+    // SAFETY: open a fixed path with no flags that could take ownership of the
+    // terminal, and read the opened file's own metadata.
+    let fd = unsafe {
+        libc::open(
+            c"/dev/tty".as_ptr(),
+            libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
         )
     };
+    if fd < 0 {
+        return None;
+    }
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: fstat writes into the zeroed struct for the open descriptor.
+    let result = unsafe { libc::fstat(fd, &mut stat) };
+    // SAFETY: the descriptor was opened above and is not used again.
+    unsafe { libc::close(fd) };
     if result != 0 {
         return None;
     }
-    let end = buffer.iter().position(|byte| *byte == 0).unwrap_or(0);
-    let name = std::str::from_utf8(&buffer[..end]).ok()?;
-    Some(std::path::PathBuf::from(name))
+    let device = stat.st_dev as u64;
+    let inode = stat.st_ino as u64;
+    if device == 0 || inode == 0 {
+        return None;
+    }
+    Some((device, inode))
 }
 
 /// This process's session id, or a negative value when unavailable.

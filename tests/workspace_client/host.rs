@@ -1084,6 +1084,14 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
     let first = client_identity_of(&[]);
     let second = client_identity_of(&[]);
     assert_eq!(first, second, "a terminal's commands share one identity");
+    // Redirecting a command's input does not change its terminal identity, so a
+    // command run with a redirected stdin reuses the capability the terminal was
+    // issued rather than falling back to another client.
+    let redirected = client_identity_with_redirected_input(&[]);
+    assert_eq!(
+        first, redirected,
+        "a redirected stdin does not change the terminal's identity"
+    );
     assert!(
         first.starts_with("terminal-"),
         "the identity is the terminal's session, not the command's pid: {first}"
@@ -1091,14 +1099,12 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
 
     // Two DISTINCT terminals are two clients even in one session, and two
     // commands in one terminal are one client: the identity follows the terminal.
-    let first_tty =
-        effigy::workspace_serving_fixture::terminal_identity(Some("/dev/ttys001"), 4242)
-            .expect("a terminal identity");
-    let same_tty = effigy::workspace_serving_fixture::terminal_identity(Some("/dev/ttys001"), 4242)
+    let first_tty = effigy::workspace_serving_fixture::terminal_identity(Some((0x10, 0x20)), 4242)
         .expect("a terminal identity");
-    let second_tty =
-        effigy::workspace_serving_fixture::terminal_identity(Some("/dev/ttys002"), 4242)
-            .expect("a terminal identity");
+    let same_tty = effigy::workspace_serving_fixture::terminal_identity(Some((0x10, 0x20)), 4242)
+        .expect("a terminal identity");
+    let second_tty = effigy::workspace_serving_fixture::terminal_identity(Some((0x10, 0x21)), 4242)
+        .expect("a terminal identity");
     assert_eq!(first_tty, same_tty, "one terminal keeps one identity");
     assert_ne!(
         first_tty, second_tty,
@@ -1124,6 +1130,26 @@ fn two_commands_in_one_terminal_share_one_client_identity() {
     assert_eq!(declared, "terminal-a");
     assert_eq!(other, "terminal-b");
     assert_ne!(declared, first, "a declared client is not the ambient one");
+}
+
+/// The same command with its input redirected, as a shell pipeline does.
+fn client_identity_with_redirected_input(env: &[(&str, &str)]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command
+        .arg("__workspace-serving-fixture-client")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("the command process runs");
+    assert!(
+        output.status.success(),
+        "the command reported its client identity: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 fn client_identity_of(env: &[(&str, &str)]) -> String {
