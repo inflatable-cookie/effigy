@@ -86,6 +86,7 @@ fn start(root: &Path, task: &str, key: &RunKey, command: &str) -> std::thread::J
             args: &[],
             key: Some(&key),
             admission: None,
+            workspace_admission: None,
             cwd: None,
         })
         .expect("keyed run admitted");
@@ -134,6 +135,7 @@ fn unreadable_history_does_not_hide_verified_foreground_custody() {
         args: &[],
         key: None,
         admission: None,
+        workspace_admission: None,
         cwd: None,
     };
     let durable = TaskRun::begin(request()).expect("initialize durable layout");
@@ -449,6 +451,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
                     args: &[],
                     key: Some(&key),
                     admission: None,
+                    workspace_admission: None,
                     cwd: None,
                 })
             })
@@ -479,6 +482,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
+        workspace_admission: None,
         cwd: None,
     });
     assert!(
@@ -494,6 +498,7 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
         args: &[],
         key: Some(&key),
         admission: None,
+        workspace_admission: None,
         cwd: None,
     })
     .expect_err("a key never binds a second task");

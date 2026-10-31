@@ -525,10 +525,13 @@ home = "/home/vscode"
                         session.environment_generation().get().to_string(),
                         generation
                     );
+                    // A canonical channel credential: the serving facts keep
+                    // the exact bytes the guest presents, so publication
+                    // refuses any other shape.
                     Ok(WorkspaceEnrolmentCredential::new(
                         generation,
                         identity.container_id.clone(),
-                        "fixture-only-secret",
+                        "ab".repeat(32),
                     ))
                 }),
                 budget: Duration::from_secs(20),
@@ -830,6 +833,10 @@ fn recover_fixture<'a>(
     let mut owner = WorkspaceOwner {
         supervisor,
         session,
+        serving: crate::runner::workspace_client::ServingFacts::fixture(
+            &publication.channel.locator,
+            std::path::PathBuf::from("/workspace"),
+        ),
         channel: publication.channel,
         creation: None,
         effect: std::sync::Arc::new(ctx.cx.clone()),

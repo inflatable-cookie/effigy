@@ -4367,6 +4367,9 @@ fn a_selection_never_names_another_session_s_listener() {
     )
     .selection()
     .clone();
+    // The wrong-session launch below is judged on its session, not on this run's
+    // claim: one session keeps one live listener, so this one gives it back.
+    drop(launch);
     let elsewhere = SessionRef::new(
         run_id(226),
         plan.session().fence().clone(),
@@ -4613,6 +4616,8 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     // A selection whose context object names other bytes is not the receipt.
     let mut wrong = good.selection().clone();
     wrong.objects.context.digest = Digest::of(b"not the document");
+    // One session has one live listener: the earlier launch gives it back.
+    drop(launch);
     let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     assert!(
         SelectionReceipt::new(
@@ -5663,6 +5668,9 @@ fn a_context_document_for_another_activation_is_refused() {
         }
         assert!(invalid.validate().is_err());
     }
+    // One session has one live listener: release this test's launch before the
+    // document fixture takes the session's own listener again.
+    drop(good_launch);
     // The document a prepare would write for this activation, byte for byte.
     let base_document = context_document(
         &plan,

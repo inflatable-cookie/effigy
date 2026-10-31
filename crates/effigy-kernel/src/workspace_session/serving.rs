@@ -488,6 +488,9 @@ struct LaunchState {
     bound: Option<ChannelBound>,
     guest: Option<GuestLocator>,
     served: bool,
+    /// This session run's live-listener claim, released with the launch so a
+    /// successor may claim the session again after this one stops.
+    claim: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 #[derive(Debug)]
@@ -585,6 +588,7 @@ impl SessionLaunch {
             bound: None,
             guest: None,
             served: false,
+            claim: None,
         }));
         // The session run is the custody: settling it takes the listener and the
         // key away, so a settled session neither serves nor keeps a socket open.
@@ -812,11 +816,35 @@ impl SessionLaunch {
     /// whose session run is no longer open.
     pub fn serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
         self.require_live_owner(session_run)?;
+        {
+            // One session is served through one owner: a second launch that asks
+            // to serve the same session refuses here instead of dispatching on a
+            // second listener and key under one session's custody.
+            let state = self.lock();
+            if state.claim.is_none() {
+                drop(state);
+                return self.claim_and_serve(session_run);
+            }
+        }
         let mut state = self.lock();
         if state.bound.is_none() {
             return Err(ServingRefusal::Unqualified);
         }
         state.live_bound()?;
+        state.served = true;
+        Ok(())
+    }
+
+    /// Claim the session's one serving owner and mark this launch serving.
+    fn claim_and_serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
+        let claim = session_run.claim_session_launch()?;
+        let mut state = self.lock();
+        if state.bound.is_none() {
+            claim.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(ServingRefusal::Unqualified);
+        }
+        state.live_bound()?;
+        state.claim = Some(claim);
         state.served = true;
         Ok(())
     }
@@ -907,6 +935,15 @@ impl SessionLaunch {
     }
 }
 
+impl Drop for SessionLaunch {
+    fn drop(&mut self) {
+        // A launch that is dropped without an explicit stop still gives the
+        // session back: its listener, key and one-owner claim are released, so a
+        // superseded or failed preparation never blocks the session's next one.
+        release_state(&self.state);
+    }
+}
+
 /// Drop the listener and the key, closing the socket and wiping the secret.
 fn release_state(state: &std::sync::Arc<std::sync::Mutex<LaunchState>>) {
     let mut state = match state.lock() {
@@ -916,6 +953,9 @@ fn release_state(state: &std::sync::Arc<std::sync::Mutex<LaunchState>>) {
     state.owned = false;
     state.bound = None;
     state.served = false;
+    if let Some(claim) = state.claim.take() {
+        claim.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
     if let Some(mut held) = state.held.take() {
         if let Some(mut listener) = held.listener.take() {
             listener.stop();

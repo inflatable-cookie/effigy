@@ -37,6 +37,32 @@ During v0.x, MINOR bumps may include breaking changes.
   environment values remain protected.
   Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
   explicit colour preferences, NO_COLOR and CI.
+- Workspace publication now freezes one typed serving value (host negotiation, session
+  fence, TLS pin, host checkout and the narrow enrolment secret) from the strict v2
+  document, the committed selection receipt and the session-owned qualified channel,
+  and cross-checks every one of those equalities before the environment commit and the
+  selector switch. A document, receipt, selection or locator that disagree refuse
+  publication instead of serving a connection under mismatched facts; a serving owner
+  retains the value for the session's life and its debug output redacts the secret.
+
+- A workspace channel reservation now reaches exactly the run it reserved: the
+  dispatcher's `AdmissionTicket` travels unchanged through the engine supervisor into
+  the task run, which admits it with `Run::begin_admitted` under the ticket's own id and
+  never mints, swaps or re-begins one. Engine-internal, standalone, nested, caller-keyed
+  and shared-lock run shapes refuse a ticket before any effect instead of admitting a
+  second run; ordinary runs keep their existing admission path.
+
+- A container-mode guest reads host authority credentials only after the pinned
+  peer verified: the client checks the context's server pin and negotiates the
+  protocol first, then presents a capability or the enrolment credential whose
+  bytes must match the digest the strict context pins. A mispinned peer receives
+  no handshake and causes no credential read.
+- Container-mode guest-local reads are served from the one strict v2 workspace
+  context the host publishes: task lists, source pins, version and checkout
+  reads come from that document and its pinned checkouts, and a guest selects it
+  only after independently observing its own container identity. v1 context
+  bytes refuse instead of being reinterpreted, and a local read admits nothing
+  and enrols nothing.
 
 - Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
 
@@ -204,6 +230,57 @@ During v0.x, MINOR bumps may include breaking changes.
 - Project container inventories refuse incomplete, duplicate or replaced full-ID
   inspect answers. Docker and Colima adapters also expose inventory and image
   inspection under one caller deadline; expired reads launch no engine process.
+- **A workspace session's custody can live in a detached process.** A serving
+  host supervisor starts before the session run is adopted or the listener
+  exists, performs the activation in its own process, announces the committed
+  session over the kernel's bounded engine-event channel, and then keeps that
+  same run, listener, key, grant book and admitted clients while it serves and
+  settles exactly once. The initiating command only launches it and reads the
+  result: an absent acknowledgement is an error, an unacknowledged detach is the
+  kernel's owner-loss path, and no dropped local owner is reported as success.
+  The container-up producer stays #452's (`ContainerUp` refuses by name in this
+  head); the process-lifetime proof runs the same launcher with the disposable
+  activation the `workspace-serving-fixture` feature compiles in, so it proves
+  process custody and not container-mode preparation. One session serves through
+  one owner: a second launch for a session whose listener is already live refuses
+  at the kernel boundary, and the claim is released only when that launch stops
+  or settles. An unacknowledged detach is the kernel's owner-loss path, which
+  stops serving and settles instead of claiming the session.
+
+- **A workspace terminal keeps its own capability, and a session's service has
+  recovery, down and retirement seams.** A guest capability is now stored per
+  client (`/run/effigy/client/capabilities/<client>`, 0600 in a 0700 directory,
+  named by `EFFIGY_WORKSPACE_CLIENT_ID` or the process's own id) instead of one
+  shared file, so no terminal can present or overwrite another's authority; the
+  capability an enrolment mints is kept once the host accepts it, and a record
+  from another session generation is never presented, and the entry that opens
+  the first terminal can stage that terminal's own 0600 record in guest-private
+  storage so it never re-enrols. A session's custody may only hand off when its
+  durable selection is *switched* (every selector and object read back at its
+  committed value): a pending or abandoned commit refuses before anything is
+  adopted. `recover_before_service`
+  completes a Pending selection through the kernel's own `recover_selection`
+  before custody serves (completed, still unproven or disproven, with only
+  positive evidence completing it), `ServiceOwner::down` answers a down with the
+  kernel's own coordination (naming only this session's children, refusing a
+  foreign holder), and `ServiceOwner::retire_for` names why a session ended
+  while taking the same single release and settle.
+
+- **A committed workspace session's service outlives the call that selected it.**
+  `workspace_client::supervisor` binds the container-up handoff to a durable
+  owner: `ServingHandoff` accepts only the committed selected session (the
+  launch must have published exactly the lease its `SelectionReceipt` froze,
+  for that session, with its key still in custody) and moves the adopted
+  supervisor, prepared listener, validated facts and admitted clients into
+  `ServiceOwner`, which keeps them across the selecting call's return and
+  serves until the session stops, its owner is lost or its custody refuses.
+  `ServiceOwner::retire` stops the listener, wipes the key and settles the
+  session through its own close transaction exactly once; an interrupted
+  handoff closes its prepared candidate and reports it instead of claiming
+  custody, and `discover` names the environment's session, its durable phase
+  and any unfinished commit's lease from the checkout journal alone, so a
+  recovery or down driver in another command finds the same session with no
+  process-local registry.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
@@ -515,9 +592,74 @@ During v0.x, MINOR bumps may include breaking changes.
   different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
   signature fails the install before activation, and non-macOS hosts are
   unchanged.
+- **A container render can be sealed and verified before it is applied, then
+  published by the one fenced publisher.** `effigy_kernel::objects::
+  Objects::seal_for_preflight` hands the frozen closure to one helper that mints
+  a random token, locks an owner lease (`preflight-<token>.lock`) *before*
+  creating `state/staging/preflight-<token>/` (`O_EXCL`/0600, synced content and
+  directories), verifies the tree with the kernel's closure verifier inside the
+  caller's deadline, and returns a typed `SealedPreflight` receipt (digest, token,
+  verified-at, byte/mode inventory). The calling thread performs no filesystem
+  work, takes no gate and publishes nothing: a helper that outlives its caller
+  can only write its own leased private tree, and a later call cannot race or
+  remove a live lease. `Objects::publish_sealed_desired` is the existing fenced
+  publisher consuming that receipt — same intent, objects gate and reference
+  transaction — re-verifying the tree under the gate, moving it with one
+  exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
+  than replacing), verifying any concurrent winner in full against the
+  receipt's bytes, digest and per-entry private modes (including existing
+  canonical objects and consumed-receipt replay), refusing any altered seal
+  still present even when canonical bytes already exist, and reclaiming one
+  provably dead seal artifact per publication after its own fenced commit. The
+  staging token records the minting process's pid and incarnation before any
+  file exists, so a live helper is never raced even between creating its lease
+  and locking it, and a crash in that instant leaves a lease a later publication
+  provably reclaims instead of accumulating. Otherwise removal needs positive
+  proof — an absent lease, or one that can be acquired; a lease that cannot be
+  opened or inspected leaves the tree untouched.
+  Receipt consumption is refused unless the run is owned by an environment and
+  its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
+  that authority. Recovery is infallible and post-commit, so residue can never
+  turn a committed publication into a failure. Replay is idempotent, and a
+  private tree altered after sealing never becomes canonical.
+  The kernel's object verifier also refuses an entry the closure digest cannot
+  name, such as an extra empty directory.
 
 ### Changed
 
+- **A container-mode guest runs Effigy through its published context and the one
+  host channel.** Static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) are answered locally from the immutable context generation and
+  never open a connection or write anything. Every command with host authority
+  is classified and sent as one typed channel request that the host re-resolves,
+  gates and journals; a host refusal is returned as an error and never falls
+  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
+  is refused in a guest because it would run a task without host authority.
+  Until a guest transport, a guest-local container observation and a published
+  session generation land, host authority reports itself unavailable with the
+  specific missing fact named, and local reads keep working.
+
+- **The workspace channel checks its pinned host identity before it speaks.**
+  A guest client compares the server identity the context pinned against the
+  identity its transport verified before writing a single byte, so a mispinned
+  peer receives no hello, version, digest or capability. A connection that dies
+  before answering is replayed under the same request id, an attach is resumed
+  by that id at the cursor the client actually consumed, and a gap never
+  advances it.
+
+- **The frozen workspace activation hands its channel to a serving owner.** The
+  environment's committed session run, listener, key and advertised locator
+  move into one owner that adopts the run durably, serves accepted connections
+  through the kernel dispatcher, and stops the listener and wipes the key on
+  stop, drop or settlement. A prepared channel published for another session is
+  refused, not served.
+
+- **A workspace session's serving custody ends when its run closes.** The
+  custody row recorded when the session run is adopted is deleted in the same
+  journal transaction that closes the run, so a settled session is no longer an
+  owner and no stale custody survives it. A crash before the close keeps the
+  row, so a successor still finds the recorded owner.
 - **No command plane shows a canned progress label.** The Q-017 live-state
   rule is now a required lint gate rather than a migration list. A task-run
   step names its ordinal, the exact child step it waits on and the elapsed

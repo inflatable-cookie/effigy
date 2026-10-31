@@ -108,6 +108,7 @@ pub(in crate::runner) fn run_standard_task(
         args: &preflight.runtime_args_exec.passthrough,
         key: run_key,
         admission: selection.task.admission,
+        workspace_admission: None,
         cwd: Some(&preflight.invocation_cwd),
     })?;
     let mut workload = None;

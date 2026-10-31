@@ -2418,7 +2418,7 @@ nor holder records are added to the machine database.
 | 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
 | 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
 | 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
-| 5 | Staging | checkout `state/staging/`; only the owning durable settle removes it |
+| 5 | Staging | checkout `state/staging/`; a run's tree is removed only by its owning durable settle, an unowned `preflight-*` seal tree only by the fenced publisher that consumed its receipt or by recovery of a dead lease |
 | 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
 | 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
 | 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
@@ -2430,6 +2430,57 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
+
+Family 5 also holds `state/staging/preflight-*` trees that no run owns. A
+preflight seal (§7.1–§7.4, effigy#509) **never publishes**: one helper thread
+mints a random token, creates and locks the owner lease
+(`preflight-<token>.lock`, `flock`) **before** creating the tree, writes
+`preflight-<token>/` (`O_EXCL`/0600, content and directories synced), verifies it
+with the kernel closure verifier inside the caller's deadline, and hands back
+`SealedPreflight { digest, token, verified_at, inventory }`. The sealing thread
+performs no filesystem work at all — it only spawns that helper and waits with a
+bounded receive — so the deadline bounds every wait and decision it takes, and a
+stalled syscall can finish late only inside that private tree. The seal takes no
+gate and no `Gate(Env)`.
+
+Because the lease is created and locked before the tree exists, and only a
+publisher that already holds the objects gate ever unlinks a lease, a tree is
+dead exactly when its lease is acquirable; a live helper's or a live returned
+receipt's tree always carries a held lease and is never removed or raced.
+Recovery never inspects a lease that has no tree, so it cannot unlink one a
+helper is about to lock. The token also records the minting process's pid and
+process incarnation *before* any file exists, so liveness never depends on the
+lease: a live helper is skipped even in the instant between creating its lease
+and locking it, and a crash in that instant leaves a bare lease that a later
+publication provably reclaims (its pid is gone or names another incarnation)
+instead of accumulating. Removal otherwise needs positive proof: the lease is
+absent, or present and acquirable; a lease it cannot open or inspect — a trust
+failure, a hard link or symlink, an I/O error, descriptor exhaustion — proves
+nothing, so that tree is left untouched for a later publication.
+
+Canonical promotion stays exactly where it was: the fenced publisher.
+`publish_sealed_desired` is that same publisher — one journalled intent, one
+objects gate, one reference transaction — consuming a receipt as its source: it
+re-verifies the private tree under the gate against the receipt's verified
+inventory (bytes, digest and every entry's private mode, so a tree whose modes
+drifted is refused even though its digest still matches), moves it with one
+exclusive no-replace rename, and verifies the canonical byte/mode inventory
+against the receipt even for existing objects and concurrent winners. Any
+still-present seal is verified before consumption even when the canonical
+object already exists; replay with a consumed seal verifies the canonical
+inventory too. The publisher records
+the object row and desired reference exactly as `publish_desired` does. There is no second
+publisher, no direct preflight promotion and no revocable-rename primitive. It
+refuses any run whose owner is not an environment or whose owner gate is not
+held, so a receipt is only ever consumed by its environment's activation under
+`Gate(Env)`; the objects gate and a run fence never substitute for that
+authority. That publisher also reclaims **one** provably dead seal tree per
+publication, under the same gate and after its own fenced commit. Recovery is
+infallible: an over-full or unreadable staging family, a trust refusal, an I/O
+error or a stalled removal leaves residue for a later publication and can never
+turn a committed publication into a failure. Both together keep recovery one
+bounded, post-commit gate-held critical section (§5.5). Seal trees never name a run and a run's own staging tree is
+still removed only by its durable settle.
 
 Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
@@ -3471,74 +3522,301 @@ native identity/dial/observe/invoke/reconnect qualification. Proposed selectors 
 fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
 #452's stop conditions.
 
-### 8.12 Creation receipt for a fresh target (effigy#510)
+#### Implemented: the client glue (effigy#452)
 
-Attribution is required for one container: the environment's workspace service,
-the one the guest binary runs in. Other project services stay Compose-managed and
-merely observed. A receipt is minted from exactly one fact — an engine create
-operation whose successful response names the full container id it created — and
-nothing else: not an inventory, not a label match, not a creation stamp, and not
-Compose's progress output, which names containers rather than the ids Compose's
-own create received.
+`src/runner/workspace_client.rs` is the one integration file this section
+allows to join the lanes, and it takes the module root lane C left as
+`src/runner/workspace_client/mod.rs`. It owns no authority: no store, no gate,
+no run, no resolution and no second credential.
 
-**Implemented seam.** The environment's one apply journals
-`environment:engine-create` under the same `Gate(Env)`, permit and deadline as
-the old apply effect. After the apply, the effect result is:
+- **Dispatch.** `runner::run_command`, `run_command_with_context` and
+  `run_skill_passthrough_with_context` consult the guest dispatch first. It
+  returns `None` when no context is published, so an ordinary host command and
+  a hybrid workspace take the unchanged host dispatch and nothing is written.
+  Every other entry point — `effigy container …` and `effigy workspace …`
+  included — reaches it through that one seam, so those two command modules
+  needed no adaptation of their own.
+- **Local reads.** Version, the pinned task list from the context's composed
+  manifest snapshot, the pinned sources and a checkout-relative file read are
+  served by lane C's `GuestLocalReads` from the published generation and the
+  mounted checkout. They open no connection, hold no capability and write
+  nothing.
+- **Host authority.** Everything else becomes one channel request: `observe`
+  for a live read (`doctor`, run and container status, logs, hosts, scope) and
+  `invoke` for anything with authority (tasks, `container down` and the rest of
+  the container lifecycle, the workspace entry, stores, delivery). The method
+  label grants nothing — the host decides the effect class from its own policy.
+  The body carries a selector, the checkout-relative cwd, the host target, the
+  operator's own arguments and the output mode; it carries no plan, executable,
+  entry point or state root.
+- **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
+  authentication) and a request-level refusal both return an error that names
+  lane A's stable code; nothing falls back to guest state or guest execution.
+  One request is one `Intent` — its id and body together — so a connection that
+  dies before answering is replayed on a fresh connection under the same id and
+  the host answers from its record instead of admitting a second run. Detach is
+  accepted only for the run this connection admitted, so a secondary terminal
+  leaving writes no control frame. Stream frames are acknowledged and dropped:
+  output belongs to the session front end that attaches.
+- **Pin before hello.** The server identity the selected context pinned is
+  checked against what the transport verified *before* the first byte is
+  written: a mispinned peer receives no `hello`, no version, no digest and no
+  capability (§8.11). The negotiation follows, then the credential, then the
+  request.
+- **Attach, cursor and reconnect.** An attach is an `Intent` like any other, so
+  its request id is its attachment identity: the same intent on the same
+  connection is the same attachment, never a second one. The client
+  acknowledges data frames and records the highest consumed sequence per stream;
+  a `gap` never advances it, and `Intent::resume_attach` asks from where the
+  reader truly stopped. A cursor the host cannot resume is a typed refusal, not
+  a silent restart.
+- **Typed refusals.** A refusal code is preserved (`identity_mismatch`,
+  `stale_context`, `unauthenticated`, `forbidden`, `held_by`, `invalid_request`,
+  …) and a transport failure is reported as unavailable/`unknown`, never as a
+  success or a refusal. Neither becomes a different claim on the way out.
 
-- `RecordedCreation::Attributed { engine, context, project, primary_service,
-  created, attached }` when `EnvironmentBackend::create_workspace_container`
-  returned full ids. Each id is read back by that exact id
-  (`EnvironmentBackend::containers_by_id`) and must answer one container in the
-  project, for the declared workspace service, with a
-  `<project>-<service>-<index>` name, no `oneoff` marker, and an immutable image
-  id (`EnvironmentBackend::image_id`) its own reference resolves to. Duplicate
-  services, a set without the workspace service, a partial or unreadable
-  read-back, a reference-only image and a moved image refuse; the effect is
-  journalled `Unknown` and no weaker receipt is recorded. `CreationReceipt` and
-  `CreatedContainer` have private fields and crate-private construction.
-- `RecordedCreation::Unattributed { project, reason }` when the backend keeps no
-  create response. The reason names the missing API. This is an explicit absence
-  of attribution, never a claim that nothing was created.
+Three facts the merged lanes do not give a guest are refused for rather than
+guessed at. Each refusal names what is missing; none of them falls back:
 
-`Settlement::Retain` keeps the record across settle: the effect settles
-`Retained` and the record stays readable. `created_by(project, full_id) ->
-Observed<RunId>` answers from that journal alone: the owning run for an
-attributed receipt naming that exact id; `Absent(NoCreator)` when every recorded
-create is attributed and none names it; `Unknown(NoBackendRecord(reason))` when an
-apply recorded no attribution or its create has no authenticated result. A retry
-of one activation returns its journalled record and runs no second apply or
-create; a create without an authenticated result is never re-derived later.
+- **The container identity.** `context::GuestWorkspace::probe_container_identity`
+  is the host's Prepare probe. Nothing in the guest observes its own container
+  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
+  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
+  refuses host access and leaves local reads working.
+- **The transport.** Every context published today carries
+  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
+  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
+  a backend with no qualified transport.
+- **The session generation.** A direct terminal must present
+  `workspace_channel::EnrolRequest::session_generation`, and the published
+  context names only `session_run_id`. `enrolment_session` refuses instead of
+  presenting a generation nobody published (§8.8: a missing credential leaves
+  local reads working and reports host access unavailable).
 
-**Missing adapter.** No container adapter can issue that create today: Compose
-owns the project's one apply, so the engine's create response goes to Compose.
-`docker create`/`nerdctl create` do return the exact full id, and
-`docker compose config --hash <service>` exposes the config hash Compose compares
-(the installed Compose v5.5.1 has both flags), but reproducing a Compose
-container's create — name, the `com.docker.compose.*` label set including that
-hash, project network endpoints and aliases, named-volume naming and labels,
-health, restart policy and `depends_on` order — is a generic Compose replacement,
-and Compose may still decide the container is out of date and recreate it,
-leaving the receipt's id stale. The exact missing contract is therefore one of:
+Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
+pinned read and its stability, hybrid detection writing nothing, the dispatch
+table for command and container entry, each refusal (version, identity,
+generation, capability, unqualified channel) before any effect, the host's real
+`Server` over an in-memory transport reaching resolution and the kernel's own
+admission record, a repeated intent answered from that record, and a secondary
+terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
+and lane B's `test:kernel:workspace` own the wire and session halves. The
+transport, the guest container observation and the published session
+generation remain their own tasks.
 
-1. an engine create/apply API from which Effigy receives the created ids while
-   Compose still performs the one apply (for example Compose surfacing its create
-   response, as `--format json` does for `ps`), or
-2. a deliberate split of the render: Compose creates the non-workspace services
-   and Effigy creates the workspace container itself from the frozen render,
-   with the project network existing first, Compose not declaring that service,
-   its labels and cleanup (`container down`/`retire`) owned by Effigy, and the
-   activation refusing if the container Compose would create for that service
-   already exists.
+**Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
+consumes what a prepared channel was waiting for. `ServingOwner` holds the
+adopted `SessionSupervisor`, the `SessionLaunch` with its listener and key, the
+accept source and the kernel dispatcher. Its turn marks the launch serving for
+the adopted run *before* it accepts anything, so no connection is taken for a
+session nothing owns or a locator that was never published; it then feeds the
+accepted transport to the kernel's `Server::serve`, which keeps its own pin
+check, session fence, grants and frame limits. Accepting is bounded and returns
+"nothing waiting", so the supervisor owns the cadence; `run` polls until its own
+stop flag. Dropping or stopping the owner stops the listener and wipes the key,
+and the run's settlement takes the same custody — so neither the socket nor the
+signing key outlives its owner. `ChannelAccept` is the typed seam: production
+binds `HostChannelAcceptor`, and a proof supplies scripted transports.
 
-Neither is inside this task's source boundary, so the production path records
-`Unattributed` and a fresh workspace target stays unpublished (#506's refusal).
-Deterministic fixture proofs cover the attributed path and every refusal; they are
-not native qualification, and no native Colima/Desktop/Engine create window has
-been recorded. `nerdctl inspect` additionally reports a container's image only as
-a reference (proved natively in #508's investigation), so a Colima receipt would
-refuse on image identity even once the create response is available. The
-attempted-before evidence for the rejected Compose-progress design lives in
-#508 PR #645 and is not creator authority.
+Proofs for it: a connection is refused acceptance until the run serves (the
+fake acceptor asserts `launch.serving(run)` on every hand-over), an accepted
+connection's negotiation reaches the dispatcher and is answered, and both
+`stop` and dropping the owner close the bound socket and wipe the key.
+
+**Frozen activation handoff (effigy#452, trace finding 11).**
+`ServingOwner::adopt_owned` is the consuming entry the environment calls once,
+after its environment commit, CAS receipt and `selection_switched` record, with
+the owned values it produced:
+
+```rust
+ServingOwner::adopt_owned(
+    OwnedWorkspaceChannel {
+        supervisor,            // the run already adopted under its supervisor id
+        session: SessionRef,
+        channel: PreparedHostChannel,
+        effect: Arc<EffectContext>,     // the activation's own retained operation
+        observe: Arc<ObserveContext>,   // derived from that same operation
+        root: &'a StateRoot,            // the environment's cached state root
+    },
+    dispatcher,
+) -> Result<ServingOwner, AdoptError>
+```
+
+**#452 integration scope and its binding state (owner ruling, 2026-10-30).**
+With #482 and #504 merged, two adapters are this task's own work rather than
+another lane's.
+
+*Bound (this branch):*
+
+- **Guest-local reads over the one strict canonical document.**
+  `workspace_client::context::LocalReadSource` is the narrow view a local read
+  uses, and `LocalReadSource for v2::WorkspaceContextV2` serves
+  `context_generation`, version/artifact digest/protocol, `paths` and `sources`
+  from the canonical `WorkspaceContextDocument`. `GuestLocalReads` therefore
+  has one bounded read implementation for both the producer's v1 projection and
+  the guest's v2 document; it holds no capability and no writer, so
+  `LocalRead`/`Static`/local `Observe` still admit nothing and enrol nothing.
+- **`detect()` binds v2 after an independent identity observation.**
+  `context::v2::read_published_guest(&mut dyn GuestReader, &mut dyn
+  identity::GuestIdentity) -> Result<Option<v2::PublishedGuestContext>,
+  ContextReadError>` strictly parses the published generation (v1 bytes refuse,
+  nothing is reinterpreted) and compares the document's container id, VM boot,
+  platform and libc against `ProcGuestIdentity::process()`'s own observation
+  before selecting `GuestPlacement::Guest`. An unproven or disagreeing
+  observation refuses before any local read or connection. The placeholder
+  identity seam (`GuestIdentity`, `UnobservedContainer`, `live_guest_run` over
+  v1) is deleted in the same binding.
+- **Pin, then credential.** `WorkspaceClient::connect` performs
+  `check_server_pin` and the `hello`/`HelloOk` negotiation only;
+  `ChannelRequest::authenticate` presents the capability or enrolment
+  credential after that, and the guest reads the credential from private
+  storage only once the connection's peer verified as the pinned host. A
+  mispinned peer therefore receives zero `hello` bytes and causes zero
+  credential reads. The v2 document's `credential.path` and
+  `credential.digest` are the ones used, and bytes that differ from the pinned
+  digest refuse instead of being presented. A direct terminal presents the
+  published `session { run_id, generation }`.
+
+*Bound (owner ruling 2026-10-30, bounded engine-owned handoff):*
+
+- **The exact reservation reaches the admitting run.** `managed_run::client::start_admitted`
+  carries a dispatcher's `AdmissionTicket` unchanged into the same
+  `EngineLaunch.admission` field the supervisor config already had; the engine reads it
+  back as `EngineSession::admission()` and `managed_run::engine::own` threads it into
+  `task_engine::run::TaskRunRequest::workspace_admission` (a new field beside the existing
+  Q-006 `admission`). A ticketed top-level task run uses `opts.id = ticket.run()` and
+  `Run::begin_admitted(…, ticket)` under the same gate, predecessor settlement, custody
+  and cleanup as `Run::begin`; it never mints a run id, never swaps the ticket and never
+  calls `Run::begin`. `run::reserve` still re-checks the durable reservation in the
+  admission transaction, so the ticket alone binds nothing.
+- **Shapes that cannot honour the exact run refuse before any effect.**
+  `task_engine::run::workspace_admission_refusal` rejects an engine-internal or standalone
+  run, a nested task run, a caller-keyed run and a run that would take a task-declared
+  shared lock first: each would own another run or another id, so each refuses instead of
+  admitting a second run or discarding the reservation. Ordinary no-ticket runs take the
+  unchanged `Run::begin` / `begin_child` paths.
+- **Proofs.** `task_engine::tests` reserves a key against a live session run and shows the
+  admitted run id equals the ticket's, that the key replays from `Recorded` rather than
+  admitting again, that the spent ticket refuses a second admission, and the full refusal
+  matrix. `task_engine`, `run_control`, `managed_secrets` and `remote` fixtures prove the
+  ordinary paths keep their shape with `workspace_admission: None`.
+
+*Bound (owner ruling 2026-10-30, C-to-glue serving-facts handoff):*
+
+- **One typed serving value crosses the publication handoff.**
+  `workspace_client::ServingFacts::validated(document, receipt, selection, credential,
+  locator)` freezes `workspace_channel::Negotiation`, `SessionFence`, the TLS `pin`, the
+  host checkout and the narrow enrolment secret/scope from the strict v2 document, the
+  committed `SelectionReceipt`, the switched `GuestSelection` and the session-owned
+  qualified channel. It runs in `prepare_reserved_guest` **before** the Env commit and
+  the selector switch, and refuses when any equality disagrees: receipt vs document
+  (context generation, container, VM boot, artifact digest, environment generation),
+  selection vs session (binary digest, context/credential generations, run and
+  generation) and qualified channel vs document (session, pin, exact bound endpoint).
+  The numeric host bind stays distinct from the guest alias: only `ServingLease::endpoint`
+  names it.
+- **The value is carried, never rebuilt.** `WorkspacePublication` and `WorkspaceOwner`
+  gain the typed field, and `OwnedWorkspaceChannel` forwards it into `ServingOwner`,
+  which retains it for the session's whole life. Its `Debug` redacts the enrolment
+  secret; it is never serialized, logged or copied into a guest-visible field, and the
+  session's `GrantBook` is seeded from it only (`grant_book()`), so revocation and drop
+  follow the owner.
+- **The enrolment credential must be a canonical channel secret.** The 64-hex text the
+  guest presents is the exact bytes the grant book matches, so publication refuses any
+  other shape instead of installing an unusable credential. No production mint site
+  exists yet (the activation caller is still #482-owned); the focused fixtures mint a
+  canonical secret.
+
+*Remaining binding:*
+
+- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
+  now supplies every fact `channel::Server::new` needs, so the remaining work is the
+  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
+  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
+  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
+  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
+  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
+  no kernel or lane module changes are needed.
+
+**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+call site, and the binding replaces the bridge entirely rather than adding a
+second seam:
+
+- `workspace_client::context::v2::read_published_v2(&mut dyn GuestReader) ->
+  Result<Option<WorkspaceContextV2>, ContextReadError>` strictly parses the
+  canonical kernel document; v1 refuses and nothing is reinterpreted. An
+  unprepared workspace still reads as "not a guest".
+- `WorkspaceContextV2::verify(&mut dyn identity::GuestIdentity, &LiveGuestRun) ->
+  Result<VerifiedWorkspaceContext, ContextRefusal>` takes the shared identity
+  trait `workspace_client::identity::GuestIdentity { fn observe(&mut self) ->
+  Result<GuestSelfObservation, GuestIdentityRefusal> }`, whose production
+  implementation is `ProcGuestIdentity::process() -> Self` — infallible, stateless
+  and zero-sized, and not `Clone`. One mutable instance is held for one command and
+  handed to `verify` as `&mut`; `verify` re-observes independently before it grants
+  a `VerifiedWorkspaceContext`, so nothing is cached, retained or reused between
+  commands. The observation carries the full container id, VM boot, platform and
+  libc and compares them itself (`GuestSelfObservation::compare`), so no guest
+  trusts the context's own claim.
+- The verified value carries `session_run_id: String` and a nonzero exact
+  `session_generation: u64`, the admitted session's own S, distinct from the
+  environment generation and the context generation. A direct terminal's
+  enrolment therefore takes `SessionIdentity { run: RunId parsed from
+  session_run_id, generation: Generation::new(session_generation) }` from it, and
+  the "no published session generation" refusal disappears.
+
+The binding commit deleted this module's placeholder identity seam
+(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and bound the paths
+above at the same call site: `detect` now selects the strict document only after
+`ProcGuestIdentity` observed and compared the container itself, and every
+authority request re-verifies that same document against the retained
+observation before it opens a connection.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+two contexts are retained as owned `Arc` handles rather than borrowed for
+`'static`: the environment context is local to the activation, and the activation
+hands over its own operation and cancellation state instead of leaking it or
+building a self-referential owner. The root is the environment's cached
+`StateRoot` reference. The entry refuses a prepared channel whose locator names
+another session, and retains run, listener, key, advertised locator and both
+contexts for the session's whole life; the activation must move them and not
+keep, drop or recreate them when its call returns. `settle` stops serving, stops
+the listener, wipes the key and settles the adopted run through the kernel's
+close transaction; dropping the owner stops the listener and wipes the key
+without settling, so the supervisor decides the outcome.
+
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+entry refuses a prepared channel whose locator names another session, and
+retains run, listener, key and advertised locator for the session's whole life;
+the activation must move them and not keep, drop or recreate them when its call
+returns. `settle` stops serving, stops the listener, wipes the key and settles
+the adopted run through the kernel's close transaction; dropping the owner
+stops the listener and wipes the key without settling, so the supervisor decides
+the outcome.
+
+The pinned TLS connection is the production transport now that #504 merged: a
+context that qualifies a locator is opened through `PinnedChannelOpener`
+(alias resolution, exact bound port, SPKI pin during the handshake) and the
+guest client's own `check_server_pin` still runs before the first byte. A
+context whose locator is not a qualified alias refuses `unavailable` and local
+reads keep working. #482's production context and the guest-local identity
+observation are bound by `read_published_guest` (§8.1: the context's own
+container claim is never trusted).
+
+Session custody is durable and released in the close. `SessionSupervisor::adopt`
+records `workspace_session_custody`, and a run's close transaction now deletes
+the row for that exact run in the same commit that writes `phase='closed'`
+(`run/settle.rs`, beside `workspace::closed`). Nothing releases it earlier: a
+crash or a stopped listener before the close keeps the row, so a successor still
+finds the recorded owner and settles or refuses instead of silently dropping
+authority, and a settled session is never an owner.
 
 ## 9. Authority map
 
@@ -4981,19 +5259,27 @@ generation while P's context remains selected.
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
 
-**Creator attribution ruling (Tom, 2026-10-31).** A foreign actor creating an
-identically labelled container during the apply window remains in the threat
-model. Before/after container ID sets, labels, timestamps and image-reference
-checks cannot prove which actor created that container, even under `Gate(Env)`.
-The v0.15 first-up path must use an Effigy-owned engine create/apply operation
-that returns the exact created container IDs as authenticated effect results,
-then verify those IDs against the intended project, service, image and target
-before publication. The provisional Option C inventory-difference design is
-rejected; a foreign creation is never adopted as this activation's target.
+**Creator attribution ruling (Tom, 2026-10-31, amended after the #510 design
+review).** Never adopt a container created by another checkout, project or
+stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
+Compose apply and exact full-ID inventories before and after it. Only an ID
+new in that window, with the complete expected created set and exact managed,
+project, service, checkout/scope, generation and immutable-image evidence, may
+bind a fresh target. Missing, extra, ambiguous, changed or unreadable evidence
+refuses publication; attached/reused containers never receive a new creator
+receipt. Recheck preflight identity under the gate and keep the complete-set
+decision and its journal evidence tied to that activation. A same-user actor
+that can create an identically labelled container inside the gate window is
+**explicitly outside this v0.15 threat model**: same-user access already permits
+reading the render and replacing the binary or vault material. The ID-set
+difference is gate-scoped attribution under that stated limit, not proof that
+the engine returned the created IDs. This supersedes the earlier 2026-10-31
+engine-create-only ruling and the rejection of Option C; it does not permit
+label-only, timestamp-only or unbounded post-apply guessing.
 
 | Window | What the guest resolves | Recovery |
 | --- | --- | --- |
-| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a foreign creation is never adopted as this activation's target, and no later step may re-target |
+| The apply creates a container the decision did not observe, or two candidate containers appear | nothing published; the decision's target is unchanged | `bind_target` refuses `TargetEvidenceMismatch` or `TargetAmbiguous` and the activation cancels after settle; a container from another checkout, project or stale generation is never adopted, and no later step may re-target |
 | Before E8 (no commit) | the predecessor's pair, A and A, and its own credential generation; the staged B objects are unselected orphans, and a crash before E7 leaves no context document at all | no selector moved, so there is nothing to restore; the reservation is cancelled after both bound runs settle and `preserve_active_predecessor` keeps the predecessor's applied fence, so a live predecessor and **its next invocation** stay fully usable on A |
 | Killed immediately after E8, before E9 runs at all | still A and A, with A's environment generation now superseded, so requests refuse `stale_context` | the obligation was written by E8's own transaction, so `unfinished_selection` names every selector, its expected previous value and every digest; `reserve` and `recover` prefer the oldest unfinished reservation, so a retry cannot roll past it, and recovery runs the same compares before any new generation is reserved |
 | Killed during E9 (some selectors moved, completion lost) | a mixed pair, reported as `stale_context` and re-read | each selector reports `AlreadyNext` or `Swapped`; recovery writes only what is still behind and then completes, so the set converges on g, B and the credential generation |
