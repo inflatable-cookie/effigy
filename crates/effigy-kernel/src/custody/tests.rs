@@ -1087,6 +1087,154 @@ fn idle_anchor_exits_on_term_within_a_bounded_grace() {
     );
 }
 
+/// An anchor is group evidence and nothing else. While any workload member is
+/// live it stays, and once its group has no live member it retires itself within
+/// a bounded deadline instead of waiting for an owner that may be gone. The only
+/// processes this proof signals are its own recorded fixtures.
+#[test]
+fn idle_anchor_retires_itself_once_its_group_closes_within_a_bounded_deadline() {
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), "/bin/sleep 40 & wait".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "anchor idle proof".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "anchor-idle", cx.operation(), &image, None, None).unwrap();
+    let leader = fixture_identity(child.pid);
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let mut fixture = AnchorFixture(vec![leader.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    let live = |identity: &ProcessIdentity| {
+        matches!(
+            crate::ident::process_state(identity.pid),
+            Observed::Verified(
+                crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
+    // The group the anchor itself pins is the only inventory this proof reads.
+    // The workload forks its `sleep` and keeps the anchor; all three are members.
+    let members = || platform::live_pids(child.pid).unwrap_or_default();
+    wait(|| {
+        members()
+            .iter()
+            .any(|pid| *pid != leader.pid && *pid != anchor.pid)
+    });
+    // Kill only the recorded leader. Its `sleep` descendant stays in the group,
+    // so the anchor must stay too: a missing leader alone is never closure.
+    assert!(platform::generation(&leader).verified().is_some());
+    platform::numeric(leader.pid, false, libc::SIGKILL);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        live(&anchor),
+        "a live workload member keeps the group's evidence"
+    );
+    // Now the last member: the anchor retires itself, with no signal to it.
+    let remaining: Vec<u32> = members()
+        .into_iter()
+        .filter(|pid| *pid != anchor.pid)
+        .collect();
+    let mut descendants = Vec::new();
+    for pid in remaining {
+        let identity = fixture_identity(pid);
+        fixture.0.push(identity.clone());
+        descendants.push(identity);
+    }
+    assert!(
+        !descendants.is_empty(),
+        "the descendant is the group's remaining member"
+    );
+    for identity in &descendants {
+        if platform::generation(identity).verified().is_some() {
+            platform::numeric(identity.pid, false, libc::SIGKILL);
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while live(&anchor) {
+        assert!(
+            Instant::now() < deadline,
+            "an anchor whose group closed must retire itself within a bounded deadline"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The whole eligible workload group is one session, its anchor included, so a
+/// nested task session or a harness census of its own session never has to
+/// account for a custody helper of a run it did not start. The routes that owe
+/// the caller's terminal keep the caller's session, where a lease can name them.
+#[test]
+fn an_eligible_custody_group_owns_its_session_and_its_anchor_shares_it() {
+    for (terminal, stdin_is_terminal, isolated) in [
+        (Terminal::None, false, true),
+        (Terminal::None, true, true),
+        (Terminal::Pipe, true, true),
+        (Terminal::Styled { pty: false }, true, true),
+        (Terminal::Styled { pty: true }, true, true),
+        (Terminal::Pty, false, true),
+        (Terminal::Foreground, true, false),
+        (Terminal::Foreground, false, false),
+        (Terminal::Inherit { capture: true }, true, false),
+        (Terminal::Inherit { capture: true }, false, true),
+        (Terminal::Inherit { capture: false }, false, true),
+    ] {
+        assert_eq!(
+            spawn::isolates_session(&terminal, stdin_is_terminal),
+            isolated,
+            "{terminal:?} with stdin terminal {stdin_is_terminal}"
+        );
+    }
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sleep".into(), "5".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(30)),
+        terminal: Terminal::None,
+        label: "anchor session proof".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "anchor-session", cx.operation(), &image, None, None).unwrap();
+    let leader = fixture_identity(child.pid);
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let _fixture = AnchorFixture(vec![leader.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    // SAFETY: getsid and getpgid only observe this proof's own recorded
+    // children, whose generations are held live by the fixture guard.
+    let (leader_session, anchor_session, anchor_group) = unsafe {
+        (
+            libc::getsid(leader.pid as i32),
+            libc::getsid(anchor.pid as i32),
+            libc::getpgid(anchor.pid as i32),
+        )
+    };
+    assert_eq!(
+        leader_session, leader.pid as i32,
+        "an eligible workload leader is its own session leader"
+    );
+    assert_eq!(
+        anchor_session, leader.pid as i32,
+        "the anchor lives in the workload's session"
+    );
+    assert_eq!(
+        anchor_group, leader.pid as i32,
+        "the anchor still joins the recorded group"
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session() {

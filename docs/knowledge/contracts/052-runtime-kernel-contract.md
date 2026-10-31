@@ -400,7 +400,7 @@ names the rule or invariant it relies on.
 | K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no group anchor outlives the group it evidences. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. A remote workload binds its environment's generation at intent; its acknowledgement and completion check the owner fence and the environment's identity, because every bring-up advances that generation, while container identity and VM boot (I-RC2) and holder protection (R4) keep it off a replacement (planner ruling, 2026-10-20). A stale-target intent writes nothing and leaves the run usable, so the caller re-reads and retries, as an attach does. | A stale stop stopping a successor; a late callback deleting a successor's route; a concurrent reuse bring-up failing a running remote step. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -1082,12 +1082,24 @@ Spawn protocol:
 | Step | Action | If the owner dies here |
 | --- | --- | --- |
 | 1 | `intend(Process { spec digest, label })` | `Intended`, nothing spawned |
-| 2 | fork; child creates its group (`setsid` for a PTY), forks and waits for its anchor, then blocks on the barrier | barrier EOF exits child and pre-go anchor; no workload ran |
+| 2 | fork; child creates its group (and its own session when it owes the caller no terminal; `setsid` for a PTY), forks and waits for its anchor, then blocks on the barrier | barrier EOF exits child and pre-go anchor; no workload ran |
 | 3 | parent records `{pid, pgid, start identity, boot identity, anchor}` as `Applied` | child and pre-go anchor exit; settle observes closure |
 | 4 | parent writes go; child releases the anchor, then execs the workload | settle stops the workload and anchor by identity |
 
 Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
 environment; descendants inherit it. It is evidence, not a credential.
+The blocked leader creates the workload's process group, and for every route
+that owes the caller no terminal it gives that group a session of its own with
+`setsid`, so the run's payload and its anchor never join the caller's session.
+A nested task session, or a harness that censuses the session it started, then
+sees this run's group as another session instead of as unexplained members:
+one custody group, one session, no stray helper rows (effigy#520). A
+`Foreground` route keeps the caller's session because `tcsetpgrp` can hand a
+terminal only to a group in the terminal's own session, and an `Inherit` route
+with stdin on a terminal keeps it for the same reason: it takes that terminal's
+foreground lease. With stdin off a terminal there is no lease to take and the
+group is isolated like any other captured route. A PTY route already created its
+own session before this, and keeps taking its controlling terminal.
 Before acknowledging the barrier, the blocked child forks an anchor inside
 its already-created process group (and its session for a PTY). A transient
 intermediate child reparents the anchor and is reaped before workload exec,
@@ -1100,12 +1112,22 @@ omit that field and deserialize unchanged; imports infer no anchor.
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.
 After the durable receipt and owner go byte, the child releases the anchor
-before execing the workload. The anchor closes its last descriptors and
-waits for custody settlement; owner or leader death alone cannot retire it.
-Tom's 2026-10-27 ruling (Q-014) makes SIGTERM a cooperative exit and leaves
-settlement as the other one. An idle anchor therefore ends within a bounded
-grace when a harness stops the tree it started, and a run that completes
-retires its anchor during settlement; no anchor outlives a settled run.
+before execing the workload. The anchor closes its last descriptors and then
+watches its own group: it is that group's evidence while any workload member is
+live, and it retires itself within a bounded deadline once the group has no live
+member other than itself. It reads only the kernel's membership of the group it
+is in, so the number cannot be a stale recording, a member that is still present
+is never inferred away from a missing leader alone, and a failed observation
+retires nothing. Owner or leader death alone still cannot retire it while a
+member lives; owner, checkout or volume loss after the group closes changes
+nothing, because nothing of the run is left to observe it. That self-retirement
+is what keeps no anchor beyond its group when an owner is killed without
+settling (effigy#520), and it is why a nested task session or a harness census
+does not meet a stranger it cannot account for. Tom's 2026-10-27 ruling (Q-014)
+keeps SIGTERM as the cooperative exit; settlement remains the other. An idle
+anchor therefore also ends within a bounded grace when a harness stops the tree
+it started, and a run that completes retires its anchor during settlement; no
+anchor outlives a settled run.
 SIGINT and SIGHUP stay ignored, because a terminal delivers them to the whole
 foreground group where the anchor is only the group's evidence.
 Settlement stops the workload and verifies group closure before retiring the
@@ -1271,7 +1293,10 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
 - I-P8: a process that creates a new session escapes the group and remains
-  outside custody. Clearing the environment loses the nonce but no longer
+  outside custody. The one exception is custody's own blocked leader, which
+  creates the group's session before the anchor joins the group: nothing escapes,
+  the recorded PGID is still the workload's group, and the anchor's membership
+  proof is unchanged. Clearing the environment loses the nonce but no longer
   escapes recovery when the recorded anchor is verified: the anchor proves
   uninterrupted group continuity after the leader is reaped. If the anchor
   was killed externally, or the receipt predates anchors (including v0.14.1

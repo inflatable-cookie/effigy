@@ -613,6 +613,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Kernel custody keeps its helpers inside its own group and session, and no
+  anchor outlives its group.** A workload group that owes the caller no terminal
+  now gets a session of its own, so a nested task session or a harness censusing
+  the session it started sees one custody group as another session rather than
+  as helper rows it cannot account for. `Foreground` routes and `Inherit` routes
+  whose stdin is a terminal keep the caller's session, because a terminal can
+  only be handed to a group of its own session. After go, a group anchor watches
+  the kernel's membership of the group it is in: it stays while any workload
+  member is live, and once the group has no live member it retires itself within
+  a bounded deadline instead of waiting for an owner that may have been killed,
+  whose checkout may be gone, or whose volume may be unmounted. Identity rules
+  are unchanged: nonce, PID generation, PGID membership and fail-closed signals
+  are exactly as strict, and nothing is ever signalled to close an anchor.
+
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and

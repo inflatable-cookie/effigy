@@ -427,7 +427,10 @@ pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: successful syscall returned a fresh owned fd.
     Ok(unsafe { OwnedFd::from_raw_fd(raw as i32) })
 }
-pub(super) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
+/// Every live (non-zombie) pid the kernel's own table places in `pgid`. The
+/// anchor's self-retirement reads this same inventory, so it stays the one
+/// definition of group membership.
+pub(crate) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
     let mut live = Vec::new();
     for pid in group_pids(pgid)? {
         #[cfg(target_os = "linux")]
