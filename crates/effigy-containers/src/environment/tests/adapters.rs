@@ -363,7 +363,7 @@ fn a_created_container_is_read_back_by_name_on_both_backends() {
     }
 }
 
-/// An inspect that answers an id no create response named is not a partial
+/// An inspect that answers an id requested ID set did not name is not a partial
 /// success: the whole read-back refuses.
 #[test]
 fn an_id_read_refuses_an_answer_for_another_container() {
@@ -372,7 +372,7 @@ fn an_id_read_refuses_an_answer_for_another_container() {
     let mut adapter = selection().adapter();
     match adapter.containers_by_id(&workdir, &["d".repeat(64)]) {
         Observed::Unknown(UnknownReason::Inconsistent(reason)) => {
-            assert!(reason.contains("no create response named"), "{reason}")
+            assert!(reason.contains("requested ID set did not name"), "{reason}")
         }
         other => panic!("expected a refusal for a foreign answer, got {other:?}"),
     }
@@ -393,4 +393,90 @@ fn an_image_read_that_is_only_a_reference_is_refused() {
         ),
         "a reference is not an image id"
     );
+}
+
+/// Every ID in the project listing must answer exactly once. A successful
+/// inspect command alone does not prove that the inventory is complete.
+#[test]
+fn project_inventory_requires_the_complete_listed_id_set() {
+    for selected in [selection(), docker_selection()] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let inspect = workdir.join("inspect.json");
+        let original = std::fs::read(&inspect).unwrap();
+        let row: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        let mut foreign = row[0].clone();
+        foreign["Id"] = serde_json::Value::String("d".repeat(64));
+        for answer in [
+            serde_json::json!([]),
+            serde_json::json!([row[0], row[0]]),
+            serde_json::json!([foreign]),
+        ] {
+            std::fs::write(&inspect, serde_json::to_vec(&answer).unwrap()).unwrap();
+            let mut backend = selected.adapter();
+            assert!(
+                matches!(
+                    backend.inventory_until(
+                        workdir,
+                        PROJECT,
+                        std::time::Instant::now() + std::time::Duration::from_secs(10)
+                    ),
+                    Observed::Unknown(_)
+                ),
+                "accepted incomplete or replaced inspect: {answer}"
+            );
+        }
+    }
+}
+
+/// An elapsed caller deadline refuses before launching either backend CLI.
+#[test]
+fn expired_observation_deadlines_do_not_launch_an_engine() {
+    for selected in [selection(), docker_selection()] {
+        let tools = CreationTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        let mut backend = selected.adapter();
+        let deadline = std::time::Instant::now();
+        assert!(matches!(
+            backend.inventory_until(workdir, PROJECT, deadline),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(matches!(
+            backend.image_id_until(workdir, "fixture:latest", deadline),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(tools.calls("docker").is_empty());
+        assert!(tools.calls("colima").is_empty());
+    }
+}
+
+/// A live but unresponsive engine is terminated and reaped by the caller's
+/// absolute observation deadline, including during the inventory's inspect.
+#[test]
+fn inspection_is_bounded_by_the_callers_deadline() {
+    for (selected, tool) in [(selection(), "colima"), (docker_selection(), "docker")] {
+        let tools = FakeTools::install();
+        let workdir = tools.logs.parent().unwrap();
+        std::fs::write(
+            tools.bin.join(tool),
+            format!(
+            "#!/bin/sh\ncase \" $* \" in\n *' ps '*) echo {ID} ;;\n *) exec sleep 30 ;;\nesac\n"
+        ),
+        )
+        .unwrap();
+        let mut backend = selected.adapter();
+        let budget = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            backend.inventory_until(workdir, PROJECT, started + budget),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            backend.image_id_until(workdir, "fixture:latest", started + budget),
+            Observed::Unknown(UnknownReason::TimedOut { .. })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 }

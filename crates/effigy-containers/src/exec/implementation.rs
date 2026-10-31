@@ -1552,6 +1552,28 @@ pub fn run_backend_invocation(
     run_command_capture_os_with_env(workdir, &program, args, label, env)
 }
 
+/// [`run_backend_invocation`] for a read bounded by the caller's absolute
+/// deadline (effigy#510). A creation window's inventories share one deadline,
+/// so an engine that stops answering fails that read instead of holding the
+/// environment gate open.
+pub fn run_backend_invocation_until(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<Output, ContainerExecError> {
+    super::process::run_command_capture_os_with_env_until(
+        workdir,
+        &program.to_string_lossy(),
+        args,
+        label,
+        env,
+        deadline,
+    )
+}
+
 pub fn run_compose_invocation_capture(
     repo_root: &Path,
     program: &OsStr,

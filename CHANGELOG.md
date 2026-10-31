@@ -201,6 +201,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Project container inventories refuse incomplete, duplicate or replaced full-ID
+  inspect answers. Docker and Colima adapters also expose inventory and image
+  inspection under one caller deadline; expired reads launch no engine process.
+
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
 
 - **A fresh workspace container can only be attributed from an engine create

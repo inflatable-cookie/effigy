@@ -10,6 +10,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Instant;
 
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::store::BackendMetadata;
@@ -348,6 +349,41 @@ pub trait EnvironmentBackend {
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
 
+    /// [`Self::inventory`] supervised by the caller's one absolute deadline,
+    /// so a runtime that stops answering fails the read instead of holding the
+    /// environment gate open (effigy#510).
+    fn inventory_until(
+        &mut self,
+        workdir: &Path,
+        project: &str,
+        deadline: Instant,
+    ) -> Observed<Vec<Workload>> {
+        let _ = (workdir, project, deadline);
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "this backend cannot bound project inventory to a deadline".to_owned(),
+        ))
+    }
+    /// The exact image id `reference` resolves to in this backend's own image
+    /// table, read under the caller's absolute deadline (effigy#510).
+    ///
+    /// A render declares an image *reference*; the engine's image table is the
+    /// only authority that turns it into the exact image id a container created
+    /// from it carries. The creation window binds a container to that exact id,
+    /// so a matching reference that the engine maps to a different image is
+    /// never a receipt. `Verified` carries the engine's own id; `Absent` and
+    /// `Unknown` refuse the window rather than fall back to the reference alone.
+    fn image_id_until(
+        &mut self,
+        workdir: &Path,
+        reference: &str,
+        deadline: Instant,
+    ) -> Observed<String> {
+        let _ = (workdir, reference, deadline);
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "this backend cannot bound image inspection to a deadline".to_owned(),
+        ))
+    }
+
     /// Create the environment's workspace container with the engine's own
     /// create API, and return exactly the full ids that operation's successful
     /// response named (effigy#510).
@@ -432,6 +468,22 @@ macro_rules! compose_adapter {
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
+            fn inventory_until(
+                &mut self,
+                workdir: &Path,
+                project: &str,
+                deadline: Instant,
+            ) -> Observed<Vec<Workload>> {
+                inventory_until(&self.selection, workdir, project, Some(deadline))
+            }
+            fn image_id_until(
+                &mut self,
+                workdir: &Path,
+                reference: &str,
+                deadline: Instant,
+            ) -> Observed<String> {
+                image_id_until(&self.selection, workdir, reference, Some(deadline))
+            }
             fn containers_by_id(
                 &mut self,
                 workdir: &Path,
@@ -469,20 +521,29 @@ fn containers_by_id(
             Ok(rows) => Verified::rows(rows, "backend inspect by id"),
             Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
         },
-        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        Err(error) => Observed::Unknown(read_reason("inspect by id", error)),
     }
 }
 
 /// The exact image id `reference` resolves to on `selection`.
 fn image_id(selection: &BackendSelection, workdir: &Path, reference: &str) -> Observed<String> {
+    image_id_until(selection, workdir, reference, None)
+}
+
+fn image_id_until(
+    selection: &BackendSelection,
+    workdir: &Path,
+    reference: &str,
+    deadline: Option<Instant>,
+) -> Observed<String> {
     let args = ["image", "inspect", reference].map(OsString::from);
     let (program, args) = runtime_invocation(selection, &args);
-    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect image", &[]) {
+    match capture(workdir, &program, &args, "inspect image", deadline) {
         Ok(output) => match parse_image_inspect(&output.stdout) {
             Ok(id) => Verified::value(id, "backend image inspect"),
             Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
         },
-        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        Err(error) => Observed::Unknown(read_reason("inspect image", error)),
     }
 }
 
@@ -502,28 +563,27 @@ impl Verified {
     }
 }
 
-/// The created ids are distinct: a create response that names one id twice
-/// cannot say how many containers were created.
+/// An exact listing contains distinct full IDs.
 fn unique_ids(ids: &[String]) -> Result<(), String> {
     let mut seen = std::collections::BTreeSet::new();
     for id in ids {
         if !full_container_id(id) {
             return Err(format!(
-                "the create response named `{id}`, which is not a full container id"
+                "the requested ID set named `{id}`, which is not a full container id"
             ));
         }
         if !seen.insert(id.to_ascii_lowercase()) {
-            return Err(format!("the create response named container `{id}` twice"));
+            return Err(format!("the requested ID set named container `{id}` twice"));
         }
     }
     Ok(())
 }
 
-/// The inspect answered exactly the created ids, once each.
+/// The inspect answered exactly the requested IDs, once each.
 fn exact_id_rows(ids: &[String], rows: Vec<Workload>) -> Result<Vec<Workload>, String> {
     if rows.len() != ids.len() {
         return Err(format!(
-            "the create response named {} containers and the engine answered {} for them",
+            "the requested ID set named {} containers and the engine answered {} for them",
             ids.len(),
             rows.len()
         ));
@@ -541,7 +601,7 @@ fn exact_id_rows(ids: &[String], rows: Vec<Workload>) -> Result<Vec<Workload>, S
         let id = row.id.to_ascii_lowercase();
         if !requested.contains(&id) {
             return Err(format!(
-                "the engine answered container `{}`, which no create response named",
+                "the engine answered container `{}`, which the requested ID set did not name",
                 row.id
             ));
         }
@@ -602,6 +662,19 @@ fn inventory(
     workdir: &Path,
     project: &str,
 ) -> Observed<Vec<Workload>> {
+    inventory_until(selection, workdir, project, None)
+}
+
+/// [`inventory`] under the caller's one absolute deadline (effigy#510): the
+/// listing and the inspect of its rows are supervised by the same deadline, so
+/// a runtime that stops answering reports a timeout instead of holding the
+/// caller.
+fn inventory_until(
+    selection: &BackendSelection,
+    workdir: &Path,
+    project: &str,
+    deadline: Option<Instant>,
+) -> Observed<Vec<Workload>> {
     let filter = format!("label={COMPOSE_PROJECT_LABEL}={project}");
     let ps = [
         "ps",
@@ -614,16 +687,20 @@ fn inventory(
     ]
     .map(OsString::from);
     let (program, args) = runtime_invocation(selection, &ps);
-    let ids =
-        match crate::exec::run_backend_invocation(workdir, &program, &args, "list project", &[]) {
-            Ok(output) => String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>(),
-            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
-        };
+    let ids = match capture(workdir, &program, &args, "list project", deadline) {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        Err(error) => return Observed::Unknown(read_reason("list project", error)),
+    };
+    // An inventory is exact or it is nothing: every listed id is a full
+    // container id, listed once.
+    if let Err(reason) = unique_ids(&ids) {
+        return Observed::Unknown(UnknownReason::Inconsistent(reason));
+    }
     if ids.is_empty() {
         return Observed::Verified(
             Vec::new(),
@@ -634,16 +711,47 @@ fn inventory(
     let mut inspect = vec![OsString::from("inspect")];
     inspect.extend(ids.iter().map(OsString::from));
     let (program, args) = runtime_invocation(selection, &inspect);
-    match crate::exec::run_backend_invocation(workdir, &program, &args, "inspect project", &[]) {
-        Ok(output) => match parse_inspect(&output.stdout) {
-            Ok(rows) => Observed::Verified(
-                rows,
-                effigy_kernel::observe::Evidence::new("backend inspect".into(), None)
-                    .expect("fixed evidence"),
-            ),
-            Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
-        },
-        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    match capture(workdir, &program, &args, "inspect project", deadline) {
+        Ok(output) => {
+            match parse_inspect(&output.stdout).and_then(|rows| exact_id_rows(&ids, rows)) {
+                Ok(rows) => Observed::Verified(
+                    rows,
+                    effigy_kernel::observe::Evidence::new("backend inspect".into(), None)
+                        .expect("fixed evidence"),
+                ),
+                Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
+            }
+        }
+        Err(error) => Observed::Unknown(read_reason("inspect project", error)),
+    }
+}
+
+/// One backend read on the caller's deadline, or unbounded when the caller set
+/// none (the ordinary inventory).
+fn capture(
+    workdir: &Path,
+    program: &std::ffi::OsStr,
+    args: &[OsString],
+    label: &str,
+    deadline: Option<Instant>,
+) -> Result<std::process::Output, crate::exec::ContainerExecError> {
+    match deadline {
+        Some(deadline) => {
+            crate::exec::run_backend_invocation_until(workdir, program, args, label, &[], deadline)
+        }
+        None => crate::exec::run_backend_invocation(workdir, program, args, label, &[]),
+    }
+}
+
+/// Why a backend read could not be taken. A read that timed out says so and
+/// stays retryable; anything else is an engine answer this seam cannot use.
+fn read_reason(label: &str, error: crate::exec::ContainerExecError) -> UnknownReason {
+    if crate::exec::error_is_timeout(&error) {
+        UnknownReason::TimedOut {
+            phase: label.to_owned(),
+        }
+    } else {
+        UnknownReason::Inconsistent(error.to_string())
     }
 }
 
