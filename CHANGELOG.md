@@ -508,11 +508,15 @@ During v0.x, MINOR bumps may include breaking changes.
   transaction — re-verifying the tree under the gate, moving it with one
   exclusive no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux,
   `renameatx_np(RENAME_EXCL)` on macOS; a filesystem without one refuses rather
-  than replacing), verifying any concurrent winner in full, and reclaiming one
-  provably dead seal tree per publication after its own fenced commit. A seal
-  tree is removed only on positive proof that its owner is gone — an absent
-  lease, or one that can be acquired; a lease that cannot be opened or inspected
-  leaves the tree untouched, so a live helper or a live receipt is never raced.
+  than replacing), verifying any concurrent winner in full against the
+  receipt's bytes, digest and per-entry private modes, and reclaiming one
+  provably dead seal artifact per publication after its own fenced commit. The
+  staging token records the minting process's pid and incarnation before any
+  file exists, so a live helper is never raced even between creating its lease
+  and locking it, and a crash in that instant leaves a lease a later publication
+  provably reclaims instead of accumulating. Otherwise removal needs positive
+  proof — an absent lease, or one that can be acquired; a lease that cannot be
+  opened or inspected leaves the tree untouched.
   Receipt consumption is refused unless the run is owned by an environment and
   its `Gate(Env)` is held, so the objects gate and a run fence never stand in for
   that authority. Recovery is infallible and post-commit, so residue can never

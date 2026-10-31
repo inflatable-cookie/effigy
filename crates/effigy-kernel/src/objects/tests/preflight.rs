@@ -120,6 +120,31 @@ fn verifies(tree: &Path, closure: &Closure) -> Result<crate::objects::Object, St
     let dir = DirFd::open(tree).unwrap();
     crate::objects::open(&dir, closure.digest(), &observe())
 }
+/// Reaps a helper process even when a proof panics.
+struct Sealer(std::process::Child);
+impl Sealer {
+    fn wait_until(&mut self, marker: &Path, what: &str) {
+        let give_up = soon(20_000);
+        while !marker.exists() {
+            assert!(Instant::now() < give_up, "the helper never reached {what}");
+            if let Some(status) = self.0.try_wait().unwrap() {
+                panic!("the helper exited before {what}: {status}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn kill(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+impl Drop for Sealer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn environment(name: &str) -> ResourceId {
     ResourceId::environment(CheckoutId::new(CheckoutKind::Primary, [4; 16]), name).unwrap()
 }
@@ -514,6 +539,63 @@ fn preflight_recovery_leaves_a_live_helpers_tree_alone() {
     assert!(seal_entries(home.path()).is_empty());
 }
 
+/// A helper killed in the instant between creating its lease and locking it
+/// leaves a bare lease and no tree. The token records the minting process's
+/// incarnation before any file exists, so recovery reclaims that crash-window
+/// lease once its owner is gone — and never while it lives.
+#[test]
+fn preflight_recovery_reclaims_a_crash_window_lease() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("lease-crash");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut child = Sealer(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                HELPER,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HELPER_HOME, home.path())
+            .env(HELPER_STAGE, "lease")
+            .env("HOME", home.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("helper process"),
+    );
+    child.wait_until(&home.path().join(MARKER), "its lease boundary");
+    // Exactly one artifact exists: the helper's own lease, created and not yet
+    // locked, and no tree.
+    assert_eq!(seal_leases(home.path()).len(), 1);
+    assert!(seal_dirs(home.path()).is_empty(), "no tree was created");
+    let lease = seal_leases(home.path()).remove(0);
+    assert!(lease_free(&lease), "created but not yet locked");
+    // While that owner lives, a publication's recovery leaves the bare lease.
+    let publishable = seal(&cx, &root, &value).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 1, &publishable, &value),
+        value.digest()
+    );
+    assert!(lease.exists(), "a live owner's bare lease is never removed");
+    // Kill the owner in that window; the lease is now provably dead.
+    child.kill();
+    assert!(lease_free(&lease));
+    let second = seal(&cx, &root, &closure("after")).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 2, &second, &closure("after")),
+        closure("after").digest()
+    );
+    assert!(
+        !lease.exists(),
+        "the crash-window lease was reclaimed, not accumulated"
+    );
+    assert!(seal_entries(home.path()).is_empty());
+}
+
 /// A crash leaves a dead leased tree that a restarted process can still verify;
 /// recovery then removes exactly that tree under the objects gate, keeps a
 /// run-owned staging tree, and the publisher makes the exact closure canonical.
@@ -526,38 +608,26 @@ fn preflight_restart_verifies_a_crash_durable_tree_and_recovery_removes_it() {
     private_dir(&staging_dir(home.path()));
     let owned = staging_dir(home.path()).join("run-1");
     private_dir(&owned);
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            HELPER,
-            "--exact",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(HELPER_HOME, home.path())
-        .env("HOME", home.path())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("helper process");
-    let marker = home.path().join(MARKER);
-    let give_up = soon(20_000);
-    while !marker.exists() {
-        assert!(
-            Instant::now() < give_up,
-            "the helper never verified its seal"
-        );
-        if let Some(status) = child.try_wait().unwrap() {
-            let outcome = std::fs::read_to_string(home.path().join("helper-outcome"))
-                .unwrap_or_else(|_| "no outcome recorded".into());
-            panic!("the helper exited before its marker: {status}: {outcome}");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let mut child = Sealer(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                HELPER,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HELPER_HOME, home.path())
+            .env("HOME", home.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("helper process"),
+    );
+    child.wait_until(&home.path().join(MARKER), "its verification");
     // Kill it before its receipt is returned: the tree and lease are dead.
-    child.kill().expect("kill the sealer");
-    assert!(!child.wait().unwrap().success());
+    child.kill();
     let dirs = seal_dirs(home.path());
     assert_eq!(dirs.len(), 1, "one dead token tree");
     let leases = seal_leases(home.path());
@@ -741,6 +811,45 @@ fn preflight_seal_refuses_altered_bytes_modes_and_extra_entries() {
             .unwrap()
             .closure,
         value
+    );
+}
+
+/// The publisher compares the receipt's verified mode inventory, not just the
+/// digest: a staged file left at a private-but-wrong mode keeps the same bytes
+/// and digest yet is refused, and becomes canonical only once it is restored.
+#[test]
+fn preflight_publisher_refuses_a_sealed_tree_whose_modes_changed() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("modes");
+    let cx = context(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let receipt = seal(&cx, &root, &value).unwrap();
+    let staged = tree_dir(home.path(), &receipt)
+        .join(value.digest())
+        .join("compose.yaml");
+    // 0700 is still "private" to the verifier, so the digest and closure match;
+    // only the receipt's mode inventory can tell that this is not the seal.
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(verifies(&tree_dir(home.path(), &receipt), &value).is_ok());
+    let refused = attempt_env_run(home.path(), "dev", 1, |run| {
+        Objects::publish_sealed_desired(run, &receipt, &value)
+    });
+    assert!(
+        matches!(refused, Err(RunError::Broken(_))),
+        "a drifted mode inventory is refused: {refused:?}"
+    );
+    assert!(
+        !objects_dir(home.path()).join(value.digest()).exists(),
+        "a tree whose modes drifted never becomes canonical"
+    );
+    assert!(
+        tree_dir(home.path(), &receipt).exists(),
+        "the tree is untouched"
+    );
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        publish(home.path(), "dev", 2, &receipt, &value),
+        value.digest()
     );
 }
 
@@ -1223,6 +1332,7 @@ fn settle_modes(dir: &Path) {
 
 const HELPER: &str = "objects::tests::preflight::helper_crashed_sealer";
 const HELPER_HOME: &str = "EFFIGY_PREFLIGHT_TEST_HOME";
+const HELPER_STAGE: &str = "EFFIGY_PREFLIGHT_TEST_STAGE";
 const MARKER: &str = "preflight-verified";
 
 #[test]
@@ -1236,11 +1346,20 @@ fn helper_crashed_sealer() {
     let root = StateRoot::effects(&cx, &home).unwrap();
     let value = closure("crash");
     let marker = home.join(MARKER);
-    test_hooks::verified(move || {
-        // The seal is verified and durable; the receipt has not been returned.
-        std::fs::write(&marker, b"verified, unreturned").unwrap();
-        std::thread::sleep(Duration::from_secs(120));
-    });
+    if std::env::var(HELPER_STAGE).as_deref() == Ok("lease") {
+        // Park between creating the lease and locking it: the crash window that
+        // leaves a bare lease and no tree.
+        test_hooks::lease(move || {
+            std::fs::write(&marker, b"lease created, unlocked").unwrap();
+            std::thread::sleep(Duration::from_secs(120));
+        });
+    } else {
+        test_hooks::verified(move || {
+            // The seal is verified and durable; the receipt has not been returned.
+            std::fs::write(&marker, b"verified, unreturned").unwrap();
+            std::thread::sleep(Duration::from_secs(120));
+        });
+    }
     let outcome = Objects::seal_for_preflight(&cx, &root, &value, soon(120_000));
     let _ = std::fs::write(home.join("helper-outcome"), format!("{outcome:?}"));
 }

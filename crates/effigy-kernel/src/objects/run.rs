@@ -22,8 +22,10 @@ impl Objects {
     /// This is the same fenced publisher — one journalled intent, one objects
     /// gate, one reference transaction — so canonical promotion still happens
     /// only here, under the caller's `Gate(Env)`, and never in the seal. The
-    /// receipt is re-verified under the gate before it is moved, so a private
-    /// tree altered after sealing never becomes canonical. A receipt whose tree
+    /// receipt is re-verified under the gate before it is moved: its digest,
+    /// bytes and every entry's private mode must still be exactly the verified
+    /// inventory it carries, so a private tree altered after sealing never
+    /// becomes canonical. A receipt whose tree
     /// a completed publication already consumed, or whose tree is gone, costs a
     /// fresh stage rather than a failure.
     pub fn publish_sealed_desired(
@@ -97,17 +99,25 @@ impl Objects {
             // A preflight receipt names a private, already written tree; it is
             // consumed here or nowhere.
             let sealed_tree = match sealed {
-                Some(sealed) => sealed.stage(run.root)?,
+                Some(sealed) => sealed.stage(run.root)?.map(|tree| (sealed, tree)),
                 None => None,
             };
             run.root.dir().sync().map_err(StoreError::from)?;
-            if let Some(tree) = &sealed_tree {
+            if let Some((sealed, tree)) = &sealed_tree {
                 if objects.entry(&name).map_err(StoreError::from)?.is_none() {
                     // Verified again under this gate: a private tree altered
                     // after sealing never becomes canonical.
                     let verified = objects::open(tree, closure.digest(), &observe)?;
                     if verified.closure != *closure {
                         return Err(RunError::broken("the sealed preflight is not this closure"));
+                    }
+                    // The receipt's inventory pins the bytes *and* the private
+                    // modes exactly as they were verified at seal time. A tree
+                    // whose bytes still hash the same but whose modes drifted
+                    // (a file left 0700, say, which is still private) is not the
+                    // sealed artifact and must never become canonical.
+                    if verified.inventory != sealed.inventory() {
+                        return Err(RunError::broken("the sealed preflight inventory changed"));
                     }
                     crate::fault_point!(ObjectRenameBefore)?;
                     #[cfg(test)]

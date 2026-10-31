@@ -31,6 +31,7 @@
 use super::*;
 use crate::ctx::{Capability, Deadline, EffectClass, EffectContext};
 use crate::fs::{self, FileName, Trust};
+use crate::ident::ProcessIdentity;
 use crate::root::{Family, StateRoot};
 use crate::run::RunError;
 use std::io::Read as _;
@@ -217,7 +218,17 @@ fn stage_object(
     closure: &Closure,
 ) -> Result<Staged, RunError> {
     let name = validate_digest(closure.digest())?;
-    let token = token()?;
+    // A seal that cannot record its own incarnation could never be proven dead,
+    // so it refuses rather than leaving unclaimable residue behind.
+    let identity = match crate::ident::process_identity(std::process::id()) {
+        Observed::Verified(identity, _) => identity,
+        Observed::Absent(_) | Observed::Unknown(_) => {
+            return Err(RunError::unavailable(
+                "a preflight seal needs its own process identity",
+            ))
+        }
+    };
+    let token = token(&identity)?;
     let staging = root
         .family(Family::Staging)
         .map_err(StoreError::from)?
@@ -296,19 +307,25 @@ fn stage_object(
     })
 }
 
-/// Recovers at most one dead seal tree. Best effort by construction: the fenced
-/// publisher calls this *after* its desired-reference transaction has committed,
-/// so no recovery outcome — an over-full or unreadable staging family, a trust
-/// refusal, an I/O error, a stalled removal — can turn that committed
-/// publication into a failure. Residue simply waits for a later publication,
-/// which keeps making progress, and each call removes at most one provably dead
-/// tree so the gate-held critical section stays bounded.
+/// Recovers at most one dead seal artifact. Best effort by construction: the
+/// fenced publisher calls this *after* its desired-reference transaction has
+/// committed, so no recovery outcome — an over-full or unreadable staging
+/// family, a trust refusal, an I/O error, a stalled removal — can turn that
+/// committed publication into a failure. Residue simply waits for a later
+/// publication, which keeps making progress, and each call removes at most one
+/// provably dead artifact so the gate-held critical section stays bounded.
 ///
-/// A tree is dead exactly when its lease is acquirable: the lease is created and
-/// locked before the tree exists, and only a publisher that already holds this
-/// gate ever unlinks a lease, so a live helper's tree always carries a held
-/// lease. Recovery never inspects a lease that has no tree, so it cannot unlink
-/// one a helper is about to lock.
+/// Removal needs positive proof, never an inference from a failure:
+/// - the token records the minting process's pid and incarnation *before* any
+///   file is created, so a dead or reused pid proves the owner is gone even when
+///   the crash happened between creating a lease and locking it (which is how
+///   crash-window leases are reclaimed rather than accumulating);
+/// - a live minting process is only ever removed from when its lease is free and
+///   a tree exists, i.e. the helper thread or the returned receipt that owned the
+///   name dropped it; a live process's bare lease is skipped as the
+///   create-before-lock instant;
+/// - a lease that is held, or that cannot be opened or inspected, leaves
+///   everything exactly as it is.
 pub(crate) fn recover(staging: &DirFd) {
     let Ok(entries) = staging.list(MAX_FILES) else {
         // An over-full or unreadable family is not a publication failure.
@@ -322,42 +339,60 @@ pub(crate) fn recover(staging: &DirFd) {
         else {
             continue;
         };
-        // A lease on its own proves nothing about liveness: a helper may be one
-        // syscall away from taking it, so it is never inspected or unlinked.
-        if token_of_lease(name.as_str()).is_some() {
-            continue;
-        }
-        let Some(token) = token_of_tree(name.as_str()) else {
+        let is_lease = token_of_lease(name.as_str()).is_some();
+        let Some(token) = (if is_lease {
+            token_of_lease(name.as_str())
+        } else {
+            token_of_tree(name.as_str())
+        }) else {
             continue;
         };
+        // Liveness first, from the token's recorded process incarnation: a live
+        // helper is never raced, even in the instants between creating its lease
+        // and locking it, and its bare lease or tree is left alone.
+        let owner = owner_of(token);
+        if owner == Owner::Unknown {
+            // Never remove what cannot be proven dead.
+            continue;
+        }
+        // Positive proof of a free lease, in every case that can remove.
         let lease = match lease_state(staging, token) {
-            // No lease file at all: nothing in this layout creates a tree before
-            // its lease, so it is dead residue (an older build, or a consumed
-            // tree whose lease went first). Removal stays under this gate.
-            Ok(None) => {
-                let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
-                let _ = staging.sync();
-                return;
-            }
-            // A lease we cannot open or inspect (trust failure, hard link or
-            // symlink, I/O error, descriptor exhaustion) proves nothing about its
-            // owner: a live helper or a live receipt may still hold it, so the
-            // tree is left exactly as it is.
-            Err(_) => continue,
-            // Held: a live helper or a live returned receipt owns this tree.
+            Ok(None) => None,
+            // Held: a live helper or a live returned receipt owns it.
             Ok(Some((lease, false))) => {
                 drop(lease);
                 continue;
             }
-            Ok(Some((lease, true))) => lease,
+            // Unopenable or uninspectable (trust failure, hard link, symlink,
+            // I/O error, descriptor exhaustion) proves nothing.
+            Err(_) => continue,
+            Ok(Some((lease, true))) => Some(lease),
         };
-        // The lease is acquirable, so its owner is gone: this tree is dead.
-        let _ = staging.remove_tree(&name, Trust::Private, STAGING_DEPTH);
+        if owner == Owner::Live && is_lease {
+            // A bare lease with a free lock under a live minting process is the
+            // instant between creating the lease and locking it: skip it. With a
+            // tree present, a free lock means the helper thread or returned
+            // receipt that owned the name is gone.
+            let tree_present = match tree_name(token) {
+                Ok(tree) => staging.entry(&tree).ok().flatten().is_some(),
+                Err(_) => true,
+            };
+            if !tree_present {
+                drop(lease);
+                continue;
+            }
+        }
+        // Remove the name's tree (when it has one) and its lease together: the
+        // listing order is arbitrary, so finishing the pair here stops a later
+        // call from finding a tree whose lease already went.
+        if let Ok(tree) = tree_name(token) {
+            let _ = staging.remove_tree(&tree, Trust::Private, STAGING_DEPTH);
+        }
         if let Ok(lease_path) = lease_name(token) {
             let _ = staging.remove(&lease_path, false);
         }
         let _ = staging.sync();
-        // The lease stays held until the tree is gone, so no second recovery and
+        // The lease stays held until the name is gone, so no second recovery and
         // no late helper can interleave.
         drop(lease);
         return;
@@ -429,7 +464,7 @@ fn inventory_of(closure: &Closure) -> Vec<SealedEntry> {
 
 /// A private name no other seal, process or retry can collide with: this
 /// process and helper identity, a per-process counter and a random token.
-fn token() -> Result<String, RunError> {
+fn token(identity: &ProcessIdentity) -> Result<String, RunError> {
     let mut random = [0u8; 8];
     // A seal whose token could be guessed cannot be uniquely owned, so a host
     // without its randomness device refuses instead of inventing a name.
@@ -447,10 +482,57 @@ fn token() -> Result<String, RunError> {
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or_default();
     Ok(format!(
-        "{random}-{nanos:x}-{}-{}",
-        std::process::id(),
+        "{:x}-{}-{random}-{nanos:x}-{:x}",
+        identity.pid,
+        identity_fingerprint(identity),
         NEXT_SEAL.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+/// A stable fingerprint of one process incarnation: its boot and start
+/// identity, exactly the evidence a gate body records. Two reads of the same
+/// process agree; a reused pid differs.
+fn identity_fingerprint(identity: &ProcessIdentity) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"effigy.preflight.owner\0\x01");
+    hash.update(identity.boot.as_str().as_bytes());
+    hash.update([0u8]);
+    hash.update(identity.start.text().as_bytes());
+    hash.finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The owner a token names: its pid and process-incarnation fingerprint.
+fn token_owner(token: &str) -> Option<(u32, &str)> {
+    let (pid, rest) = token.split_once('-')?;
+    let (fingerprint, _) = rest.split_once('-')?;
+    Some((u32::from_str_radix(pid, 16).ok()?, fingerprint))
+}
+
+/// Whether the process that minted this token is still the same incarnation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    /// The minting process is gone, or its pid now names another incarnation.
+    Dead,
+    /// The minting process is still this same incarnation.
+    Live,
+    /// Liveness could not be proven either way; nothing may be removed.
+    Unknown,
+}
+fn owner_of(token: &str) -> Owner {
+    let Some((pid, fingerprint)) = token_owner(token) else {
+        return Owner::Unknown;
+    };
+    match crate::ident::process_identity(pid) {
+        Observed::Verified(current, _) if identity_fingerprint(&current) == fingerprint => {
+            Owner::Live
+        }
+        Observed::Verified(_, _) | Observed::Absent(_) => Owner::Dead,
+        Observed::Unknown(_) => Owner::Unknown,
+    }
 }
 
 fn tree_name(token: &str) -> Result<FileName, StoreError> {

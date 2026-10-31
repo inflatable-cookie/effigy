@@ -2448,18 +2448,24 @@ publisher that already holds the objects gate ever unlinks a lease, a tree is
 dead exactly when its lease is acquirable; a live helper's or a live returned
 receipt's tree always carries a held lease and is never removed or raced.
 Recovery never inspects a lease that has no tree, so it cannot unlink one a
-helper is about to lock. It removes a tree only on positive proof: the lease is
-absent, or present and acquirable. A lease it cannot open or inspect — a trust
+helper is about to lock. The token also records the minting process's pid and
+process incarnation *before* any file exists, so liveness never depends on the
+lease: a live helper is skipped even in the instant between creating its lease
+and locking it, and a crash in that instant leaves a bare lease that a later
+publication provably reclaims (its pid is gone or names another incarnation)
+instead of accumulating. Removal otherwise needs positive proof: the lease is
+absent, or present and acquirable; a lease it cannot open or inspect — a trust
 failure, a hard link or symlink, an I/O error, descriptor exhaustion — proves
-nothing about its owner, so that tree is left untouched for a later
-publication.
+nothing, so that tree is left untouched for a later publication.
 
 Canonical promotion stays exactly where it was: the fenced publisher.
 `publish_sealed_desired` is that same publisher — one journalled intent, one
 objects gate, one reference transaction — consuming a receipt as its source: it
-re-verifies the private tree under the gate, moves it with one exclusive
-no-replace rename, verifies any concurrent winner in full, and records the object
-row and desired reference exactly as `publish_desired` does. There is no second
+re-verifies the private tree under the gate against the receipt's verified
+inventory (bytes, digest and every entry's private mode, so a tree whose modes
+drifted is refused even though its digest still matches), moves it with one
+exclusive no-replace rename, verifies any concurrent winner in full, and records
+the object row and desired reference exactly as `publish_desired` does. There is no second
 publisher, no direct preflight promotion and no revocable-rename primitive. It
 refuses any run whose owner is not an environment or whose owner gate is not
 held, so a receipt is only ever consumed by its environment's activation under
