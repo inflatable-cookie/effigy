@@ -7,7 +7,6 @@ use effigy_kernel::objects::Closure;
 
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
-mod preflight;
 mod publication;
 pub(crate) use publication::{checkout, recorded_backend, state_home};
 pub use publication::{prepare, publish_shared_render, reset, verify};
@@ -38,8 +37,6 @@ pub(crate) enum Request {
         workdir: Option<String>,
     },
 }
-
-pub use preflight::materialize_render_for_preflight;
 
 /// Prepare the same workspace binding that was observed during planning.
 /// Named and inline workspaces share publication but retain their own inputs.

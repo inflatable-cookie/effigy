@@ -3027,16 +3027,18 @@ re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
 that disappeared all refuse. The pre-decision read alone cannot see any of that.
 The intended hash needs the frozen closure at its final content-addressed path
-before the one apply publishes it, so the owner
-`policy::render::materialize_render_for_preflight(policy, deadline)` seals it
-there: private staging with explicit 0700/0600 modes, atomic no-replace promotion
-into `objects/<closure digest>/`, an already-present byte-identical object
-accepted unchanged, differing bytes refused, no `Gate(Env)` acquisition, no
-desired-state mutation, and nothing promoted once the absolute deadline has passed
-(it is synchronous, so no abandoned worker can publish later; its own staging is
-removed on every refusal). The gated recheck only reads that sealed object and the
-live backend, so it never reacquires the environment gate, and the kernel
-publisher accepts the same object unchanged when the apply reconciles it. Ownership
+before the one apply publishes it, and the preflight must not put it there: the only
+owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
+acquire `Gate(Env)` — which the gated recheck cannot do — publish desired state, and
+run on a fixed budget rather than the publication's one deadline. A hand-written
+seal cannot meet the same bar either, because the primitives it needs are the
+kernel's own and are not exposed: private staging under the staging family, an
+exclusive no-replace directory promotion (`fs::DirFd::move_to` is a plain
+`renameat`), and the trusted closure verifier that rejects extra entries,
+untrusted modes and a wrong digest. The missing owner signature is
+`effigy_kernel::objects::Objects::seal_for_preflight(cx, root, closure, deadline)`.
+Until it exists the preflight **reads** an already-published render (every closure
+file at its final path with the exact frozen bytes) and otherwise refuses. Ownership
 resolution (canonicalization plus the scope-token read) is bounded by the
 deadline;
 and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
