@@ -616,7 +616,6 @@ fn durable_selection(
     root: &StateRoot,
     session: &effigy_kernel::workspace_session::SessionRef,
 ) -> Result<effigy_kernel::workspace_session::SelectionState, RunError> {
-    use effigy_kernel::workspace_session::SelectionState;
     let reader = match Store::read(observe, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Unknown(reason) => {
