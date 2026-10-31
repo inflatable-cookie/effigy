@@ -3496,7 +3496,7 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
 }
 
 #[test]
-fn a_stale_or_replaced_attachment_refuses_with_zero_effect() {
+fn an_attachment_that_did_not_bind_the_writer_never_types_or_resizes() {
     let cx = effects();
     let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
@@ -3522,7 +3522,10 @@ fn a_stale_or_replaced_attachment_refuses_with_zero_effect() {
     custody.input(&owner, b"live").expect("the owner types");
     wait_until("the owner's first bytes", || written(&log) == b"live");
 
-    // A terminal that attached and detached: its row is stale.
+    // A terminal that attached and detached, and a second live terminal of the
+    // same run: neither is the attachment that bound this writer, so both
+    // refuse. (The bound row going stale, and the kernel replacing a bound
+    // attachment, are proven by their own tests below.)
     let mut stale = run::attach_secondary(
         &cx,
         &root,
@@ -3542,8 +3545,8 @@ fn a_stale_or_replaced_attachment_refuses_with_zero_effect() {
         .resize(&stale, size(30, 30))
         .expect_err("a stale attachment never resizes");
 
-    // A different live attachment of the same run: the terminal's owner was not
-    // replaced under it, so the replacement is refused too.
+    // A different live attachment of the same run: the writer's binding is not
+    // replaced under it, so the second terminal is refused too.
     let replaced = run::attach_secondary(
         &cx,
         &root,
@@ -3569,6 +3572,176 @@ fn a_stale_or_replaced_attachment_refuses_with_zero_effect() {
     wait_until("the owner's next frame", || {
         written(&log) == b"live and live"
     });
+}
+
+#[test]
+fn a_stale_attachment_is_refused_by_its_own_released_row() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone())),
+        )
+        .expect("the run's terminal opens");
+    // A second terminal is the attachment this terminal's writer binds to.
+    let mut bound = run::attach_secondary(
+        &cx,
+        &root,
+        terminal_session(),
+        run,
+        AttachmentId::new([55; 16]),
+    )
+    .expect("a terminal attaches");
+    custody.start(&bound, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+    assert_eq!(
+        custody.terminal_mut(run).expect("terminal").owner(),
+        Some(bound.id()),
+        "the first attachment binds the run's writer"
+    );
+    custody
+        .input(&bound, b"live")
+        .expect("the bound attachment types");
+    wait_until("the bound attachment's frame", || written(&log) == b"live");
+
+    // That exact row is released — the terminal's own bound attachment is now
+    // stale, while the run's owning row (the writer's lifetime) is untouched.
+    bound
+        .release(&cx, &root, Release::Detach)
+        .expect("the bound attachment detaches");
+    let delivered = custody.terminal_mut(run).expect("terminal").delivered();
+    // The refusal is the lifetime read of the *bound* row, not "not my
+    // attachment": the identity matches and the row is gone.
+    let refusal = custody
+        .input(&bound, b"stale")
+        .expect_err("a stale attachment never types");
+    assert_eq!(
+        refusal.code,
+        host::RefusalCode::InvalidRequest,
+        "the stale refusal comes from the released row: {refusal:?}"
+    );
+    custody
+        .resize(&bound, size(30, 30))
+        .expect_err("a stale attachment never resizes");
+    assert_eq!(written(&log), b"live", "a stale frame wrote nothing");
+    assert!(sizes(&log).is_empty(), "a stale frame resized nothing");
+    let terminal = custody.terminal_mut(run).expect("terminal");
+    assert_eq!(
+        terminal.delivered(),
+        delivered,
+        "a stale frame delivered nothing"
+    );
+    assert!(
+        !terminal.retired(),
+        "a second terminal's detach never retires the run's writer"
+    );
+
+    // The writer's lifetime is still the owning row: owner EOF retires it.
+    let mut owner =
+        run::resume_owner(&cx, &root, terminal_session(), run).expect("owning attachment");
+    owner
+        .release(&cx, &root, Release::Eof)
+        .expect("the owning client's end of stream");
+    wait_until("the writer to retire on owner EOF", || {
+        log.lock().expect("pty log").retired == 1
+    });
+}
+
+#[test]
+fn a_replaced_attachment_is_refused_and_the_bound_one_still_types() {
+    let cx = effects();
+    let fixture = effigy_test_support::Fixture::new("workspace-terminal").expect("fixture");
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    terminal_session_row(&cx, &root);
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let run = RunId::new(1, [9; 10]).expect("run id");
+    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let log = Arc::new(Mutex::new(PtyLog::default()));
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(log.clone())),
+        )
+        .expect("the run's terminal opens");
+
+    // One connection attaches (this server did not admit the run, so its attach
+    // is a second terminal), binds the run's writer, and types.
+    let first = RequestId::new([2; 16]);
+    let replacement = RequestId::new([3; 16]);
+    let frames = {
+        let mut frames = terminal_hello(capability());
+        frames.push(terminal_attach(first, run, None));
+        frames.push(typed(first, 0, b"before the replacement"));
+        // The same connection re-attaches with a new request id: the kernel
+        // releases the first attachment as an end of stream and opens the
+        // replacement, which is exactly the replacement path.
+        frames.push(terminal_attach(replacement, run, None));
+        // The replacement's own sequence starts at zero on the rebound stream.
+        frames.push(typed(replacement, 0, b"from the replacement"));
+        frames
+    };
+    // The attaching connection is its own client: this server did not admit the
+    // run, so its attach opens a second terminal — the attachment the kernel's
+    // replacement path can actually replace.
+    let mut attaching_server = terminal_server(&root, calls.clone(), &[9], capability());
+    let (mut transport, wire) = scripted(&frames);
+    let result = attaching_server.serve(&mut transport, &cx, &observe, &root, &mut custody);
+
+    // Reversible failing safety assertion: the same bytes through the bound
+    // attachment were delivered, and the replacement's bytes are refused with
+    // zero bytes at the writer.
+    wait_until("the bound attachment's frame", || {
+        written(&log) == b"before the replacement"
+    });
+    assert!(
+        matches!(
+            result,
+            Err(host::Refusal {
+                code: host::RefusalCode::Forbidden,
+                ..
+            })
+        ),
+        "a replacement attachment never types into the bound writer: {result:?}"
+    );
+    assert_eq!(
+        written(&log),
+        b"before the replacement",
+        "the replacement's bytes never reached the writer"
+    );
+    assert!(sizes(&log).is_empty(), "the replacement resized nothing");
+    let terminal = custody.terminal_mut(run).expect("the run's terminal");
+    assert_eq!(
+        terminal.owner(),
+        Some(AttachmentId::new(*first.bytes())),
+        "the writer stays bound to the attachment that first attached"
+    );
+    let wire = decoded(&wire.lock().expect("written"));
+    assert!(
+        wire.iter().any(|frame| matches!(
+            frame,
+            host::Frame::Refuse(host::Refusal {
+                code: host::RefusalCode::Forbidden,
+                ..
+            })
+        )),
+        "the client was told why its replacement frame did not arrive: {wire:?}"
+    );
 }
 
 #[test]

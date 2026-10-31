@@ -4542,7 +4542,11 @@ connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
 `ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
 handoff its caller opens entries through. Opening a terminal resumes the run's
 owning handle, so a run this session did not admit has no owner to write for and
-is refused. The connection fences the live attachment it was handed, and the
+is refused. The first attachment of that run binds the writer for its whole
+life — in the workspace flow the owning client, which admitted the run — so a
+second terminal, a re-attach and the kernel's own replacement of a second
+terminal can never displace it. The connection fences the live attachment it was
+handed, and the
 owner's writer runs on its own pump: the pump re-reads the resumed owning row
 with `Attachment::attached_observed` immediately before every writer effect —
 each partial write, each resize, and each idle tick — so a stale, released,
@@ -4563,10 +4567,14 @@ once, again without waiting for connection traffic or for the run's closure. A
 reconnect resumes the retained log at the negotiated cursor or reports the
 rotated range as a `gap`, with no second replay store. `effigy#485` proves those
 behaviours with production-shaped fake writers through the real `Server::serve`
-loop and the merged serving loop, owned by `test:workspace:publication:c`: the
-crossing terminal and its reversible refusal, the stale and replaced attachment,
-the owner-EOF retirement with no further traffic, the idle drain, and the
-rotated-prefix gap. The container-up caller that opens one entry per admitted run
+loop and the merged serving loop, owned by `test:workspace:publication:c`: a
+bound row released under its own terminal (stale) and a repeated attach whose
+replacement the kernel opens (replaced), each refused with zero bytes and zero
+resize while the same bytes through the bound attachment are delivered — the
+reversible failing safety assertion in both directions; the crossing terminal;
+the owner-EOF retirement with no further traffic; the idle drain; the
+write/resize alternation that keeps a full writer from starving geometry; and
+the rotated-prefix gap. The container-up caller that opens one entry per admitted run
 is effigy#452, and the live child-PTY writer with its two-real-PTY process proof
 is effigy#519: nothing above claims a production terminal binding.
 
