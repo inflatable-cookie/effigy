@@ -88,6 +88,23 @@ fn read_summary(observe: &ObserveContext, root: &StateRoot, run: RunId) -> Optio
     }
 }
 
+/// The outcome a settled run recorded, named without Debug formatting.
+fn summary_names(summary: &Option<run::RunSummary>) -> &'static str {
+    match summary
+        .as_ref()
+        .and_then(|summary| summary.workload.as_ref())
+    {
+        Some(effigy_kernel::outcome::WorkloadOutcome::Succeeded) => "succeeded",
+        Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }) => "cancelled",
+        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { .. }) => "failed",
+        Some(effigy_kernel::outcome::WorkloadOutcome::NotStarted) => "not-started",
+        Some(effigy_kernel::outcome::WorkloadOutcome::Interrupted) => "interrupted",
+        Some(effigy_kernel::outcome::WorkloadOutcome::TimedOut { .. }) => "timed-out",
+        Some(effigy_kernel::outcome::WorkloadOutcome::Unknown(_)) => "unknown",
+        None => "no-outcome",
+    }
+}
+
 fn endpoint_of(published_endpoint: &str) -> SocketAddr {
     // The disposable activation publishes a numeric loopback lease; a
     // container-mode publication publishes the guest alias for the same port.
@@ -361,6 +378,18 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         Some(true),
         "the session reports complete cleanup"
     );
+    // The no-cause path is unchanged: a normal stop is not an owner loss.
+    assert!(
+        !matches!(
+            session_settled.workload,
+            Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                ..
+            })
+        ),
+        "a normal settlement keeps its prior outcome: {}",
+        summary_names(&Some(session_settled.clone()))
+    );
     // A second stop is refused: the run already settled once.
     let second = Request {
         id: RunId::new(millis + 1, [0x44; 10]).expect("a request id"),
@@ -431,6 +460,14 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
                 host.as_ref().and_then(|summary| summary.cleanup_complete),
                 Some(true),
                 "an owner-loss settle reports complete cleanup"
+            );
+            // Reported, not claimed: the session run's settled outcome is
+            // recorded in the PR, because `Run::interrupt` before
+            // `ServingOwner`'s settle does not carry the named cause into the
+            // settled outcome for a session run (see the task report).
+            eprintln!(
+                "session-run settled outcome after owner loss: {}",
+                summary_names(&session)
             );
             break;
         }

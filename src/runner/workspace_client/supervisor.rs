@@ -734,7 +734,8 @@ impl<'a> ServiceOwner<'a> {
             ..
         } = self;
         owner.stop();
-        let outcome = owner.settle(cleanup, adapter)?;
+        // The session's own run records why it ended before its one settle.
+        let outcome = owner.settle_with(cause, cleanup, adapter)?;
         Ok(Retired {
             session,
             lease,

@@ -592,6 +592,17 @@ fn retirement_names_its_cause_and_releases_once() {
             .expect("the session settles");
         assert_eq!(retired.cause, RetirementCause::Down);
         assert_eq!(retired.cause.as_str(), "down");
+        // A settled session refuses a second settlement: the kernel's own fence.
+        let double = effigy_kernel::run::Request {
+            id: effigy_kernel::id::RunId::new(1, [0x99; 10]).expect("a request id"),
+            run: retired.session.run(),
+            expected: retired.session.fence().clone(),
+            action: effigy_kernel::run::RequestAction::Stop,
+        };
+        assert!(
+            effigy_kernel::run::request(cx, root, &double).is_err(),
+            "a settled session refuses a second settlement"
+        );
         assert_eq!(retired.session.run(), session.run());
         assert!(
             TcpStream::connect(endpoint).is_err(),

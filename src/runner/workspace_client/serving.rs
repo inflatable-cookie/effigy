@@ -394,6 +394,45 @@ where
         self.supervisor.settle(cleanup, adapter)
     }
 
+    /// Durable settlement that names why the session ended (owner ruling
+    /// 2026-10-31): the session's own run records the already-typed cause through
+    /// the kernel's `Run::interrupt` path *before* its one close transaction, so
+    /// the settled outcome and cleanup say owner loss or listener failure instead
+    /// of an unrecorded default.
+    ///
+    /// Only the causes a serving owner can reach are mapped; every other cause
+    /// settles exactly as [`Self::settle`] does. A run that already settled
+    /// refuses a second settlement at the kernel, as it always has.
+    pub(crate) fn settle_with(
+        mut self,
+        cause: crate::runner::workspace_client::supervisor::RetirementCause,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+        adapter: &mut impl effigy_kernel::run::SettlementAdapter,
+    ) -> Result<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>, RunError> {
+        use crate::runner::workspace_client::supervisor::RetirementCause;
+        self.stop();
+        let workload = match cause {
+            RetirementCause::OwnerLost => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                    signal: None,
+                })
+            }
+            RetirementCause::ListenerFailed => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::Requested,
+                    signal: None,
+                })
+            }
+            RetirementCause::Settled | RetirementCause::Stopped | RetirementCause::Down => None,
+        };
+        let mut supervisor = self.supervisor;
+        if let Some(workload) = workload {
+            supervisor.interrupt(cleanup, workload)?;
+        }
+        supervisor.settle(cleanup, adapter)
+    }
+
     /// Take the session's serving custody. The supervisor must be the adopted
     /// owner of the run the launch belongs to; the kernel refuses anything else
     /// at the first [`SessionLaunch::serve`].
