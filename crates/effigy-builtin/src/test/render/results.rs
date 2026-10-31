@@ -5,7 +5,7 @@ use effigy_ui::{render_utf8, text_renderer, Renderer};
 
 use super::super::super::response::render_text_or_json_lazy;
 use super::super::planning::BuiltinTestTarget;
-use super::super::{BuiltinError, BuiltinTestExecResult};
+use super::super::{BuiltinError, BuiltinTestExecResult, BuiltinTestOutcome};
 
 #[path = "results/hint.rs"]
 mod hint;
@@ -79,7 +79,7 @@ pub(crate) fn render_builtin_test_results(
                 lifecycle.3,
                 lifecycle.4,
                 result.command.clone(),
-                result.success,
+                result.outcome,
                 result.code,
             )
         })
@@ -94,7 +94,7 @@ pub(crate) fn render_builtin_test_results(
             usize,
             String,
             String,
-            bool,
+            BuiltinTestOutcome,
             Option<i32>,
         )>>();
     ordered.sort_by(|a, b| a.0.cmp(&b.0));
@@ -109,17 +109,20 @@ pub(crate) fn render_builtin_test_results(
         teardown_steps,
         teardown_policy,
         command,
-        success,
+        outcome,
         code,
     ) in ordered
     {
-        let status = if success {
-            "ok".to_owned()
-        } else {
-            match code {
+        // A suite that did not run is not a failure the suite reported, and
+        // neither state is ever rendered as a pass.
+        let status = match outcome {
+            BuiltinTestOutcome::Passed => "ok".to_owned(),
+            BuiltinTestOutcome::Cancelled => "cancelled".to_owned(),
+            BuiltinTestOutcome::NotStarted => "not_started".to_owned(),
+            BuiltinTestOutcome::Failed => match code {
                 Some(value) => format!("exit={value}"),
-                None => "terminated".to_owned(),
-            }
+                None => "failed".to_owned(),
+            },
         };
         let value = if verbose {
             format!(
@@ -133,10 +136,9 @@ pub(crate) fn render_builtin_test_results(
         renderer.key_values(&[KeyValue::new(name, value)])?;
     }
     renderer.text("")?;
-    if results
-        .iter()
-        .any(|result| !result.success && result.command.starts_with("oxide "))
-    {
+    if results.iter().any(|result| {
+        result.outcome == BuiltinTestOutcome::Failed && result.command.starts_with("oxide ")
+    }) {
         renderer.notice(
             NoticeLevel::Warning,
             "a suite ran through Oxide; if Oxide refused the build, set EFFIGY_OXIDE_ESCAPE=cargo to run plain Cargo",
@@ -173,7 +175,7 @@ pub(crate) fn finalize_builtin_test_outcome(
     let mut failures = results
         .iter()
         .filter_map(|result| {
-            if result.success {
+            if result.success() {
                 None
             } else {
                 Some((result.name.clone(), result.code))
@@ -195,6 +197,20 @@ pub(crate) fn finalize_builtin_test_outcome(
         return Ok(Some(rendered));
     }
 
+    // A run the operator stopped is a cancellation, not a failed check, and
+    // the task carries the interrupted convention (130) so a durable run
+    // record reads the same outcome the text and JSON do. A suite that never
+    // started, or any suite that reported its own failure, keeps the ordinary
+    // failure exit.
+    let cancelled = results
+        .iter()
+        .any(|result| result.outcome == BuiltinTestOutcome::Cancelled)
+        && !results.iter().any(|result| {
+            matches!(
+                result.outcome,
+                BuiltinTestOutcome::Failed | BuiltinTestOutcome::NotStarted
+            )
+        });
     let rendered = render_builtin_test_outcome_rendered(
         results,
         targets,
@@ -204,7 +220,11 @@ pub(crate) fn finalize_builtin_test_outcome(
         output_json,
         true,
     )?;
-    Err(BuiltinError::BuiltinTestNonZero { failures, rendered })
+    Err(BuiltinError::BuiltinTestNonZero {
+        failures,
+        cancelled,
+        rendered,
+    })
 }
 
 fn render_builtin_test_outcome_rendered(

@@ -202,14 +202,49 @@ pub(crate) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_roo
     planning::builtin_test_max_parallel(catalogs, resolved_root)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuiltinTestOutcome {
+    /// The suite ran and reported success.
+    Passed,
+    /// The suite ran and reported a failure.
+    Failed,
+    /// The operator stopped the run before this suite reported a result.
+    Cancelled,
+    /// The suite never started, so it proved nothing.
+    NotStarted,
+}
+
+impl BuiltinTestOutcome {
+    /// Only a suite that ran and passed is a success. A cancelled or
+    /// never-started suite is not, and no projection may turn it into one.
+    pub(crate) fn success(self) -> bool {
+        matches!(self, Self::Passed)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::NotStarted => "not_started",
+        }
+    }
+}
+
 #[derive(Debug)]
-struct BuiltinTestExecResult {
-    name: String,
-    runner: String,
-    root: std::path::PathBuf,
-    command: String,
-    success: bool,
-    code: Option<i32>,
+pub(crate) struct BuiltinTestExecResult {
+    pub(crate) name: String,
+    pub(crate) runner: String,
+    pub(crate) root: std::path::PathBuf,
+    pub(crate) command: String,
+    pub(crate) outcome: BuiltinTestOutcome,
+    pub(crate) code: Option<i32>,
+}
+
+impl BuiltinTestExecResult {
+    pub(crate) fn success(&self) -> bool {
+        self.outcome.success()
+    }
 }
 
 #[cfg(test)]

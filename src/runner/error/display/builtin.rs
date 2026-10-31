@@ -8,15 +8,22 @@ pub(super) fn write_doctor_non_zero(
 pub(super) fn write_builtin_test_non_zero(
     f: &mut std::fmt::Formatter<'_>,
     failures: &[(String, Option<i32>)],
+    cancelled: bool,
 ) -> std::fmt::Result {
     let rendered = failures
         .iter()
         .map(|(target, code)| match code {
             Some(value) => format!("{target}: exit={value}"),
-            None => format!("{target}: terminated"),
+            None => format!("{target}: did not complete"),
         })
         .collect::<Vec<String>>()
         .join(", ");
+    if cancelled {
+        return write!(
+            f,
+            "the built-in test run was cancelled before every suite finished: {rendered}"
+        );
+    }
     write!(f, "one or more built-in test targets failed: {rendered}")
 }
 

@@ -33,9 +33,36 @@ pub enum MultiProcessTuiError {
     Control(String),
 }
 
+/// What the supervised session recorded for one entry when it ended. The
+/// session reports the facts it observed; a caller decides what they mean for
+/// its own result (a stopped test suite, for example, is a cancelled check).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEntryState {
+    /// The entry reported a successful exit.
+    Passed,
+    /// The entry reported a non-zero exit, or a final state that proves no
+    /// successful completion (a wait error, a closed terminal, no exit at
+    /// all).
+    Failed { detail: String },
+    /// The entry was stopped by a signal: it never reported an exit status.
+    Stopped { detail: String },
+    /// The entry never started, so it never reported anything.
+    NotStarted,
+}
+
+/// One supervised entry's recorded result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEntry {
+    pub name: String,
+    pub state: SessionEntryState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiProcessTuiOutcome {
-    pub non_zero_exits: Vec<(String, String)>,
+    /// Every entry the session supervised, with the outcome it recorded.
+    pub entries: Vec<SessionEntry>,
+    /// The session ended because its operator quit it (or its terminal went
+    /// away), not because the entries finished.
     pub stopped_by_user: bool,
 }
 
@@ -231,7 +258,6 @@ fn run_session(
     let summary_result = shutdown_and_render_summary(
         &mut runtime.terminal,
         runtime.supervisor.as_ref(),
-        std::mem::take(&mut runtime.state.observed_non_zero),
         &runtime.state.logs,
         &runtime.state.process_started_at,
         &runtime.diagnostics,
@@ -245,7 +271,7 @@ fn run_session(
         let SessionRuntime { terminal, .. } = runtime;
         std::mem::forget(terminal);
     }
-    let non_zero_exits = summary_result?;
+    let entries = summary_result?;
     let stopped_by_user = result?;
     if let Some(result) = before_shutdown {
         result.map_err(MultiProcessTuiError::Control)?;
@@ -257,7 +283,7 @@ fn run_session(
         return Err(MultiProcessTuiError::Process(error));
     }
     Ok(MultiProcessTuiOutcome {
-        non_zero_exits,
+        entries,
         stopped_by_user,
     })
 }

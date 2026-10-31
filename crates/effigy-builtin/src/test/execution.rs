@@ -19,7 +19,7 @@ use effigy_tui::multiprocess::{
 
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::sweep::Sweep;
-use super::{BuiltinError, BuiltinTestExecResult};
+use super::{BuiltinError, BuiltinTestExecResult, BuiltinTestOutcome};
 use crate::ports::BuiltinTestChildEvidence;
 use crate::{BuiltinRuntimePorts, HostSuiteCustody};
 #[path = "planning/runnable/cargo_env.rs"]
@@ -108,30 +108,65 @@ pub(super) fn run_builtin_test_targets_tui(
         run_multiprocess_tui(ports.current_working_dir()?, specs, tab_order, options)
     }
     .map_err(|error| BuiltinError::Ui(format!("builtin test tui runtime failed: {error}")))?;
-    let failures = outcome
-        .non_zero_exits
-        .into_iter()
-        .collect::<HashMap<String, String>>();
 
-    let results = runnable
-        .into_iter()
-        .map(|suite| {
-            let diagnostic = failures.get(&suite.name);
-            let code = diagnostic
-                .and_then(|value| value.strip_prefix("exit="))
-                .and_then(|value| value.parse::<i32>().ok());
-            BuiltinTestExecResult {
-                name: suite.name,
-                runner: suite.runner,
-                root: suite.root,
-                command: suite.command,
-                success: diagnostic.is_none(),
-                code,
-            }
-        })
-        .collect::<Vec<BuiltinTestExecResult>>();
+    let results = builtin_test_results_from_tui(runnable, &outcome);
     finish_sweep(sweep)?;
     Ok(results)
+}
+
+/// One suite's result from the session state the TUI recorded for it.
+///
+/// The session reports what it observed; this is the only place that decides
+/// what those facts mean for a suite. A suite the operator stopped is
+/// cancelled and a suite that never started is not started; neither is a
+/// failure invented by the projection, and neither is a pass.
+fn suite_result(
+    suite: BuiltinTestRunnable,
+    state: Option<&effigy_tui::multiprocess::SessionEntryState>,
+    stopped_by_user: bool,
+) -> BuiltinTestExecResult {
+    use effigy_tui::multiprocess::SessionEntryState;
+
+    let (outcome, code) = match state {
+        Some(SessionEntryState::Passed) => (BuiltinTestOutcome::Passed, Some(0)),
+        Some(SessionEntryState::Failed { detail }) => {
+            let code = detail
+                .strip_prefix("exit=")
+                .and_then(|value| value.parse::<i32>().ok());
+            (BuiltinTestOutcome::Failed, code)
+        }
+        Some(SessionEntryState::Stopped { .. }) if stopped_by_user => {
+            (BuiltinTestOutcome::Cancelled, None)
+        }
+        Some(SessionEntryState::Stopped { .. }) => (BuiltinTestOutcome::Failed, None),
+        Some(SessionEntryState::NotStarted) | None => (BuiltinTestOutcome::NotStarted, None),
+    };
+    BuiltinTestExecResult {
+        name: suite.name,
+        runner: suite.runner,
+        root: suite.root,
+        command: suite.command,
+        outcome,
+        code,
+    }
+}
+
+fn builtin_test_results_from_tui(
+    runnable: Vec<BuiltinTestRunnable>,
+    outcome: &effigy_tui::multiprocess::MultiProcessTuiOutcome,
+) -> Vec<BuiltinTestExecResult> {
+    let states = outcome
+        .entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), &entry.state))
+        .collect::<HashMap<&str, &effigy_tui::multiprocess::SessionEntryState>>();
+    runnable
+        .into_iter()
+        .map(|suite| {
+            let state = states.get(suite.name.as_str()).copied();
+            suite_result(suite, state, outcome.stopped_by_user)
+        })
+        .collect()
 }
 
 pub(super) fn run_builtin_test_targets_parallel(
@@ -263,7 +298,11 @@ pub(super) fn run_builtin_test_targets_parallel(
                                 runner,
                                 root,
                                 command,
-                                success: status.success(),
+                                outcome: if status.success() {
+                                    BuiltinTestOutcome::Passed
+                                } else {
+                                    BuiltinTestOutcome::Failed
+                                },
                                 code: status.code(),
                             });
                             continue;
@@ -375,7 +414,11 @@ pub(super) fn run_builtin_test_targets_parallel(
                             runner,
                             root,
                             command,
-                            success: status.success(),
+                            outcome: if status.success() {
+                                BuiltinTestOutcome::Passed
+                            } else {
+                                BuiltinTestOutcome::Failed
+                            },
                             code: status.code(),
                         });
                     }
@@ -632,9 +675,10 @@ mod tests {
     struct ScratchPorts {
         env: Vec<(String, OsString)>,
         custody_marker: Option<PathBuf>,
-        /// Lifecycle commands handed to container routing. Empty unless a
-        /// non-nested container suite actually routed.
-        routed_commands: Arc<Mutex<Vec<String>>>,
+        /// `(container, lifecycle command)` pairs handed to container
+        /// routing. Empty unless a non-nested container suite actually
+        /// routed.
+        routed_commands: Arc<Mutex<Vec<(String, String)>>>,
     }
 
     impl BuiltinRuntimePorts for ScratchPorts {
@@ -714,15 +758,16 @@ mod tests {
 
         fn render_container_suite_command(
             &self,
-            _target: &BuiltinContainerSuiteTarget,
+            target: &BuiltinContainerSuiteTarget,
             suite_command: &str,
         ) -> Result<String, BuiltinError> {
+            // The observation is which container the lifecycle was rendered
+            // for and which command was routed; printf still has to run as a
+            // host script.
             self.routed_commands
                 .lock()
                 .expect("routed command lock")
-                .push(suite_command.to_owned());
-            // Identity render: the observation is which command was routed,
-            // and printf still has to run as a host script.
+                .push((target.container.clone(), suite_command.to_owned()));
             Ok(suite_command.to_owned())
         }
     }
@@ -821,7 +866,7 @@ mod tests {
         let results =
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
         assert_eq!(
             std::fs::read_to_string(&seen).expect("suite output"),
             scratch.path().display().to_string(),
@@ -840,7 +885,7 @@ mod tests {
 
         let results =
             run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
         let recorded = std::fs::read_to_string(&marker).expect("custody marker");
         let fields = recorded.split('\u{1f}').collect::<Vec<_>>();
         assert_eq!(fields.len(), 7, "custody marker fields: {recorded}");
@@ -894,7 +939,7 @@ mod tests {
         let results =
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
         assert_ne!(
             std::fs::read_to_string(&seen).expect("suite output"),
             scratch.path().display().to_string(),
@@ -919,7 +964,7 @@ mod tests {
         let ports = ports(scratch.path());
         let results =
             run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
 
         let routed = ports.routed_commands.lock().expect("routed lock").clone();
         assert_eq!(
@@ -927,7 +972,11 @@ mod tests {
             1,
             "one container route for the suite: {routed:?}"
         );
-        let command = &routed[0];
+        let (container, command) = &routed[0];
+        assert_eq!(
+            container, "web",
+            "every hook is rendered for the selected container: {routed:?}"
+        );
         assert!(
             command.contains("printf setup"),
             "setup must be inside the container exec, got {command}"
@@ -959,7 +1008,7 @@ mod tests {
         let ports = ports(scratch.path());
         let results =
             run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
         assert!(
             ports
                 .routed_commands
@@ -980,7 +1029,7 @@ mod tests {
             run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
                 .expect("suite recorded");
         assert!(
-            !results[0].success,
+            !results[0].success(),
             "exit 130 must not project success: {:?}",
             results[0]
         );
@@ -997,7 +1046,7 @@ mod tests {
         let ports = ports(scratch.path());
         let results =
             run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
-        assert!(results[0].success, "{:?}", results[0]);
+        assert!(results[0].success(), "{:?}", results[0]);
         assert!(
             ports
                 .routed_commands
@@ -1006,5 +1055,224 @@ mod tests {
                 .is_empty(),
             "a host suite must not reach container routing"
         );
+    }
+
+    use effigy_tui::multiprocess::{MultiProcessTuiOutcome, SessionEntry, SessionEntryState};
+
+    fn named_suite(root: &Path, name: &str) -> BuiltinTestRunnable {
+        let mut runnable = suite(root, "printf suite", BuiltinTargetRuntime::Host);
+        runnable.name = name.to_owned();
+        runnable
+    }
+
+    fn tui_outcome(
+        entries: Vec<(&str, SessionEntryState)>,
+        stopped_by_user: bool,
+    ) -> MultiProcessTuiOutcome {
+        MultiProcessTuiOutcome {
+            entries: entries
+                .into_iter()
+                .map(|(name, state)| SessionEntry {
+                    name: name.to_owned(),
+                    state,
+                })
+                .collect(),
+            stopped_by_user,
+        }
+    }
+
+    /// The interactive projection: the session's recorded states decide every
+    /// suite's result, and only a suite that ran and passed is a success.
+    #[test]
+    fn interactive_session_states_project_to_suite_outcomes() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let stopped = SessionEntryState::Stopped {
+            detail: "signal=15".to_owned(),
+        };
+        let cases = [
+            (
+                "stopped before the first member started",
+                vec![
+                    ("one", SessionEntryState::NotStarted),
+                    ("two", SessionEntryState::NotStarted),
+                ],
+                true,
+                vec![
+                    BuiltinTestOutcome::NotStarted,
+                    BuiltinTestOutcome::NotStarted,
+                ],
+            ),
+            (
+                "stopped after one member passed",
+                vec![("one", SessionEntryState::Passed), ("two", stopped.clone())],
+                true,
+                vec![BuiltinTestOutcome::Passed, BuiltinTestOutcome::Cancelled],
+            ),
+            (
+                "no member started",
+                vec![
+                    ("one", SessionEntryState::NotStarted),
+                    ("two", SessionEntryState::NotStarted),
+                ],
+                false,
+                vec![
+                    BuiltinTestOutcome::NotStarted,
+                    BuiltinTestOutcome::NotStarted,
+                ],
+            ),
+            (
+                "every member passed",
+                vec![
+                    ("one", SessionEntryState::Passed),
+                    ("two", SessionEntryState::Passed),
+                ],
+                true,
+                vec![BuiltinTestOutcome::Passed, BuiltinTestOutcome::Passed],
+            ),
+            (
+                "one member failed",
+                vec![
+                    ("one", SessionEntryState::Passed),
+                    (
+                        "two",
+                        SessionEntryState::Failed {
+                            detail: "exit=7".to_owned(),
+                        },
+                    ),
+                ],
+                false,
+                vec![BuiltinTestOutcome::Passed, BuiltinTestOutcome::Failed],
+            ),
+        ];
+
+        for (case, entries, stopped_by_user, expected) in cases {
+            let runnable = vec![
+                named_suite(fixture.path(), "one"),
+                named_suite(fixture.path(), "two"),
+            ];
+            let outcome = tui_outcome(entries, stopped_by_user);
+            let results = builtin_test_results_from_tui(runnable, &outcome);
+            assert_eq!(
+                results
+                    .iter()
+                    .map(|result| result.outcome)
+                    .collect::<Vec<BuiltinTestOutcome>>(),
+                expected,
+                "{case}"
+            );
+            assert_eq!(
+                results.iter().filter(|result| result.success()).count(),
+                expected.iter().filter(|outcome| outcome.success()).count(),
+                "only a passed suite is a success: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_suite_the_session_never_supervised_never_reports_success() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let runnable = vec![named_suite(fixture.path(), "one")];
+        let outcome = tui_outcome(Vec::new(), true);
+
+        let results = builtin_test_results_from_tui(runnable, &outcome);
+
+        assert_eq!(results[0].outcome, BuiltinTestOutcome::NotStarted);
+        assert!(!results[0].success());
+    }
+
+    /// Text, JSON and the task's own outcome agree on a stopped run: the
+    /// passed suite stays a pass, the stopped suite is cancelled, and the run
+    /// carries the interrupted exit, never a success exit.
+    #[test]
+    fn a_stopped_interactive_run_projects_one_outcome_everywhere() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let runnable = vec![
+            named_suite(fixture.path(), "one"),
+            named_suite(fixture.path(), "two"),
+        ];
+        let outcome = tui_outcome(
+            vec![
+                ("one", SessionEntryState::Passed),
+                (
+                    "two",
+                    SessionEntryState::Stopped {
+                        detail: "signal=15".to_owned(),
+                    },
+                ),
+            ],
+            true,
+        );
+        let results = builtin_test_results_from_tui(runnable, &outcome);
+
+        let text = cancelled_run(&results, false);
+        assert!(
+            text.contains("ok") && text.contains("cancelled"),
+            "text keeps the pass and names the cancelled suite: {text}"
+        );
+        assert!(
+            !text.contains("two  ok") && !text.contains("two ok"),
+            "a stopped suite is never rendered as ok: {text}"
+        );
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&cancelled_run(&results, true)).expect("cancelled run JSON");
+        assert_eq!(payload["schema"], "effigy.test.results.v1");
+        let targets = payload["targets"].as_array().expect("targets");
+        assert_eq!(targets[0]["outcome"], "passed");
+        assert_eq!(targets[1]["outcome"], "cancelled");
+        assert_eq!(targets[1]["success"], serde_json::Value::Bool(false));
+        assert_eq!(targets[1]["code"], serde_json::Value::Null);
+        assert_eq!(payload["failures"][0]["target"], "two");
+    }
+
+    /// Finalize the stopped run and return the rendered payload: the same
+    /// projection every front end reads, proving the cancellation reaches the
+    /// text and the machine contract from one place.
+    fn cancelled_run(results: &[BuiltinTestExecResult], output_json: bool) -> String {
+        let error = crate::test::render::finalize_builtin_test_outcome(
+            results,
+            &[],
+            None,
+            &[],
+            false,
+            output_json,
+        )
+        .expect_err("a cancelled run is not a success");
+        match error {
+            BuiltinError::BuiltinTestNonZero {
+                cancelled,
+                failures,
+                rendered,
+            } => {
+                assert!(cancelled, "the run reports cancellation");
+                assert_eq!(failures, vec![("two".to_owned(), None)]);
+                rendered
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn an_unstarted_suite_keeps_the_ordinary_failure_exit() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let runnable = vec![named_suite(fixture.path(), "one")];
+        let outcome = tui_outcome(vec![("one", SessionEntryState::NotStarted)], false);
+        let results = builtin_test_results_from_tui(runnable, &outcome);
+
+        let error = crate::test::render::finalize_builtin_test_outcome(
+            &results,
+            &[],
+            None,
+            &[],
+            false,
+            false,
+        )
+        .expect_err("an unstarted suite proves nothing");
+        match error {
+            BuiltinError::BuiltinTestNonZero { cancelled, .. } => {
+                assert!(!cancelled, "an unstarted suite is not an operator stop")
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }
