@@ -102,7 +102,12 @@ a changed body is `id_conflict` and an unestablished outcome is `unknown`. A
 guest never resends an indeterminate invocation, including under the same ID,
 and never falls back or replaces its request ID. After Unknown it may perform
 separately authorized read-only outcome inspection or open a new safe attachment.
-Terminal input is never replayed. Observe remains read-only.
+Terminal input is never replayed. Observe remains read-only. Cloned intents share
+a nonblocking delivery fence: one synchronous exchange claims it before writing,
+a possibly partial write marks it indeterminate, and only a matching definitive
+non-Unknown answer makes it sendable again. Validation/negotiation failure before
+any write leaves it unsent. This local fence establishes no execution outcome;
+the host journal remains authoritative.
 
 The reservation must bind both the canonical request digest and the canonical
 resolved-invocation digest in the same transaction as the reserved run. Admission

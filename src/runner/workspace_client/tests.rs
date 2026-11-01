@@ -5249,3 +5249,291 @@ fn level_one_old_strict_peer_refusal_names_unsupported_feature_before_authentica
         host::Frame::Hello(_)
     ));
 }
+
+#[test]
+fn level_one_unknown_intent_clone_cannot_be_resent_after_transport_loss() {
+    let intent = Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }));
+    let mut first = WorkspaceClient::connect(
+        MuteTransport::answering_negotiation(),
+        verified(),
+        live_run(),
+    )
+    .unwrap();
+    first
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    assert!(matches!(
+        first.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    let cloned = intent.clone();
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut second = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    second
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let _refused = second.send(&cloned).unwrap_err();
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "an indeterminate clone resent its request"
+    );
+}
+
+fn level_one_append_response(
+    transport: &mut MuteTransport,
+    intent: &Intent,
+    outcome: host::ResponseOutcome,
+) {
+    let bytes = host::encode_frame(&host::Frame::Response(host::Response {
+        id: intent.id(),
+        outcome,
+    }))
+    .unwrap();
+    transport.input.extend((bytes.len() as u32).to_be_bytes());
+    transport.input.extend(bytes);
+}
+
+#[test]
+fn level_one_host_unknown_fences_all_intent_clones_but_known_answers_allow_safe_replay() {
+    for unknown in [true, false] {
+        let intent = Intent::new(RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }));
+        let mut transport = MuteTransport::answering_negotiation();
+        let response = || {
+            if unknown {
+                host::ResponseOutcome::Refused(host::Refusal::unknown(
+                    "outcome cannot be established",
+                ))
+            } else {
+                host::ResponseOutcome::Observed(serde_json::json!({"observed":true}))
+            }
+        };
+        level_one_append_response(&mut transport, &intent, response());
+        level_one_append_response(&mut transport, &intent, response());
+        let written = transport.written.clone();
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        let first = client.send(&intent);
+        let before = written.lock().unwrap().len();
+        let cloned = intent.clone();
+        let second = client.send(&cloned);
+        if unknown {
+            assert!(matches!(
+                first,
+                Err(ChannelError::Refused {
+                    code: "unknown",
+                    ..
+                })
+            ));
+            assert!(matches!(second, Err(ChannelError::Unknown { .. })));
+            assert_eq!(
+                written.lock().unwrap().len(),
+                before,
+                "host Unknown resent a clone"
+            );
+        } else {
+            assert!(
+                first.is_ok() && second.is_ok(),
+                "a known answer must retain safe replay semantics"
+            );
+            assert!(written.lock().unwrap().len() > before);
+        }
+    }
+}
+
+#[test]
+fn level_one_prewrite_refusal_does_not_mark_an_unsent_intent_indeterminate() {
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: Some(host::ObserveQuery {
+            cwd: ".".into(),
+            args: vec!["doctor".into()],
+            output: host::OutputMode::Text,
+        }),
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let hello = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+        capabilities: vec![],
+        protocol: host::PROTOCOL_V1,
+        effigy_version: running_binary().version,
+    }))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (hello.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(hello)
+        .collect();
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&intent),
+        Err(ChannelError::Refused {
+            code: "forbidden",
+            ..
+        })
+    ));
+    assert_eq!(written.lock().unwrap().len(), before);
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut capable = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    capable
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        capable.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert!(
+        written.lock().unwrap().len() > before,
+        "an unsent intent was incorrectly fenced"
+    );
+}
+
+#[test]
+fn level_one_partial_write_is_unknown_and_never_resends() {
+    struct PartialWrite(MuteTransport, bool);
+    impl Transport for PartialWrite {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.0.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if self.1 {
+                self.0
+                    .written
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&bytes[..2]);
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "partial request"))
+            } else {
+                self.0.write_all(bytes)
+            }
+        }
+    }
+    let transport = PartialWrite(MuteTransport::answering_negotiation(), false);
+    let written = transport.0.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.transport.1 = true;
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    assert!(matches!(
+        client.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "partial-write Unknown resent bytes"
+    );
+}
+
+#[test]
+fn level_one_concurrent_intent_clone_refuses_before_a_second_transport_write() {
+    use std::sync::mpsc;
+    struct BlockingWrite {
+        inner: MuteTransport,
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl Transport for BlockingWrite {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.inner.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(host::Frame::Request(_))) {
+                self.started
+                    .send(())
+                    .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+                self.release
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+            }
+            self.inner.write_all(bytes)
+        }
+    }
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let transport = BlockingWrite {
+        inner: MuteTransport::answering_negotiation(),
+        started: started_tx,
+        release: release_rx,
+    };
+    let mut first = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    first
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut second = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    second
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let cloned = intent.clone();
+    let first_thread = std::thread::spawn(move || first.send(&cloned));
+    let ready = started_rx.recv_timeout(Duration::from_secs(5));
+    let refused = second.send(&intent);
+    let released = release_tx.send(());
+    let first_result = first_thread.join();
+    assert!(ready.is_ok() && released.is_ok());
+    assert!(matches!(
+        first_result.unwrap(),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert!(matches!(refused, Err(ChannelError::Local(message)) if message.contains("in flight")));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "a concurrent clone wrote a second request"
+    );
+    assert!(matches!(
+        second.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(written.lock().unwrap().len(), before);
+}

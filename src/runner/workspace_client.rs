@@ -681,6 +681,13 @@ pub(crate) enum RunPlacement {
 pub(crate) struct Intent {
     id: RequestId,
     body: RequestBody,
+    delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IntentDelivery {
+    Sendable,
+    Indeterminate,
 }
 
 impl Intent {
@@ -688,6 +695,7 @@ impl Intent {
         Self {
             id: RequestId::new(fresh_bytes()),
             body,
+            delivery: std::sync::Arc::new(std::sync::Mutex::new(IntentDelivery::Sendable)),
         }
     }
 
@@ -1123,7 +1131,27 @@ impl<T: Transport> WorkspaceClient<T> {
     /// acknowledged and dropped: output streams belong to the session front
     /// end, and this glue never attaches.
     fn exchange(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
-        let outcome = self.exchange_authenticated(intent);
+        // Clones share this nonblocking claim. It is local synchronization,
+        // never a kernel gate, and spans only the bounded synchronous exchange.
+        let mut delivery = match intent.delivery.try_lock() {
+            Ok(delivery) => delivery,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err(ChannelError::local(
+                    "this request is already in flight; it was not resent",
+                ));
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(ChannelError::unknown(
+                    "this request's delivery state is unavailable",
+                ));
+            }
+        };
+        if *delivery == IntentDelivery::Indeterminate {
+            return Err(ChannelError::unknown(
+                "this request's delivery is indeterminate; inspect its outcome or open a fresh safe attachment",
+            ));
+        }
+        let outcome = self.exchange_authenticated(intent, &mut delivery);
         if outcome.is_ok() {
             self.keep_capability();
         }
@@ -1144,7 +1172,11 @@ impl<T: Transport> WorkspaceClient<T> {
         let _ = store_capability(std::path::Path::new(CLIENT_ROOT), &client, &stored);
     }
 
-    fn exchange_authenticated(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+    fn exchange_authenticated(
+        &mut self,
+        intent: &Intent,
+        delivery: &mut IntentDelivery,
+    ) -> Result<ChannelOutcome, ChannelError> {
         if matches!(&intent.body, RequestBody::Observe(body) if body.query.is_some())
             && !self.observe_query_v1
         {
@@ -1154,13 +1186,22 @@ impl<T: Transport> WorkspaceClient<T> {
         }
         let id = intent.id();
         let request = self.request_for(intent);
-        channel::write_frame(&mut self.transport, &Frame::Request(request))
-            .map_err(ChannelError::from_refusal)?;
+        // Validation/encoding cannot deliver anything. Only after it succeeds
+        // do we fence every clone, before the first possibly partial write.
+        let body =
+            channel::encode_frame(&Frame::Request(request)).map_err(ChannelError::from_refusal)?;
+        let mut bytes = Vec::with_capacity(body.len() + 4);
+        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&body);
+        *delivery = IntentDelivery::Indeterminate;
+        self.transport.write_all(&bytes).map_err(|_| {
+            ChannelError::unknown("the connection failed while writing this request")
+        })?;
         loop {
             let frame = read_frame(&mut self.transport)?;
             match frame {
                 Frame::Response(response) if response.id == id => {
-                    return match response.outcome {
+                    let outcome = match response.outcome {
                         channel::ResponseOutcome::Observed(value) => {
                             if matches!(intent.body, RequestBody::Attach(_)) {
                                 // An attach answers with the host's own view of
@@ -1198,6 +1239,16 @@ impl<T: Transport> WorkspaceClient<T> {
                             Err(ChannelError::from_refusal(refusal))
                         }
                     };
+                    if !matches!(
+                        &outcome,
+                        Err(ChannelError::Refused {
+                            code: "unknown",
+                            ..
+                        })
+                    ) {
+                        *delivery = IntentDelivery::Sendable;
+                    }
+                    return outcome;
                 }
                 Frame::Response(_) => {
                     return Err(ChannelError::local(
@@ -1206,7 +1257,12 @@ impl<T: Transport> WorkspaceClient<T> {
                 }
                 // A connection-level refusal: no request of this connection
                 // was dispatched, so nothing was admitted (§8.11).
-                Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
+                Frame::Refuse(refusal) => {
+                    if refusal.code != channel::RefusalCode::Unknown {
+                        *delivery = IntentDelivery::Sendable;
+                    }
+                    return Err(ChannelError::from_refusal(refusal));
+                }
                 Frame::Stream(stream) => {
                     // A gap names bytes this client never received, so it never
                     // advances the cursor; `end` reports the final sequence.
