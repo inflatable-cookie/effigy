@@ -1381,8 +1381,13 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
             reservation.claim().unwrap(),
         )
         .unwrap();
-        // This only simulates releasing Env: the owning process remains alive.
-        drop(run);
+        // The real owner remains live and retains the exact run while Env is free.
+        let _parked = run
+            .park_workspace(
+                &reservation,
+                std::time::Instant::now() + std::time::Duration::from_secs(60),
+            )
+            .expect("park reserved owner");
         println!("effigy-reserved-owner-ready");
         std::io::stdout().flush().unwrap();
         let mut line = String::new();
@@ -1406,6 +1411,15 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
             _ => {}
         }
     };
+    let gate_free = ready.then(|| {
+        crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast,
+        )
+        .map(drop)
+    });
     let live = ready.then(|| {
         crate::run::settle_interrupted(
             &cx,
@@ -1447,6 +1461,7 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
         .wait()
         .expect("reap exactly the child this test started");
     assert!(ready, "child admitted the reserved run");
+    assert!(matches!(gate_free, Some(Ok(()))), "park releases Env");
     assert!(
         matches!(live, Some(Err(RunError::Refused(_)))),
         "live owner is protected"

@@ -397,6 +397,17 @@ pub struct Run<'a> {
     session_launch: std::cell::RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
+/// Retains the exact reserved run while its environment gate is free. There is
+/// deliberately no generic effect access through this type.
+#[derive(Debug)]
+pub struct ParkedWorkspaceRun<'a> {
+    _run: Run<'a>,
+    _gates: Vec<crate::id::ResourceId>,
+    _reservation: crate::workspace_session::WorkspaceActivationReservation,
+    _snapshot: crate::workspace_session::ActivationReservationRecord,
+    _deadline: std::time::Instant,
+}
+
 impl std::fmt::Debug for Run<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Run")
@@ -406,6 +417,36 @@ impl std::fmt::Debug for Run<'_> {
     }
 }
 impl<'a> Run<'a> {
+    /// Consume a claimed environment run and release only its gate. Failure
+    /// returns the original owner so the caller can settle it explicitly.
+    pub fn park_workspace(
+        mut self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+        deadline: std::time::Instant,
+    ) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
+        let checked = (|| {
+            self.can_effect()?;
+            if std::time::Instant::now() >= deadline {
+                return Err(RunError::unavailable(
+                    "workspace activation deadline expired",
+                ));
+            }
+            let snapshot =
+                reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
+            let gates = self.guard.park().map_err(RunError::refused)?;
+            Ok((snapshot, gates))
+        })();
+        match checked {
+            Ok((snapshot, gates)) => Ok(ParkedWorkspaceRun {
+                _run: self,
+                _gates: gates,
+                _reservation: reservation.clone(),
+                _snapshot: snapshot,
+                _deadline: deadline,
+            }),
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
     pub fn begin(
         cx: &EffectContext,
         root: &'a StateRoot,
