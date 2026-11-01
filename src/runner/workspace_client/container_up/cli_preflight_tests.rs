@@ -1,7 +1,8 @@
 //! Read-only Phase-0 controls against real fixture paths, with no backend call.
 use super::*;
 
-fn fixture() -> (effigy_test_support::Fixture, std::path::PathBuf) {
+pub(in crate::runner::workspace_client::container_up) fn fixture(
+) -> (effigy_test_support::Fixture, std::path::PathBuf) {
     let fixture = effigy_test_support::Fixture::new("cli-phase-zero").expect("fixture");
     let root = fixture.path().join("project");
     std::fs::create_dir_all(root.join(".git")).expect("project");

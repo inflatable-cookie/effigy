@@ -103,6 +103,31 @@ pub(in crate::runner) struct BoundReservedGuest<'a> {
 }
 
 impl BoundReservedGuest<'_> {
+    /// The parked facade consumes fresh target/platform observations, never
+    /// expected kernel facts. The callback retained with this input performs
+    /// the actual backend/guest reads again on the original absolute deadline.
+    pub(in crate::runner) fn observe_resume(
+        &mut self,
+        until: Instant,
+    ) -> Observed<(ContainerIdentity, BoundPlatform)> {
+        if until != self.until || Instant::now() >= until {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace target/platform resume observation".into(),
+            });
+        }
+        let fresh = match (self.input.reobserve)(until) {
+            Ok(fresh) => fresh,
+            Err(_) => return resume_unknown(),
+        };
+        checked_resume_observation(
+            &self.target,
+            &self.binding,
+            &self.input.targets,
+            fresh,
+            until,
+        )
+    }
+
     /// Reobserve the retained publication's exact target, platform, session and
     /// creator inventory after Env is reacquired. Failure retains this input.
     #[allow(dead_code)] // The parked production owner connects this seam.
@@ -149,21 +174,8 @@ impl BoundReservedGuest<'_> {
                 "workspace creator receipt changed during integration",
             ));
         }
-        let (targets, platform) = (self.input.reobserve)(self.until)?;
-        match (
-            &self.input.targets,
-            &targets,
-            &self.input.platform,
-            &platform,
-        ) {
-            (
-                Observed::Verified(original_targets, _),
-                Observed::Verified(current_targets, _),
-                Observed::Verified(original_platform, _),
-                Observed::Verified(current_platform, _),
-            ) if original_targets == current_targets
-                && original_platform == current_platform
-                && current_platform == &self.binding => {}
+        match self.observe_resume(self.until) {
+            Observed::Verified(_, _) => {}
             _ => {
                 return Err(refused(
                     "workspace target or platform changed during integration",
@@ -185,6 +197,50 @@ impl BoundReservedGuest<'_> {
         Ok(())
     }
 }
+
+fn resume_unknown() -> Observed<(ContainerIdentity, BoundPlatform)> {
+    Observed::Unknown(UnknownReason::Inconsistent(
+        "workspace target/platform resume observation unavailable or changed".into(),
+    ))
+}
+
+fn checked_resume_observation(
+    expected_target: &ContainerIdentity,
+    expected_platform: &BoundPlatform,
+    original_targets: &Observed<Vec<TargetCandidate>>,
+    fresh: TargetObservation,
+    until: Instant,
+) -> Observed<(ContainerIdentity, BoundPlatform)> {
+    if Instant::now() >= until {
+        return resume_unknown();
+    }
+    match (original_targets, fresh.0, fresh.1) {
+        (
+            Observed::Verified(original, _),
+            Observed::Verified(targets, _),
+            Observed::Verified(platform, _),
+        ) if targets == *original
+            && targets.len() == 1
+            && targets[0].identity == *expected_target
+            && platform == *expected_platform
+            && platform.target == targets[0].identity =>
+        {
+            // Both values come from the fresh observer; expected values
+            // are equality fences only and are never returned as proof.
+            let target = targets
+                .into_iter()
+                .next()
+                .expect("one observed target")
+                .identity;
+            Observed::Verified((target, platform), evidence())
+        }
+        _ => resume_unknown(),
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/resume_observation.rs"]
+mod resume_observation_tests;
 
 pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,

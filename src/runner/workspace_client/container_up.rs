@@ -13,6 +13,7 @@ use super::supervisor::ServiceOwner;
 
 mod cli_preflight;
 mod declaration;
+mod supervisor_preflight;
 pub(crate) use declaration::PostPrepDeclaration;
 
 const PREPARATION_UNAVAILABLE: &str =
@@ -176,6 +177,13 @@ pub(crate) fn preflight(
     request: &ContainerUpRequest,
 ) -> Result<(), RunError> {
     let until = request.deadline(host)?;
+    if request.post_prep.is_some() {
+        let validated = supervisor_preflight::validate(host, request, until)?;
+        validated.recheck_directory()?;
+        return Err(RunError::unavailable(
+            "workspace guarded activation recovery is unavailable; no apply was attempted",
+        ));
+    }
     validate_identity(host, until)?;
     Err(RunError::unavailable(PREPARATION_UNAVAILABLE))
 }

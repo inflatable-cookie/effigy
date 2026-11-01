@@ -213,4 +213,4 @@ impl CliPrevalidation {
 
 #[cfg(test)]
 #[path = "cli_preflight_tests.rs"]
-mod tests;
+pub(super) mod tests;
