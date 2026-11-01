@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use super::serving_host::ServingHostRequest;
 use super::supervisor::ServiceOwner;
 
+mod cli_preflight;
+mod declaration;
+pub(crate) use declaration::PostPrepDeclaration;
+
 const PREPARATION_UNAVAILABLE: &str =
     "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted";
 
@@ -61,6 +65,8 @@ pub(crate) struct ContainerUpRequest {
     pub(crate) environment: String,
     pub(crate) retention: Retention,
     pub(crate) budget_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) post_prep: Option<PostPrepDeclaration>,
 }
 
 impl ContainerUpRequest {

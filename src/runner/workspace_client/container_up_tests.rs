@@ -19,6 +19,7 @@ fn request() -> ContainerUpRequest {
         environment: "dev".into(),
         retention: Retention::Persistent,
         budget_ms: 1000,
+        post_prep: None,
     }
 }
 
