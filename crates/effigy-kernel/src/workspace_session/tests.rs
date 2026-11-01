@@ -6471,11 +6471,11 @@ fn a_session_key_never_prints_its_secret() {
     assert!(ServingKey::new(vec![1u8; 8], Digest([0u8; 32])).is_err());
 }
 
-/// Fail each boundary of one decision-driven activation and lose both handles,
-/// as a crash does. The mapping, the session's `Borrow` attachment, `active(E)`
+/// Fail each boundary of one decision-driven activation, then settle its exact
+/// owners in this process. The mapping, the session's `Borrow` attachment, `active(E)`
 /// and the `Pending` selection obligation are all committed or none is; a
-/// committed generation whose switch never ran is recovered from its own
-/// obligation, never from a guess.
+/// committed generation whose switch never ran remains fenced by its own
+/// obligation after the owners settle.
 #[cfg(feature = "fault-injection")]
 #[test]
 fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
@@ -6486,6 +6486,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
         (Point::SelectionCommitBefore, false, None),
         (Point::ActivationMappingBefore, false, None),
         (Point::ActivationAttachmentBefore, false, None),
+        (Point::ActivationCommitAfter, true, Some("pending")),
         (Point::SelectionCommitAfter, true, Some("pending")),
         (Point::SelectionSwitchBefore, true, Some("pending")),
         (Point::SelectionSwitchAfter, true, Some("switched")),
