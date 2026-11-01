@@ -190,6 +190,7 @@ pub(super) fn run_detached_command_with_env_until(
 
 /// Workspace-only detached invocation: no backend bytes enter retained logs,
 /// pipes or returned diagnostics. The caller supplies its existing deadline.
+#[cfg(unix)]
 pub(super) fn run_private_detached_command(
     repo_root: &Path,
     program: &str,
@@ -226,22 +227,23 @@ pub(super) fn run_private_detached_command(
     let mut child = command
         .spawn()
         .map_err(|error| private_error(error.kind()))?;
-    let status = loop {
+    let timed_out = loop {
         if Instant::now() >= deadline {
-            terminate_unreaped_process_group(&mut child);
-            let _ = child.wait();
-            return Err(timeout_error(label));
+            break true;
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(error) => {
-                terminate_unreaped_process_group(&mut child);
-                let _ = child.wait();
-                return Err(private_error(error.kind()));
+        match private_child_exited(child.id()) {
+            Ok(true) => break false,
+            Ok(false) => thread::sleep(Duration::from_millis(20)),
+            Err(_) => {
+                let _ = settle_private_group(&mut child);
+                return Err(private_group_uncertain(label));
             }
         }
     };
+    let status = settle_private_group(&mut child).map_err(|_| private_group_uncertain(label))?;
+    if timed_out {
+        return Err(timeout_error(label));
+    }
     if !status.success() {
         return Err(ContainerExecError::Failure {
             command: label.to_owned(),
@@ -251,6 +253,90 @@ pub(super) fn run_private_detached_command(
         });
     }
     Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn run_private_detached_command(
+    _repo_root: &Path,
+    _program: &str,
+    _args: &[OsString],
+    label: &str,
+    _env: &[(String, OsString)],
+    _deadline: Instant,
+) -> Result<(), ContainerExecError> {
+    Err(private_group_uncertain(label))
+}
+
+fn private_group_uncertain(label: &str) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: label.to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "[effigy] private workspace backend process group cleanup uncertain".into(),
+    }
+}
+
+#[cfg(unix)]
+fn private_child_exited(pid: u32) -> std::io::Result<bool> {
+    // SAFETY: waitid writes siginfo; WNOWAIT keeps our direct child unreaped.
+    let mut info: nix::libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        nix::libc::waitid(
+            nix::libc::P_PID,
+            pid as nix::libc::id_t,
+            &mut info,
+            nix::libc::WEXITED | nix::libc::WNOHANG | nix::libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful waitid initializes the child PID field.
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+#[cfg(unix)]
+fn settle_private_group(
+    child: &mut std::process::Child,
+) -> std::io::Result<std::process::ExitStatus> {
+    settle_private_group_with(child, kill)
+}
+
+#[cfg(unix)]
+fn settle_private_group_with(
+    child: &mut std::process::Child,
+    mut signal_group: impl FnMut(Pid, Option<Signal>) -> nix::Result<()>,
+) -> std::io::Result<std::process::ExitStatus> {
+    let group = Pid::from_raw(-(child.id() as i32));
+    for signal in [Signal::SIGTERM, Signal::SIGKILL] {
+        // A signal can fail for an already-exited leader on some platforms.
+        // Success is decided only by the post-reap group absence probe.
+        let _ = signal_group(group, Some(signal));
+        if signal == Signal::SIGTERM {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let until = Instant::now() + Duration::from_secs(2);
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if Instant::now() < until => thread::sleep(Duration::from_millis(20)),
+            None => return Err(std::io::Error::other("private process leader did not exit")),
+        }
+    };
+    loop {
+        match signal_group(group, None) {
+            Err(nix::errno::Errno::ESRCH) => return Ok(status),
+            Ok(()) | Err(nix::errno::Errno::EPERM) if Instant::now() < until => {
+                thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                return Err(std::io::Error::other(
+                    "private process group remains uncertain",
+                ))
+            }
+        }
+    }
 }
 
 struct DetachedControl<'a> {
@@ -458,11 +544,17 @@ impl DetachedOutputRecord {
         )
         .map_err(|e| error(e.to_string()))?;
         let mut directory = DirFd::open(repo_root).map_err(|e| error(e.to_string()))?;
-        for part in [".effigy", "runtime", "logs"] {
+        for part in [".effigy", "runtime"] {
             directory = directory
                 .prepare_child(&cx, &FileName::new(part).map_err(|e| error(e.to_string()))?)
                 .map_err(|e| error(e.to_string()))?;
         }
+        directory = directory
+            .prepare_private_child(
+                &cx,
+                &FileName::new("logs").map_err(|e| error(e.to_string()))?,
+            )
+            .map_err(|e| error(e.to_string()))?;
         let name = FileName::new(
             path.file_name()
                 .and_then(OsStr::to_str)
@@ -1617,6 +1709,7 @@ mod detached_capture_tests {
     use super::{run_command_capture_os_with_env, run_command_capture_with_timeout};
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::fs::PermissionsExt;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
@@ -1633,9 +1726,10 @@ mod detached_capture_tests {
         for exit_code in [0, 1] {
             let fixture = tempfile::tempdir().unwrap();
             let script = fixture.path().join("compose.py");
-            fs::write(&script, format!("import os,sys\nos.write(1,b'private-')\nos.write(1,b'secret-value')\nos.write(2,b'private-secret-value')\nsys.exit({exit_code})\n")).unwrap();
+            fs::write(&script, format!("#!/usr/bin/env python3\nimport os,sys\nos.write(1,b'private-')\nos.write(1,b'secret-value')\nos.write(2,b'private-secret-value')\nsys.exit({exit_code})\n")).unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
             let args = [
-                script.into_os_string(),
+                "compose".into(),
                 "-p".into(),
                 "workspace-private".into(),
                 "up".into(),
@@ -1643,13 +1737,13 @@ mod detached_capture_tests {
             ];
             let result = super::super::implementation::run_backend_invocation_private_until(
                 fixture.path(),
-                std::ffi::OsStr::new("python3"),
+                script.as_os_str(),
                 &args,
                 "workspace apply",
                 &[],
                 Instant::now() + Duration::from_secs(10),
             );
-            assert_eq!(result.is_ok(), exit_code == 0);
+            assert_eq!(result.is_ok(), exit_code == 0, "{result:?}");
             if let Err(error) = result {
                 assert!(!error.to_string().contains("private-secret-value"));
             }
@@ -1670,7 +1764,8 @@ mod detached_capture_tests {
         use nix::{sys::signal::kill, unistd::Pid};
         let fixture = tempfile::tempdir().unwrap();
         let script = fixture.path().join("backend.py");
-        fs::write(&script, r#"import json,os,signal,time
+        fs::write(&script, r#"#!/usr/bin/env python3
+import json,os,signal,time
 r,w=os.pipe()
 child=os.fork()
 if child==0:
@@ -1679,8 +1774,9 @@ os.close(w); assert os.read(r,1)==b'r'; os.close(r)
 json.dump({'pid':os.getpid(),'group':os.getpgrp(),'child':child},open('identity.json','w'))
 os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.sleep(60)
 "#).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let args = [
-            script.into_os_string(),
+            "compose".into(),
             "-p".into(),
             "private-timeout".into(),
             "up".into(),
@@ -1688,7 +1784,7 @@ os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.s
         ];
         let error = super::super::implementation::run_backend_invocation_private_until(
             fixture.path(),
-            std::ffi::OsStr::new("python3"),
+            script.as_os_str(),
             &args,
             "workspace apply",
             &[],
@@ -1716,9 +1812,110 @@ os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.s
             let _ = kill(Pid::from_raw(descendant), nix::sys::signal::Signal::SIGKILL);
         }
         assert!(gone, "owned descendant survived deadline cleanup");
-        assert!(super::error_is_timeout(&error));
+        assert!(super::error_is_timeout(&error), "{error}");
         assert!(!error.to_string().contains("private-secret-value"));
         assert!(!fixture.path().join(".effigy/runtime/logs").exists());
+    }
+
+    #[test]
+    fn workspace_private_leader_exit_stops_delayed_descendant() {
+        for exit_code in [0, 1] {
+            let fixture = tempfile::tempdir().unwrap();
+            let script = fixture.path().join("backend.py");
+            fs::write(&script, format!(r#"#!/usr/bin/env python3
+import os,signal,time
+r,w=os.pipe()
+child=os.fork()
+if child==0:
+ os.close(r); signal.signal(signal.SIGTERM,signal.SIG_IGN); os.write(w,b'r'); os.close(w); time.sleep(0.7); open('late-write','w').write('bad'); os._exit(0)
+os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
+"#)).unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+            let args = [
+                "compose".into(),
+                "-p".into(),
+                "private-exit".into(),
+                "up".into(),
+                "-d".into(),
+            ];
+            let result = super::super::implementation::run_backend_invocation_private_until(
+                fixture.path(),
+                script.as_os_str(),
+                &args,
+                "workspace apply",
+                &[],
+                Instant::now() + Duration::from_secs(5),
+            );
+            std::thread::sleep(Duration::from_secs(1));
+            assert_eq!(result.is_ok(), exit_code == 0, "{result:?}");
+            assert!(
+                !fixture.path().join("late-write").exists(),
+                "descendant outlived the private invocation"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_private_rejects_non_up_commands_before_spawn() {
+        let fixture = tempfile::tempdir().unwrap();
+        let script = fixture.path().join("backend.py");
+        fs::write(
+            &script,
+            "#!/usr/bin/env python3\nopen('unexpected','w').write('ran')\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        for bad in [
+            vec!["down", "up", "-d"],
+            vec!["compose", "down", "up", "-d"],
+            vec!["compose", "up", "--", "-d"],
+            vec!["compose", "-f", "up", "down", "-d"],
+        ] {
+            let args = bad
+                .into_iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>();
+            let error = super::super::implementation::run_backend_invocation_private_until(
+                fixture.path(),
+                script.as_os_str(),
+                &args,
+                "workspace apply",
+                &[],
+                Instant::now() + Duration::from_secs(5),
+            )
+            .expect_err("not a detached up command");
+            assert!(error.to_string().contains("requires detached up"));
+        }
+        assert!(!fixture.path().join("unexpected").exists());
+    }
+
+    #[test]
+    fn workspace_private_group_probe_uncertainty_never_reports_success() {
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let mut child = command.spawn().unwrap();
+        let result = super::settle_private_group_with(&mut child, |group, signal| {
+            if signal.is_none() {
+                Err(nix::errno::Errno::EPERM)
+            } else {
+                nix::sys::signal::kill(group, signal)
+            }
+        });
+        assert!(result.is_err(), "unverified group absence must refuse");
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "the exact leader was reaped"
+        );
+        assert!(super::private_group_uncertain("workspace apply")
+            .to_string()
+            .contains("cleanup uncertain"));
     }
 
     #[test]
@@ -1779,6 +1976,12 @@ print('detached diagnostic',file=sys.stderr)
             crate::load_container_policy(fixture.path(), None).expect("private policy")
         });
         policy.shared_services.clear();
+        let logs_dir = fixture.path().join(".effigy/runtime/logs");
+        fs::create_dir_all(&logs_dir).unwrap();
+        fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let prior_record = logs_dir.join("private-probe.compose.log");
+        fs::write(&prior_record, b"old record").unwrap();
+        fs::set_permissions(&prior_record, fs::Permissions::from_mode(0o644)).unwrap();
         let args = [
             compose.into_os_string(),
             "-p".into(),
@@ -1816,6 +2019,14 @@ print('detached diagnostic',file=sys.stderr)
             .path()
             .join(".effigy/runtime/logs/private-probe.compose.log");
         let retained = fs::read_to_string(&record).expect("retained detached output");
+        assert_eq!(
+            fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&record).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         assert!(retained.contains("detached output"), "{retained}");
         assert!(retained.contains("detached diagnostic"), "{retained}");
         let inventory = fixture.path().join("inventory.py");
