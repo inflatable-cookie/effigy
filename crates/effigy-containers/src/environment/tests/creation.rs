@@ -998,7 +998,9 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     .unwrap();
     let mut input = String::new();
     let _ = std::io::stdin().read_line(&mut input);
-    drop(parked);
+    parked
+        .abort(&ctx, Wait::FailFast)
+        .expect("parked owners settle and cancel");
 }
 
 #[test]

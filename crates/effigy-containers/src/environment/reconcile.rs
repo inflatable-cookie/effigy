@@ -619,6 +619,18 @@ pub struct ParkedEnvRun<'r> {
     _plan: effigy_kernel::workspace_session::ActivationPlan,
 }
 
+impl<'r> ParkedEnvRun<'r> {
+    pub(super) fn settle(
+        self,
+        cleanup: &CleanupContext,
+    ) -> Result<CleanupOutcome, (EnvError, effigy_kernel::run::WorkspaceCleanupCustody<'r>)> {
+        self._run
+            .settle(cleanup, &mut EnvSettlement)
+            .map(|outcome| outcome.cleanup())
+            .map_err(|(error, custody)| (EnvError::Kernel(error), custody))
+    }
+}
+
 impl<'r> EnvRun<'r> {
     /// Park only after target binding and a complete journalled creator receipt.
     /// Any refusal returns the still-guarded owner for explicit settlement.

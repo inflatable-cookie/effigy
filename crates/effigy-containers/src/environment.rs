@@ -18,7 +18,8 @@ mod tests;
 mod view;
 mod workspace_activation;
 pub use workspace_activation::{
-    ParkedWorkspaceActivation, WorkspaceActivation, WorkspaceBegin, WorkspaceFinishCustody,
+    ParkedAbortCustody, ParkedWorkspaceActivation, WorkspaceActivation, WorkspaceBegin,
+    WorkspaceFinishCustody,
 };
 
 pub use backend::{

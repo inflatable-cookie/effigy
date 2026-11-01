@@ -58,9 +58,134 @@ pub struct ParkedWorkspaceActivation<'r> {
     _attempt: effigy_kernel::run::RequestId,
 }
 
-impl ParkedWorkspaceActivation<'_> {
+/// Custody retained when a parked activation cannot be safely cancelled.
+#[derive(Debug)]
+pub enum ParkedAbortCustody<'r> {
+    Activation(Box<ParkedWorkspaceActivation<'r>>),
+    Environment {
+        environment: effigy_kernel::run::WorkspaceCleanupCustody<'r>,
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+    Session {
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+    Reservation {
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+}
+
+impl<'r> ParkedWorkspaceActivation<'r> {
     pub fn session(&self) -> &SessionRef {
         &self.session
+    }
+
+    /// Settle both exact owners before attempting tagged reservation cleanup.
+    /// Unknown or incomplete cleanup leaves the reservation recoverable.
+    pub fn abort(
+        self,
+        ctx: &EnvContext<'_>,
+        wait: Wait,
+    ) -> Result<(), (EnvError, Box<ParkedAbortCustody<'r>>)> {
+        use effigy_kernel::outcome::CleanupOutcome;
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::Activation(Box::new(self))),
+                ))
+            }
+        };
+        let Self {
+            _environment,
+            _supervisor,
+            session: _,
+            _reservation,
+            _supervisor_id: _,
+            _attempt,
+        } = self;
+        match _environment.settle(&cleanup) {
+            Err((error, environment)) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::Environment {
+                        environment,
+                        supervisor: Box::new(_supervisor),
+                        reservation: _reservation,
+                        attempt: _attempt,
+                    }),
+                ))
+            }
+            Ok(CleanupOutcome::Incomplete) => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(ParkedAbortCustody::Session {
+                        supervisor: Box::new(_supervisor),
+                        reservation: _reservation,
+                        attempt: _attempt,
+                    }),
+                ))
+            }
+            Ok(_) => {}
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::Session {
+                        supervisor: Box::new(_supervisor),
+                        reservation: _reservation,
+                        attempt: _attempt,
+                    }),
+                ))
+            }
+        };
+        match _supervisor.settle_recoverable(&cleanup, &mut EnvSettlement) {
+            Err((error, supervisor)) => {
+                return Err((
+                    EnvError::Kernel(error),
+                    Box::new(ParkedAbortCustody::Session {
+                        supervisor,
+                        reservation: _reservation,
+                        attempt: _attempt,
+                    }),
+                ))
+            }
+            Ok(outcome) if outcome.cleanup() == CleanupOutcome::Incomplete => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(ParkedAbortCustody::Reservation {
+                        reservation: _reservation,
+                        attempt: _attempt,
+                    }),
+                ))
+            }
+            Ok(_) => {}
+        }
+        let result = ctx.cleanup().and_then(|cleanup| {
+            let effects = cleanup.operation().effects().map_err(|error| {
+                EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+            })?;
+            _reservation
+                .cancel_for_attempt(&effects, ctx.root, wait, _attempt)
+                .map(|_| ())
+                .map_err(EnvError::Kernel)
+        });
+        result.map_err(|error| {
+            (
+                error,
+                Box::new(ParkedAbortCustody::Reservation {
+                    reservation: _reservation,
+                    attempt: _attempt,
+                }),
+            )
+        })
     }
 }
 

@@ -593,6 +593,18 @@ impl<'a> SessionSupervisor<'a> {
     ) -> Result<crate::outcome::Outcome<crate::run::Settled>, RunError> {
         self.run.settle(cleanup, adapter)
     }
+
+    /// Keep the session's private slot when cleanup cannot finish.
+    pub fn settle_recoverable(
+        self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<crate::outcome::Outcome<crate::run::Settled>, (RunError, Box<Self>)> {
+        match self.run.settle_recoverable(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
+        }
+    }
 }
 
 impl<'a> std::ops::Deref for SessionSupervisor<'a> {
