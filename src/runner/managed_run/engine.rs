@@ -103,6 +103,28 @@ pub(in crate::runner) fn take_owner() -> Option<OwnerSession> {
         .take()
 }
 
+/// Reserved workspace engines may execute only the resolution carried by
+/// their owning dispatcher. Ordinary managed clients have no such fence.
+pub(in crate::runner) fn workspace_resolution(
+) -> Result<Option<super::wire::WorkspaceResolution>, RunnerError> {
+    let owner = OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match owner.as_ref() {
+        Some(owner) if owner.session.admission().is_some() => owner
+            .payload
+            .workspace_resolution
+            .clone()
+            .map(Some)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(
+                    "reserved workspace resolution evidence is unavailable",
+                )
+            }),
+        _ => Ok(None),
+    }
+}
+
 /// One workload as the run starts it.
 #[derive(Clone)]
 pub(in crate::runner) struct WorkloadSpec {

@@ -127,6 +127,7 @@ impl<'a, 'b> ScanContext<'a, 'b> {
             catalog_root,
             manifest_path: manifest_path.to_path_buf(),
             bundle_root: None,
+            effective_digest: None,
             defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
             deferred_builtins: manifest
                 .defer

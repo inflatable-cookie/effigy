@@ -94,9 +94,17 @@ pub(in crate::runner) fn start_reserved(
     invocation: &effigy_cli::TaskInvocation,
     cwd: PathBuf,
     admission: effigy_kernel::run::AdmissionTicket,
+    resolution: wire::WorkspaceResolution,
 ) -> Result<Started, RunnerError> {
     let executable = task_engine::startup_executable()?;
-    start_reserved_with_executable(host_checkout, invocation, cwd, admission, &executable)
+    start_reserved_with_executable(
+        host_checkout,
+        invocation,
+        cwd,
+        admission,
+        Some(resolution),
+        &executable,
+    )
 }
 
 pub(in crate::runner) fn start_reserved_with_executable(
@@ -104,6 +112,7 @@ pub(in crate::runner) fn start_reserved_with_executable(
     invocation: &effigy_cli::TaskInvocation,
     cwd: PathBuf,
     admission: effigy_kernel::run::AdmissionTicket,
+    resolution: Option<wire::WorkspaceResolution>,
     executable: &effigy_kernel::supervise::Executable,
 ) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
@@ -117,6 +126,7 @@ pub(in crate::runner) fn start_reserved_with_executable(
         front: Front::Detached,
         state_home: home,
         terminal: None,
+        workspace_resolution: resolution,
     };
     let mut env: Vec<(OsString, OsString)> =
         crate::runner::secret_session::workload_ambient_environment()
@@ -171,6 +181,7 @@ fn start_with(
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,
+        workspace_resolution: None,
     };
     // The supervisor is Effigy's own process, and it is never a workload's
     // environment: it starts without session access, then reads the one-shot

@@ -1148,6 +1148,88 @@ fn a_workspace_ticket_refuses_every_shape_that_would_own_another_run() {
 
 /// The reserved path must pass the secret reader to the actual spawned helper.
 #[test]
+#[cfg(feature = "workspace-serving-fixture")]
+#[ignore = "build the current Effigy binary with test:workspace:effigy-build before this process proof"]
+fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use effigy_kernel::workspace_channel::{
+        InvocationBody, OutputMode, Resolver, Selector, Target,
+    };
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let manifest = checkout.join("effigy.toml");
+    std::fs::write(
+        &manifest,
+        "[tasks.build]\nmode = 'tui'\nconcurrent = [{ name = 'one', run = 'echo original' }]\n",
+    )
+    .unwrap();
+    let cx = kernel::effects();
+    let state = kernel::effects_root(&checkout).unwrap();
+    let identity = state.owning_directory().identity().unwrap();
+    let catalog = catalog(&checkout, "", "", 0);
+    let session_run = begin(&TaskTarget::for_catalog(&checkout, "session", &catalog)).unwrap();
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let ticket = match reserve_ticket(&checkout, session, 79, b"workspace drift") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
+        checkout.clone(),
+        state.clone(),
+    );
+    let body = InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: OutputMode::Text,
+    };
+    let resolved = dispatch.resolve(&cx, &body).unwrap();
+    let resolution = crate::runner::managed_run::WorkspaceResolution {
+        invocation: serde_json::to_vec(&resolved).unwrap(),
+        checkout: checkout.clone(),
+        identity,
+    };
+    let marker = checkout.join("unexpected-effect");
+    std::fs::write(
+        &manifest,
+        format!("[tasks]\nbuild = 'touch {}'\n", marker.display()),
+    )
+    .unwrap();
+    let binary = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy");
+    let executable = Executable::capture(&binary)
+        .expect("build current Effigy with test:workspace:effigy-build first");
+    let invocation = effigy_cli::TaskInvocation {
+        name: "build".into(),
+        args: vec![],
+    };
+    let result = crate::runner::managed_run::start_reserved_with_executable(
+        &checkout,
+        &invocation,
+        checkout.clone(),
+        ticket,
+        Some(resolution),
+        &executable,
+    );
+    let refused = result.is_err();
+    drop(result);
+    let effects_absent = !marker.exists();
+    let warnings = session_run.close(WorkloadOutcome::Succeeded);
+    assert!(refused, "a changed task must refuse before admission");
+    assert!(
+        effects_absent,
+        "a changed standard-task fallback ran without the ticket"
+    );
+    assert!(warnings.is_empty(), "fixture session cleanup: {warnings:?}");
+}
+
+#[test]
 fn reserved_child_receives_grant_at_handoff_fd() {
     use effigy_kernel::run::{Reservation, Session};
     use effigy_kernel::supervise::Executable;
@@ -1194,6 +1276,7 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         &invocation,
         root.path().to_owned(),
         ticket,
+        None,
         &executable,
     );
     let bytes = std::fs::read(&observed)
@@ -1212,6 +1295,7 @@ fn reserved_child_receives_grant_at_handoff_fd() {
         &invocation,
         root.path().to_owned(),
         ticket,
+        None,
         &executable,
     );
     assert_eq!(

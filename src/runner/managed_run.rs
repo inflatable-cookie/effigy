@@ -31,8 +31,8 @@ pub(in crate::runner) use control::wait_views;
 pub(in crate::runner) use control::OUTPUT_LOG;
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{
-    own, record_gateway, take_owner, workload_env, ExecGroupSpec, OwnedRun, OwnerSession,
-    WorkloadSpec, EXEC_NONCE,
+    own, record_gateway, take_owner, workload_env, workspace_resolution, ExecGroupSpec, OwnedRun,
+    OwnerSession, WorkloadSpec, EXEC_NONCE,
 };
 pub(in crate::runner) use environment::EnvironmentPlan;
 pub(in crate::runner) use host_tabs::HostProcessTab;
@@ -40,7 +40,7 @@ pub(in crate::runner) use host_tabs::HostProcessTab;
 pub(in crate::runner) use host_tabs::{HostFollower, HostStatus};
 pub(in crate::runner) use settlement::Binding;
 pub(in crate::runner) use tui::{attach_tui, ManagedTab, TabSource};
-pub(in crate::runner) use wire::Front;
+pub(in crate::runner) use wire::{Front, WorkspaceResolution};
 
 use effigy_kernel::ctx::CleanupContext;
 use effigy_kernel::observe::Observed;

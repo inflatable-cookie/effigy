@@ -27,6 +27,11 @@ pub struct LoadedTaskManifest {
 }
 
 impl LoadedTaskManifest {
+    /// Identity of the composed value from which this manifest was parsed.
+    pub fn effective_digest(&self) -> effigy_kernel::id::Digest {
+        effigy_kernel::id::Digest::of(self.effective_manifest.as_bytes())
+    }
+
     pub fn manifest_defined_catalog_alias(&self) -> Option<&str> {
         let alias = self
             .manifest
