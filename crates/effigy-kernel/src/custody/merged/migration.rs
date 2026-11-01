@@ -550,7 +550,7 @@ mod tests {
             let home = effigy_test_support::short_tempdir("lm-").unwrap();
             let path = home.path().join("app.log");
             let raw = b"\x1b[31mlegacy-secret-457\x1b[0m\n";
-            std::fs::write(&path, raw).unwrap();
+            effigy_test_support::write_private(&path, raw).unwrap();
             let old = std::fs::metadata(&path).unwrap();
             assert!(prepare(&path, [3; 32], "fault", |at| if at == stop {
                 Err(io::Error::other("crash"))
@@ -588,7 +588,7 @@ mod tests {
     fn direct_reader_resets_on_new_inode_even_when_new_file_is_larger() {
         let home = effigy_test_support::short_tempdir("lm-").unwrap();
         let path = home.path().join("app.log");
-        std::fs::write(&path, b"\x1b[31mlegacy-secret\n").unwrap();
+        effigy_test_support::write_private(&path, b"\x1b[31mlegacy-secret\n").unwrap();
         let old = std::fs::metadata(&path).unwrap();
         let old_identity = FileIdentity {
             device: old.dev(),
@@ -619,7 +619,7 @@ mod tests {
             let home = effigy_test_support::short_tempdir("lr-").unwrap();
             let path = home.path().join("app.log");
             let other = home.path().join("operator-data");
-            std::fs::write(&other, b"retain all operator bytes").unwrap();
+            effigy_test_support::write_private(&other, b"retain all operator bytes").unwrap();
             match kind {
                 0 => std::os::unix::fs::symlink(&other, &path).unwrap(),
                 1 => std::fs::create_dir(&path).unwrap(),
@@ -639,7 +639,7 @@ mod tests {
         drop(file);
         assert!(prepare(&path, [4; 32], "other", |_| Ok(())).is_err());
         let replacement = home.path().join("replacement");
-        std::fs::write(&replacement, b"operator data").unwrap();
+        effigy_test_support::write_private(&replacement, b"operator data").unwrap();
         std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::rename(replacement, &path).unwrap();
         assert!(prepare(&path, [3; 32], "retry", |_| Ok(())).is_err());
@@ -658,7 +658,7 @@ mod tests {
         }
         let home = effigy_test_support::short_tempdir("lu-").unwrap();
         let path = home.path().join("app.log");
-        std::fs::write(&path, b"operator data").unwrap();
+        effigy_test_support::write_private(&path, b"operator data").unwrap();
         let (dir, name, _, _) = names(&path).unwrap();
         let owner = std::fs::metadata(&path).unwrap().uid();
         let _restore = RestoreUid;
@@ -677,7 +677,7 @@ mod tests {
     fn legacy_retry_syncs_retained_entry_before_a_second_crash() {
         let home = effigy_test_support::short_tempdir("l2-").unwrap();
         let path = home.path().join("app.log");
-        std::fs::write(&path, b"legacy operator data").unwrap();
+        effigy_test_support::write_private(&path, b"legacy operator data").unwrap();
         assert!(prepare(&path, [3; 32], "first", |at| {
             if at == Boundary::AfterLegacyRename {
                 Err(io::Error::other("crash after rename"))
@@ -712,7 +712,7 @@ mod tests {
         for stop in [Boundary::AfterLegacyRename, Boundary::AfterExclusiveCreate] {
             let home = effigy_test_support::short_tempdir("lf-").unwrap();
             let path = home.path().join("app.log");
-            std::fs::write(&path, b"legacy").unwrap();
+            effigy_test_support::write_private(&path, b"legacy").unwrap();
             assert!(prepare(&path, [3; 32], "first", |at| if at == stop {
                 Err(io::Error::other("crash"))
             } else {
@@ -740,7 +740,7 @@ mod tests {
         for destination_race in [false, true] {
             let home = effigy_test_support::short_tempdir("lx-").unwrap();
             let path = home.path().join("app.log");
-            std::fs::write(&path, b"original operator data").unwrap();
+            effigy_test_support::write_private(&path, b"original operator data").unwrap();
             let old = std::fs::metadata(&path).unwrap();
             let target = home.path().join(".legacy-host-logs").join(format!(
                 "{:x}-{:x}.legacy",
@@ -751,11 +751,11 @@ mod tests {
             let result = prepare(&path, [3; 32], "race", |at| {
                 if at == Boundary::BeforeLegacyMove {
                     if destination_race {
-                        std::fs::write(&target, b"raced destination data")?;
+                        effigy_test_support::write_private(&target, b"raced destination data")?;
                         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))?;
                     } else {
                         std::fs::rename(&path, &held)?;
-                        std::fs::write(&path, b"raced source data")?;
+                        effigy_test_support::write_private(&path, b"raced source data")?;
                     }
                 }
                 Ok(())

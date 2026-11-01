@@ -90,6 +90,29 @@ fn short_location(
 // runtime kernel. No platform without that support may accept an overlong path.
 const DIRECTORY_RELATIVE_SOCKETS: bool = cfg!(any(target_os = "macos", target_os = "linux"));
 
+/// The mode every fixture home is created with.
+///
+/// `tempfile` applies `mode & !umask`, so asking for 0700 yields 0700 under any
+/// umask. That matters because a fixture home is the directory a custody log or
+/// state root is opened through, and the kernel refuses a group- or
+/// other-writable directory there (`Trust::Operator`); a default tempdir mode is
+/// `0o777 & !umask`, which is group-writable under a 0002 umask (effigy#520).
+fn private_home() -> fs::Permissions {
+    fs::Permissions::from_mode(0o700)
+}
+
+/// Write a fixture file that the kernel will open as operator- or
+/// private-trusted state, such as a custody log, receipt or journal.
+///
+/// `std::fs::write` creates `0o666 & !umask`, which is group-writable under a
+/// 0002 umask; the kernel refuses a group- or other-writable operator file (and
+/// any group- or other-accessible private file), so a fixture standing in for
+/// kernel state must be 0600 whatever the process umask is (effigy#520).
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    fs::write(path, bytes)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
 /// A fresh directory for kernel socket fixtures, preferring a short absolute
 /// path and otherwise using the kernel's directory-relative socket support.
 /// For harnesses that need a bare `TempDir` rather than a [`Fixture`].
@@ -99,6 +122,7 @@ pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
     tempfile::Builder::new()
         .prefix(&name)
         .rand_bytes(rand_bytes)
+        .permissions(private_home())
         .tempdir_in(fs::canonicalize(parent)?)
 }
 
@@ -139,6 +163,7 @@ impl Fixture {
             tempfile::Builder::new()
                 .prefix(prefix)
                 .rand_bytes(rand_bytes)
+                .permissions(private_home())
                 .tempdir_in(parent)?,
         )
     }
@@ -269,6 +294,90 @@ fn unseal(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    /// Marker that makes the child half of the umask regression run.
+    const UMASK_CHILD: &str = "EFFIGY_FIXTURE_UMASK_CHILD";
+
+    /// A fixture home must be 0700 whatever the process umask is (effigy#520).
+    ///
+    /// The child re-executes this test binary with umask 0002 — the guest umask
+    /// under which the r6 Linux custody run failed `Trust::Operator` on a 0775
+    /// fixture home. It runs alone, in its own process, so no other test sees a
+    /// changed umask.
+    #[test]
+    fn fixture_homes_are_private_under_a_group_writable_umask() {
+        use std::os::unix::process::CommandExt;
+        let exe = std::env::current_exe().expect("test binary");
+        // SAFETY: the child-only pre-exec hook calls async-signal-safe `umask`
+        // and nothing else before exec; the umask change dies with that child.
+        let child = unsafe {
+            std::process::Command::new(&exe)
+                .args([
+                    "--exact",
+                    "tests::fixture_home_is_private_under_child_umask",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(UMASK_CHILD, "1")
+                .pre_exec(|| {
+                    libc::umask(0o002);
+                    Ok(())
+                })
+                .output()
+                .expect("run the umask child")
+        };
+        assert!(
+            child.status.success(),
+            "umask-0002 child failed: status {:?}\nstdout: {}\nstderr: {}",
+            child.status,
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr),
+        );
+    }
+
+    /// Child half of [`fixture_homes_are_private_under_a_group_writable_umask`].
+    #[test]
+    #[ignore = "child half of the umask regression, run by its parent"]
+    fn fixture_home_is_private_under_child_umask() {
+        if std::env::var_os(UMASK_CHILD).is_none() {
+            return;
+        }
+        // The parent's pre-exec hook really set umask 0002: a plain directory
+        // now comes out group-writable, so the assertion below is not vacuous.
+        let probe = short_tempdir("probe-").expect("probe home");
+        let plain = probe.path().join("plain");
+        fs::create_dir(&plain).expect("plain directory");
+        let plain_mode = fs::metadata(&plain).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            plain_mode, 0o775,
+            "child umask is not 0002 (plain directory mode {plain_mode:o})"
+        );
+
+        let short = short_tempdir("kf-").expect("short fixture home");
+        let fixture = Fixture::new("fx-").expect("fixture home");
+        let home = Fixture::short_home("sh-").expect("short fixture home");
+        // A fixture file that stands in for kernel state must be 0600 too.
+        let state = short.path().join("app.log");
+        write_private(&state, b"legacy\n").expect("private fixture file");
+        assert_eq!(
+            fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "write_private must create a 0600 file under umask 0002"
+        );
+        for (label, path) in [
+            ("short_tempdir", short.path()),
+            ("Fixture::new", fixture.path()),
+            ("Fixture::short_home", home.path()),
+        ] {
+            let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode,
+                0o700,
+                "{label} home {} has mode {mode:o} under umask 0002",
+                path.display()
+            );
+        }
+    }
 
     #[test]
     fn short_location_confines_every_fixture_to_the_run_temp_root() {

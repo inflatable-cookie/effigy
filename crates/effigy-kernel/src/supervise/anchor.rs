@@ -1,6 +1,8 @@
 //! Same-image group anchor. It announces its ready PID before go, and exits on
-//! SIGTERM or when settlement retires it.
+//! SIGTERM, when settlement retires it, or once its group has no live member.
 use super::*;
+use crate::custody::platform;
+use crate::ident::ProcessState;
 use std::ffi::CString;
 use std::os::fd::OwnedFd;
 
@@ -214,11 +216,101 @@ pub(super) fn entry() -> Result<(), RunError> {
     if byte != [1] {
         return Err(RunError::broken("invalid anchor go"));
     }
+    // SAFETY: getpgrp only observes this process's own process group, which the
+    // blocked leader created before the anchor joined it.
+    let group = unsafe { libc::getpgrp() };
+    if group <= 0 {
+        return Err(RunError::broken("the anchor cannot read its own group"));
+    }
+    let group = group as u32;
+    let me = std::process::id();
+    let mut wait = POLL_MIN;
     loop {
-        // SAFETY: pause has no arguments. INT and HUP stay ignored, and TERM's
-        // default action ends the process; no fds remain either way.
-        unsafe {
-            libc::pause();
+        // A live leader pins the group, so no inventory is needed while it is
+        // there; only an emptied leader turns this into a closure question. A
+        // signal still ends the process: INT and HUP stay ignored, TERM keeps
+        // its default action, and settlement may still retire the anchor last.
+        if !leader_live(group) && observe_group(group, me) == ClosureRound::Empty {
+            // No live member remains, so the anchor is no longer anyone's
+            // evidence. It retires itself here instead of waiting to be killed:
+            // that is what keeps no anchor beyond its group, including after its
+            // owner, its checkout or its volume is gone. A round with an unproven
+            // row or without the anchor's own positive row keeps waiting instead,
+            // so an anchor that cannot establish closure stays alive and is
+            // reported as `unproven group closure` (effigy#520).
+            return Ok(());
         }
+        std::thread::sleep(wait);
+        wait = wait.saturating_mul(2).min(POLL_MAX);
+    }
+}
+
+/// How long the anchor waits between group observations, and the ceiling that
+/// wait grows to. Both phases stay bounded, so an anchor whose group closes is
+/// gone within [`POLL_MAX`] of that closure whatever happened to its owner.
+const POLL_MIN: Duration = Duration::from_millis(20);
+const POLL_MAX: Duration = Duration::from_millis(250);
+
+/// Whether the group's leader, which the blocked leader became before the anchor
+/// joined it, is still a live process. One observation, never a signal.
+fn leader_live(group: u32) -> bool {
+    matches!(
+        ident::process_state(group),
+        Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+    )
+}
+
+/// Outcome of one best-effort closure round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosureRound {
+    /// Every listed member other than the anchor was positively not live, and the
+    /// anchor's own row was positively observed. The inventory is not atomic,
+    /// so an unlisted descendant may still have been missed.
+    Empty,
+    /// A member other than the anchor is positively live.
+    Live,
+    /// A listed row was unreadable at its state or identity read. It may hide a
+    /// member this inventory cannot see, so nothing is proved.
+    Unproven,
+    /// An observation failed, or the anchor's own row was not positively seen.
+    Unknown,
+}
+
+/// Classify one inventory round. Pure, so the shape is testable without timing.
+///
+/// Only positively resolved rows are evidence: a zombie (`NotLive`) cannot fork,
+/// while an unreadable row is [`ClosureRound::Unproven`] and keeps the anchor
+/// alive. The anchor's own positive row keeps an empty inventory from satisfying
+/// this vacuously (effigy#520).
+pub(crate) fn closure_round(rows: &[platform::MembershipRow], me: u32) -> ClosureRound {
+    let mut anchor_live = false;
+    let mut unproven = false;
+    for row in rows {
+        match row {
+            platform::MembershipRow::Live(identity) if identity.pid == me => anchor_live = true,
+            platform::MembershipRow::Live(_) => return ClosureRound::Live,
+            platform::MembershipRow::NotLive(_) => {}
+            platform::MembershipRow::Unproven(_) => unproven = true,
+        }
+    }
+    if !anchor_live {
+        return ClosureRound::Unknown;
+    }
+    if unproven {
+        return ClosureRound::Unproven;
+    }
+    ClosureRound::Empty
+}
+
+/// This round's outcome against the live group.
+///
+/// Best effort, never a proof: an inventory is not atomic with process creation,
+/// so a descendant forked and orphaned inside the window can be missed. Only a
+/// round with no live or unproven member and a positively observed anchor row
+/// retires the anchor. An unproven row or failed read keeps it alive as evidence.
+fn observe_group(group: u32, me: u32) -> ClosureRound {
+    match platform::group_membership(group) {
+        Ok(rows) => closure_round(&rows, me),
+        Err(_) => ClosureRound::Unknown,
     }
 }

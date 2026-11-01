@@ -53,12 +53,18 @@ through `custody::spawn` inherits no suite marker: the payload's descriptor plan
 overwrites slots 3 and 4 and closes everything above them, its environment holds
 only the custody nonce, and `__kernel-anchor` exists as positive evidence of the
 original group identity. Owner death, a settled checkout or a missing state root
-does not prove group closure, so nothing here self-exits on those grounds and
+does not prove group closure, so nothing here retires on those grounds and
 the sweep never signals a custody anchor, supervisor, sentinel or payload.
 Contract 052 settlement owns them: it stops workload members only on that
 evidence, stops the anchor last, and then releases the shared checkout lease.
-An anchor ends on SIGTERM (Q-014), which retires evidence a harness stopped
-rather than leaving it to survive indefinitely.
+What does retire an anchor is the group itself: it stays while any workload
+member is live, and once the group has no live member it exits by itself within a
+bounded deadline (effigy#520), so an owner killed without settling leaves no
+anchor behind. SIGTERM stays the cooperative exit (Q-014), which retires evidence
+a harness stopped rather than leaving it to survive indefinitely.
+A custody group that owes the caller no terminal also gets its own session, so a
+suite, a nested task session or a harness census never meets a custody helper of
+another run in the session it started.
 `custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure`
 proves the anchor and lease survive deletion until closure; the same test proves
 the anchor is gone once settlement completes.
