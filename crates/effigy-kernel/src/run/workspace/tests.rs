@@ -924,6 +924,94 @@ fn workspace_attachment_release_fences_the_other_owner_handle() {
 
 #[test]
 #[cfg(feature = "fault-injection")]
+fn attachment_release_retry_compares_exact_durable_cause() {
+    for (point, cause, secondary) in [
+        (Point::RunAttachReleaseBefore, Release::Eof, false),
+        (Point::RunAttachReleaseAfter, Release::Eof, false),
+        (Point::RunAttachReleaseBefore, Release::Detach, false),
+        (Point::RunAttachReleaseAfter, Release::Detach, false),
+        (Point::RunAttachReleaseBefore, Release::Eof, true),
+        (Point::RunAttachReleaseAfter, Release::Eof, true),
+        (Point::RunAttachReleaseBefore, Release::Detach, true),
+        (Point::RunAttachReleaseAfter, Release::Detach, true),
+    ] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let foreign = home();
+        let foreign_root = StateRoot::effects(&cx, foreign.path()).unwrap();
+        let mut fake = Fake::new(fixture.path());
+        let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+        let mut owner = if secondary {
+            attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([44; 16])).unwrap()
+        } else {
+            resume_owner(&cx, &root, session(), id(1)).unwrap()
+        };
+        assert!(
+            owner.release_recoverable(&cx, &root, cause).is_err(),
+            "a retry needs the original attempt"
+        );
+        fault::arm_point(point, Fault::Eperm);
+        assert!(owner.release(&cx, &root, cause).is_err());
+        assert!(fault::fired());
+        fault::arm(None);
+        let other = match cause {
+            Release::Eof => Release::Detach,
+            Release::Detach => Release::Eof,
+        };
+        assert!(
+            owner.release_recoverable(&cx, &root, other).is_err(),
+            "a retry cannot change cause"
+        );
+        assert!(
+            owner
+                .release_recoverable(&cx, &foreign_root, cause)
+                .is_err(),
+            "a retry cannot change state root"
+        );
+        if point == Point::RunAttachReleaseAfter {
+            let mut store = Store::open(&cx, &root).unwrap();
+            store
+                .transaction(&cx, |txn| {
+                    txn.conn().execute(
+                        "UPDATE run_attachments SET release=?2 WHERE attachment_id=?1",
+                        params![owner.id().to_string(), release_name(other)],
+                    )?;
+                    Ok::<_, RunError>(())
+                })
+                .unwrap();
+            assert!(
+                owner.release_recoverable(&cx, &root, cause).is_err(),
+                "a conflicting durable release cannot be accepted"
+            );
+            store
+                .transaction(&cx, |txn| {
+                    txn.conn().execute(
+                        "UPDATE run_attachments SET release=?2 WHERE attachment_id=?1",
+                        params![owner.id().to_string(), release_name(cause)],
+                    )?;
+                    Ok::<_, RunError>(())
+                })
+                .unwrap();
+        }
+        owner
+            .release_recoverable(&cx, &root, cause)
+            .expect("same release recovers");
+        assert!(!owner.attached(&cx, &root).unwrap());
+        assert_eq!(
+            scalar(
+                &cx,
+                &root,
+                "SELECT count(*) FROM requests WHERE state='pending'"
+            ),
+            usize::from(!secondary && matches!(cause, Release::Eof)) as i64
+        );
+        run.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
 fn workspace_attachment_release_wins_while_control_is_before_its_transaction() {
     let fixture = home();
     let cx = context();
