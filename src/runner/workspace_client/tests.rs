@@ -3256,6 +3256,23 @@ fn owner_connection_guard_closes_the_peer_on_panic() {
     assert!(saw_eof.load(Ordering::SeqCst));
 }
 
+#[test]
+fn owner_fixture_write_timeout_bounds_an_undrained_peer() {
+    let (_client, host_side) = connection_pair();
+    let mut transport = PeerTransport::new(host_side);
+    transport
+        .stream
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .expect("bounded host write");
+    let error = transport
+        .write_all(&vec![0; 16 * 1024 * 1024])
+        .expect_err("undrained peer fills the socket");
+    assert!(matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    ));
+}
+
 impl host::Streams for OpenAfterAdmission {
     fn next_chunk(&mut self, attachment: Option<&run::Attachment>) -> Option<host::StreamChunk> {
         self.custody.next_chunk(attachment)
@@ -3318,6 +3335,9 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     host_side
         .set_read_timeout(Some(Duration::from_secs(30)))
         .expect("bounded owner read");
+    host_side
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner write");
     // All fixture I/O and wire construction precede the ready barrier. The
     // serving observation budget must not tick while setup is still running.
     let ready = std::sync::Barrier::new(2);
@@ -3666,6 +3686,9 @@ fn backpressured_input_drains_while_the_connection_is_idle() {
     // them and then blocks on a quiet socket, which is what "the connection is
     // idle" means. The client end stays open until the proof is done.
     let (mut client, host_side) = connection_pair();
+    client
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded fixture write");
     {
         use std::io::Write as _;
         client
@@ -3676,6 +3699,9 @@ fn backpressured_input_drains_while_the_connection_is_idle() {
     host_side
         .set_read_timeout(Some(Duration::from_secs(30)))
         .expect("bounded owner read");
+    host_side
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner write");
     std::thread::scope(|scope| {
         let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
@@ -3749,6 +3775,9 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     host_side
         .set_read_timeout(Some(Duration::from_secs(30)))
         .expect("bounded owner read");
+    host_side
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner write");
     std::thread::scope(|scope| {
         let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
@@ -4091,6 +4120,9 @@ impl ChannelAccept for PeerAccept {
 fn live_connection(frames: &[host::Frame]) -> (UnixStream, UnixStream) {
     use std::io::Write as _;
     let (mut client, host_side) = connection_pair();
+    client
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded fixture write");
     client
         .write_all(&framed(frames))
         .expect("the connection's frames");
