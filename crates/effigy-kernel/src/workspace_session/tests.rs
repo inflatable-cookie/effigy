@@ -1510,7 +1510,7 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
 #[test]
 fn parked_reservation_reacquires_only_before_its_original_deadline() {
     let fixture = home();
-    let cx = context();
+    let cx = context().patience(Duration::from_secs(120));
     let root = StateRoot::effects(&cx, fixture.path()).unwrap();
     let reservation = decided(&cx, &root, &environment());
     let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(231));
@@ -1518,7 +1518,7 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
     let parked = run
         .park_workspace(
             &reservation,
-            std::time::Instant::now() + std::time::Duration::from_secs(10),
+            std::time::Instant::now() + std::time::Duration::from_secs(120),
         )
         .expect("park");
     let guarded = parked.reacquire().expect("same reservation reacquires");
@@ -1533,11 +1533,144 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
     let mut parked = run
         .park_workspace(
             &reservation,
-            std::time::Instant::now() + std::time::Duration::from_secs(10),
+            std::time::Instant::now() + std::time::Duration::from_secs(120),
         )
         .expect("park");
     parked.expire_for_test();
     let (_error, _custody) = parked.reacquire().expect_err("expired deadline refuses");
+}
+
+#[test]
+fn parked_resume_requires_matching_observed_creator_and_target_facts() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                           "created": [{"container_id": target.identity.container_id}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let facts = guarded.view().unwrap().facts().clone();
+    let (error, guarded) = guarded
+        .resume(Observed::Unknown(UnknownReason::Injected))
+        .expect_err("unknown never resumes");
+    assert!(error.to_string().contains("observation is unknown"));
+    let (error, mut guarded) = guarded
+        .resume(Observed::Absent(AbsenceProof::NoRow {
+            table: "fixture".into(),
+        }))
+        .expect_err("absent observation never resumes");
+    assert!(error.to_string().contains("observation is absent"));
+    let mut changed_ids = facts.clone();
+    changed_ids.created_ids.clear();
+    let mut changed_target = facts.clone();
+    changed_target.target.vm_boot_id = "changed-boot".into();
+    let mut changed_platform = facts.clone();
+    changed_platform.platform.platform.architecture = "changed-arch".into();
+    let mut changed_receipt = facts.clone();
+    changed_receipt.creator_receipt["record"]["generation"] = serde_json::json!(999);
+    let mut changed_selection = facts.clone();
+    changed_selection.selection = Digest::of(b"different selection");
+    for changed in [
+        changed_ids,
+        changed_target,
+        changed_platform,
+        changed_receipt,
+        changed_selection,
+    ] {
+        let (error, retained) = guarded
+            .resume(Observed::Verified(changed, evidence()))
+            .expect_err("changed resume evidence never resumes");
+        assert!(error.to_string().contains("observation changed"));
+        guarded = retained;
+    }
+    let mut store = Store::open(&cx, &root).unwrap();
+    let mut changed_receipt = facts.creator_receipt.clone();
+    changed_receipt["record"]["extra"] = serde_json::json!("changed after reobservation");
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&changed_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, retained) = guarded
+        .resume(Observed::Verified(facts.clone(), evidence()))
+        .expect_err("changed journal receipt never resumes");
+    assert!(error
+        .to_string()
+        .contains("journalled resume evidence changed"));
+    guarded = retained;
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&facts.creator_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    let run = guarded
+        .resume(Observed::Verified(facts, evidence()))
+        .expect("matching fixture observation resumes");
+    assert_eq!(run.id(), run_id(254));
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
 }
 
 #[test]

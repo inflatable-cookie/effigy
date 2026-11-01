@@ -687,6 +687,14 @@ impl Run<'_> {
         workspace_fact(self.store.conn(), self.id, WORKSPACE_TARGET_KIND)
     }
 
+    pub(crate) fn workspace_bound_platform(
+        &self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<crate::workspace_session::BoundPlatform, RunError> {
+        self.verify_workspace_reservation(reservation)?;
+        workspace_fact(self.store.conn(), self.id, WORKSPACE_PLATFORM_KIND)
+    }
+
     pub(crate) fn bind_workspace_target(
         &mut self,
         reservation: &crate::workspace_session::WorkspaceActivationReservation,
