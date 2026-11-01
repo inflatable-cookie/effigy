@@ -830,6 +830,7 @@ impl Store {
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
             && has_session_owner(&self.conn)?
+            && has_admission_resolution(&self.conn)?
             && has_activation_session_owner(&self.conn)?
             && has_activation_inputs(&self.conn)?
             && !stale_build
@@ -868,6 +869,9 @@ impl Store {
                 txn.conn.execute_batch(
                     "ALTER TABLE workspace_admissions ADD COLUMN session_owner TEXT",
                 )?;
+            }
+            if !has_admission_resolution(txn.conn)? {
+                txn.conn.execute_batch("ALTER TABLE workspace_admissions ADD COLUMN resolution_digest BLOB")?;
             }
             for (name, sql) in ADDITIVE_INDEXES {
                 if !has_index(txn.conn, name)? {
@@ -1501,6 +1505,9 @@ fn has_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
         [], |r| r.get(0),
     )
 }
+fn has_admission_resolution(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_admissions') WHERE name='resolution_digest')", [], |r| r.get(0))
+}
 fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {
     has_column(conn, "backend")
 }
@@ -1592,7 +1599,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 8] = [
+const ADDITIVE_TABLES: [(&str, &str); 9] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1623,6 +1630,7 @@ CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   session_owner TEXT,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
+  resolution_digest BLOB,
   run_id TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
   outcome TEXT,
@@ -1693,6 +1701,13 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
   ON workspace_activation_reservations(session_run)",
+    ),
+    (
+        "workspace_activation_attempts",
+        "CREATE TABLE IF NOT EXISTS workspace_activation_attempts (
+  reservation_id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL
+) STRICT;",
     ),
     (
         "workspace_session_runs",
@@ -1935,6 +1950,7 @@ CREATE TABLE workspace_admissions (
   session_owner TEXT,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
+  resolution_digest BLOB,
   run_id TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
   outcome TEXT,

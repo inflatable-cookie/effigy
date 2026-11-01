@@ -84,6 +84,98 @@ fn container_identity() -> WorkspaceContainerIdentity {
     observed_identity(HOST_CONTAINER_ID)
 }
 
+#[test]
+fn guest_identity_exec_uses_the_selected_backend_and_full_id() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("pinned-guest-identity-").expect("fixture");
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let docker = bin.join("docker");
+    std::fs::write(&docker, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EFFIGY_TEST_LOG\"\n[ \"$2\" = pinned-context ] || exit 2\n[ -e \"$EFFIGY_TEST_MISSING\" ] && { printf 'platform=x86_64\\n'; exit 0; }\nprintf 'boot=boot-fixture\\nplatform=x86_64\\nlibc_glibc=/lib/libc.so.6\\n'\n").unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let log = fixture.path().join("calls");
+    let missing = fixture.path().join("missing-boot");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let _env = EnvGuard::set_many(&[
+        ("PATH", Some(path)),
+        ("EFFIGY_TEST_LOG", Some(log.display().to_string())),
+        ("EFFIGY_TEST_MISSING", Some(missing.display().to_string())),
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".into())),
+    ]);
+    let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
+    let checkout = fixture.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let root = effigy_kernel::root::StateRoot::effects(&cx, &checkout).unwrap();
+    let selected = effigy_containers::environment::BackendSelection {
+        kind: effigy_containers::environment::BackendKind::DockerDesktop,
+        engine: effigy_containers::BackendId::docker_compose(),
+        context: "pinned-context".into(),
+        reason: effigy_containers::environment::BackendReason::EnvironmentVariable("docker".into()),
+    };
+    let identity = super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &selected,
+        HOST_CONTAINER_ID,
+        std::time::Instant::now() + std::time::Duration::from_secs(10),
+    )
+    .unwrap();
+    assert_eq!(identity.container_id, HOST_CONTAINER_ID);
+    assert_eq!(identity.vm_boot_id, "boot-fixture");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.starts_with("--context\npinned-context\nexec\n"));
+    assert!(calls.contains(HOST_CONTAINER_ID));
+    let mut wrong = selected.clone();
+    wrong.context = "wrong-context".into();
+    assert!(super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &wrong,
+        HOST_CONTAINER_ID,
+        std::time::Instant::now() + std::time::Duration::from_secs(10)
+    )
+    .is_err());
+    std::fs::write(&missing, "").unwrap();
+    assert!(super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &selected,
+        HOST_CONTAINER_ID,
+        std::time::Instant::now() + std::time::Duration::from_secs(10)
+    )
+    .is_err());
+    std::fs::remove_file(&log).unwrap();
+    assert!(super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &selected,
+        "short",
+        std::time::Instant::now() + std::time::Duration::from_secs(10)
+    )
+    .is_err());
+    assert!(super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &selected,
+        HOST_CONTAINER_ID,
+        std::time::Instant::now() - std::time::Duration::from_millis(1)
+    )
+    .is_err());
+    assert!(
+        !log.exists(),
+        "invalid or expired observation did not spawn"
+    );
+    std::fs::rename(&checkout, fixture.path().join("prior-checkout")).unwrap();
+    std::fs::create_dir(&checkout).unwrap();
+    assert!(super::super::provisioning::observed_identity_on_backend(
+        &root,
+        &selected,
+        HOST_CONTAINER_ID,
+        std::time::Instant::now() + std::time::Duration::from_secs(10)
+    )
+    .is_err());
+    assert!(!log.exists(), "replaced checkout did not spawn");
+}
+
 fn local_identity() -> WorkspaceEnvironmentIdentity {
     WorkspaceEnvironmentIdentity {
         resource_id: "env:dev".to_owned(),

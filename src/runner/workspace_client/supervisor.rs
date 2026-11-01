@@ -282,27 +282,27 @@ impl ServingHandoff<'static> {
     pub(crate) fn committed(
         owner: WorkspaceOwner,
         obligation: &SelectionObligation,
-    ) -> Result<Self, HandoffRefusal> {
-        if obligation.session_run() != owner.session.run() {
-            return Err(HandoffRefusal::WrongSession);
-        }
+    ) -> Result<Self, (HandoffRefusal, Box<WorkspaceOwner>)> {
         // A commit is not a selection until it has switched: the publication is
         // only servable once every selector and object read back at its
         // committed value, which is what `Switched` records (§8.11).
-        Self::fenced(owner, obligation.state(), obligation.receipt().serving())
-    }
-
-    /// The handoff boundary: a custody may be handed over only for a selection
-    /// that switched and was read back, under exactly the lease the commit
-    /// recorded. This is the one route into service, so there is no
-    /// receipt-only constructor that could skip the state fence.
-    fn fenced(
-        owner: WorkspaceOwner,
-        state: SelectionState,
-        committed: &ServingLease,
-    ) -> Result<Self, HandoffRefusal> {
-        committed_state(state)?;
-        Self::validated(owner.into(), committed)
+        let committed = obligation.receipt().serving();
+        let validation = if obligation.session_run() != owner.session.run() {
+            Err(HandoffRefusal::WrongSession)
+        } else {
+            committed_state(obligation.state()).and_then(|()| {
+                Self::validate_custody(&owner.session, &owner.channel.launch, committed)
+            })
+        };
+        if let Err(error) = validation {
+            return Err((error, Box::new(owner)));
+        }
+        let session = owner.session.clone();
+        Ok(Self {
+            owner: owner.into(),
+            session,
+            lease: committed.clone(),
+        })
     }
 }
 
@@ -327,27 +327,36 @@ impl<'a> ServingHandoff<'a> {
         owner: OwnedWorkspaceChannel<'a>,
         committed: &ServingLease,
     ) -> Result<Self, HandoffRefusal> {
-        if committed.session().run != owner.session.run()
-            || committed.session().generation != owner.session.generation()
-        {
-            return Err(HandoffRefusal::WrongSession);
-        }
-        if !owner.channel.launch.key_held() {
-            return Err(HandoffRefusal::KeyReleased);
-        }
-        // A launch that published nothing, or published another lease, cannot
-        // serve this commit: the locator a guest dials and the lease a commit
-        // recorded are one fact (§8.11).
-        match owner.channel.launch.lease() {
-            Some(published) if published == *committed => {}
-            _ => return Err(HandoffRefusal::Unpublished),
-        }
+        Self::validate_custody(&owner.session, &owner.channel.launch, committed)?;
         let session = owner.session.clone();
         Ok(Self {
             owner,
             session,
             lease: committed.clone(),
         })
+    }
+
+    fn validate_custody(
+        session: &SessionRef,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
+        committed: &ServingLease,
+    ) -> Result<(), HandoffRefusal> {
+        if committed.session().run != session.run()
+            || committed.session().generation != session.generation()
+        {
+            return Err(HandoffRefusal::WrongSession);
+        }
+        if !launch.key_held() {
+            return Err(HandoffRefusal::KeyReleased);
+        }
+        // A launch that published nothing, or published another lease, cannot
+        // serve this commit: the locator a guest dials and the lease a commit
+        // recorded are one fact (§8.11).
+        match launch.lease() {
+            Some(published) if published == *committed => {}
+            _ => return Err(HandoffRefusal::Unpublished),
+        }
+        Ok(())
     }
 
     /// The session this custody belongs to.
@@ -542,19 +551,45 @@ impl<'a> ServiceOwner<'a> {
     /// Take the committed session's custody into service with the production
     /// dispatcher: one `HostDispatch` answers all four kernel seams, and the
     /// server is built only from the publication's validated facts.
-    pub(crate) fn adopt(handoff: ServingHandoff<'a>) -> Result<Self, AdoptError> {
+    pub(crate) fn adopt(handoff: ServingHandoff<'a>) -> Result<Self, ServiceAdoptFailure<'a>> {
         let ServingHandoff {
             owner,
             session,
             lease,
         } = handoff;
-        // A refused adoption closes the candidate: `adopt_production` consumed
-        // the prepared channel, whose custody stops the listener and wipes the
-        // key when it is dropped.
-        let adopted = ServingOwner::adopt_production(owner)?;
-        Self::retained(adopted, session, lease)
+        let adopted = ServingOwner::adopt_production(owner)
+            .map_err(|(error, owner)| ServiceAdoptFailure::Before { error, owner })?;
+        Self::retain_recoverable(adopted, session, lease)
+            .map_err(|(error, owner)| ServiceAdoptFailure::After { error, owner })
     }
 }
+
+#[derive(Debug)]
+pub(crate) enum ServiceAdoptFailure<'a> {
+    Before {
+        error: AdoptError,
+        owner: Box<OwnedWorkspaceChannel<'a>>,
+    },
+    After {
+        error: AdoptError,
+        owner: Box<
+            ServingOwner<
+                'a,
+                ServerTlsTransport,
+                HostChannelAcceptor,
+                HostDispatch,
+                HostDispatch,
+                HostDispatch,
+                HostDispatch,
+            >,
+        >,
+    },
+}
+
+type RetainFailure<'a, Ad, Rs, Ob, Id> = (
+    AdoptError,
+    Box<ServingOwner<'a, ServerTlsTransport, HostChannelAcceptor, Ad, Rs, Ob, Id>>,
+);
 
 impl<'a, Ad, Rs, Ob, Id> ServiceOwner<'a, Ad, Rs, Ob, Id>
 where
@@ -576,12 +611,21 @@ where
         session: SessionRef,
         lease: ServingLease,
     ) -> Result<Self, AdoptError> {
+        Self::retain_recoverable(owner, session, lease).map_err(|(error, mut owner)| {
+            owner.stop();
+            error
+        })
+    }
+
+    fn retain_recoverable(
+        owner: ServingOwner<'a, ServerTlsTransport, HostChannelAcceptor, Ad, Rs, Ob, Id>,
+        session: SessionRef,
+        lease: ServingLease,
+    ) -> Result<Self, RetainFailure<'a, Ad, Rs, Ob, Id>> {
         if lease.session().run != session.run()
             || lease.session().generation != session.generation()
         {
-            let mut owner = owner;
-            owner.stop();
-            return Err(AdoptError::WrongSession);
+            return Err((AdoptError::WrongSession, Box::new(owner)));
         }
         // The structural fence, for every path: the custody's own launch must
         // have published exactly this lease. A launch that published nothing, or
@@ -590,20 +634,14 @@ where
         // custody must agree with the locator it advertises.
         let published = owner.launch().and_then(|launch| launch.lease());
         if published.as_ref() != Some(&lease) {
-            let mut owner = owner;
-            owner.stop();
-            return Err(AdoptError::WrongSession);
+            return Err((AdoptError::WrongSession, Box::new(owner)));
         }
         if owner.session() != &session {
-            let mut owner = owner;
-            owner.stop();
-            return Err(AdoptError::WrongSession);
+            return Err((AdoptError::WrongSession, Box::new(owner)));
         }
         if let Some(locator) = owner.locator() {
             if locator.bound().lease() != &lease {
-                let mut owner = owner;
-                owner.stop();
-                return Err(AdoptError::WrongSession);
+                return Err((AdoptError::WrongSession, Box::new(owner)));
             }
         }
         Ok(Self {
@@ -780,6 +818,29 @@ where
             served,
             cause,
         })
+    }
+
+    /// Preserve the stopped service and its exact session supervisor when
+    /// settlement fails. No listener or key remains servable on this path.
+    pub(crate) fn retire_for_recoverable(
+        mut self,
+        cause: RetirementCause,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Retired, (RunError, Box<Self>)> {
+        match self.owner.settle_with_recoverable(cause, cleanup, adapter) {
+            Ok(outcome) => Ok(Retired {
+                session: self.session,
+                lease: self.lease,
+                outcome,
+                served: self.served,
+                cause,
+            }),
+            Err((error, owner)) => {
+                self.owner = *owner;
+                Err((error, Box::new(self)))
+            }
+        }
     }
 
     /// Give the session up without settling it. The listener stops and the key

@@ -361,24 +361,150 @@ impl InvocationBody {
         self.selector.check()?;
         self.target.check()?;
         check_relative_path(&self.cwd)?;
-        if self.args.len() > MAX_ARGUMENTS {
-            return Err(Refusal::invalid("a request carries at most 256 arguments"));
-        }
-        let mut total = 0usize;
-        for argument in &self.args {
-            total = total.saturating_add(argument.len());
-            if argument.len() > MAX_PATH_BYTES {
-                return Err(Refusal::invalid("an argument is at most 4096 bytes"));
-            }
-            if argument.contains('\0') {
-                return Err(Refusal::invalid("an argument carries no NUL"));
-            }
-        }
-        if total > MAX_BODY_BYTES {
-            return Err(Refusal::invalid("a request body is at most 64 KiB"));
-        }
+        check_arguments(&self.args)?;
         Ok(())
     }
+}
+
+fn check_arguments(args: &[String]) -> Result<(), Refusal> {
+    if args.len() > MAX_ARGUMENTS {
+        return Err(Refusal::invalid("a request carries at most 256 arguments"));
+    }
+    let mut total = 0usize;
+    for argument in args {
+        total = total.saturating_add(argument.len());
+        if argument.len() > MAX_PATH_BYTES {
+            return Err(Refusal::invalid("an argument is at most 4096 bytes"));
+        }
+        if argument.contains('\0') {
+            return Err(Refusal::invalid("an argument carries no NUL"));
+        }
+    }
+    if total > MAX_BODY_BYTES {
+        return Err(Refusal::invalid("a request body is at most 64 KiB"));
+    }
+    Ok(())
+}
+
+/// Typed query inputs for the negotiated `observe_query_v1` extension.
+/// Debug deliberately omits cwd and arguments, which may contain private input.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveQuery {
+    #[serde(deserialize_with = "deserialize_query_cwd")]
+    pub cwd: String,
+    #[serde(deserialize_with = "deserialize_query_args")]
+    pub args: Vec<String>,
+    pub output: OutputMode,
+}
+impl fmt::Debug for ObserveQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObserveQuery")
+            .field("output", &self.output)
+            .finish_non_exhaustive()
+    }
+}
+impl ObserveQuery {
+    fn check(&self) -> Result<(), Refusal> {
+        check_relative_path(&self.cwd)?;
+        check_arguments(&self.args)
+    }
+}
+
+/// Validate query inputs before the general frame decoder allocates its JSON
+/// value tree. Only the bounded frame buffer and serde's string unescape scratch
+/// exist before this pass; arbitrary frame fields are skipped without storing.
+fn preflight_observe_query(body: &[u8]) -> Result<(), Refusal> {
+    #[derive(Deserialize)]
+    struct QueryFrame {
+        #[serde(default)]
+        body: Option<QueryBody>,
+    }
+    #[derive(Deserialize)]
+    struct QueryBody {
+        #[serde(default)]
+        query: Option<ObserveQuery>,
+    }
+    let frame: QueryFrame = serde_json::from_slice(body)
+        .map_err(|_| Refusal::invalid("a frame has malformed or unbounded query inputs"))?;
+    if let Some(query) = frame.body.and_then(|body| body.query) {
+        query.check()?;
+    }
+    Ok(())
+}
+
+fn deserialize_query_cwd<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    struct Cwd;
+    impl Visitor<'_> for Cwd {
+        type Value = String;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded checkout-relative cwd")
+        }
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<String, E> {
+            check_relative_path(value).map_err(|_| E::custom("invalid query cwd"))?;
+            Ok(value.to_owned())
+        }
+    }
+    deserializer.deserialize_str(Cwd)
+}
+
+fn deserialize_query_args<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    struct Argument(String);
+    impl<'de> Deserialize<'de> for Argument {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Text;
+            impl Visitor<'_> for Text {
+                type Value = Argument;
+                fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    formatter.write_str("a bounded UTF-8 argument")
+                }
+                fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Argument, E> {
+                    if value.len() > MAX_PATH_BYTES || value.contains('\0') {
+                        return Err(E::custom("invalid query argument"));
+                    }
+                    Ok(Argument(value.to_owned()))
+                }
+            }
+            deserializer.deserialize_str(Text)
+        }
+    }
+    struct Arguments;
+    impl<'de> Visitor<'de> for Arguments {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("at most 256 bounded arguments")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<String>, A::Error> {
+            let mut values = Vec::new();
+            let mut bytes = 0usize;
+            loop {
+                if values.len() == MAX_ARGUMENTS {
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::custom("too many query arguments"));
+                    }
+                    break;
+                }
+                let Some(Argument(value)) = seq.next_element::<Argument>()? else {
+                    break;
+                };
+                bytes += value.len();
+                if bytes > MAX_BODY_BYTES {
+                    return Err(serde::de::Error::custom(
+                        "query arguments exceed body limit",
+                    ));
+                }
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_seq(Arguments)
 }
 
 /// The body of an `observe` request. `op` is a bounded operation name whose
@@ -387,11 +513,33 @@ impl InvocationBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<ObserveQuery>,
     pub op: String,
     pub target: Option<Target>,
+    /// Exact run identity for run-specific observations. Omitted on legacy reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 impl ObserveBody {
     fn check(&self) -> Result<(), Refusal> {
+        if let Some(query) = &self.query {
+            query.check()?;
+        }
+        match (&*self.op, &self.run_id) {
+            ("runs:status", Some(id)) if id.parse::<RunId>().is_ok() => {}
+            ("runs:status", _) => {
+                return Err(Refusal::invalid(
+                    "runs:status requires an exact run identity",
+                ))
+            }
+            (_, None) => {}
+            (_, Some(_)) => {
+                return Err(Refusal::invalid(
+                    "run identity is not valid for this observation",
+                ))
+            }
+        }
         if self.op.is_empty() || self.op.len() > 120 {
             return Err(Refusal::invalid("an observe operation name is bounded"));
         }
@@ -611,9 +759,19 @@ pub struct Negotiation {
     pub artifact: HostArtifact,
 }
 
+/// Versioned, explicitly negotiated optional wire support. No capability is
+/// inferred from a binary version, digest or an unacknowledged query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelCapability {
+    ObserveQueryV1,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hello {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ChannelCapability>,
     pub schema: String,
     pub protocol_versions: Vec<u32>,
     pub effigy_version: String,
@@ -624,8 +782,19 @@ pub struct Hello {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelloOk {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ChannelCapability>,
     pub protocol: u32,
     pub effigy_version: String,
+}
+
+fn check_capabilities(capabilities: &[ChannelCapability]) -> Result<(), Refusal> {
+    if capabilities.len() > 1 {
+        return Err(Refusal::invalid(
+            "a hello offers each supported capability once",
+        ));
+    }
+    Ok(())
 }
 
 /// The TLS identity the transport verified. The pin check compares it with the
@@ -660,6 +829,7 @@ pub fn check_server_pin(pinned: &Digest, peer: Option<&ServerIdentity>) -> Resul
 /// anything else is written, so a version or identity mismatch refuses before
 /// effects and before a credential is disclosed.
 pub fn negotiate(client: &Hello, host: &Negotiation) -> Result<HelloOk, Refusal> {
+    check_capabilities(&client.capabilities)?;
     if client.schema != SCHEMA {
         return Err(Refusal::version(
             "this client speaks another channel schema; rerun the binary this workspace provisioned",
@@ -688,6 +858,7 @@ pub fn negotiate(client: &Hello, host: &Negotiation) -> Result<HelloOk, Refusal>
         ));
     }
     Ok(HelloOk {
+        capabilities: client.capabilities.clone(),
         protocol: PROTOCOL_V1,
         effigy_version: host.artifact.effigy_version.clone(),
     })
@@ -1770,6 +1941,12 @@ impl Frame {
 /// Encode a frame body. Framing (the four-byte length prefix) belongs to the
 /// connection, so a body and its length can never disagree.
 pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, Refusal> {
+    match frame {
+        Frame::Request(request) => request.body.check()?,
+        Frame::Hello(hello) => check_capabilities(&hello.capabilities)?,
+        Frame::HelloOk(hello) => check_capabilities(&hello.capabilities)?,
+        _ => {}
+    }
     let mut object = Map::new();
     object.insert("frame".to_string(), Value::String(frame.tag().into()));
     match frame {
@@ -1870,6 +2047,7 @@ pub fn decode_frame(body: &[u8]) -> Result<Frame, Refusal> {
     if body.len() > MAX_FRAME_BYTES {
         return Err(Refusal::invalid("a frame is at most 1 MiB"));
     }
+    preflight_observe_query(body)?;
     let value = serde_json::from_slice::<NoDuplicates>(body)
         .map_err(|_| Refusal::invalid("a frame is not JSON, or repeats a key"))?
         .0;
@@ -1913,7 +2091,9 @@ pub fn decode_frame(body: &[u8]) -> Result<Frame, Refusal> {
     match &frame {
         Frame::Request(request) => request.body.check()?,
         Frame::Stream(stream) => stream.check()?,
+        Frame::HelloOk(hello) => check_capabilities(&hello.capabilities)?,
         Frame::Hello(hello) => {
+            check_capabilities(&hello.capabilities)?;
             if hello.protocol_versions.len() > 8 {
                 return Err(Refusal::invalid("a hello names at most eight versions"));
             }
@@ -2144,6 +2324,27 @@ pub trait Transport {
     fn verified_peer(&self) -> Option<ServerIdentity>;
 }
 
+/// Distinguish a local transport failure from a peer-supplied refusal code.
+struct TrackedTransport<'a, T> {
+    inner: &'a mut T,
+    failed: bool,
+}
+impl<T: Transport> Transport for TrackedTransport<'_, T> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        let result = self.inner.read(bytes);
+        self.failed |= result.is_err();
+        result
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let result = self.inner.write_all(bytes);
+        self.failed |= result.is_err();
+        result
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
 /// Read one framed body: four-byte big-endian length, checked against
 /// [`MAX_FRAME_BYTES`] before the body is allocated.
 pub fn read_frame<T: Transport>(transport: &mut T) -> Result<Option<Vec<u8>>, Refusal> {
@@ -2203,6 +2404,16 @@ pub trait Resolver {
         cx: &EffectContext,
         body: &InvocationBody,
     ) -> Result<ResolvedInvocation, Refusal>;
+
+    /// Derive the exact invocation the engine will admit for this run.
+    fn admission_invocation(
+        &mut self,
+        _body: &InvocationBody,
+        resolved: &ResolvedInvocation,
+        _run: RunId,
+    ) -> Result<ResolvedInvocation, Refusal> {
+        Ok(resolved.clone())
+    }
 }
 
 /// The host engine's admission handoff: the dispatcher has reserved the
@@ -2215,6 +2426,11 @@ pub trait Admission {
         ticket: &AdmissionTicket,
         resolved: &ResolvedInvocation,
     ) -> Result<(), Refusal>;
+    /// Fence acknowledged by the exact retained supervisor for this ticket.
+    /// An adapter without that evidence cannot confer owner authority.
+    fn admitted_fence(&self, _ticket: &AdmissionTicket) -> Option<run::Fence> {
+        None
+    }
 }
 
 /// The host's read surface. Observe runs under [`ObserveContext`] and writes
@@ -2244,6 +2460,7 @@ pub struct Dispatcher<A, R, O, I> {
     /// Runs this connection admitted or recovered as admitted. Only they make
     /// this connection the owning client; every other attach is secondary.
     admitted: BTreeSet<RunId>,
+    admitted_owners: BTreeMap<RunId, Attachment>,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
     pub fn new(admission: A, resolver: R, observer: O, ids: I) -> Self {
@@ -2253,10 +2470,33 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
             observer,
             ids,
             admitted: BTreeSet::new(),
+            admitted_owners: BTreeMap::new(),
         }
     }
     pub fn observer_mut(&mut self) -> &mut O {
         &mut self.observer
+    }
+
+    fn verified_owner(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        session: Session,
+        run: RunId,
+    ) -> Result<Attachment, Refusal> {
+        let original = self
+            .admitted_owners
+            .get(&run)
+            .ok_or_else(|| Refusal::unknown("the original admitted owner is unavailable"))?;
+        original.check_release_root(root).map_err(refusal_from)?;
+        let handle = run::resume_owner(cx, root, session, run).map_err(refusal_from)?;
+        if handle.fence() != original.fence()
+            || handle.id() != original.id()
+            || handle.session() != original.session()
+        {
+            return Err(Refusal::unknown("the admitted owner attachment changed"));
+        }
+        Ok(handle)
     }
 
     /// `observe` is host `ObserveContext` only: no run, reservation, token,
@@ -2310,22 +2550,35 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         // records nothing and a corrected retry is a fresh request.
         let resolved = self.resolver.resolve(cx, body)?;
         let run = self.ids.next()?;
-        let reply = match run::reserve(cx, root, key, digest, run).map_err(refusal_from)? {
+        let admission_invocation = self.resolver.admission_invocation(body, &resolved, run)?;
+        let reply = match run::reserve_resolved(cx, root, key, digest, run, &admission_invocation)
+            .map_err(refusal_from)?
+        {
             Reservation::Recorded(recovered) => replay(recovered)?,
             Reservation::Fresh(ticket) => {
                 // A refused admission keeps the reservation recorded against
                 // this key, so a later retry reads `unknown` instead of
                 // admitting a second run under a fresh id.
                 self.admission.admit(cx, &ticket, &resolved)?;
+                self.admitted.insert(ticket.run());
+                let expected = self.admission.admitted_fence(&ticket).ok_or_else(|| {
+                    Refusal::unknown("the admitted owner's fence was not acknowledged")
+                })?;
+                let owner = run::resume_owner(cx, root, session, ticket.run()).map_err(|_| {
+                    Refusal::unknown("the admitted owner attachment could not be verified")
+                })?;
+                if owner.fence() != &expected {
+                    return Err(Refusal::unknown(
+                        "the admitted owner fence did not match its acknowledgement",
+                    ));
+                }
+                self.admitted_owners.insert(ticket.run(), owner);
                 AdmissionReply::Accepted(Accepted {
                     run: ticket.run(),
                     placement: Placement::Host,
                 })
             }
         };
-        if let AdmissionReply::Accepted(accepted) = &reply {
-            self.admitted.insert(accepted.run);
-        }
         Ok(reply)
     }
 
@@ -2345,7 +2598,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         // other terminal takes a secondary attachment, which never stops,
         // detaches or releases the owner's run (§8.11).
         if self.admitted.contains(&body.run) {
-            return run::resume_owner(cx, root, session, body.run).map_err(refusal_from);
+            return self.verified_owner(cx, root, session, body.run);
         }
         let attachment = AttachmentId::new(*id.bytes());
         match run::resume_secondary(cx, root, session, body.run, attachment) {
@@ -2356,9 +2609,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         }
     }
 
-    /// Reopen the owning client's handle on a run this session admitted, for a
-    /// reconnect after a restart. The kernel refuses any other run, and a
-    /// secondary terminal never becomes the owner this way.
+    /// Reopen the owner handle only for the connection that admitted the run.
     pub fn reopen_owner(
         &mut self,
         cx: &EffectContext,
@@ -2366,8 +2617,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         session: Session,
         run: RunId,
     ) -> Result<Attachment, Refusal> {
-        let handle = run::resume_owner(cx, root, session, run).map_err(refusal_from)?;
-        self.admitted.insert(run);
+        if !self.admitted.contains(&run) {
+            return Err(Refusal::forbidden("this connection did not admit the run"));
+        }
+        let handle = self.verified_owner(cx, root, session, run)?;
         Ok(handle)
     }
 
@@ -2382,13 +2635,19 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         handle: Option<&Attachment>,
         body: &RunBody,
     ) -> Result<(), Refusal> {
-        let id = self.ids.next()?;
         match handle {
             Some(handle) if handle.run() == body.run => {
+                let id = self.ids.next()?;
                 handle.control(cx, root, id, RequestAction::Stop)
             }
             _ => {
-                let owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
+                if !self.admitted.contains(&body.run) {
+                    return Err(Refusal::forbidden(
+                        "this connection has no attachment to the run",
+                    ));
+                }
+                let id = self.ids.next()?;
+                let owner = self.verified_owner(cx, root, session, body.run)?;
                 // The stop request is the whole effect: the handle is not
                 // released here, so this client cannot end another client's
                 // attachment on its way past.
@@ -2407,10 +2666,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         session: Session,
         body: &RunBody,
     ) -> Result<(), Refusal> {
-        let mut owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
+        if !self.admitted.contains(&body.run) {
+            return Err(Refusal::forbidden("this connection did not admit the run"));
+        }
+        let mut owner = self.verified_owner(cx, root, session, body.run)?;
         owner
             .release(cx, root, Release::Detach)
-            .map_err(refusal_from)
+            .map_err(refusal_from)?;
+        self.admitted.remove(&body.run);
+        self.admitted_owners.remove(&body.run);
+        Ok(())
     }
 }
 
@@ -2491,6 +2756,12 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     pinned: Digest,
     grants: GrantBook,
     dispatcher: Dispatcher<A, R, O, I>,
+    /// Do not serve another client while an owner's EOF cleanup is uncertain.
+    owner_cleanup_unsettled: bool,
+    unsettled_attachment: Option<Attachment>,
+    unsettled_replacement: Option<Attachment>,
+    pending_eof_root: Option<crate::fs::DirectoryIdentity>,
+    pending_eof_owners: BTreeMap<RunId, Attachment>,
     /// Data frames this connection has queued and the client has not yet
     /// acknowledged, plus the request id they name.
     outbound: Outbound,
@@ -2502,6 +2773,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     /// The next inbound sequence this connection accepts per stream id:
     /// terminal input and resize, in order and never replayed.
     inbound: BTreeMap<u32, u64>,
+    observe_query_v1: bool,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A, R, O, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2535,10 +2807,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             pinned,
             grants,
             dispatcher,
+            owner_cleanup_unsettled: false,
+            unsettled_attachment: None,
+            unsettled_replacement: None,
+            pending_eof_root: None,
+            pending_eof_owners: BTreeMap::new(),
             outbound: Outbound::new(),
             attach: None,
             carry: None,
             inbound: BTreeMap::new(),
+            observe_query_v1: false,
         }
     }
     pub fn grants(&self) -> &GrantBook {
@@ -2546,6 +2824,110 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
     }
     pub fn grants_mut(&mut self) -> &mut GrantBook {
         &mut self.grants
+    }
+
+    /// Whether this server retains an attachment or admission whose disconnect
+    /// cleanup could not be established. The serving owner must retain this
+    /// server and its run custody while the state remains unresolved.
+    pub fn cleanup_pending(&self) -> bool {
+        self.owner_cleanup_unsettled
+    }
+
+    /// Retry retained attachment releases with fresh cleanup authority. A
+    /// verified EOF can also drain the exact owner handles captured at that
+    /// disconnect. Unknown and malformed-owner states remain fenced; this
+    /// does not settle the session or any child run.
+    pub fn retry_cleanup(&mut self, cx: &EffectContext, root: &StateRoot) -> Result<(), Refusal> {
+        if !self.owner_cleanup_unsettled {
+            return Err(Refusal::forbidden("there is no retained channel cleanup"));
+        }
+        if let Some(replacement) = self.unsettled_replacement.as_mut() {
+            if let Some(previous) = self.unsettled_attachment.as_mut() {
+                if previous.client() != Client::Secondary
+                    || previous.pending_release() != Some(Release::Eof)
+                {
+                    return Err(Refusal::unknown(
+                        "attachment replacement cleanup is unsettled",
+                    ));
+                }
+                previous
+                    .release_recoverable(cx, root, Release::Eof)
+                    .map_err(|_| Refusal::unknown("attachment replacement cleanup is unsettled"))?;
+                self.unsettled_attachment = None;
+            }
+            if replacement.client() != Client::Secondary {
+                return Err(Refusal::unknown(
+                    "attachment replacement cleanup is unsettled",
+                ));
+            }
+            let released = match replacement.pending_release() {
+                None => replacement.release(cx, root, Release::Eof),
+                Some(Release::Eof) => replacement.release_recoverable(cx, root, Release::Eof),
+                Some(Release::Detach) => {
+                    return Err(Refusal::unknown(
+                        "attachment replacement cleanup is unsettled",
+                    ))
+                }
+            };
+            released
+                .map_err(|_| Refusal::unknown("attachment replacement cleanup is unsettled"))?;
+            self.unsettled_replacement = None;
+            return self.retry_pending_owners(cx, root);
+        }
+        let Some(handle) = self.unsettled_attachment.as_mut() else {
+            return self.retry_pending_owners(cx, root);
+        };
+        let Some(cause) = handle.pending_release() else {
+            return Err(Refusal::unknown(
+                "attachment release cause is not established",
+            ));
+        };
+        handle
+            .release_recoverable(cx, root, cause)
+            .map_err(|_| Refusal::unknown("attachment cleanup is unsettled"))?;
+        if handle.client() == Client::Owner {
+            self.dispatcher.admitted.remove(&handle.run());
+            self.dispatcher.admitted_owners.remove(&handle.run());
+        }
+        self.unsettled_attachment = None;
+        self.retry_pending_owners(cx, root)
+    }
+
+    fn retry_pending_owners(
+        &mut self,
+        cx: &EffectContext,
+        root: &StateRoot,
+    ) -> Result<(), Refusal> {
+        if !self.dispatcher.admitted.is_empty() {
+            let identity = root
+                .state_directory()
+                .identity()
+                .map_err(|_| Refusal::unknown("owner cleanup root is unavailable"))?;
+            if self.pending_eof_root != Some(identity) {
+                return Err(Refusal::unknown(
+                    "owner EOF authority is not established for this root",
+                ));
+            }
+            for run in self.dispatcher.admitted.clone() {
+                let Some(mut owner) = self.pending_eof_owners.remove(&run) else {
+                    return Err(Refusal::unknown("original owner attachment is unavailable"));
+                };
+                if owner.release(cx, root, Release::Eof).is_err() {
+                    if owner.pending_release().is_some() {
+                        self.unsettled_attachment = Some(owner);
+                    } else {
+                        self.pending_eof_owners.insert(run, owner);
+                    }
+                    return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                }
+                self.dispatcher.admitted.remove(&run);
+                self.dispatcher.admitted_owners.remove(&run);
+            }
+        }
+        self.pending_eof_root = None;
+        self.pending_eof_owners.clear();
+        self.owner_cleanup_unsettled = false;
+        Ok(())
     }
 
     /// Serve one connection: pin check, hello, negotiation, authentication,
@@ -2559,6 +2941,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         root: &StateRoot,
         streams: &mut impl Streams,
     ) -> Result<Served, Refusal> {
+        if self.owner_cleanup_unsettled {
+            return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+        }
         // A server may serve successive connections, so each one starts with no
         // queued stream state: a previous connection's window, carry or request
         // id never reaches this one.
@@ -2590,10 +2975,17 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
 
     /// Drop everything the previous connection left queued.
     fn begin_connection(&mut self) {
+        // Admission ownership belongs only to the connection that admitted it.
+        // A replay on another connection cannot recover an owner attachment.
+        self.dispatcher.admitted.clear();
+        self.dispatcher.admitted_owners.clear();
+        self.pending_eof_root = None;
+        self.pending_eof_owners.clear();
         self.outbound = Outbound::new();
         self.attach = None;
         self.carry = None;
         self.inbound.clear();
+        self.observe_query_v1 = false;
     }
 
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
@@ -2613,7 +3005,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             Err(refusal) => return Err(self.refuse(transport, refusal)),
         };
         match negotiate(&hello, &self.negotiation) {
-            Ok(ok) => write_frame(transport, &Frame::HelloOk(ok))?,
+            Ok(ok) => {
+                self.observe_query_v1 =
+                    ok.capabilities.contains(&ChannelCapability::ObserveQueryV1);
+                write_frame(transport, &Frame::HelloOk(ok))?;
+            }
             Err(refusal) => return Err(self.refuse(transport, refusal)),
         }
         let Some(body) = read_frame(transport)? else {
@@ -2656,8 +3052,12 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         state: &mut Served,
     ) -> Result<(), Refusal> {
         let mut attachment: Option<Attachment> = None;
+        let mut tracked = TrackedTransport {
+            inner: transport,
+            failed: false,
+        };
         let outcome = self.converse_frames(
-            transport,
+            &mut tracked,
             cx,
             observe,
             root,
@@ -2666,6 +3066,48 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             state,
             &mut attachment,
         );
+        let transport_lost = tracked.failed
+            && outcome
+                .as_ref()
+                .is_err_and(|error| error.code == RefusalCode::Unavailable);
+        if state.closed || transport_lost {
+            match root.state_directory().identity() {
+                Ok(identity) => self.pending_eof_root = Some(identity),
+                Err(_) => {
+                    self.unsettled_attachment = attachment.take();
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("owner cleanup root is unavailable"));
+                }
+            }
+            for run in self.dispatcher.admitted.clone() {
+                if self
+                    .unsettled_attachment
+                    .as_ref()
+                    .is_some_and(|handle| handle.client() == Client::Owner && handle.run() == run)
+                    || self.pending_eof_owners.contains_key(&run)
+                {
+                    continue;
+                }
+                match self.dispatcher.admitted_owners.remove(&run) {
+                    Some(owner) => {
+                        self.pending_eof_owners.insert(run, owner);
+                    }
+                    None => {
+                        if attachment.is_some() && self.unsettled_attachment.is_none() {
+                            self.unsettled_attachment = attachment.take();
+                        }
+                        self.owner_cleanup_unsettled = true;
+                        return Err(Refusal::unknown("original owner attachment is unavailable"));
+                    }
+                }
+            }
+        }
+        if self.owner_cleanup_unsettled {
+            if attachment.is_some() {
+                self.unsettled_attachment = attachment.take();
+            }
+            return Err(Refusal::unknown("attachment cleanup is unsettled"));
+        }
         // Every way a connection ends must account for the attachment it opened.
         // A refused or malformed frame used to return before the end-of-stream
         // release, so a second terminal's durable row stayed live and its slot
@@ -2677,8 +3119,39 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // run's own, reopened rather than reallocated.
         if let Some(mut handle) = attachment.take() {
             if outcome.is_err() && handle.client() == Client::Secondary && !handle.released() {
-                let _ = handle.release(cx, root, Release::Eof);
+                if handle.release(cx, root, Release::Eof).is_err() {
+                    self.unsettled_attachment = Some(handle);
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown(
+                        "attachment disconnect cleanup is unsettled",
+                    ));
+                }
+            } else if outcome.is_err() && !transport_lost && handle.client() == Client::Owner {
+                self.unsettled_attachment = Some(handle);
             }
+        }
+        if state.closed || transport_lost {
+            for run in self.dispatcher.admitted.clone() {
+                let Some(mut owner) = self.pending_eof_owners.remove(&run) else {
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("original owner attachment is unavailable"));
+                };
+                if owner.release(cx, root, Release::Eof).is_err() {
+                    if owner.pending_release().is_some() {
+                        self.unsettled_attachment = Some(owner);
+                    } else {
+                        self.pending_eof_owners.insert(run, owner);
+                    }
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                }
+                self.dispatcher.admitted.remove(&run);
+                self.dispatcher.admitted_owners.remove(&run);
+            }
+        } else if outcome.is_err() && !self.dispatcher.admitted.is_empty() {
+            // Invalid input is not owner EOF, but its disconnected owner must
+            // not be silently forgotten or handed to another connection.
+            self.owner_cleanup_unsettled = true;
         }
         outcome
     }
@@ -2714,6 +3187,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     let response =
                         self.answer(cx, observe, root, &grant, &request, attachment, streams);
                     write_frame(transport, &Frame::Response(response))?;
+                    if self.owner_cleanup_unsettled {
+                        return Err(Refusal::unknown("attachment cleanup is unsettled"));
+                    }
                 }
                 Frame::Stream(stream) => {
                     state.streams += 1;
@@ -2743,13 +3219,20 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // End of stream is the client going away: the kernel records the
         // owner's stop or releases this client's own row, and a secondary never
         // stops the owner's run. A detached handle is already gone.
-        if let Some(mut handle) = attachment.take() {
-            handle
-                .release(cx, root, Release::Eof)
-                .map_err(refusal_from)?;
-        }
-        self.begin_connection();
         state.closed = true;
+        if let Some(mut handle) = attachment.take() {
+            if handle.release(cx, root, Release::Eof).is_err() {
+                self.unsettled_attachment = Some(handle);
+                self.owner_cleanup_unsettled = true;
+                return Err(Refusal::unknown(
+                    "attachment disconnect cleanup is unsettled",
+                ));
+            }
+            if handle.client() == Client::Owner {
+                self.dispatcher.admitted.remove(&handle.run());
+                self.dispatcher.admitted_owners.remove(&handle.run());
+            }
+        }
         Ok(())
     }
 
@@ -2955,6 +3438,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             let session = grant.session();
             match &request.body {
                 RequestBody::Observe(body) => {
+                    if body.query.is_some() && !self.observe_query_v1 {
+                        return Err(Refusal::forbidden(
+                            "observe_query_v1 is unsupported on this connection; use an independent host CLI",
+                        ));
+                    }
                     let value = self.dispatcher.observe(observe, body)?;
                     Ok(ResponseOutcome::Observed(value))
                 }
@@ -3007,9 +3495,14 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         // of stream, which for a secondary never stops the run.
                         if previous.id() != handle.id() && previous.client() == Client::Secondary {
                             let mut previous = previous;
-                            previous
-                                .release(cx, root, Release::Eof)
-                                .map_err(refusal_from)?;
+                            if previous.release(cx, root, Release::Eof).is_err() {
+                                self.unsettled_attachment = Some(previous);
+                                self.unsettled_replacement = Some(handle);
+                                self.owner_cleanup_unsettled = true;
+                                return Err(Refusal::unknown(
+                                    "attachment replacement cleanup is unsettled",
+                                ));
+                            }
                         }
                     }
                     // A replacement is a new attachment lifetime, and it is
@@ -3049,11 +3542,56 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // lifetime and records no stop, so a Detached run keeps
                     // going (§8.11). The handle is taken, so a later end of
                     // stream has nothing left to send a stop for.
-                    match attachment.take().filter(|handle| handle.run() == body.run) {
-                        Some(mut handle) => handle
-                            .release(cx, root, Release::Detach)
-                            .map_err(refusal_from)?,
-                        None => self.dispatcher.detach(cx, root, session, body)?,
+                    if attachment
+                        .as_ref()
+                        .is_some_and(|handle| handle.run() != body.run)
+                    {
+                        return Err(Refusal::forbidden(
+                            "this connection is attached to another run",
+                        ));
+                    }
+                    match attachment.as_mut() {
+                        Some(handle) => {
+                            let is_owner = handle.client() == Client::Owner;
+                            if let Err(error) = handle.release(cx, root, Release::Detach) {
+                                if !matches!(error, run::RunError::Refused(_)) {
+                                    self.owner_cleanup_unsettled = true;
+                                    return Err(Refusal::unknown("attachment detach is unsettled"));
+                                }
+                                return Err(refusal_from(error));
+                            }
+                            if is_owner {
+                                self.dispatcher.admitted.remove(&body.run);
+                                self.dispatcher.admitted_owners.remove(&body.run);
+                            }
+                            attachment.take();
+                        }
+                        None => {
+                            if !self.dispatcher.admitted.contains(&body.run) {
+                                return Err(Refusal::forbidden(
+                                    "this connection did not admit the run",
+                                ));
+                            }
+                            let mut owner = self
+                                .dispatcher
+                                .verified_owner(cx, root, session, body.run)?;
+                            match owner.release(cx, root, Release::Detach) {
+                                Ok(()) => {
+                                    self.dispatcher.admitted.remove(&body.run);
+                                    self.dispatcher.admitted_owners.remove(&body.run);
+                                }
+                                Err(error) => {
+                                    if !matches!(error, run::RunError::Refused(_)) {
+                                        self.unsettled_attachment = Some(owner);
+                                        self.owner_cleanup_unsettled = true;
+                                        return Err(Refusal::unknown(
+                                            "attachment detach is unsettled",
+                                        ));
+                                    }
+                                    return Err(refusal_from(error));
+                                }
+                            }
+                        }
                     }
                     self.attach = None;
                     // A detached connection has no attachment to publish for,

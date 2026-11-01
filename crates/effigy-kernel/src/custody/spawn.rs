@@ -184,7 +184,11 @@ pub(crate) fn isolates_session(terminal: &Terminal, stdin_is_terminal: bool) -> 
     match terminal {
         Terminal::Foreground => false,
         Terminal::Inherit { .. } => !stdin_is_terminal,
-        Terminal::None | Terminal::Pipe | Terminal::Styled { .. } | Terminal::Pty => true,
+        Terminal::None
+        | Terminal::Discard
+        | Terminal::Pipe
+        | Terminal::Styled { .. }
+        | Terminal::Pty => true,
     }
 }
 
@@ -326,6 +330,12 @@ impl Blocked {
         let mut input_keep = None;
         match spec.terminal {
             Terminal::None | Terminal::Styled { pty: false } => drop(input_write),
+            Terminal::Discard => {
+                drop(input_write);
+                let null = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
+                out_write = high(null.into())?;
+                err_write = duplicate(out_write.as_raw_fd())?;
+            }
             Terminal::Pipe => {
                 // High, so the child's descriptor sweep closes it: a child
                 // holding its own stdin write end would never see EOF.

@@ -173,7 +173,7 @@ code settle it:
 | D4 | Meaning of a free gate | free gate + live record = interrupted | release permits reconciliation, not successor activation | Both. A free gate with a non-closed run reads `Interrupted`. A successor must settle it before its own run is admitted (K5). | X-sol §3: lock release does not prove grouped or remote work ended |
 | D5 | Effect classes | static, read, refresh, mutate | Static, Observe, RefreshDerived, PrepareSource, Mutate | Static, Observe, RefreshDerived, Prepare, Mutate | Brief |
 | D6 | Managed supervisor | detached | foreground stays foreground | One detached supervisor per managed run. Owning-client death means stop and settle. Attaching to a running stack leaves it running. | Tom ruling 5 |
-| D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Workspace client in container mode only: local reads against a materialised context; every authority request over one authenticated host channel, re-resolved, gated and journalled on the host; a durable workspace session run; a version-locked Linux binary installed at Prepare. Hybrid mode has no guest (§8). | Lane rule 1; Tom 2026-10-18 (container mode needs full coverage); `synthesis/GUEST-EFFIGY.md` option (c) |
+| D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Workspace client in container mode only: local reads against a materialised context; every authority request over one authenticated host channel, re-resolved, gated and journalled on the host; a durable workspace session run; a version-locked Linux binary installed at Prepare. Hybrid mode has no guest (§8). | Lane rule 1; Tom 2026-11-01 (Level 1 v0.15, §8.6); `synthesis/GUEST-EFFIGY.md` option (c) |
 | D8 | Endpoint store | `state.json` + lock | SQLite + effect outbox | Endpoint claims are kernel store rows; the gateway engine is their only writer; a released endpoint is immediately reusable | D1; X-sol gap 6 |
 | D9 | Remote registration | ack `{container_id, nonce, pgid}` | ack with namespace and start identity | In-band ack on the exec stream, plus the nonce in the remote environment for recovery; no bind-mount marker files | R1: guests never write host state |
 | D10 | Owner SIGKILL of a one-shot run | "no custody process outlives its run" incl. KILL | a small supervisor may outlive the front end | Foreground custody has an in-memory death guard; durable custody keeps the journal-backed sentinel (§3.1). Loss of foreground evidence leaves residue, never numeric recovery authority. | Q-010; X-opus K5 for durable runs |
@@ -320,7 +320,8 @@ as lost and free slots on its own."). An orchestrator that opts in to
 `effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
 makes Effigy write exactly one row to the owning checkout journal at settle,
 in an additive schema-1 `foreground_terminals` table. An older reader selects
-the columns it knows, so the addition needs no schema-version bump.
+the columns it knows, so that existing addition needs no schema-version bump.
+The later v2 detached-owner claim boundary in §8.7 has different writer rules.
 
 The row holds the run id, the `CheckoutId`, the boot identity, the task, the
 outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
@@ -2901,7 +2902,9 @@ operation that needs authority or live host facts.
   invoking process. A managed run is `Detached`. Container targets run in the
   container through remote custody (§5.10); host targets run on the host.
 - Idempotence: the host records each request id before admission. A retried
-  id returns the existing run or outcome and never admits a second run.
+  id returns the existing run or outcome and never admits a second run. This
+  host deduplication does not authorize a guest to resend an indeterminate
+  request after `Unknown` (§8.6).
 - Streams: events, log frames, terminal input and resize travel on the
   channel with bounded flow control. The guest client is a front end
   (I-SV3). For an `Inline` run it started, its stop request or stream EOF
@@ -2910,8 +2913,10 @@ operation that needs authority or live host facts.
   request or EOF without detach means stop and settle.
 - Disconnect: on disconnect, capability loss, generation mismatch or a host
   probe timeout, the client reports `Unknown` for every unfinished run and
-  refuses further Mutate. It never falls back to local execution. A
-  reconnect with the same request id reads the host's recorded outcome.
+  refuses further Mutate. It never falls back to local execution or resends
+  the indeterminate request. Reconnection may restore a session under §8.7;
+  a separately exposed read-only inspection may read an already-recorded
+  outcome without resending or admitting the operation.
 - Reads: Observe requests run under `ObserveContext` on the host. They create
   no run, token or journal entry and append no access log. Authenticating
   with an existing capability writes nothing.
@@ -2955,40 +2960,99 @@ Transport candidates by backend. None is supported until qualified:
 
 ### 8.6 Coverage
 
-Container mode gives full coverage: each command either runs locally
-against the context, or reaches the correct host authority and gets the
-result or refusal a host client would get. Rows follow the investigation's
-coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
+**Operator ruling (Tom, 2026-11-01):** v0.15 requires the Level 1
+container-mode workspace-client surface below. This stages command coverage;
+it does not claim that a current implementation or backend has passed it.
+A supported guest command is served locally from its pinned context or
+forwarded to its authenticated host session. The host resolves, gates and
+journals every authority-bearing request; it never accepts a guest-resolved
+plan or a second owner.
 
-| Matrix rows | In the guest | Mechanism |
-| --- | --- | --- |
-| Help, groups, version; `--plan` and `test --plan`; `rhai surface`; `config` inspect, schema, reference, completion | local | Static; binary metadata and the context |
-| `tasks` listing and resolve; implicit bundle load; `bundle` inspect; `service` list and extract | local | Static against the pinned snapshot (§8.2). No fetch, lock or cache write. |
-| `graph` queries and status; `docs` checks and context; `scan`; `contracts` and `changelog` static checks; `skill tasks`; `state` plan; `artifact` inspect | local | Static and Observe reads of the mounted checkout and graph store. A stale index reports stale; a query never refreshes it (R2). |
-| App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
-| `defer` | local inside an admitted workload; otherwise channel | Inside a workload it is that run's command, under its custody. From a shell it is an admission request targeting the current container. |
-| Workspace-only tasks, `workspace`, `system` | channel | Attach to the live workspace session run (§8.7); never a second shell or session. Lifecycle operations are requests. |
-| Managed headless (`dev`, profiles) | channel | Non-interactive admission and output streaming, subject to the Level 1 limits in §8.11. A guest request that needs a TUI or terminal refuses with the Level 2 message. |
-| Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
-| `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). QA groups are in the admission row. |
-| `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, ownership, volumes) are host Observe requests. |
-| `container shell`, bounded shell, `exec`, aliases | channel | Admission request; the host launches the command in the named service, including the current container, through remote custody. |
-| `container up`, `down`, `reset`, `retire` | channel | Mutate requests to the environment engine under R4. A guest `down` of its own environment follows §8.7. |
-| `container status`, `stats`, `logs` | channel | Host Observe requests on the backend inventory. |
-| `container data`, `cache`, `volume`, `profile`, `migrate`, `hosts`, `scope`, `ports` | local and channel | Declared configuration is local from the context; host facts are Observe requests; mutations, including `eject` source writes, are requests. |
-| `secrets` list, doctor, get, export | channel | Observe requests to the secrets engine; plaintext follows the host CLI's policy. |
-| `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
-| `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
-| `graph` index; `bundle` sync (bundle and catalog source pins); `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
-| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
-| `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
-| Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
+| Level 1 class | Required behavior |
+| --- | --- |
+| Pinned tasks and help | Task listing uses the pinned context; help uses the guest binary. Neither creates a host effect. |
+| Foreground declared tasks, test, dev and QA | Forward CLI routes as well as declared selectors for host admission under the exact task/session owner and canonical gates. Return the requested run, output and result; managed `dev` is a child of the workspace session. |
+| Doctor, task resolution and status | Use pinned facts for local reads and bounded host Observe for live facts. Observe writes no host state. |
+| Container down, status and logs | Forward to the host engine. Down follows the session-aware holder and child-settlement order in §8.7. |
+| Stop, restart and runs stop | Forward to the exact host owner and run with generation fencing. Stale or unknown identity refuses. |
+| Detach, attach, reconnect, terminal input and resize | Level 2: guest requests refuse by name; Level 1 forwarding is non-interactive as specified in §8.11. Ordinary host terminal and detached supervisor behavior remain unchanged. |
+| Runs list and status | Use bounded host Observe. Status names and verifies one checkout-scoped run. |
+
+Shared-lock task admission, pause, gateway/config/install/release over the
+channel, and the rest of the former full command matrix are **Level 2**, after
+v0.15. Until each is implemented and reviewed, a guest request refuses with a
+stable unsupported-operation diagnostic and directs the operator to invoke the
+host CLI independently. Hidden and unknown operations also refuse. A separate
+host invocation is not a guest fallback: it obeys the host engine's existing
+owner, session, gate, holder and authorization checks. Unknown state is not
+absence. A guest never falls back locally, resends an indeterminate request after
+`Unknown`, or mints a second run or owner. Each supported Level 1 row requires
+production entry and positive and negative evidence; the native, identity,
+credential, TLS, custody and cleanup gates in §8.11–§8.12 are unchanged.
 
 Exclusion covers workloads, data and endpoints, not only selectors: `dev`,
 `dev:container`, `dev:hybrid` and aliases resolve to their resources on the
 host, so overlapping app roles and shared data claims conflict there (§5.9).
 
 ### 8.7 Workspace session run
+
+**Operator ruling (Tom, 2026-11-01):** the v0.15 guest surface is Level 1
+in §8.6. Its `dev`, controls, attachment/reconnect and terminal frames retain
+the same session/child owner and exact generation rules below. Unsupported
+Level 2 requests refuse in the guest. An independently invoked host CLI is
+not a guest retry: its owning engine must verify applicable session and
+reservation state and obey the same gates, holders and custody. A live or
+unknown session never authorizes a legacy bypass; guest `Unknown` never
+permits resending the indeterminate request or local execution.
+
+**Supervisor under Tom’s Level 1 ruling, 2026-11-01:** reconnect does not
+transfer a live foreground owner. Inline owner EOF cancels its run; detached
+owner EOF without acknowledged detach stops its child. Only a durably
+acknowledged detach leaves that child running. The connection that admitted a
+run is its owner; a secondary never displaces a live owner, and a transferable
+admission ticket is not a client identity.
+
+After durable acknowledged detach, an authenticated client may make a new,
+explicit `Grant` owner claim. The host verifies pinned TLS and its own grant
+book and binds the authenticated per-client grant to the host user, CheckoutId,
+environment generation, allowed operation and target, session and container/boot
+identities, and exact session and run fences and generations. A digest or
+transferable admission ticket is not this identity or authority. One atomic
+durable owner/attachment compare-and-swap checks the detached state and decides
+the claim: one contender wins; concurrent others attach as secondaries or refuse.
+Stale or revoked grants refuse. A lost detach response is `Unknown`: no claim is
+allowed without positive durable acknowledgement of detach. Replay never creates
+an Owner, and no foreground
+reconnect or retry of an unknown invocation is authorized. New owner-claim
+journal state and the attachment transition are lifecycle slice E work after the
+#512 base, not an existing or qualified implementation.
+
+**Supervisor schema ruling under Tom’s Level 1 decision, 2026-11-01:** the
+future detached-owner claim requires a v2 journal boundary. Existing schema-1
+additions elsewhere in this contract are not authority for old binaries to
+write a v2 owner-claim journal. A v1 writer encountering v2 must refuse with
+named upgrade, down or reset guidance; it must not ignore claim fields. The v2
+reader may Observe v1 without migrating or writing. Before the first effectful
+use of v1, create and verify a named adjacent mode-0600 SQLite backup that is
+transactionally consistent and includes all committed state, including WAL
+contents. Only then migrate atomically and idempotently. A crash before the
+migration commit leaves a valid v1 journal; a crash after it leaves a valid v2
+journal and the verified v1 backup.
+
+The v2 journal must retain the minimal exact release cause, client claim and
+acknowledgement tombstones, atomically with attachment release and any EOF Stop.
+Compaction must not expire them while any related owner, claim or operation is
+live, unresolved or `Unknown`; only after that safety condition holds may the
+defined N-day retention policy apply. Legacy or compacted-away NULL evidence is
+`Unknown`, not detach acknowledgement or permission to claim. Unsafe downgrade
+refuses. Supported rollback restores the pre-migration backup with the previous
+binary only after establishing quiescence, identity and ownership and detecting
+changes since the backup. Potential loss of later journal state or orphaned
+resources refuses absent an explicit operator-authorized recovery; the backup
+does not undo later effects. Backup, crash interruption, repeat migration,
+restore and rollback require explicit tests and independent data-loss and
+backup/restore review. This is
+future lifecycle slice E design, not a shipped schema or migration proof.
 
 - The workspace session is a `Detached` run owned by `Task(TaskId)` of the
   environment's workspace entry — the **same logical owner** at every generation,
@@ -3211,6 +3275,15 @@ proposals in this section and its appendices describe that later scope, not
 Level 1 delivery or current production readiness. This ruling does not
 change ordinary host commands or the detached workspace session supervisor.
 
+**Staged production cut (Tom, 2026-11-01).** Workspace-mode container up
+currently refuses by name before workspace preparation or apply; private
+Compose and production Discard remain refused. The retained reserved-guest
+publication, target revalidation, activation-deadline and guest-write crash
+tests require private apply and are not evidence of those behaviors while it
+is refused. Their acceptance is deferred to effigy#533 and effigy#531 before
+production enablement. Native full-session qualification remains a release
+gate; the cut does not alter ordinary Compose or hybrid behavior.
+
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
 guest for selection. `SessionLaunch::qualify_guest` issues a launch-local
@@ -3225,8 +3298,7 @@ cannot authorize a guest selection without `qualify_guest` evidence.
 
 This is the normative production seam (effigy#481). The guest client, the pinned TLS transport (effigy#483), the host
 channel dispatcher (effigy#452) and the serving owner are implemented. Not implemented: the production activation caller
-(`environment::workspace::up_prepared` has only test call sites), the wider Observe surface beyond `runs:list` and
-`runs:status`, backend/consumer qualification, and the end-to-end container-mode proof. Only APIs marked implemented below
+(`environment::workspace::up_prepared` has only test call sites), run-specific `runs:status` (in progress in #512), the wider Observe surface beyond `runs:list`, backend/consumer qualification, and the end-to-end container-mode proof. The Level 1 surface is required by §8.6; Level 2 is deferred. Only APIs marked implemented below
 are merged seams. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
 E-step/fault/retry proposals remain [non-normative,
 unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates), with no acceptance claims; [existing API
@@ -3796,7 +3868,7 @@ no run, no resolution and no second credential.
   for a live read and `invoke` for anything with authority. The method label
   grants nothing — the host decides the effect class from its own policy. The
   merged dispatcher (`workspace_client/host_dispatch.rs`) serves host-target
-  `runs:list` and `runs:status` observations and admits a declared host-placed
+  `runs:list` observations and admits a declared host-placed
   task run a reservation can carry; every other observation, a selector that
   routes to a host built-in, a shared-lock task and an engine-internal run
   refuse by name with the host command, so `doctor`, `container …` status/logs,
@@ -3807,9 +3879,10 @@ no run, no resolution and no second credential.
 - **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
   authentication) and a request-level refusal both return an error that names
   lane A's stable code; nothing falls back to guest state or guest execution.
-  One request is one `Intent` — its id and body together — so a connection that
-  dies before answering is replayed on a fresh connection under the same id and
-  the host answers from its record instead of admitting a second run. Detach is
+  One request is one `Intent` — its id and body together. If a connection dies
+  before answering, the client reports `Unknown` and must not resend the request.
+  A separately authorized read may inspect an existing outcome without admitting
+  another run. Detach is
   accepted only for the run this connection admitted, so a secondary terminal
   leaving writes no control frame. Stream frames are acknowledged and dropped:
   output belongs to the session front end that attaches.
@@ -3982,8 +4055,10 @@ another lane's.
 - **The production server and dispatcher adapter are built from the validated serving
   facts.** `host_dispatch::HostDispatch` re-resolves `InvocationBody` from host records
   (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
-  `managed_run::start_reserved` with the exact ticket, serves `runs:list`/`runs:status`
-  on the host `ObserveContext`, and refuses every operation it does not serve.
+  `managed_run::start_reserved` with the exact ticket, serves `runs:list`
+  under the supplied host `ObserveContext`, and refuses every operation it does not serve.
+  Run-specific `runs:status` and its optional identity wire extension are in progress
+  in #512; they are not a merged production capability.
   `host_dispatch::production_server` composes it into `channel::Server`, and
   `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
@@ -3992,7 +4067,7 @@ another lane's.
 - **The production activation caller.** `environment::workspace::up_prepared` still has
   only test call sites, so nothing in a released command prepares a guest context and
   a qualified locator yet. The wider Observe surface (every observation beyond
-  `runs:list`/`runs:status`), the guest-side entry for non-task invocations and native
+  `runs:list`, including run-specific `runs:status`), the guest-side entry for non-task invocations and native
   backend qualification remain unmerged.
 
 **Guest entry (v2, bound).** The guest's context read is one
@@ -4678,6 +4753,18 @@ transaction; persistent foreign or resolved request-ID collisions select another
 identity without deleting the existing row. Control and release deadlines also
 bound schema initialization and additive migration.
 
+If an attachment release commits but its response is lost, and the child run
+closes and compacts the release row before retry can verify its cause, the
+serving owner retains unresolved custody and reports `Unknown`. It must not
+infer EOF or detach, revive the attachment, or settle the child twice. The
+operator can attempt `effigy down` for this workspace; successful cleanup of
+this particular unresolved case has not yet been proven. Durable release
+cause retention and authenticated attachment claims are deferred to the Level 1
+lifecycle work; missing legacy evidence remains `Unknown`.
+The kernel fault controls are indexed by
+`run::workspace::tests::committed_owner_eof_retry_refuses_after_child_compacts_release_row`
+and `workspace_channel::tests::owner_release_fault_retains_exact_handle_and_reports_unknown`.
+
 During keyed predecessor recovery, the current owner gate and successor fence
 keep the predecessor's already-fenced escalation serviceable. New controls use
 the admitted successor's current RunId and fence; escalation there also shortens
@@ -4817,12 +4904,14 @@ for the session the host recorded, never the one an `enrol` frame names.
 Revoking a generation ends the enrolment credential with the capabilities it
 issued, so re-enrolment cannot mint a live capability for a dead generation.
 A connection owns at most one attachment: attaching to another run refuses,
-replacing this connection's own secondary releases the replaced row, and only
-the connection that admitted a run holds its owner handle. A connection that
+replacing this connection's own secondary releases the replaced row. The
+connection that admitted a run holds its owner handle until acknowledged detach;
+after that durable detach only the authenticated winner of the fenced claim in
+§8.7 may hold a new owner handle. A connection that
 ends on a refused or malformed frame releases its own secondary row with it, so
 a rejected frame can neither exhaust the run's secondary slots nor orphan one,
-while an owning client's lifetime is still released only by its own end of
-stream: malformed traffic records no owner stop. Captured output is
+while the owning attachment is released by its own acknowledged detach or
+its own end of stream; malformed traffic records no owner stop. Captured output is
 published through a pump bounded by the acknowledgement window, so a control
 request is answered while data is backpressured; the connection's lifetime is
 its session's, and a closed connection whose frames were malformed releases no
@@ -4896,10 +4985,14 @@ connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
 `ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
 handoff its caller opens entries through. Opening a terminal resumes the run's
 owning handle, so a run this session did not admit has no owner to write for and
-is refused. Only that owning attachment binds the writer, for its whole life: a
-second terminal — the first one to attach included — never claims it, a re-attach
-never displaces it, and the kernel's own replacement of a second terminal cannot
-put one in its place. Because the attachment allowed to queue work and the row
+is refused. Only the current owning attachment binds the writer for that
+attachment's lifetime. A second terminal — the first one to attach included —
+never claims it, and no re-attach displaces a live owner. After durable
+acknowledged detach, the required fenced owner claim in §8.7 must atomically
+retire the old writer binding and install the winning owner attachment. That
+rebind is future lifecycle slice E work, not an implemented or proven #485
+behavior. Replacing a secondary never creates an owner or puts it in the
+writer's place. Because the attachment allowed to queue work and the row
 the pump re-reads before every effect are therefore one attachment, a released
 owning row stops queued work as well as new frames, and nothing is ever queued on
 a second terminal's authority. The connection fences the live attachment it was
@@ -4926,8 +5019,9 @@ one; a second terminal's detach releases only its own row and never stops the
 owning run; and the owning client's end of stream retires the writer exactly
 once, again without waiting for connection traffic or for the run's closure. A
 reconnect resumes the retained log at the negotiated cursor or reports the
-rotated range as a `gap`, with no second replay store. `effigy#485` proves those
-behaviours with production-shaped fake writers through the real `Server::serve`
+rotated range as a `gap`, with no second replay store. `effigy#485` proves the
+existing pre-claim behaviours described here, excluding the future post-detach
+writer rebind, with production-shaped fake writers through the real `Server::serve`
 loop and the merged serving loop, owned by `test:workspace:publication:c`, for
 **input and resize** on both paths: a released owning row stopping the work it had
 queued (a resize is sent on the same live connection and is never applied), and a
@@ -5278,6 +5372,14 @@ loses the run race gets `ClaimedByAnotherRun` from `Run::begin_claimed`, and any
 ordinary `Run::begin` on the environment is refused by name while a successor
 generation is reserved ("reserved by a workspace activation"). Such a caller
 reports the in-progress activation and changes nothing.
+
+A production staging attempt carries a fresh attempt identity distinct from its
+session run. Staging records the attempt with the session in one transaction;
+only that attempt may cancel its tagged reservation. A mismatched attempt or a
+legacy untagged session refuses without change and remains recoverable. A crash
+between reservation and staging leaves an untagged reservation for recovery;
+no caller may infer that it owns that reservation. This tag adds no run owner or
+gate and staging still occurs with `Gate(Env)` free (Supervisor, 2026-11-01).
 
 Then the command, in the order the reservation forces. **The activation process is
 the session owner until the handoff**: it stages and admits the successor while
@@ -5775,36 +5877,15 @@ failure before it leaves the predecessor's pointer where it was.
 | Two invocations at once | the winner's decision and its reservation | the loser either attaches or is refused by name and invalidates nothing |
 | Guest holds an older context generation | the published pointer | the guest re-reads `current`, re-verifies and reconnects; its old requests refuse `stale_context` |
 
-**Reconnect.** A broken connection is never a reason to admit twice or to fall
-back. `src/runner/workspace_client.rs` keeps one pending intent and re-enters the
-same order:
-
-```rust
-pub(crate) struct PendingIntent {
-    intent: Intent,                        // id + body, one canonical digest
-    session: WorkspaceSessionBinding,
-    context_generation: u64,
-}
-impl<T: Transport> WorkspaceClient<T> {
-    pub(crate) fn reconnect(&mut self, /* re-read context, identity, transport */)
-        -> Result<(), ChannelError>;
-}
-```
-
-Reconnect re-observes the guest identity, re-reads `current`, re-verifies, opens
-a new connection, re-checks the pin before any frame, negotiates, authenticates
-with the same capability and replays the same `Intent`. A session binding that
-changed, a session record that no longer resolves, or a capability the host
-revoked refuses `identity_mismatch`/`unauthenticated`; the client then reports
-`Unknown` for every unfinished run and refuses further Mutate (R3) and never
-executes locally. An unchanged binding at a newer context generation continues
-under the new generation. The host answers the replayed id from its admission
-record (`completed`, `accepted` or `unknown`) and a different digest is
-`id_conflict`; `observe` re-observes and never returns a recorded result. A
-stream resumes by `AttachBody.cursor`, a rotated-away range is a `gap` and never
-complete output, terminal input is not replayed and resize is latest-wins.
-Attempts are bounded by the invocation's own `OperationContext` budget, and an
-exhausted budget is `unavailable`, never an unbounded retry.
+**Reconnect (historical proposal, superseded).** The earlier candidate proposed
+resending the same `Intent` on a fresh connection. The Operator ruling in §8.6
+supersedes that proposal: after an indeterminate request the client reports
+`Unknown` and does not resend it or execute locally. A separately authorized,
+read-only inspection may discover an already recorded outcome without admitting
+a new operation. A new attachment to an existing run may resume from the
+consumed cursor after rechecking identity, pin, authentication and authority;
+terminal input is never replayed and resize is latest-wins. A rotated-away range
+is a `gap`, not complete output.
 
 **Owners and serialization.** These are the minimal disjoint tasks; the order is
 the dependency order, and the last column names the file that forces

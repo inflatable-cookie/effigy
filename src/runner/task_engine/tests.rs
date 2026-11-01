@@ -1053,7 +1053,16 @@ fn reserve_ticket(
     let cx = kernel::effects();
     let state = kernel::effects_root(root).expect("effects root");
     let run = RunId::new(1_760_000_000_000, [marker; 10]).expect("run id");
-    effigy_kernel::run::reserve(
+    let target = TaskTarget::for_catalog(root, "build", &catalog(root, "", "", 0));
+    let checkout = super::checkout::mint(root).expect("checkout");
+    let resolved = super::run::invocation(
+        &target.task_id(checkout).unwrap(),
+        target.owner(checkout).unwrap(),
+        vec!["build".into()],
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
+    effigy_kernel::run::reserve_resolved(
         &cx,
         state,
         AdmissionKey {
@@ -1062,6 +1071,7 @@ fn reserve_ticket(
         },
         Digest::of(digest),
         run,
+        &resolved,
     )
     .expect("the host records this request")
 }
@@ -1079,7 +1089,10 @@ fn ticketed(
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: Some(ticket),
+        workspace_admission: Some(super::WorkspaceAdmission {
+            ticket,
+            catalog_snapshot: None,
+        }),
         cwd: None,
     })
 }
@@ -1144,4 +1157,382 @@ fn a_workspace_ticket_refuses_every_shape_that_would_own_another_run() {
             "{refusal}"
         );
     }
+}
+
+/// The reserved path must pass the secret reader to the actual spawned helper.
+#[test]
+#[cfg(feature = "workspace-serving-fixture")]
+#[ignore = "build the current Effigy binary with test:workspace:effigy-build before this process proof"]
+fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use effigy_kernel::workspace_channel::{
+        InvocationBody, OutputMode, Resolver, Selector, Target,
+    };
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture");
+    let checkout = fixture.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let manifest = checkout.join("effigy.toml");
+    std::fs::write(
+        &manifest,
+        "[tasks.build]\nmode = 'tui'\nconcurrent = [{ name = 'one', run = 'echo original' }]\n",
+    )
+    .unwrap();
+    let cx = kernel::effects();
+    let state = kernel::effects_root(&checkout).unwrap();
+    let identity = state.owning_directory().identity().unwrap();
+    let catalog = catalog(&checkout, "", "", 0);
+    let session_run = begin(&TaskTarget::for_catalog(&checkout, "session", &catalog)).unwrap();
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
+        checkout.clone(),
+        state.clone(),
+    );
+    let body = InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: OutputMode::Text,
+    };
+    let resolved = dispatch.resolve(&cx, &body).unwrap();
+    let run_id = effigy_kernel::id::RunId::new(1_760_000_000_000, [79; 10]).unwrap();
+    let admitted = dispatch
+        .admission_invocation(&body, &resolved, run_id)
+        .unwrap();
+    let ticket = match effigy_kernel::run::reserve_resolved(
+        &cx,
+        &state,
+        effigy_kernel::run::AdmissionKey {
+            session,
+            request: effigy_kernel::run::RequestId::new([79; 16]),
+        },
+        effigy_kernel::id::Digest::of(b"workspace drift"),
+        run_id,
+        &admitted,
+    )
+    .unwrap()
+    {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    let resolution = crate::runner::managed_run::WorkspaceResolution {
+        invocation: serde_json::to_vec(&resolved).unwrap(),
+        checkout: checkout.clone(),
+        identity,
+    };
+    let marker = checkout.join("unexpected-effect");
+    std::fs::write(
+        &manifest,
+        format!("[tasks]\nbuild = 'touch {}'\n", marker.display()),
+    )
+    .unwrap();
+    let binary = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy");
+    let executable = Executable::capture(&binary)
+        .expect("build current Effigy with test:workspace:effigy-build first");
+    let invocation = effigy_cli::TaskInvocation {
+        name: "build".into(),
+        args: vec![],
+    };
+    let result = crate::runner::managed_run::start_reserved_with_executable(
+        &checkout,
+        &invocation,
+        checkout.clone(),
+        ticket,
+        Some(resolution),
+        &executable,
+    );
+    let refused = result.is_err();
+    drop(result);
+    let effects_absent = !marker.exists();
+    let warnings = session_run.close(WorkloadOutcome::Succeeded);
+    assert!(refused, "a changed task must refuse before admission");
+    assert!(
+        effects_absent,
+        "a changed standard-task fallback ran without the ticket"
+    );
+    assert!(warnings.is_empty(), "fixture session cleanup: {warnings:?}");
+}
+
+#[cfg(feature = "workspace-serving-fixture")]
+#[test]
+#[ignore = "requires a current binary from test:workspace:effigy-build"]
+fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use effigy_kernel::workspace_channel::{
+        InvocationBody, OutputMode, Resolver, Selector, Target,
+    };
+    let _lock = crate::contract_test_support::lock_test();
+    // This test proves the real reserved engine starts without a ChildGrant.
+    // Nextest isolates its process and the lock protects the process-local state.
+    let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
+    ]);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    assert!(crate::runner::secret_session::session_passphrase().is_none());
+    assert!(!crate::runner::secret_session::local_dev_secret_access_active());
+    let fixture = tempfile::tempdir().unwrap();
+    let checkout = fixture.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let default_marker = checkout.join("default-ran");
+    let admin_marker = checkout.join("admin-ran");
+    std::fs::write(checkout.join("effigy.toml"), format!(
+        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", default_marker.display(), admin_marker.display(),
+    )).unwrap();
+    let cx = kernel::effects();
+    let state = kernel::effects_root(&checkout).unwrap();
+    let identity = state.owning_directory().identity().unwrap();
+    let session_run = begin(&TaskTarget::for_catalog(
+        &checkout,
+        "session",
+        &catalog(&checkout, "", "", 0),
+    ))
+    .unwrap();
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let binary = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy");
+    let executable = Executable::capture(&binary)
+        .expect("build current Effigy with test:workspace:effigy-build first");
+    let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
+        checkout.clone(),
+        state.clone(),
+    );
+    let mut failures = Vec::new();
+    for (request_id, args, profile, wanted, unwanted) in [
+        (80, vec![], "default", &default_marker, &admin_marker),
+        (
+            81,
+            vec!["admin".to_owned()],
+            "admin",
+            &admin_marker,
+            &default_marker,
+        ),
+    ] {
+        let body = InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: args.clone(),
+            output: OutputMode::Text,
+        };
+        let resolved = match dispatch.resolve(&cx, &body) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                failures.push(format!("resolve {profile}: {error:?}"));
+                continue;
+            }
+        };
+        let proposed_run =
+            effigy_kernel::id::RunId::new(1_760_000_000_000, [request_id; 10]).unwrap();
+        let admitted = dispatch
+            .admission_invocation(&body, &resolved, proposed_run)
+            .unwrap();
+        let ticket = match effigy_kernel::run::reserve_resolved(
+            &cx,
+            &state,
+            effigy_kernel::run::AdmissionKey {
+                session,
+                request: effigy_kernel::run::RequestId::new([request_id; 16]),
+            },
+            effigy_kernel::id::Digest::of(b"workspace profile"),
+            proposed_run,
+            &admitted,
+        )
+        .unwrap()
+        {
+            Reservation::Fresh(ticket) => ticket,
+            other => {
+                failures.push(format!("fresh reservation: {other:?}"));
+                continue;
+            }
+        };
+        let expected_run = ticket.run();
+        let resolution = crate::runner::managed_run::WorkspaceResolution {
+            invocation: serde_json::to_vec(&resolved).unwrap(),
+            checkout: checkout.clone(),
+            identity,
+        };
+        let invocation = effigy_cli::TaskInvocation {
+            name: "build".into(),
+            args,
+        };
+        let start_result = crate::runner::managed_run::start_reserved_with_executable(
+            &checkout,
+            &invocation,
+            checkout.clone(),
+            ticket,
+            Some(resolution),
+            &executable,
+        );
+        if crate::runner::managed_run::take_reserved_handoff_observation() != Some(false) {
+            failures.push(format!(
+                "{profile}: launch did not use the no-handoff branch"
+            ));
+        }
+        let mut started = match start_result {
+            Ok(started) => started,
+            Err(error) => {
+                failures.push(format!("start {profile}: {error}"));
+                continue;
+            }
+        };
+        if started.run != expected_run || started.client.run != expected_run {
+            failures.push(format!("{profile}: wrong admitted run"));
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !wanted.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !wanted.exists() || unwanted.exists() {
+            failures.push(format!("{profile}: wrong workload marker"));
+        }
+        let observation = kernel::observe();
+        match effigy_kernel::store::Store::read(&observation, &started.root) {
+            effigy_kernel::observe::Observed::Verified(reader, _) => {
+                match effigy_kernel::run::summary(&reader, expected_run) {
+                    effigy_kernel::observe::Observed::Verified(summary, _)
+                        if summary.invocation.as_ref().is_some_and(|inv| {
+                            inv.spec().task.profile() == Some(profile)
+                                && inv.digest() == admitted.digest()
+                                && inv.spec().provenance.get(super::MANAGED_RUN_PROVENANCE)
+                                    == Some(&effigy_kernel::id::Digest::of(
+                                        effigy_kernel::run::workspace_managed_token(expected_run)
+                                            .as_bytes(),
+                                    ))
+                        }) => {}
+                    other => {
+                        failures.push(format!("{profile}: wrong journal invocation: {other:?}"))
+                    }
+                }
+            }
+            other => failures.push(format!("{profile}: cannot read journal: {other:?}")),
+        }
+        started.client.close_input();
+        if let Err(error) = started
+            .client
+            .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
+        {
+            failures.push(format!("{profile}: supervisor reap: {error}"));
+            if let Err(retry_error) = started
+                .client
+                .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
+            {
+                failures.push(format!("{profile}: supervisor reap retry: {retry_error}"));
+                if let Err(cleanup_error) = started.client.fixture_terminate_and_reap() {
+                    failures.push(format!("{profile}: fixture termination: {cleanup_error}"));
+                }
+            }
+        }
+        let post_wait_observation = kernel::observe();
+        match effigy_kernel::store::Store::read(&post_wait_observation, &started.root) {
+            effigy_kernel::observe::Observed::Verified(reader, _) => {
+                match effigy_kernel::run::summary(&reader, expected_run) {
+                    effigy_kernel::observe::Observed::Verified(summary, _)
+                        if summary.cleanup_complete == Some(true) => {}
+                    other => failures.push(format!("{profile}: cleanup not complete: {other:?}")),
+                }
+            }
+            other => failures.push(format!("{profile}: cannot read cleanup: {other:?}")),
+        }
+        if wanted.exists() {
+            if let Err(error) = std::fs::remove_file(wanted) {
+                failures.push(format!("{profile}: remove marker: {error}"));
+            }
+        }
+        if unwanted.exists() {
+            if let Err(error) = std::fs::remove_file(unwanted) {
+                failures.push(format!("{profile}: remove unexpected marker: {error}"));
+            }
+        }
+    }
+    let warnings = session_run.close(WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "session cleanup: {warnings:?}");
+    assert!(
+        failures.is_empty(),
+        "reserved profile proof failures: {failures:?}"
+    );
+}
+
+#[test]
+fn reserved_child_receives_grant_at_handoff_fd() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("fixture");
+    let helper = root.path().join("helper");
+    let observed = root.path().join("observed");
+    std::fs::write(&helper, format!(
+        "#!/bin/sh\nif [ \"$EFFIGY_INTERNAL_SECRET_GRANT\" = 1 ]; then /bin/cat /dev/fd/11 > '{}' ; else echo absent > '{}'; fi\n",
+        observed.display(), observed.display()
+    )).expect("helper");
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    let executable = Executable::capture(&helper).expect("executable");
+    let root_catalog = catalog(root.path(), "", "", 0);
+    let session_run = begin(&TaskTarget::for_catalog(
+        root.path(),
+        "session",
+        &root_catalog,
+    ))
+    .expect("session run");
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let ticket = match reserve_ticket(root.path(), session, 77, b"child grant") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    // This nextest process owns its environment and the shared test lock.
+    unsafe {
+        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
+    }
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    let grant = crate::runner::secret_session::activate_local_dev_secret_access(true);
+    let invocation = effigy_cli::TaskInvocation {
+        name: "test".into(),
+        args: vec![],
+    };
+    let result = crate::runner::managed_run::start_reserved_with_executable(
+        root.path(),
+        &invocation,
+        root.path().to_owned(),
+        ticket,
+        None,
+        &executable,
+    );
+    let bytes = std::fs::read(&observed)
+        .unwrap_or_else(|error| panic!("child did not write: {error}; launch: {:?}", result.err()));
+    assert!(
+        bytes.starts_with(b"EFFGRNT1"),
+        "child received grant frame: {bytes:?}"
+    );
+    drop(grant);
+    let ticket = match reserve_ticket(root.path(), session, 78, b"without grant") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    let _ = crate::runner::managed_run::start_reserved_with_executable(
+        root.path(),
+        &invocation,
+        root.path().to_owned(),
+        ticket,
+        None,
+        &executable,
+    );
+    assert_eq!(
+        std::fs::read(&observed).expect("child wrote absence"),
+        b"absent\n"
+    );
+    assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
 }

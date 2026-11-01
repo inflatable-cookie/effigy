@@ -200,6 +200,11 @@ pub struct AdmissionTicket {
     run: RunId,
     digest: Digest,
 }
+
+/// Non-secret settle identity reserved for exactly this workspace run.
+pub fn workspace_managed_token(run: RunId) -> String {
+    format!("effigy-workspace-managed-v1-{run}")
+}
 impl AdmissionTicket {
     pub fn key(&self) -> AdmissionKey {
         self.key
@@ -218,12 +223,25 @@ impl AdmissionTicket {
 /// (§8.11). The reservation is durable and idempotent: one caller gets
 /// `Fresh`, every other caller — concurrent, later or after a restart — gets
 /// what is already recorded for the key.
-pub fn reserve(
+/// Reserve the canonical request and its already-resolved invocation together.
+pub fn reserve_resolved(
     cx: &EffectContext,
     root: &StateRoot,
     key: AdmissionKey,
     digest: Digest,
     run: RunId,
+    resolved: &crate::id::ResolvedInvocation,
+) -> Result<Reservation, RunError> {
+    reserve_inner(cx, root, key, digest, run, Some(resolved.digest()))
+}
+
+fn reserve_inner(
+    cx: &EffectContext,
+    root: &StateRoot,
+    key: AdmissionKey,
+    digest: Digest,
+    run: RunId,
+    resolution_digest: Option<&Digest>,
 ) -> Result<Reservation, RunError> {
     mutations_only(cx, "a workspace admission")?;
     // An engine's workload may be open-ended; this journal phase, including
@@ -232,7 +250,15 @@ pub fn reserve(
     let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(AdmissionReserveBefore)?;
     let recorded = store.transaction_within(cx, BusyWait::Context, |txn| {
-        insert_reservation(txn.conn(), txn.now(), key, &digest, run, cx, root)
+        insert_reservation(
+            txn.conn(),
+            txn.now(),
+            key,
+            (&digest, resolution_digest),
+            run,
+            cx,
+            root,
+        )
     })?;
     crate::fault_point!(AdmissionReserveAfter)?;
     Ok(match recorded {
@@ -248,11 +274,12 @@ fn insert_reservation(
     conn: &Connection,
     now: i64,
     key: AdmissionKey,
-    digest: &Digest,
+    digests: (&Digest, Option<&Digest>),
     run: RunId,
     cx: &EffectContext,
     root: &StateRoot,
 ) -> Result<Option<Recovered>, RunError> {
+    let (digest, resolution_digest) = digests;
     // A key that already has a record is a replay, whatever run id it offers
     // this time: classify it before looking at the proposed identity, so a
     // same-key retry recovers its admission (or reports its digest conflict)
@@ -288,8 +315,8 @@ fn insert_reservation(
         return Err(RunError::refused("this run id already names a run"));
     }
     conn.execute(
-        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at,session_owner) \
-         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6,?7)",
+        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at,session_owner,resolution_digest) \
+         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6,?7,?8)",
         params![
             key.session.run.to_string(),
             key.session.generation.get() as i64,
@@ -297,7 +324,8 @@ fn insert_reservation(
             digest.0.as_slice(),
             run.to_string(),
             now,
-            session_owner
+            session_owner,
+            resolution_digest.map(|digest| digest.0.as_slice())
         ],
     )?;
     Ok(None)
@@ -415,7 +443,11 @@ fn replayed(
 /// Bind a reservation to its run inside the admission transaction, so the
 /// run row, the key's `admitted` state and the owning client's attachment
 /// commit together or not at all.
-pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), RunError> {
+pub(super) fn bind(
+    txn: &mut Txn<'_>,
+    ticket: &AdmissionTicket,
+    inv: &crate::id::ResolvedInvocation,
+) -> Result<(), RunError> {
     let row = row(txn.conn(), &ticket.key)?.ok_or_else(|| RunError::refused("no reservation"))?;
     current_session(
         txn.conn(),
@@ -426,6 +458,21 @@ pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), Ru
                 .ok_or_else(|| RunError::refused("the recorded session owner is unknown"))?,
         ),
     )?;
+    let recorded: Option<Vec<u8>> = txn.conn().query_row(
+        "SELECT resolution_digest FROM workspace_admissions WHERE session_id=?1 AND session_generation=?2 AND request_id=?3",
+        params![ticket.key.session.run.to_string(), ticket.key.session.generation.get() as i64, ticket.key.request.to_string()],
+        |row| row.get(0),
+    )?;
+    let Some(recorded) = recorded else {
+        return Err(RunError::refused(
+            "workspace ticket predates digest binding; re-run up or down",
+        ));
+    };
+    if recorded.as_slice() != inv.digest().0.as_slice() {
+        return Err(RunError::refused(
+            "workspace resolved invocation differs from its reservation",
+        ));
+    }
     let claimed = txn.conn().execute(
         "UPDATE workspace_admissions SET state='admitted',updated_at=?6 \
          WHERE session_id=?1 AND session_generation=?2 AND request_id=?3 AND run_id=?4 AND digest=?5 AND state='reserved'",
@@ -534,9 +581,11 @@ pub struct Attachment {
     fence: Fence,
     session: Session,
     client: Client,
+    root_identity: crate::fs::DirectoryIdentity,
     /// Absolute byte position per `(process sequence, stream)`.
     cursors: BTreeMap<(i64, &'static str), u64>,
     released: bool,
+    pending_release: Option<Release>,
 }
 impl Attachment {
     /// Supervisor liveness needs only the identity, never a terminal's cursors.
@@ -547,8 +596,10 @@ impl Attachment {
             fence: self.fence.clone(),
             session: self.session,
             client: self.client,
+            root_identity: self.root_identity,
             cursors: BTreeMap::new(),
             released: self.released,
+            pending_release: None,
         }
     }
     pub fn id(&self) -> AttachmentId {
@@ -570,6 +621,9 @@ impl Attachment {
     /// another holder is reported by `attached`, not here.
     pub fn released(&self) -> bool {
         self.released
+    }
+    pub(crate) fn pending_release(&self) -> Option<Release> {
+        self.pending_release
     }
     /// Whether this attachment is still attached in the journal.
     pub fn attached(&self, cx: &EffectContext, root: &StateRoot) -> Result<bool, RunError> {
@@ -717,11 +771,57 @@ impl Attachment {
         root: &StateRoot,
         cause: Release,
     ) -> Result<(), RunError> {
+        self.check_release_root(root)?;
         if self.released {
             return Ok(());
         }
-        release_attachment(cx, root, self, cause)?;
+        if self.pending_release.is_some() {
+            return Err(RunError::refused(
+                "an earlier release outcome is unsettled; use the retained retry",
+            ));
+        }
+        self.pending_release = Some(cause);
+        if let Err(error) = release_attachment(cx, root, self, cause, false) {
+            if matches!(error, RunError::Refused(_)) {
+                self.pending_release = None;
+            }
+            return Err(error);
+        }
         self.released = true;
+        Ok(())
+    }
+
+    /// Retry this same handle's uncertain release with fresh authority. An
+    /// already committed release counts only when its exact identity and cause
+    /// match; no stop or attachment is recreated.
+    pub fn release_recoverable(
+        &mut self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        cause: Release,
+    ) -> Result<(), RunError> {
+        self.check_release_root(root)?;
+        if self.pending_release != Some(cause) {
+            return Err(RunError::refused("no matching release attempt is retained"));
+        }
+        if self.released {
+            return Ok(());
+        }
+        release_attachment(cx, root, self, cause, true)?;
+        self.released = true;
+        Ok(())
+    }
+
+    pub(crate) fn check_release_root(&self, root: &StateRoot) -> Result<(), RunError> {
+        let identity = root
+            .state_directory()
+            .identity()
+            .map_err(|error| RunError::unavailable(error.to_string()))?;
+        if identity != self.root_identity {
+            return Err(RunError::refused(
+                "attachment release uses a different state root",
+            ));
+        }
         Ok(())
     }
     /// This handle's own durable lifetime: its row must still be attached to
@@ -815,6 +915,10 @@ fn open(
     opening: Opening,
 ) -> Result<Attachment, RunError> {
     mutations_only(cx, "a workspace attachment")?;
+    let root_identity = root
+        .state_directory()
+        .identity()
+        .map_err(|error| RunError::unavailable(error.to_string()))?;
     let cx = &cx.child(std::time::Duration::from_secs(30));
     let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachBefore)?;
@@ -900,8 +1004,10 @@ fn open(
         fence,
         session,
         client,
+        root_identity,
         cursors: BTreeMap::new(),
         released: false,
+        pending_release: None,
     })
 }
 
@@ -910,16 +1016,16 @@ fn release_attachment(
     root: &StateRoot,
     attachment: &Attachment,
     cause: Release,
+    recover: bool,
 ) -> Result<(), RunError> {
     mutations_only(cx, "a workspace attachment release")?;
     let cx = &cx.child(std::time::Duration::from_secs(1));
     let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachReleaseBefore)?;
     store.transaction_within(cx, BusyWait::Context, |txn| {
-        if !attached_row(txn.conn(), attachment.id, attachment)? {
-            return Err(RunError::refused(
-                "this attachment is no longer attached to the run",
-            ));
+        let attached = attached_row(txn.conn(), attachment.id, attachment)?;
+        if !attached && !recover {
+            return Err(RunError::refused("this attachment is no longer attached to the run"));
         }
         require_live_owner(
             &cx.operation()
@@ -929,7 +1035,24 @@ fn release_attachment(
             txn.conn(),
             attachment.run,
         )?;
+        let record = journal_run(txn.conn(), attachment.run)?
+            .ok_or_else(|| RunError::refused("this run is no longer in its journal"))?;
+        if record.owner != attachment.fence.resource.name().to_string()
+            || record.generation != attachment.fence.generation
+        {
+            return Err(RunError::refused("the attachment's run fence changed"));
+        }
         journal::check_run_fence(txn.conn(), attachment.run, &attachment.fence)?;
+        if !attached {
+            let same_release: bool = recover && admission_session(txn.conn(), attachment.run)? == Some(attachment.session)
+                && txn.conn().query_row(
+                    "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE attachment_id=?1 AND run_id=?2 AND session_id=?3 AND session_generation=?4 AND lifetime=?5 AND state='released' AND release=?6)",
+                    params![attachment.id.to_string(), attachment.run.to_string(), attachment.session.run.to_string(), attachment.session.generation.get() as i64, match attachment.client { Client::Owner => "owner", Client::Secondary => "secondary" }, release_name(cause)],
+                    |row| row.get(0),
+                )?;
+            if same_release { return Ok(()); }
+            return Err(RunError::refused("this attachment is no longer attached to the run"));
+        }
         release_row(txn, cx, attachment, cause)?;
         Ok::<_, RunError>(())
     })?;
@@ -1082,6 +1205,12 @@ fn owner_attachment(run: RunId) -> AttachmentId {
     let mut material = b"effigy.workspace.owner-attachment.v1".to_vec();
     material.extend_from_slice(run.bytes());
     AttachmentId::derived(&material)
+}
+
+/// The existing owner attachment identity for a run. This derives an ID;
+/// it does not grant attachment or control authority.
+pub fn owner_attachment_id(run: RunId) -> AttachmentId {
+    owner_attachment(run)
 }
 
 /// Both records are writes to a session's journal: host authority and Mutate

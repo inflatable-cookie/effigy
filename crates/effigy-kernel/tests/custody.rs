@@ -1813,10 +1813,11 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
         request: RequestId::new([3; 16]),
     };
     let digest = Digest::of(b"effigy.custody.engine.fixture.v1");
-    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
-        Reservation::Fresh(ticket) => ticket,
-        other => panic!("expected the one reservation, saw {other:?}"),
-    };
+    let ticket =
+        match reserve_resolved(&cx, &root, key, digest.clone(), id(9), &invocation()).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("expected the one reservation, saw {other:?}"),
+        };
     let mut client = start_engine(
         &cx,
         home.path(),
@@ -1933,7 +1934,9 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             request: RequestId::new([4; 16]),
         };
         let digest = Digest::of(b"workspace-lifetimes");
-        let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+        let ticket = match reserve_resolved(&cx, &root, key, digest.clone(), id(9), &invocation())
+            .unwrap()
+        {
             Reservation::Fresh(ticket) => ticket,
             other => panic!("reservation {other:?}"),
         };
@@ -3280,10 +3283,11 @@ fn custody_workspace_orphan_refuses_handles_until_journal_recovery() {
         request: RequestId::new([71; 16]),
     };
     let digest = Digest::of(b"workspace-orphan");
-    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
-        Reservation::Fresh(ticket) => ticket,
-        other => panic!("reservation {other:?}"),
-    };
+    let ticket =
+        match reserve_resolved(&cx, &root, key, digest.clone(), id(9), &invocation()).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("reservation {other:?}"),
+        };
     let mut client = start_engine(
         &cx,
         home.path(),
@@ -3339,7 +3343,7 @@ fn custody_workspace_orphan_refuses_handles_until_journal_recovery() {
     assert!(resume_owner(&cx, &root, key.session, id(9)).is_err());
     assert!(attach_secondary(&cx, &root, key.session, id(9), AttachmentId::new([71; 16])).is_err());
     assert!(matches!(
-        reserve(&cx, &root, key, digest.clone(), id(10)).unwrap(),
+        reserve_resolved(&cx, &root, key, digest.clone(), id(10), &invocation()).unwrap(),
         Reservation::Recorded(Recovered::Unknown { .. })
     ));
     let outcome = settle_interrupted(
@@ -3432,7 +3436,9 @@ fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
             request: RequestId::new([81; 16]),
         };
         let digest = Digest::of(b"keyed recovery escalation");
-        let ticket = match reserve(&cx, &root, key, digest.clone(), id(10)).unwrap() {
+        let ticket = match reserve_resolved(&cx, &root, key, digest.clone(), id(10), &invocation())
+            .unwrap()
+        {
             Reservation::Fresh(ticket) => ticket,
             other => panic!("ticket {other:?}"),
         };

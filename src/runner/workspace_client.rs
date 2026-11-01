@@ -49,7 +49,9 @@
 // lane C's `context.rs` records for its verification seam.
 #![allow(dead_code)]
 
+pub(crate) mod container_up;
 pub(crate) mod context;
+pub(crate) mod coverage_policy;
 // #482's producer side: the staged guest probe and the guest's own identity
 // observation, which the v2 context verification takes.
 pub(crate) mod guest_probe;
@@ -76,7 +78,7 @@ pub(crate) mod serving_host;
 
 pub(crate) use serving_facts::ServingFacts;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "workspace-serving-fixture"))]
 pub(crate) mod guest_fake;
 
 use effigy_cli::Command;
@@ -464,6 +466,7 @@ pub(crate) enum GuestOperation {
     Observe {
         op: String,
         target: Target,
+        run_id: Option<String>,
     },
     Invoke {
         selector: Selector,
@@ -482,6 +485,10 @@ pub(crate) enum GuestOperation {
 pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     use effigy_cli::{ContainerSubcommand, RunsAction};
 
+    if let Some(message) = coverage_policy::unsupported(cmd) {
+        return GuestOperation::Refused(message.to_owned());
+    }
+
     let operation = |label: &str| GuestOperation::Invoke {
         selector: Selector::Operation(label.to_owned()),
         target: Target::Host,
@@ -489,14 +496,19 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     let observation = |label: &str| GuestOperation::Observe {
         op: label.to_owned(),
         target: Target::Host,
+        run_id: None,
     };
     match cmd {
         // The pinned identity this guest runs under, and the task names the
         // context's composed manifest snapshot carries.
         Command::Version => GuestOperation::Local(LocalRead::Version),
         Command::Tasks(args) => {
-            if args.qa.is_some() {
-                operation("tasks:qa-group")
+            if let Some(qa) = &args.qa {
+                match qa {
+                    effigy_cli::TasksQaCommand::GroupStatus { .. } => observation("tasks:qa-group:status"),
+                    effigy_cli::TasksQaCommand::GroupStop { .. } => operation("tasks:qa-group:stop"),
+                    _ => operation("tasks:qa-group"),
+                }
             } else if args.status_selector.is_some() || args.status_all {
                 observation("tasks:status")
             } else if args.resolve_selector.is_some() || args.task_name.is_some() {
@@ -536,7 +548,14 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
         Command::Doctor(_) => observation("doctor"),
         Command::Runs(args) => match &args.action {
             RunsAction::List { .. } => observation("runs:list"),
-            RunsAction::Status { .. } => observation("runs:status"),
+            RunsAction::Status { .. } if args.repo_override.is_some() => GuestOperation::Refused(
+                "workspace run status does not accept a checkout override".into(),
+            ),
+            RunsAction::Status { run } => GuestOperation::Observe {
+                op: "runs:status".into(),
+                target: Target::Host,
+                run_id: Some(run.clone()),
+            },
             RunsAction::Logs { .. } => observation("runs:logs"),
             RunsAction::Stop { .. } => operation("runs:stop"),
         },
@@ -584,16 +603,15 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     }
 }
 
-/// Why a guest never reached its host.
+/// Why a guest did not obtain a definitive successful host outcome.
 #[derive(Debug)]
 pub(crate) enum ChannelError {
-    /// The host refused before it recorded any effect for this request. The
-    /// code is lane A's stable refusal code (§8.11).
+    /// A refusal established before delivery or from a definitive host response.
+    /// The code is lane A's stable refusal code (§8.11).
     Refused { code: &'static str, message: String },
-    /// The connection failed or ended before the host answered. Whether the
-    /// host acted is `Unknown` and is never guessed; [`ChannelRequest::retry`]
-    /// replays the same request id so the host answers from its record.
-    Unknown { message: String, replayable: bool },
+    /// The outcome cannot be established after possible delivery. Whether the
+    /// host acted is `Unknown` and is never guessed. It authorizes no resend.
+    Unknown { message: String },
     /// The client would not form or send this request at all.
     Local(String),
 }
@@ -611,11 +629,10 @@ impl ChannelError {
     }
 
     /// A transport failure: the request may or may not have been admitted, so
-    /// the caller keeps its id and replays rather than admitting again.
+    /// the caller inspects the outcome without resending the request.
     fn unknown(message: impl Into<String>) -> Self {
         Self::Unknown {
             message: message.into(),
-            replayable: true,
         }
     }
 
@@ -628,21 +645,10 @@ impl ChannelError {
             )),
             Self::Unknown { message, .. } => RunnerError::task_invocation(format!(
                 "the workspace host did not answer, so whether it acted is unknown: {message}; \
-                 retry the same command — the host answers a retry from its own record instead of \
-                 admitting a second run"
+                 inspect its recorded status from an independent host CLI; do not submit it as a new request"
             )),
             Self::Local(message) => RunnerError::task_invocation(message),
         }
-    }
-
-    fn is_replayable(&self) -> bool {
-        matches!(
-            self,
-            Self::Unknown {
-                replayable: true,
-                ..
-            }
-        )
     }
 }
 
@@ -676,6 +682,16 @@ pub(crate) enum RunPlacement {
 pub(crate) struct Intent {
     id: RequestId,
     body: RequestBody,
+    delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentDelivery {
+    Sendable,
+    /// Historical acceptance survives clones; it never grants a new connection ownership.
+    Accepted(RunId),
+    Completed,
+    Indeterminate,
 }
 
 impl Intent {
@@ -683,14 +699,15 @@ impl Intent {
         Self {
             id: RequestId::new(fresh_bytes()),
             body,
+            delivery: std::sync::Arc::new(std::sync::Mutex::new(IntentDelivery::Sendable)),
         }
     }
 
-    /// One attach, at a caller's retained cursor. Replaying this same intent on
-    /// a fresh connection names the same request id, so the host resumes the
-    /// attachment it already recorded rather than opening a second one
-    /// (§8.11). The cursor is where the caller's own stream reader stopped;
-    /// `None` starts at the beginning.
+    /// One attach, at a caller's retained cursor. A known definitive answer
+    /// permits replay under the same request id; an indeterminate request is
+    /// never resent. A fresh connection is secondary, even if it knows an
+    /// earlier admission. The cursor is where the caller's own stream reader
+    /// stopped; `None` starts at the beginning.
     pub(crate) fn attach(
         run: RunId,
         streams: Vec<StreamKind>,
@@ -729,8 +746,7 @@ pub(crate) trait ChannelRequest {
     /// connection whose peer is not the pinned host (§8.11).
     fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError>;
     /// Send one intent. A transport failure returns [`ChannelError::Unknown`];
-    /// the caller replays the same intent, whose id the host has already
-    /// recorded or will record exactly once.
+    /// the caller may inspect the outcome or attach safely, never resend it.
     fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError>;
     /// Acknowledge detach of a run this client admitted. A run this client did
     /// not admit is refused locally: no frame, so a secondary terminal can
@@ -953,14 +969,31 @@ impl GuestIdentity for ObservedGuest {
     }
 }
 
+/// A fresh accept on this connection, with the outcome shared by intent clones.
+#[derive(Debug)]
+struct ConnectionAdmission {
+    run: RunId,
+    delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthenticationDelivery {
+    Unsent,
+    Indeterminate,
+    Presented,
+}
+
 /// One authenticated channel connection: the guest client of §8.11 over the
 /// transport an integration supplies.
 pub(crate) struct WorkspaceClient<T: Transport> {
     transport: T,
+    observe_query_v1: bool,
+    authentication: AuthenticationDelivery,
     verified: VerifiedWorkspaceContext,
     live: LiveGuestRun,
-    /// The one run this connection admitted. Only it may detach.
-    admitted: Option<RunId>,
+    /// Fresh accepts observed on this connection, keyed by the original request.
+    /// This validates reply roles; the host kernel remains the authority.
+    admitted: std::collections::BTreeMap<RequestId, ConnectionAdmission>,
     /// The highest sequence this client consumed and acknowledged per stream,
     /// so a resume asks from where it stopped. A `gap` leaves a stream where it
     /// was: missing bytes are never reported as consumed.
@@ -982,6 +1015,16 @@ impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
 }
 
 impl<T: Transport> WorkspaceClient<T> {
+    fn owns_run(&self, run: RunId) -> bool {
+        self.admitted.values().any(|admission| {
+            admission.run == run
+                && admission
+                    .delivery
+                    .try_lock()
+                    .is_ok_and(|delivery| *delivery == IntentDelivery::Accepted(run))
+        })
+    }
+
     /// Pin, then negotiate, and hold the connection open for one command.
     ///
     /// The pinned host identity is checked before a single byte is written, so
@@ -1003,6 +1046,7 @@ impl<T: Transport> WorkspaceClient<T> {
             .map_err(ChannelError::from_refusal)?;
         let session_run_id = parse_run_id(&verified.session_run_id)?;
         let hello = Hello {
+            capabilities: vec![channel::ChannelCapability::ObserveQueryV1],
             schema: channel::SCHEMA.to_owned(),
             protocol_versions: vec![channel::PROTOCOL_V1],
             effigy_version: live.binary.version.clone(),
@@ -1012,20 +1056,37 @@ impl<T: Transport> WorkspaceClient<T> {
         };
         channel::write_frame(&mut transport, &Frame::Hello(hello))
             .map_err(ChannelError::from_refusal)?;
-        match read_frame(&mut transport)? {
-            Frame::HelloOk(_) => {}
-            Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
+        let observe_query_v1 = match read_frame(&mut transport)? {
+            Frame::HelloOk(ok) => {
+                if ok.protocol != channel::PROTOCOL_V1 || ok.effigy_version != live.binary.version {
+                    return Err(ChannelError::local(
+                        "the host selected an incompatible protocol",
+                    ));
+                }
+                ok.capabilities
+                    .contains(&channel::ChannelCapability::ObserveQueryV1)
+            }
+            Frame::Refuse(refusal) => {
+                if refusal.code == channel::RefusalCode::InvalidRequest {
+                    return Err(ChannelError::from_refusal(channel::Refusal::forbidden(
+                        "the workspace peer refused observe_query_v1 capability negotiation; use an independent host CLI",
+                    )));
+                }
+                return Err(ChannelError::from_refusal(refusal));
+            }
             _ => {
                 return Err(ChannelError::local(
                     "the workspace host did not answer the protocol negotiation",
                 ))
             }
-        }
+        };
         Ok(Self {
             transport,
+            observe_query_v1,
+            authentication: AuthenticationDelivery::Unsent,
             verified,
             live,
-            admitted: None,
+            admitted: std::collections::BTreeMap::new(),
             cursors: std::collections::BTreeMap::new(),
             enrolled: None,
         })
@@ -1037,8 +1098,21 @@ impl<T: Transport> WorkspaceClient<T> {
     /// arrives as the connection's refusal on the first response read, so no
     /// request can be built on an unauthenticated connection.
     pub(crate) fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError> {
-        let frame = match auth {
-            GuestAuth::Capability(capability) => Frame::Authenticate(capability),
+        match self.authentication {
+            AuthenticationDelivery::Unsent => {}
+            AuthenticationDelivery::Indeterminate => {
+                return Err(ChannelError::unknown(
+                    "credential delivery is indeterminate; discard this connection without sending another credential or command",
+                ));
+            }
+            AuthenticationDelivery::Presented => {
+                return Err(ChannelError::local(
+                    "this connection already presented its credential; open a fresh connection to change clients",
+                ));
+            }
+        }
+        let (frame, enrolled) = match auth {
+            GuestAuth::Capability(capability) => (Frame::Authenticate(capability), None),
             GuestAuth::Enrolment {
                 credential,
                 session,
@@ -1054,31 +1128,42 @@ impl<T: Transport> WorkspaceClient<T> {
                 // Held until the host answers: a refused enrolment stores
                 // nothing, so a terminal never keeps a capability it was not
                 // granted.
-                self.enrolled = Some(StoredCapability {
+                let enrolled = StoredCapability {
                     generation: Generation::new(session.generation.get()),
                     secret: Secret::new(minted),
-                });
-                Frame::Enrol(EnrolRequest {
-                    credential,
-                    capability: minted,
-                    session_run_id: session.run,
-                    session_generation: session.generation,
-                    environment_generation: Generation::new(environment_generation),
-                    container_id: self.live.container.container_id.clone(),
-                    vm_boot_id: self.live.container.vm_boot_id.clone(),
-                })
+                };
+                (
+                    Frame::Enrol(EnrolRequest {
+                        credential,
+                        capability: minted,
+                        session_run_id: session.run,
+                        session_generation: session.generation,
+                        environment_generation: Generation::new(environment_generation),
+                        container_id: self.live.container.container_id.clone(),
+                        vm_boot_id: self.live.container.vm_boot_id.clone(),
+                    }),
+                    Some(enrolled),
+                )
             }
         };
-        match channel::write_frame(&mut self.transport, &frame) {
-            Ok(()) => Ok(()),
-            // The host may have refused during authentication and closed
-            // before this frame landed. Its sentence is the answer; a
-            // connection that simply failed is `unknown`, never a silent
-            // success and never a fabricated refusal.
-            Err(write) => match read_frame(&mut self.transport) {
-                Ok(Frame::Refuse(refusal)) => Err(ChannelError::from_refusal(refusal)),
-                _ => Err(ChannelError::from_refusal(write)),
-            },
+        // Local validation cannot deliver a credential. Once encoded, fence
+        // this stream before even a partial transport write can reach the peer.
+        let body = channel::encode_frame(&frame).map_err(ChannelError::from_refusal)?;
+        let mut bytes = Vec::with_capacity(body.len() + 4);
+        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&body);
+        self.authentication = AuthenticationDelivery::Indeterminate;
+        match self.transport.write_all(&bytes) {
+            Ok(()) => {
+                self.authentication = AuthenticationDelivery::Presented;
+                self.enrolled = enrolled;
+                Ok(())
+            }
+            // An unkeyed queued refusal cannot establish this credential's
+            // delivery or enrolment outcome after a possibly partial write.
+            Err(_) => Err(ChannelError::unknown(
+                "the connection failed while writing a credential; discard it without retrying authentication",
+            )),
         }
     }
 
@@ -1101,7 +1186,55 @@ impl<T: Transport> WorkspaceClient<T> {
     /// acknowledged and dropped: output streams belong to the session front
     /// end, and this glue never attaches.
     fn exchange(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
-        let outcome = self.exchange_authenticated(intent);
+        // Clones share this nonblocking claim. It is local synchronization,
+        // never a kernel gate, and spans only the bounded synchronous exchange.
+        let mut delivery = match intent.delivery.try_lock() {
+            Ok(delivery) => delivery,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err(ChannelError::local(
+                    "this request is already in flight; it was not resent",
+                ));
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(ChannelError::unknown(
+                    "this request's delivery state is unavailable",
+                ));
+            }
+        };
+        if *delivery == IntentDelivery::Indeterminate {
+            return Err(ChannelError::unknown(
+                "this request's delivery is indeterminate; inspect its outcome or open a fresh safe attachment",
+            ));
+        }
+        // A malformed or unrelated reply cannot establish the outcome of a
+        // delivered request. Only prewrite failures and definitive responses
+        // may retain their ordinary refusal/local classification.
+        let outcome = match self.exchange_authenticated(intent, &mut delivery) {
+            Err(ChannelError::Refused { message, .. } | ChannelError::Local(message))
+                if *delivery == IntentDelivery::Indeterminate =>
+            {
+                Err(ChannelError::unknown(message))
+            }
+            outcome => outcome,
+        };
+        if let RequestBody::Detach(body) = &intent.body {
+            if outcome.is_ok() || *delivery == IntentDelivery::Indeterminate {
+                self.admitted
+                    .retain(|_, admission| admission.run != body.run);
+            }
+        }
+        if matches!(
+            &outcome,
+            Err(ChannelError::Refused {
+                code: "unauthenticated"
+                    | "stale_context"
+                    | "identity_mismatch"
+                    | "version_mismatch",
+                ..
+            })
+        ) {
+            self.admitted.clear();
+        }
         if outcome.is_ok() {
             self.keep_capability();
         }
@@ -1122,18 +1255,75 @@ impl<T: Transport> WorkspaceClient<T> {
         let _ = store_capability(std::path::Path::new(CLIENT_ROOT), &client, &stored);
     }
 
-    fn exchange_authenticated(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+    fn exchange_authenticated(
+        &mut self,
+        intent: &Intent,
+        delivery: &mut IntentDelivery,
+    ) -> Result<ChannelOutcome, ChannelError> {
+        match self.authentication {
+            AuthenticationDelivery::Presented => {}
+            AuthenticationDelivery::Unsent => {
+                return Err(ChannelError::from_refusal(
+                    channel::Refusal::unauthenticated(
+                        "present this connection's credential before sending requests",
+                    ),
+                ));
+            }
+            AuthenticationDelivery::Indeterminate => {
+                return Err(ChannelError::from_refusal(channel::Refusal::unauthenticated(
+                    "credential delivery is indeterminate; discard this connection; no command was sent",
+                )));
+            }
+        }
+        let previous = *delivery;
+        if matches!(&intent.body, RequestBody::Observe(body) if body.query.is_some())
+            && !self.observe_query_v1
+        {
+            return Err(ChannelError::from_refusal(channel::Refusal::forbidden(
+                "observe_query_v1 is unsupported by this peer; use an independent host CLI",
+            )));
+        }
         let id = intent.id();
         let request = self.request_for(intent);
-        channel::write_frame(&mut self.transport, &Frame::Request(request))
-            .map_err(ChannelError::from_refusal)?;
+        // Validation/encoding cannot deliver anything. Only after it succeeds
+        // do we fence every clone, before the first possibly partial write.
+        let body =
+            channel::encode_frame(&Frame::Request(request)).map_err(ChannelError::from_refusal)?;
+        let mut bytes = Vec::with_capacity(body.len() + 4);
+        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&body);
+        *delivery = IntentDelivery::Indeterminate;
+        self.transport.write_all(&bytes).map_err(|_| {
+            ChannelError::unknown("the connection failed while writing this request")
+        })?;
         loop {
             let frame = read_frame(&mut self.transport)?;
             match frame {
                 Frame::Response(response) if response.id == id => {
-                    return match response.outcome {
+                    let matching_method = matches!(
+                        (&intent.body, &response.outcome),
+                        (_, channel::ResponseOutcome::Refused(_))
+                            | (
+                                RequestBody::Invoke(_),
+                                channel::ResponseOutcome::Accepted(_)
+                                    | channel::ResponseOutcome::Completed(_)
+                            )
+                            | (
+                                RequestBody::Observe(_)
+                                    | RequestBody::Attach(_)
+                                    | RequestBody::Cancel(_)
+                                    | RequestBody::Detach(_),
+                                channel::ResponseOutcome::Observed(_)
+                            )
+                    );
+                    if !matching_method {
+                        return Err(ChannelError::unknown(
+                            "the host response outcome does not match this request method",
+                        ));
+                    }
+                    let outcome = match response.outcome {
                         channel::ResponseOutcome::Observed(value) => {
-                            if matches!(intent.body, RequestBody::Attach(_)) {
+                            if let RequestBody::Attach(body) = &intent.body {
                                 // An attach answers with the host's own view of
                                 // the attachment it opened; a body that is not
                                 // one is not this client's business to guess.
@@ -1144,13 +1334,72 @@ impl<T: Transport> WorkspaceClient<T> {
                                              unreadable attachment view",
                                         )
                                     })?;
+                                if view.run != body.run || view.cursor != body.cursor.unwrap_or(0) {
+                                    return Err(ChannelError::unknown(
+                                        "the attachment view does not match the requested run and cursor",
+                                    ));
+                                }
+                                let owns_here = self.owns_run(body.run);
+                                let (expected_client, expected_attachment) = if owns_here {
+                                    (
+                                        effigy_kernel::run::Client::Owner,
+                                        effigy_kernel::run::owner_attachment_id(body.run),
+                                    )
+                                } else {
+                                    (
+                                        effigy_kernel::run::Client::Secondary,
+                                        effigy_kernel::run::AttachmentId::new(*id.bytes()),
+                                    )
+                                };
+                                if view.client != expected_client
+                                    || view.attachment != expected_attachment
+                                {
+                                    return Err(ChannelError::unknown(
+                                        "the attachment identity or role does not match this connection's request",
+                                    ));
+                                }
                                 Ok(ChannelOutcome::Attached(view))
                             } else {
+                                if matches!(
+                                    intent.body,
+                                    RequestBody::Cancel(_) | RequestBody::Detach(_)
+                                ) && !value.is_null()
+                                {
+                                    return Err(ChannelError::unknown(
+                                        "the host control reply does not match this request",
+                                    ));
+                                }
                                 Ok(ChannelOutcome::Observed(value))
                             }
                         }
                         channel::ResponseOutcome::Accepted(accepted) => {
-                            self.admitted = Some(accepted.run);
+                            if accepted.placement != effigy_kernel::ctx::Placement::Host {
+                                return Err(ChannelError::unknown(
+                                    "the host admission reply names a non-host placement",
+                                ));
+                            }
+                            match previous {
+                                IntentDelivery::Completed => {
+                                    return Err(ChannelError::unknown(
+                                        "a completed invocation cannot return a fresh admission",
+                                    ))
+                                }
+                                IntentDelivery::Accepted(run) if run != accepted.run => {
+                                    return Err(ChannelError::unknown(
+                                        "the replayed admission names a different run",
+                                    ))
+                                }
+                                IntentDelivery::Sendable => {
+                                    self.admitted.insert(
+                                        id,
+                                        ConnectionAdmission {
+                                            run: accepted.run,
+                                            delivery: intent.delivery.clone(),
+                                        },
+                                    );
+                                }
+                                _ => {}
+                            }
                             Ok(ChannelOutcome::Accepted {
                                 run: accepted.run,
                                 placement: match accepted.placement {
@@ -1160,6 +1409,7 @@ impl<T: Transport> WorkspaceClient<T> {
                             })
                         }
                         channel::ResponseOutcome::Completed(completed) => {
+                            self.admitted.remove(&id);
                             Ok(ChannelOutcome::Completed {
                                 outcome: completed.outcome,
                                 exit: completed.exit,
@@ -1169,6 +1419,22 @@ impl<T: Transport> WorkspaceClient<T> {
                             Err(ChannelError::from_refusal(refusal))
                         }
                     };
+                    if !matches!(
+                        &outcome,
+                        Err(ChannelError::Refused {
+                            code: "unknown",
+                            ..
+                        })
+                    ) {
+                        *delivery = match &outcome {
+                            Ok(ChannelOutcome::Accepted { run, .. }) => {
+                                IntentDelivery::Accepted(*run)
+                            }
+                            Ok(ChannelOutcome::Completed { .. }) => IntentDelivery::Completed,
+                            _ => previous,
+                        };
+                    }
+                    return outcome;
                 }
                 Frame::Response(_) => {
                     return Err(ChannelError::local(
@@ -1177,7 +1443,12 @@ impl<T: Transport> WorkspaceClient<T> {
                 }
                 // A connection-level refusal: no request of this connection
                 // was dispatched, so nothing was admitted (§8.11).
-                Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
+                Frame::Refuse(refusal) => {
+                    if refusal.code != channel::RefusalCode::Unknown {
+                        *delivery = previous;
+                    }
+                    return Err(ChannelError::from_refusal(refusal));
+                }
                 Frame::Stream(stream) => {
                     // A gap names bytes this client never received, so it never
                     // advances the cursor; `end` reports the final sequence.
@@ -1219,7 +1490,7 @@ impl<T: Transport> ChannelRequest for WorkspaceClient<T> {
     }
 
     fn detach(&mut self, run: RunId) -> Result<(), ChannelError> {
-        if self.admitted != Some(run) {
+        if !self.owns_run(run) {
             return Err(ChannelError::Refused {
                 code: channel::RefusalCode::Forbidden.as_str(),
                 message: "this terminal did not admit that run, so it cannot detach it; a \
@@ -1444,9 +1715,12 @@ impl Transport for BoxedTransport {
 ///
 /// A local read is answered from the pinned context. Everything else crosses
 /// the one channel; a refusal is returned as an error and never retried
-/// against guest state or a guest engine.
+/// against guest state or a guest engine. `args` is the CLI entry's frozen
+/// request argument array: a task's tail, or a built-in's full argv. This seam
+/// never reads arguments from its own process.
 pub(crate) fn dispatch_in(
     cmd: &Command,
+    args: &[String],
     published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
@@ -1457,10 +1731,20 @@ pub(crate) fn dispatch_in(
     match classify(cmd) {
         GuestOperation::Local(read) => run_local(read, published, guest, checkout, wants_json),
         GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
-        GuestOperation::Observe { op, target } => {
+        GuestOperation::Observe { op, target, run_id } => {
             let body = RequestBody::Observe(ObserveBody {
+                query: Some(channel::ObserveQuery {
+                    cwd: checkout_relative(&published.document.paths, cwd)?,
+                    args: args.to_vec(),
+                    output: if wants_json {
+                        ChannelOutputMode::Json
+                    } else {
+                        ChannelOutputMode::Text
+                    },
+                }),
                 op,
                 target: Some(target),
+                run_id,
             });
             ask_host(published, guest, opener, body, wants_json, cwd)
         }
@@ -1469,7 +1753,7 @@ pub(crate) fn dispatch_in(
                 selector,
                 cwd: checkout_relative(&published.document.paths, cwd)?,
                 target,
-                args: invocation_args(cmd)?,
+                args: args.to_vec(),
                 output: if wants_json {
                     ChannelOutputMode::Json
                 } else {
@@ -1501,9 +1785,8 @@ fn run_local(
     Ok(render_local(outcome, wants_json))
 }
 
-/// Ask the host, once. A connection that dies before answering is replayed on
-/// one fresh connection under the same request id, so the host answers from its
-/// record rather than admitting a second run (§8.11).
+/// Ask the host once. An unanswered request remains Unknown: only separately
+/// authorized observation or a fresh safe attachment may follow it.
 ///
 /// Order is the contract's: verify the strict context against this guest's own
 /// observation, open the pinned connection and let it check the server pin and
@@ -1547,45 +1830,43 @@ fn ask_host(
         }
     };
     let intent = Intent::new(body);
-    let outcome = match client
-        .authenticate(auth.clone())
-        .and_then(|()| client.send(&intent))
-    {
-        Ok(outcome) => Ok(outcome),
-        Err(error) if error.is_replayable() => {
-            let mut replay = opener
-                .open(&verified, &live)
-                .map_err(ChannelError::into_runner)?;
-            replay
-                .authenticate(auth)
-                .and_then(|()| replay.send(&intent))
-        }
-        Err(error) => Err(error),
-    };
+    let outcome = client
+        .authenticate(auth)
+        .and_then(|()| client.send(&intent));
     outcome
         .map(|outcome| render_outcome(outcome, wants_json))
         .map_err(ChannelError::into_runner)
 }
 
-/// The guest's own argv tail, as the channel carries it. A task's own
-/// arguments come from its parsed invocation; every other command carries the
-/// arguments the operator typed, which the host re-parses against its own
-/// records (§8.11).
-fn invocation_args(cmd: &Command) -> Result<Vec<String>, RunnerError> {
+/// The caller's frozen argument array, never the ambient process's argv.
+/// A Task carries its lossless parsed tail; other authority-bearing commands
+/// require the original CLI array and must reparse to the same command. The
+/// host independently reparses these claims against its own records (§8.11).
+fn invocation_args(
+    cmd: &Command,
+    original_args: Option<&[String]>,
+) -> Result<Vec<String>, RunnerError> {
+    if !matches!(
+        classify(cmd),
+        GuestOperation::Observe { .. } | GuestOperation::Invoke { .. }
+    ) {
+        return Ok(Vec::new());
+    }
     if let Command::Task(task) = cmd {
         return Ok(task.args.clone());
     }
-    let mut args = Vec::new();
-    for argument in std::env::args_os().skip(1) {
-        let argument = argument.into_string().map_err(|_| {
-            RunnerError::task_invocation(
-                "a container-mode guest sends its arguments over the workspace channel, which \
-                 carries UTF-8 text; rename the argument to cross the channel",
-            )
-        })?;
-        args.push(argument);
+    let args = original_args.ok_or_else(|| RunnerError::task_invocation(
+        "this embedded workspace command lacks its original arguments; pass the captured CLI arguments or use an independent host CLI",
+    ))?;
+    let parsed = effigy_cli::parse_command(args.iter().cloned()).map_err(|_| {
+        RunnerError::task_invocation("the captured workspace arguments do not name a valid command")
+    })?;
+    if parsed != *cmd {
+        return Err(RunnerError::task_invocation(
+            "the captured workspace arguments do not match the parsed command",
+        ));
     }
-    Ok(args)
+    Ok(args.to_vec())
 }
 
 fn checkout_relative(paths: &WorkspacePathMap, cwd: &Path) -> Result<String, RunnerError> {
@@ -1754,18 +2035,57 @@ fn local_read_error(error: LocalReadError) -> RunnerError {
     }
 }
 
+#[cfg(test)]
+type TestGuestCommand =
+    Box<dyn FnMut(&Command, &[String], &Path) -> Result<Option<String>, RunnerError>>;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_GUEST_COMMAND: std::cell::RefCell<Option<TestGuestCommand>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Substitute guest I/O only, leaving public CLI parsing and argv selection real.
+#[cfg(test)]
+fn with_guest_command_io<T>(
+    hook: impl FnMut(&Command, &[String], &Path) -> Result<Option<String>, RunnerError> + 'static,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<TestGuestCommand>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            drop(TEST_GUEST_COMMAND.with(|slot| slot.replace(self.0.take())));
+        }
+    }
+    let previous = TEST_GUEST_COMMAND.with(|slot| slot.replace(Some(Box::new(hook))));
+    let _restore = Restore(previous);
+    run()
+}
+
 /// The dispatch entry the runner calls before its host dispatch.
 ///
 /// `Ok(None)` means this process is not a prepared container-mode guest: the
 /// ordinary host dispatch runs unchanged, and nothing was written. Hybrid mode
 /// always takes this path (§8.10 R1). `cwd` is the directory the command was
 /// invoked from, as the runner captured it.
-pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>, RunnerError> {
+pub(crate) fn guest_command(
+    cmd: &Command,
+    original_args: Option<&[String]>,
+    cwd: &Path,
+) -> Result<Option<String>, RunnerError> {
     // The staged guest probe is executed by the producer inside the created
     // container. It is the guest's own entry, handled by `guest_probe`, so it
     // takes the ordinary dispatch rather than the channel.
     if matches!(cmd, Command::InternalGuestProbe(_)) {
         return Ok(None);
+    }
+    #[cfg(test)]
+    if TEST_GUEST_COMMAND.with(|hook| hook.borrow().is_some()) {
+        let args = invocation_args(cmd, original_args)?;
+        return TEST_GUEST_COMMAND.with(|hook| {
+            hook.borrow_mut()
+                .as_mut()
+                .expect("installed guest I/O override")(cmd, &args, cwd)
+        });
     }
     let mut guest = ContainerGuest;
     let published = match detect(&mut guest)? {
@@ -1777,7 +2097,17 @@ pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>,
         backend: published.document.backend.clone(),
         budget: CHANNEL_OPEN_BUDGET,
     };
-    dispatch_in(cmd, &published, &mut guest, &mut checkout, &mut opener, cwd).map(Some)
+    let args = invocation_args(cmd, original_args)?;
+    dispatch_in(
+        cmd,
+        &args,
+        &published,
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        cwd,
+    )
+    .map(Some)
 }
 
 /// A container-mode guest never runs the host engines locally, so a raw
@@ -1797,3 +2127,17 @@ pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
 #[cfg(test)]
 #[path = "workspace_client/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod level_one_unknown_tests {
+    use super::*;
+
+    #[test]
+    fn level_one_unknown_never_authorizes_a_resend() {
+        let error = ChannelError::unknown("reply lost");
+        assert!(matches!(error, ChannelError::Unknown { .. }));
+        let message = error.into_runner().to_string();
+        assert!(message.contains("independent host CLI"));
+        assert!(!message.contains("retry the same command"));
+    }
+}

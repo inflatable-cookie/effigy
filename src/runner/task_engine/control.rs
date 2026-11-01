@@ -393,10 +393,92 @@ pub(in crate::runner) fn list(
             view.roots
         }
     };
+    list_roots(&cx, roots, omitted, limit)
+}
+
+/// Observe this already-owned checkout with the caller's read budget.
+pub(in crate::runner) fn list_owned(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    limit: usize,
+) -> Result<RunListing, RunnerError> {
+    cx.check("workspace run listing")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    let result = list_roots(cx, vec![root.clone()], Vec::new(), limit)?;
+    cx.check("workspace run listing")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    Ok(result)
+}
+
+/// Read one exact Task run from the already-owned checkout journal.
+pub(in crate::runner) fn status_owned(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    checkout: &str,
+    id: RunId,
+) -> Result<serde_json::Value, RunnerError> {
+    cx.check("workspace run status")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    let reader = match Store::read(cx, root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return Err(unreadable("run is unavailable in this checkout")),
+    };
+    let summary = match effigy_kernel::run::summary(&reader, id) {
+        Observed::Verified(summary, _) => summary,
+        _ => return Err(unreadable("run is unavailable in this checkout")),
+    };
+    let invocation = summary
+        .invocation
+        .as_ref()
+        .ok_or_else(|| unreadable("run scope is unavailable"))?;
+    let owner = &invocation.spec().owner;
+    let same_checkout = matches!(owner.scope(), effigy_kernel::id::Scope::Checkout(scope) if scope.text() == checkout);
+    if owner.kind() != ResourceKind::Task
+        || !same_checkout
+        || invocation.spec().task.checkout().text() != checkout
+    {
+        return Err(unreadable("run is unavailable in this checkout"));
+    }
+    let next = effigy_kernel::outcome::Invocation::validated(
+        vec![
+            "effigy".into(),
+            "runs".into(),
+            "status".into(),
+            id.to_string().into(),
+        ],
+        |_| true,
+    )
+    .map_err(|_| unreadable("run status recovery invocation is invalid"))?;
+    let status = match effigy_kernel::run::status(cx, root, &reader, id, next) {
+        Observed::Verified(effigy_kernel::run::RunStatus::Live(phase), _) => {
+            serde_json::json!({"state":"running", "phase": super::status::phase_name(phase)})
+        }
+        Observed::Verified(effigy_kernel::run::RunStatus::Interrupted { phase, .. }, _) => {
+            serde_json::json!({"state":"interrupted", "phase": super::status::phase_name(phase)})
+        }
+        Observed::Verified(
+            effigy_kernel::run::RunStatus::Closed {
+                workload, complete, ..
+            },
+            _,
+        ) => serde_json::json!({"state":"closed", "workload":workload, "complete":complete}),
+        _ => return Err(unreadable("run status is unavailable")),
+    };
+    cx.check("workspace run status")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    Ok(serde_json::json!({"schema":"effigy.run-status.v1", "run":id.to_string(), "status":status}))
+}
+
+fn list_roots(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    roots: Vec<effigy_kernel::root::StateRoot>,
+    mut omitted: Vec<String>,
+    limit: usize,
+) -> Result<RunListing, RunnerError> {
     let observed_roots = roots.len();
     let mut records = Vec::new();
     for state in roots {
-        match foreground_records(&cx, &state) {
+        match foreground_records(cx, &state) {
             Ok(rows) => records.extend(rows.into_iter().filter(|record| match &record.source {
                 RunSource::Foreground(row) => {
                     row.coordinates.owner.kind() == ResourceKind::Task || row.coordinates.root
@@ -405,7 +487,7 @@ pub(in crate::runner) fn list(
             })),
             Err(reason) => omitted.push(reason),
         }
-        let reader = match Store::read(&cx, &state) {
+        let reader = match Store::read(cx, &state) {
             Observed::Verified(reader, _) => reader,
             Observed::Absent(_) => continue,
             Observed::Unknown(reason) => {
@@ -430,7 +512,7 @@ pub(in crate::runner) fn list(
         };
         records.extend(
             rows.into_iter()
-                .map(|summary| record(&cx, &state, summary))
+                .map(|summary| record(cx, &state, summary))
                 .filter(|record| {
                     record
                         .summary()

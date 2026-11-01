@@ -100,6 +100,8 @@ struct DetachedOperationState {
     active: bool,
     stage: Option<&'static str>,
     preparation_step: Option<&'static str>,
+    /// Workspace preparation diagnostics must not echo backend/secret values.
+    workspace_mode: bool,
     /// The environment and checkout the activation was asked to bring up.
     identity: Option<String>,
 }
@@ -301,13 +303,65 @@ fn run_container_up_inner(
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
+    let workspace_prevalidation =
+        crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?;
+    if workspace_prevalidation.is_some()
+        && (attach || retention != Retention::Persistent || !holders.is_empty())
+    {
+        return Err(RunnerError::task_invocation("workspace activation requires detached persistent ownership; held/attached handoff is unavailable"));
+    }
+    if workspace_prevalidation.is_some() {
+        crate::runner::workspace_client::container_up::require_private_preparation_output()
+            .map_err(|_| RunnerError::task_invocation("workspace private preparation output is unavailable; no preparation or workspace apply was attempted"))?;
+    }
     // `container up` is a Prepare path (contract 020): a checkout whose bundle
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.
     prepare_sources_for_container_up(repo_root)?;
+    // Source refresh may have changed mode. Recheck before policy preparation,
+    // mount creation, secrets, handover or the ordinary reconciler can run.
+    let workspace_prevalidation = match workspace_prevalidation {
+        Some(checked) => {
+            checked.before_policy_preparation(repo_root, name)?;
+            Some(checked)
+        }
+        None => crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?,
+    };
 
+    if workspace_prevalidation.is_some() {
+        // A refreshed source closure can newly declare workspace mode. It
+        // must cross the same capability refusal before policy preparation.
+        crate::runner::workspace_client::container_up::require_private_preparation_output()
+            .map_err(|_| RunnerError::task_invocation("workspace private preparation output is unavailable; no workspace policy preparation or apply was attempted"))?;
+    }
     operation.stage = Some("preparation");
-    let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
+    operation.workspace_mode = workspace_prevalidation.is_some();
+    let mut plan =
+        prepare_container_up(repo_root, name, attach, detach, operation).map_err(|error| {
+            if operation.workspace_mode {
+                RunnerError::task_invocation(
+                    "workspace ordinary preparation failed; no workspace apply was attempted",
+                )
+            } else {
+                error
+            }
+        })?;
+    if let Some(checked) = workspace_prevalidation {
+        let declaration = checked.verify_prepared(&plan.policy)?;
+        operation.stage = Some("workspace_activation");
+        let published = crate::runner::workspace_client::container_up::launch_prepared(
+            &plan.policy,
+            declaration,
+        )?;
+        // The host's acknowledgement is committed and selected. The ordinary
+        // reconciler must never execute a second apply for this activation.
+        return Ok(if output_json {
+            published.json.to_string()
+        } else {
+            published.text
+        });
+    }
+
     // A new bring-up owns its environment's published waits: a record left by
     // an earlier session is never read as this one's (effigy#458). A run that
     // holds this environment published its host graph before this `up` could
@@ -517,7 +571,11 @@ fn prepare_container_up(
                 prepared
             }
             Err(error) => {
-                ports_step.fail(error.to_string());
+                ports_step.fail(if operation.workspace_mode {
+                    "workspace ordinary policy preparation failed".to_owned()
+                } else {
+                    error.to_string()
+                });
                 return Err(error.into());
             }
         };
@@ -3616,6 +3674,239 @@ version = "16"
                 1,
                 "exactly one name-only passthrough per credential: {args:?}"
             );
+        }
+    }
+}
+
+/// Gate-free effects for the reserved workspace owner. This value owns the
+/// frozen policy and all returned exposure handles; it never applies Compose,
+/// opens another environment activation or runs lifecycle cleanup itself.
+pub(in crate::runner) struct WorkspaceUpEffects {
+    target: effigy_kernel::workspace_session::ContainerIdentity,
+    policy: EffectiveContainerPolicy,
+    secrets: ResolvedContainerSecretRuntime,
+    binding: Option<effigy_containers::exec::VerifiedComposeContainer>,
+    health: Option<&'static str>,
+    routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
+    listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
+    listener_failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
+    tcp_alias_notes: Vec<String>,
+    permissions_attempted: bool,
+    secrets_attempted: bool,
+    routes_attempted: bool,
+    host_attempted: bool,
+}
+
+/// Secret values remain in this process, resolved once for both apply and
+/// runtime-file integration. Binding the observed target adds no new secrets.
+pub(in crate::runner) struct WorkspacePreparedEffects {
+    policy: EffectiveContainerPolicy,
+    secrets: ResolvedContainerSecretRuntime,
+}
+
+impl WorkspacePreparedEffects {
+    pub(in crate::runner) fn prepare(
+        policy: EffectiveContainerPolicy,
+    ) -> Result<Self, RunnerError> {
+        let secrets =
+            resolve_container_secret_runtime(&policy.repo_root, &policy, secrets_required())?;
+        Ok(Self { policy, secrets })
+    }
+    pub(in crate::runner) fn compose_env(&self) -> Vec<(String, OsString)> {
+        super::secret_env::compose_env(&self.secrets)
+    }
+    pub(in crate::runner) fn bind(
+        self,
+        target: effigy_kernel::workspace_session::ContainerIdentity,
+    ) -> WorkspaceUpEffects {
+        WorkspaceUpEffects {
+            target,
+            policy: self.policy,
+            secrets: self.secrets,
+            binding: None,
+            health: None,
+            routes: Vec::new(),
+            listeners: Vec::new(),
+            listener_failures: Vec::new(),
+            tcp_alias_notes: Vec::new(),
+            permissions_attempted: false,
+            secrets_attempted: false,
+            routes_attempted: false,
+            host_attempted: false,
+        }
+    }
+}
+
+impl WorkspaceUpEffects {
+    pub(in crate::runner) fn startup_report(
+        &self,
+    ) -> crate::runner::workspace_client::serving_host::ContainerStartupReport {
+        let mut report = up_detached_report(&self.policy, false, self.health);
+        annotate_registered_gateway_routes(&mut report, &self.routes);
+        annotate_managed_host_listeners(&mut report, &self.listeners);
+        annotate_tcp_alias_host_notes(&mut report, &self.tcp_alias_notes);
+        annotate_warning_lines(&mut report, &self.secrets.warnings);
+        crate::runner::workspace_client::serving_host::ContainerStartupReport {
+            json: report.json,
+            text: report.success_text,
+        }
+    }
+
+    fn binding(
+        &self,
+    ) -> Result<&effigy_containers::exec::VerifiedComposeContainer, effigy_kernel::run::RunError>
+    {
+        self.binding.as_ref().ok_or_else(|| {
+            effigy_kernel::run::RunError::refused(
+                "workspace integrations have no verified primary binding",
+            )
+        })
+    }
+}
+
+impl crate::runner::workspace_client::container_up::integrations::IntegrationEffects
+    for WorkspaceUpEffects
+{
+    fn reconcile(
+        &mut self,
+        step: super::workspace_integrations::WorkspaceIntegrationStep,
+        deadline: std::time::Instant,
+    ) -> Result<(), effigy_kernel::run::RunError> {
+        use super::workspace_integrations::WorkspaceIntegrationStep as Step;
+        use effigy_kernel::run::RunError;
+        let failed = |error: RunnerError| {
+            #[cfg(feature = "workspace-serving-fixture")]
+            crate::runner::workspace_client::container_up::fixture_diagnostic(
+                "integration effect failed",
+            );
+            let _ = error;
+            RunError::unavailable("workspace integration effect failed")
+        };
+        if std::time::Instant::now() >= deadline {
+            return Err(RunError::unavailable("integration budget exhausted"));
+        }
+        if step != Step::Readiness {
+            self.binding()?
+                .reverify(&self.policy.repo_root, &self.policy, deadline)
+                .map_err(|_| RunError::unavailable("workspace integration target changed"))?;
+        }
+        let root = &self.policy.repo_root;
+        match step {
+            Step::Readiness => {
+                self.health =
+                    wait_for_container_ready(&self.policy, None, Some(deadline)).map_err(failed)?;
+                if self.health == Some("interrupted") {
+                    return Err(RunError::refused("workspace readiness interrupted"));
+                }
+                self.binding = Some(
+                    crate::runner::container_runtime_prep::ensure_primary_service_binding(
+                        root,
+                        &self.policy,
+                        Some(deadline),
+                    )
+                    .map_err(failed)?,
+                );
+                if self.binding()?.id() != self.target.container_id {
+                    return Err(RunError::refused(
+                        "workspace integration primary target changed",
+                    ));
+                }
+            }
+            Step::Permissions => {
+                self.permissions_attempted = true;
+                crate::runner::workspace_command::ensure_workspace_permissions_ready(
+                    root,
+                    &self.policy,
+                    Some(&self.policy.name),
+                    None,
+                )
+                .map_err(failed)?;
+            }
+            Step::Secrets => {
+                self.secrets_attempted = !self.secrets.env.is_empty()
+                    && self.secrets.delivery
+                        == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles;
+                materialize_container_secret_runtime(
+                    root,
+                    &self.policy,
+                    &self.secrets,
+                    self.binding()?,
+                )
+                .map_err(failed)?;
+            }
+            Step::Routes => {
+                self.routes_attempted =
+                    crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(
+                        &self.policy,
+                    );
+                super::support::ensure_pinned_host_ports_available(
+                    root,
+                    &self.policy,
+                    Some(deadline),
+                )
+                .map_err(failed)?;
+                super::gateway_registration::ensure_gateway_running_for_container(&self.policy)
+                    .map_err(failed)?;
+                self.routes =
+                    super::gateway_registration::register_gateway_routes_for_verified_container(
+                        root,
+                        &self.policy,
+                        Some(self.binding()?),
+                    )
+                    .map_err(failed)?;
+            }
+            Step::HostIntegrations => {
+                self.host_attempted = true;
+                self.tcp_alias_notes = reconcile_primary_service_tcp_alias_hosts(
+                    root,
+                    &self.policy,
+                    self.binding()?,
+                    Some(deadline),
+                )
+                .map_err(failed)?;
+                let report = start_host_processes_for_container(root, &self.policy, Some(deadline))
+                    .map_err(failed)?;
+                self.listeners = report.ready;
+                self.listener_failures = report.failures;
+                if !self.listener_failures.is_empty() {
+                    return Err(RunError::unavailable(
+                        "workspace host listener exposure is incomplete",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn unwind(
+        &mut self,
+        step: super::workspace_integrations::WorkspaceIntegrationStep,
+        cleanup_deadline: std::time::Instant,
+    ) -> Result<(), effigy_kernel::run::RunError> {
+        use super::workspace_integrations::WorkspaceIntegrationStep as Step;
+        use effigy_kernel::run::RunError;
+        if std::time::Instant::now() >= cleanup_deadline {
+            return Err(RunError::unavailable(
+                "workspace integration cleanup budget exhausted",
+            ));
+        }
+        // Readiness changes nothing. A definitely skipped effect has nothing
+        // to withdraw. For attempted mutations the ordinary helpers do not yet
+        // supply exact-effect absence evidence: retain handles/journal instead
+        // of erasing another activation's route, process or secret files.
+        let absent = match step {
+            Step::Readiness => true,
+            Step::Permissions => !self.permissions_attempted,
+            Step::Secrets => !self.secrets_attempted,
+            Step::Routes => !self.routes_attempted,
+            Step::HostIntegrations => !self.host_attempted,
+        };
+        if absent {
+            Ok(())
+        } else {
+            Err(RunError::unavailable(
+                "integration effects unsettled; re-run up",
+            ))
         }
     }
 }

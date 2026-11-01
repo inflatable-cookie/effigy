@@ -77,9 +77,9 @@ use crate::runner::workspace_command::provisioning::reserved_guest::{
 use crate::runner::workspace_command::provisioning::staging::DeadlineGuest;
 use crate::runner::workspace_command::provisioning::{
     bounded_publication_read, held_linux_workspace_effigy_artifact_until, host_user,
-    observed_workspace_container_identity, operator_workspace_until, verify_guest_artifact_bounded,
-    workspace_path_map, workspace_routes, workspace_source_closure, BoundedReadRefusal,
-    LinuxWorkspaceTarget, OperatorWorkspace, WorkspaceSourceClosure,
+    operator_workspace_until, verify_guest_artifact_bounded, workspace_path_map, workspace_routes,
+    workspace_source_closure, BoundedReadRefusal, LinuxWorkspaceTarget, OperatorWorkspace,
+    WorkspaceSourceClosure,
 };
 use crate::runner::workspace_transport::qualification::{Backend, ChannelAliasPlan};
 
@@ -145,6 +145,7 @@ pub(in crate::runner) struct ReservedAddressing {
 pub(in crate::runner) struct VerifiedBinding {
     pub(in crate::runner) container_id: String,
     pub(in crate::runner) selected: BackendSelection,
+    pub(in crate::runner) workload: Option<effigy_containers::environment::Workload>,
 }
 
 impl VerifiedBinding {
@@ -191,10 +192,26 @@ pub(in crate::runner) trait ReservedBackendObservation {
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<VerifiedBinding>;
+    /// A complete primary inventory; absence is distinct from an unavailable read.
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        _selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        match self.binding(policy, deadline) {
+            Observed::Verified(binding, evidence) => Observed::Verified(Some(binding), evidence),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "primary inventory did not prove absence".into(),
+            )),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
+    }
     /// The guest's own boot, machine type and C library in that exact container.
     fn identity(
         &mut self,
         policy: &EffectiveContainerPolicy,
+        selected: &BackendSelection,
         target_id: &str,
         deadline: PublicationDeadline,
     ) -> Observed<WorkspaceContainerIdentity>;
@@ -227,20 +244,118 @@ pub(in crate::runner) trait ReservedBackendObservation {
 /// The production observation: the environment record's backend selection, the
 /// Compose engine's own binding, the guest's `/proc` and loader facts, the
 /// backend's image inspect, and the host's produced artifact.
-#[derive(Debug, Default)]
-pub(in crate::runner) struct ContainerBackendObservation;
+pub(in crate::runner) struct ContainerBackendObservation {
+    prepared: crate::runner::environment::PreparedEnvironmentObservation,
+}
+
+impl ContainerBackendObservation {
+    pub(in crate::runner) fn prepare(
+        policy: &EffectiveContainerPolicy,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self {
+            prepared: crate::runner::environment::PreparedEnvironmentObservation::prepare(policy)?,
+        })
+    }
+}
 
 impl ReservedBackendObservation for ContainerBackendObservation {
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        if deadline.remaining().is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "primary inventory".into(),
+            });
+        }
+        let rows = match effigy_containers::exec::decision_project_inventory(
+            &policy.repo_root,
+            policy,
+            selected,
+            deadline.at(),
+        ) {
+            Ok(rows) => rows,
+            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        };
+        let project_empty = rows.is_empty();
+        let primary: Vec<_> = rows
+            .into_iter()
+            .filter(|row| {
+                !row.oneoff && row.service.as_deref() == Some(policy.primary_service.as_str())
+            })
+            .collect();
+        if deadline.remaining().is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "primary inventory".into(),
+            });
+        }
+        if primary.is_empty() {
+            return if project_empty {
+                Observed::Verified(None, evidence())
+            } else {
+                Observed::Unknown(UnknownReason::Inconsistent(
+                    "sibling-only inventory does not prove primary absence".into(),
+                ))
+            };
+        }
+        if primary.len() != 1 {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "ambiguous primary inventory".into(),
+            ));
+        }
+        if !effigy_containers::exec::compose_status_is_running(&primary[0].status) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "primary container state is not running".into(),
+            ));
+        }
+        let inventory = match selected.adapter().inventory_until(
+            &policy.repo_root,
+            &policy.project_name,
+            deadline.at(),
+        ) {
+            Observed::Verified(rows, _) => rows,
+            Observed::Absent(_) => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "primary identity inventory is absent".into(),
+                ))
+            }
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        };
+        let named: Vec<_> = inventory
+            .iter()
+            .filter(|row| row.name == primary[0].container_name)
+            .collect();
+        let [row] = named.as_slice() else {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "primary changed during ownership inspection".into(),
+            ));
+        };
+        match verify_pinned_primary(
+            self.prepared.state_root(),
+            self.prepared.checkout_id(),
+            policy,
+            selected,
+            row,
+        ) {
+            Ok(binding) if deadline.remaining().is_ok() => {
+                Observed::Verified(Some(binding), evidence())
+            }
+            Ok(_) => Observed::Unknown(UnknownReason::TimedOut {
+                phase: "primary ownership".into(),
+            }),
+            Err(reason) => Observed::Unknown(UnknownReason::Inconsistent(reason)),
+        }
+    }
     fn selection(
         &mut self,
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<BackendSelection> {
-        // The record's own answer, with an unreadable record or recorded backend
-        // kept `Unknown` instead of collapsing into the policy default. Reading it
-        // establishes (and may write) the checkout token and reads the store, so
-        // it runs on the publication's bounded worker.
-        observed_backend_bounded(policy, deadline)
+        // Keep unreadable records and recorded backends `Unknown`. The prepared
+        // checkout and root were established before the bounded reader starts.
+        observed_backend_bounded(&self.prepared, policy, deadline)
     }
 
     fn addressing(
@@ -358,7 +473,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         );
         match bound {
             Ok(container) => {
-                let selected = observed_backend_bounded(policy, deadline);
+                let selected = observed_backend_bounded(&self.prepared, policy, deadline);
                 // The whole selection, not just its engine: two Colima profiles
                 // or two Docker contexts share an engine while naming different
                 // backends, so only the full value fences the planned profile.
@@ -375,6 +490,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                     VerifiedBinding {
                         container_id: container.id().to_owned(),
                         selected,
+                        workload: None,
                     },
                     evidence(),
                 )
@@ -385,13 +501,14 @@ impl ReservedBackendObservation for ContainerBackendObservation {
 
     fn identity(
         &mut self,
-        policy: &EffectiveContainerPolicy,
+        _policy: &EffectiveContainerPolicy,
+        selected: &BackendSelection,
         target_id: &str,
         deadline: PublicationDeadline,
     ) -> Observed<WorkspaceContainerIdentity> {
-        match observed_workspace_container_identity(
-            policy.repo_root.as_path(),
-            policy,
+        match crate::runner::workspace_command::provisioning::observed_identity_on_backend(
+            self.prepared.state_root(),
+            selected,
             target_id,
             deadline.at(),
         ) {
@@ -453,6 +570,64 @@ impl ReservedBackendObservation for ContainerBackendObservation {
     }
 }
 
+fn verify_pinned_primary(
+    root: &effigy_kernel::root::StateRoot,
+    checkout: effigy_kernel::id::CheckoutId,
+    policy: &EffectiveContainerPolicy,
+    selected: &BackendSelection,
+    row: &effigy_containers::environment::Workload,
+) -> Result<VerifiedBinding, String> {
+    use effigy_kernel::id::CheckoutKind;
+    let label = |name: &str| row.labels.get(name).map(String::as_str);
+    if row.id.len() != 64
+        || !row
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        || !row.running
+        || label("com.docker.compose.project") != Some(policy.project_name.as_str())
+        || label("com.docker.compose.service") != Some(policy.primary_service.as_str())
+        || !label("com.docker.compose.oneoff")
+            .is_some_and(|value| value.eq_ignore_ascii_case("false"))
+    {
+        return Err("primary identity, project, service or one-off status is unproved".into());
+    }
+    let scope = label("com.effigy.scope");
+    let checkout_path = match checkout.kind() {
+        CheckoutKind::LinkedWorktree | CheckoutKind::EphemeralClone => {
+            let expected: String = checkout
+                .token()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            if !scope.is_some_and(|value| value.eq_ignore_ascii_case(&expected)) {
+                return Err("primary scope differs from the retained checkout".into());
+            }
+            label("com.effigy.checkout")
+        }
+        CheckoutKind::Primary if scope.is_none() => {
+            label("com.docker.compose.project.working_dir").or_else(|| label("com.effigy.checkout"))
+        }
+        _ => return Err("primary checkout kind or scope is unproved".into()),
+    }
+    .ok_or_else(|| "primary checkout label is unavailable".to_owned())?;
+    let labelled = effigy_kernel::fs::DirFd::open(std::path::Path::new(checkout_path))
+        .map_err(|error| error.to_string())?;
+    if labelled.identity().map_err(|error| error.to_string())?
+        != root
+            .owning_directory()
+            .identity()
+            .map_err(|error| error.to_string())?
+    {
+        return Err("primary checkout differs from the retained directory".into());
+    }
+    Ok(VerifiedBinding {
+        container_id: row.id.clone(),
+        selected: selected.clone(),
+        workload: Some(row.clone()),
+    })
+}
+
 /// Builds the production probe for the exact target a publication verified.
 ///
 /// The probe's own constructor needs the target (container id and boot), which
@@ -468,7 +643,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
 /// therefore injects the read, receives the same one absolute deadline, and the
 /// producer compares it against the frozen decision.
 pub(in crate::runner) type ReservedReobserver<'a> = Box<
-    dyn FnOnce(
+    dyn FnMut(
             std::time::Instant,
         )
             -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError>
@@ -480,46 +655,21 @@ pub(in crate::runner) type ReservedProbeFactory<'a> =
 
 /// The admitted backend selection, read on the publication's bounded worker.
 ///
-/// Reading it establishes the checkout's identity token (a write) and resolves the
-/// environment, then reads the record, so a stalled filesystem cannot hold the
-/// publication past its deadline.
+/// The prepared handle pins the checkout and environment before this worker
+/// starts, so a late worker cannot allocate an identity or open an effects root.
 pub(in crate::runner) fn observed_backend_bounded(
+    prepared: &crate::runner::environment::PreparedEnvironmentObservation,
     policy: &EffectiveContainerPolicy,
     deadline: PublicationDeadline,
 ) -> Observed<BackendSelection> {
     let owned = policy.clone();
+    let prepared = prepared.clone();
     match bounded_publication_read("workspace-backend-record", deadline.at(), move || {
-        Ok(crate::runner::environment::observed_backend(
-            owned.repo_root.as_path(),
-            &owned,
-            deadline.at(),
-        ))
+        Ok(prepared.backend(&owned, deadline.at()))
     }) {
         Ok(observed) => observed,
         Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
             phase: "workspace backend record".into(),
-        }),
-        Err(BoundedReadRefusal::Unavailable(reason)) => {
-            Observed::Unknown(UnknownReason::Inconsistent(reason))
-        }
-    }
-}
-
-/// The environment record, read on the publication's bounded worker.
-fn environment_record_bounded(
-    policy: &EffectiveContainerPolicy,
-    deadline: PublicationDeadline,
-) -> Observed<effigy_containers::environment::EnvRecord> {
-    let owned = policy.clone();
-    match bounded_publication_read("workspace-environment-record", deadline.at(), move || {
-        Ok(crate::runner::environment::record_until(
-            &owned,
-            deadline.at(),
-        ))
-    }) {
-        Ok(observed) => observed,
-        Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
-            phase: "workspace environment record".into(),
         }),
         Err(BoundedReadRefusal::Unavailable(reason)) => {
             Observed::Unknown(UnknownReason::Inconsistent(reason))
@@ -688,6 +838,239 @@ impl ReservedPublicationPlan {
     }
 }
 
+/// Observe the primary for a decision. The caller must invoke this while the
+/// kernel decision holds the environment gate. All reads share the plan budget.
+pub(in crate::runner) fn observe_decision_target(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<TargetEvidence, EnvError> {
+    observe_decision_target_with_binding(plan, observation).map(|(target, _)| target)
+}
+
+fn observe_decision_target_with_binding(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<(TargetEvidence, Option<VerifiedBinding>), EnvError> {
+    let deadline = plan.deadline;
+    deadline.remaining()?;
+    let selected = verified(
+        observation.selection(&plan.policy, deadline),
+        "decision backend",
+    )?;
+    if selected != plan.selected {
+        return Err(refused("decision backend differs from the frozen plan"));
+    }
+    let primary = verified(
+        observation.primary(&plan.policy, &plan.selected, deadline),
+        "decision primary inventory",
+    )?;
+    let mut retained = None;
+    let target = match primary {
+        None => TargetEvidence::Absent {
+            project: plan.policy.project_name.clone(),
+            backend: plan.backend_label.clone(),
+        },
+        Some(binding) => {
+            if binding.selected != plan.selected {
+                return Err(refused("primary backend differs from the frozen plan"));
+            }
+            let identity = verified(
+                observation.identity(
+                    &plan.policy,
+                    &plan.selected,
+                    &binding.container_id,
+                    deadline,
+                ),
+                "decision guest identity",
+            )?;
+            if identity.container_id.len() != 64
+                || !identity
+                    .container_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+                || identity.container_id != binding.container_id
+                || identity.vm_boot_id.trim().is_empty()
+                || identity.vm_boot_id.contains('\0')
+            {
+                return Err(refused(
+                    "decision guest identity differs from the verified primary",
+                ));
+            }
+            let target = TargetEvidence::Observed(ContainerIdentity {
+                container_id: identity.container_id,
+                vm_boot_id: identity.vm_boot_id,
+                backend: plan.backend_label.clone(),
+            });
+            retained = Some(binding);
+            target
+        }
+    };
+    let fresh = verified(
+        observation.primary(&plan.policy, &plan.selected, deadline),
+        "decision primary recheck",
+    )?;
+    match (&target, fresh) {
+        (TargetEvidence::Absent { .. }, None) => {}
+        (TargetEvidence::Observed(identity), Some(binding))
+            if binding.container_id == identity.container_id
+                && binding.selected == plan.selected
+                && retained
+                    .as_ref()
+                    .is_some_and(|prior| prior.workload == binding.workload) =>
+        {
+            let repeated = verified(
+                observation.identity(
+                    &plan.policy,
+                    &plan.selected,
+                    &binding.container_id,
+                    deadline,
+                ),
+                "decision guest identity recheck",
+            )?;
+            if repeated.container_id != identity.container_id
+                || repeated.vm_boot_id != identity.vm_boot_id
+            {
+                return Err(refused(
+                    "primary guest identity changed during decision observation",
+                ));
+            }
+        }
+        _ => return Err(refused("primary changed during decision observation")),
+    }
+    let selected = verified(
+        observation.selection(&plan.policy, deadline),
+        "decision backend recheck",
+    )?;
+    if selected != plan.selected {
+        return Err(refused("decision backend changed during observation"));
+    }
+    deadline.remaining()?;
+    Ok((target, retained))
+}
+
+/// Reobserve the target and its artifact using the same frozen plan. The
+/// caller must hold the decision Env gate throughout this operation.
+pub(in crate::runner) fn observe_decision_inputs(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+    preflight: &effigy_containers::environment::CreationPreflight,
+    root: &effigy_kernel::root::StateRoot,
+    environment: &effigy_containers::environment::EnvRef,
+    observe: &effigy_kernel::ctx::ObserveContext,
+) -> Result<PublishInputs, EnvError> {
+    let (target, binding) = observe_decision_target_with_binding(plan, observation)?;
+    let artifact = observe_decision_artifact(
+        plan,
+        preflight,
+        &target,
+        binding.as_ref(),
+        root,
+        environment,
+        observe,
+    )?;
+    plan.publish_inputs(artifact, target)
+}
+
+/// Resolve artifact evidence from the frozen preflight or the committed
+/// publication. The caller holds the decision gate through this read.
+pub(in crate::runner) fn observe_decision_artifact(
+    plan: &ReservedPublicationPlan,
+    preflight: &effigy_containers::environment::CreationPreflight,
+    target: &TargetEvidence,
+    binding: Option<&VerifiedBinding>,
+    root: &effigy_kernel::root::StateRoot,
+    environment: &effigy_containers::environment::EnvRef,
+    observe: &effigy_kernel::ctx::ObserveContext,
+) -> Result<ArtifactEvidence, EnvError> {
+    use effigy_containers::environment::{Retention, Up};
+    plan.deadline.remaining()?;
+    if environment.resource.name().to_string() != plan.guest.environment_resource {
+        return Err(refused("artifact environment differs from the frozen plan"));
+    }
+    let policy = &plan.policy;
+    let mut request = Up {
+        render: policy.render.as_ref().map(|render| &render.closure),
+        project: &policy.project_name,
+        backend: &plan.selected,
+        retention: Retention::Persistent,
+        workdir: &policy.repo_root,
+        primary_service: &policy.primary_service,
+        compose_files: &policy.compose_files,
+    }
+    .creation_request();
+    request.deadline = plan.deadline.at();
+    let reference = preflight
+        .primary_image_reference(request, plan.selected.adapter().as_mut())
+        .map_err(|error| unavailable(format!("primary image preflight: {error}")))?;
+    let artifact = match target {
+        TargetEvidence::Absent { project, backend }
+            if project == &policy.project_name && backend == &plan.backend_label =>
+        {
+            ArtifactEvidence::Unselected {
+                image_reference: reference.to_owned(),
+                backend: backend.clone(),
+            }
+        }
+        TargetEvidence::Observed(identity) => {
+            let binding = binding
+                .filter(|binding| {
+                    binding.container_id == identity.container_id
+                        && binding.selected == plan.selected
+                })
+                .ok_or_else(|| refused("artifact has no exact pinned primary binding"))?;
+            let workload = binding
+                .workload
+                .as_ref()
+                .ok_or_else(|| unavailable("pinned primary image inventory is unavailable"))?;
+            let image = preflight
+                .reobserve_attached_primary(plan.selected.adapter().as_mut(), request, workload)
+                .map_err(|error| unavailable(format!("attached primary image: {error}")))?;
+            if image.container_id() != identity.container_id
+                || image.engine() != plan.backend_label
+                || image.context() != plan.selected.context
+            {
+                return Err(refused(
+                    "attached image differs from the selected backend and primary",
+                ));
+            }
+            let reader = verified(
+                effigy_kernel::store::Store::read(observe, root),
+                "committed publication journal",
+            )?;
+            let obligation = verified(
+                effigy_kernel::workspace_session::committed_selection(
+                    &reader,
+                    &environment.resource,
+                ),
+                "committed publication",
+            )?
+            .ok_or_else(|| refused("no committed publication names the observed primary"))?;
+            let receipt = obligation.receipt();
+            let publication = &receipt.publication().publication;
+            if obligation.state() != effigy_kernel::workspace_session::SelectionState::Switched
+                || publication.container_id != identity.container_id
+                || publication.vm_boot_id != identity.vm_boot_id
+                || receipt.selection().backend != identity.backend
+                || identity.backend != plan.backend_label
+                || receipt.selection_digest() != &plan.selection
+            {
+                return Err(refused(
+                    "committed artifact differs from the observed primary or frozen selection",
+                ));
+            }
+            // Checkout identity is still checked by reopening a pathname before
+            // and after the guest probe. A replacement and restoration between
+            // those checks is not excluded, so this is not yet selected evidence.
+            return Err(unavailable(
+                "descriptor-pinned checkout identity is unavailable for the guest probe",
+            ));
+        }
+        _ => return Err(refused("artifact target differs from the frozen plan")),
+    };
+    plan.deadline.remaining()?;
+    Ok(artifact)
+}
+
 /// Plan the publication from the backend and the host's provisioning records.
 ///
 /// `Ok(None)` is a hybrid environment: it declares no operator workspace, so it
@@ -741,12 +1124,15 @@ pub(in crate::runner) fn plan(
     // interrupted once started, so the whole local sequence runs on one bounded
     // worker and the publication reports it unknown at its deadline instead of
     // blocking past the one budget it declared.
+    // Identity allocation must complete before the abandonable read worker.
+    let environment = crate::runner::environment::env_ref(policy).map_err(io)?;
+    deadline.remaining()?;
     let local = match bounded_publication_read("workspace-plan-local", deadline.at(), {
         let policy = policy.clone();
         let workspace = workspace.clone();
         let alias = alias.clone();
         let selected = selected.clone();
-        move || plan_local(&policy, &workspace, &alias, &selected)
+        move || plan_local(&policy, &workspace, &alias, &selected, &environment)
     }) {
         Ok(local) => local,
         Err(BoundedReadRefusal::TimedOut) => {
@@ -918,6 +1304,7 @@ fn plan_local(
     workspace: &OperatorWorkspace,
     alias: &ChannelAliasPlan,
     selected: &BackendSelection,
+    environment: &effigy_containers::environment::EnvRef,
 ) -> Result<PlannedLocal, RunnerError> {
     // The apply must be handed the policy that carries this alias; the alias
     // render is in-memory and creates no container and no network.
@@ -935,7 +1322,7 @@ fn plan_local(
         })?;
     let paths = workspace_path_map(rendered.repo_root.as_path(), workspace)?;
     let closure = workspace_source_closure(rendered.repo_root.as_path(), &paths)?;
-    let guest = environment_materialisation(&rendered, selected, paths, &closure)?;
+    let guest = environment_materialisation(&rendered, selected, paths, &closure, environment)?;
     let backend_label = selected.engine.as_str().to_owned();
     let canonical = |value: &serde_json::Value| {
         serde_json::to_vec(value).map_err(|error| {
@@ -983,20 +1370,14 @@ fn environment_materialisation(
     selected: &BackendSelection,
     paths: WorkspacePathMap,
     closure: &WorkspaceSourceClosure,
+    environment: &effigy_containers::environment::EnvRef,
 ) -> Result<GuestContextInputs, RunnerError> {
     let guest = GuestContextInputs {
         version: effigy_core::build_info::active_version(),
         protocol: CHANNEL_PROTOCOL_VERSION,
         host_user: host_user(),
-        checkout_id: crate::runner::task_engine::checkout::mint(policy.repo_root.as_path())?
-            .text()
-            .to_owned(),
-        // The kernel compares the canonical resource name, not a display label
-        // such as `env:web`. Resolve it through the same environment owner.
-        environment_resource: crate::runner::environment::env_ref(policy)?
-            .resource
-            .name()
-            .to_string(),
+        checkout_id: environment.checkout.text().to_owned(),
+        environment_resource: environment.resource.name().to_string(),
         profile: selected.context.clone(),
         runtime: None,
         vm_type: None,
@@ -1161,25 +1542,22 @@ impl<'a> PreparedReservedPublication<'a> {
     }
 }
 
-/// Observe the exact target and build the producer's input.
-///
-/// `policy` is the caller's own [`ReservedPublicationPlan::rendered_policy`] copy:
-/// it must be the plan's exact render (checked here), and it is what the guest the
-/// producer stages through borrows.
-///
-/// Every fact is derived from the plan, the host's verified binding, the
-/// backend's image inspect, the guest's own report in that binding and the
-/// artifact's producer receipt. The frozen decision evidence is the guard: a
-/// target the decision did not name refuses before anything is staged, so a
-/// raced or replaced container is never published into.
-pub(in crate::runner) fn observe<'a>(
+struct FreshReservedEvidence {
+    artifact: PathBuf,
+    binary: crate::runner::workspace_client::context::GuestBinaryIdentity,
+    identity: WorkspaceContainerIdentity,
+    target: TargetCandidate,
+    platform: BoundPlatform,
+}
+
+/// Perform the read-only observation under the caller's activation Env gate.
+fn read_reserved_evidence(
     request: ReservedObservationRequest<'_>,
     plan: &ReservedPublicationPlan,
-    policy: &'a EffectiveContainerPolicy,
-    probe: &ReservedProbeFactory<'a>,
+    policy: &EffectiveContainerPolicy,
     facts: &ReservedDecisionFacts,
-    observation: &'a mut dyn ReservedBackendObservation,
-) -> Result<PreparedReservedPublication<'a>, EnvError> {
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<FreshReservedEvidence, EnvError> {
     let deadline = plan.deadline;
     if policy.render.as_ref().map(|render| render.closure.digest())
         != Some(plan.render_digest.as_str())
@@ -1195,11 +1573,10 @@ pub(in crate::runner) fn observe<'a>(
     }
     let ReservedDecisionFacts {
         inputs,
-        reservation_generation,
+        reservation_generation: _,
         created_by,
         creation,
     } = facts;
-    let reservation_generation = *reservation_generation;
     // The decision must be this plan's decision: another plan's frozen
     // materialisation, selection or inputs would publish bytes the decision
     // never compared.
@@ -1237,7 +1614,7 @@ pub(in crate::runner) fn observe<'a>(
     }
     deadline.remaining()?;
     let identity = verified(
-        observation.identity(policy, &binding.container_id, deadline),
+        observation.identity(policy, &plan.selected, &binding.container_id, deadline),
         "workspace guest identity",
     )?;
     // The guest read the container the host bound, not a replacement the service
@@ -1348,6 +1725,59 @@ pub(in crate::runner) fn observe<'a>(
         artifact_version: binary.version.clone(),
         execution_available,
     };
+    Ok(FreshReservedEvidence {
+        artifact,
+        binary,
+        identity,
+        target: TargetCandidate {
+            identity: target,
+            project: plan.policy.project_name.clone(),
+            created_by,
+        },
+        platform: binding_facts,
+    })
+}
+
+/// Independently re-read target, creator, platform and artifact without staging or minting.
+pub(in crate::runner) fn reobserve_reserved(
+    request: ReservedObservationRequest<'_>,
+    plan: &ReservedPublicationPlan,
+    policy: &EffectiveContainerPolicy,
+    facts: &ReservedDecisionFacts,
+    observation: &mut dyn ReservedBackendObservation,
+    deadline: Instant,
+) -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError> {
+    if deadline != plan.deadline.at() {
+        return Err(refused(
+            "workspace reobservation deadline differs from its frozen plan",
+        ));
+    }
+    let fresh = read_reserved_evidence(request, plan, policy, facts, observation)?;
+    plan.deadline.remaining()?;
+    Ok((
+        Observed::Verified(vec![fresh.target], evidence()),
+        Observed::Verified(fresh.platform, evidence()),
+    ))
+}
+
+pub(in crate::runner) fn observe<'a>(
+    request: ReservedObservationRequest<'_>,
+    plan: &ReservedPublicationPlan,
+    policy: &'a EffectiveContainerPolicy,
+    probe: &ReservedProbeFactory<'a>,
+    facts: &ReservedDecisionFacts,
+    observation: &'a mut dyn ReservedBackendObservation,
+) -> Result<PreparedReservedPublication<'a>, EnvError> {
+    let deadline = plan.deadline;
+    let FreshReservedEvidence {
+        artifact,
+        binary,
+        identity,
+        target: candidate,
+        platform: binding_facts,
+    } = read_reserved_evidence(request, plan, policy, facts, observation)?;
+    let target = candidate.identity.clone();
+    let reservation_generation = facts.reservation_generation;
     // The same frozen materialisation the decision recorded, with the identity
     // this observation just proved.
     let context = WorkspaceContextInput {
@@ -1390,11 +1820,7 @@ pub(in crate::runner) fn observe<'a>(
     Ok(PreparedReservedPublication {
         guest,
         artifact,
-        targets: vec![TargetCandidate {
-            identity: target.clone(),
-            project: plan.policy.project_name.clone(),
-            created_by,
-        }],
+        targets: vec![candidate],
         platform: binding_facts,
         alias: plan.alias.clone(),
         context,

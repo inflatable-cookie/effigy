@@ -2044,27 +2044,75 @@ impl ComposeWorkspaceGuest<'_> {
     }
 }
 
-/// The boot, machine type and C library one exact verified target reports about
-/// itself, read through the bounded Compose guest adapter.
-///
-/// The caller supplies the full id the host verified and the publication's one
-/// absolute deadline; nothing else is inferred here. The machine type and loader
-/// this returns are the guest's own diagnostic report, used for the target's
-/// identity fence and its loader family, never for the image's platform.
-pub(in crate::runner) fn observed_workspace_container_identity(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
+/// Read guest-local identity through the selected backend and exact full ID.
+/// This does not re-resolve a Compose service or select a backend from a path.
+pub(in crate::runner) fn observed_identity_on_backend(
+    root: &effigy_kernel::root::StateRoot,
+    selected: &effigy_containers::environment::BackendSelection,
     target_id: &str,
     deadline: std::time::Instant,
 ) -> Result<WorkspaceContainerIdentity, RunnerError> {
-    let mut budget = BoundedCommandBudget::new(
-        std::time::Instant::now(),
+    if target_id.len() != 64
+        || !target_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(RunnerError::task_invocation(
+            "guest identity needs an exact full container id",
+        ));
+    }
+    let checkout = root.owning_directory();
+    let expected = checkout
+        .identity()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let check = || -> Result<(), RunnerError> {
+        let current = effigy_kernel::fs::DirFd::open(checkout.path())
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        if current
+            .identity()
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+            != expected
+        {
+            return Err(RunnerError::task_invocation(
+                "workspace checkout identity changed",
+            ));
+        }
+        Ok(())
+    };
+    check()?;
+    let script = "printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
+                  printf 'platform=%s\\n' \"$(uname -m)\"\n\
+                  printf 'libc_musl=%s\\n' \"$(ls /lib/ld-musl-*.so.1 2>/dev/null | head -n1)\"\n\
+                  printf 'libc_glibc=%s\\n' \"$(ls /lib/*-linux-gnu*/libc.so.6 /lib/libc.so.6 /lib64/libc.so.6 2>/dev/null | head -n1)\"";
+    let args = ["exec", target_id, "sh", "-lc", script].map(OsString::from);
+    let (program, args) = selected
+        .compose_invocation(&args)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let output = effigy_containers::exec::run_backend_invocation_until(
+        checkout.path(),
+        &program,
+        &args,
+        "workspace guest identity",
+        &[],
         deadline,
-        WORKSPACE_IDENTITY_STDOUT_BYTES,
-        WORKSPACE_IDENTITY_STDERR_BYTES,
-    );
-    let mut guest = ComposeWorkspaceGuest::bounded(repo_root, policy, target_id, &mut budget);
-    guest.probe_container_identity()
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if output.stdout.len() as u64 > WORKSPACE_IDENTITY_STDOUT_BYTES
+        || output.stderr.len() as u64 > WORKSPACE_IDENTITY_STDERR_BYTES
+    {
+        return Err(RunnerError::task_invocation(
+            "workspace guest identity output exceeds its capture budget",
+        ));
+    }
+    check()?;
+    if std::time::Instant::now() >= deadline {
+        return Err(RunnerError::task_invocation(
+            "workspace guest identity deadline expired",
+        ));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| RunnerError::task_invocation("workspace guest identity is not UTF-8"))?;
+    parse_container_identity(text, target_id)
 }
 
 /// Combine a probe taken through an exact target exec with the host-verified

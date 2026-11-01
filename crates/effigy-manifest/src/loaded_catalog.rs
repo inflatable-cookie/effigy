@@ -41,6 +41,9 @@ pub struct LoadedCatalog {
     pub manifest_path: PathBuf,
     pub bundle_root: Option<PathBuf>,
     pub manifest: TaskManifest,
+    /// Digest of the effective composed value used to parse this catalog.
+    /// Synthetic catalogs and readers without composition evidence use None.
+    pub effective_digest: Option<effigy_kernel::id::Digest>,
     pub defer_run: Option<String>,
     pub deferred_builtins: BTreeSet<String>,
     pub depth: usize,
@@ -66,6 +69,7 @@ impl LoadedCatalog {
             catalog_root,
             bundle_root: None,
             manifest,
+            effective_digest: None,
             defer_run: None,
             deferred_builtins: BTreeSet::new(),
             depth,

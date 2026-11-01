@@ -24,8 +24,9 @@ mod spawn_env;
 mod status;
 
 pub(in crate::runner) use control::{
-    effects_in as run_effects, list as list_runs, lookup_checkout, read_log as read_run_log,
-    request_stop, resolve_in, signal_owner, Lookup, RunRecord, StopStarted, POLL as RUN_POLL,
+    effects_in as run_effects, list as list_runs, list_owned as list_owned_runs, lookup_checkout,
+    read_log as read_run_log, request_stop, resolve_in, signal_owner,
+    status_owned as status_owned_run, Lookup, RunRecord, StopStarted, POLL as RUN_POLL,
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
@@ -39,6 +40,7 @@ pub(in crate::runner) use process::{
 pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
 pub(in crate::runner) use run::{
     resolve_lock_wait_ms, resolve_lock_wait_ms_or, RunKey, TaskRun, TaskRunRequest,
+    WorkspaceAdmission, MANAGED_RUN_PROVENANCE,
 };
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,

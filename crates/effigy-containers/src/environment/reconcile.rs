@@ -169,6 +169,20 @@ impl<'r> EnvContext<'r> {
         })
     }
 
+    /// A child operation that cannot outlive a workspace publication budget.
+    pub fn bounded_until(&self, deadline: Instant) -> Result<Self, EnvError> {
+        if Instant::now() >= deadline {
+            return Err(EnvError::Kernel(RunError::unavailable(
+                "workspace publication deadline expired",
+            )));
+        }
+        Ok(Self {
+            root: self.root,
+            cx: self.cx.child_until(deadline),
+            cleanup_budget: self.cleanup_budget,
+        })
+    }
+
     /// A fresh bounded cleanup context, made when the settlement that uses it
     /// starts. Each admission, holder settlement and run settle takes its own,
     /// so activation time can never spend it (effigy#447).
@@ -585,7 +599,387 @@ pub struct EnvRun<'r> {
     step: Step,
 }
 
+/// The exact environment run and its progress state while Env is free or
+/// while its reacquired gate is awaiting validated evidence.
+#[derive(Debug)]
+pub struct ParkedEnvRun<'r> {
+    gate: ParkedEnvGate<'r>,
+    parts: ParkedEnvParts<'r>,
+}
+
+pub(super) struct EnvAdmissionFailure<'r> {
+    pub error: EnvError,
+    pub owner: Option<EnvAdmissionOwner<'r>>,
+}
+
+pub(super) enum EnvAdmissionOwner<'r> {
+    Run(Box<Run<'r>>),
+    Guarded(Box<effigy_kernel::run::GuardedWorkspaceCleanup<'r>>),
+}
+
+impl From<EnvError> for EnvAdmissionFailure<'_> {
+    fn from(error: EnvError) -> Self {
+        Self { error, owner: None }
+    }
+}
+
+#[derive(Debug)]
+enum ParkedEnvGate<'r> {
+    Parked(Box<effigy_kernel::run::ParkedWorkspaceRun<'r>>),
+    Guarded(Box<effigy_kernel::run::ReacquiredWorkspaceRun<'r>>),
+}
+
+#[derive(Debug)]
+struct ParkedEnvParts<'r> {
+    cx: EffectContext,
+    root: &'r StateRoot,
+    env: EnvRef,
+    cleanup_budget: Duration,
+    began: EnvRecord,
+    published: bool,
+    failed: bool,
+    transitioned: bool,
+    progress: ProgressSource,
+    step: Step,
+    receipt: super::CreationReceipt,
+    target: effigy_kernel::workspace_session::ContainerIdentity,
+    plan: effigy_kernel::workspace_session::ActivationPlan,
+}
+
+impl<'r> ParkedEnvRun<'r> {
+    pub(super) fn repark(self) -> Result<Self, (EnvError, Box<Self>)> {
+        let Self { gate, parts } = self;
+        match gate {
+            ParkedEnvGate::Parked(run) => Ok(Self {
+                gate: ParkedEnvGate::Parked(run),
+                parts,
+            }),
+            ParkedEnvGate::Guarded(run) => match run.repark() {
+                Ok(run) => Ok(Self {
+                    gate: ParkedEnvGate::Parked(Box::new(run)),
+                    parts,
+                }),
+                Err((error, run)) => Err((
+                    EnvError::Kernel(error),
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(run),
+                        parts,
+                    }),
+                )),
+            },
+        }
+    }
+
+    pub(super) fn integration_snapshot(
+        &self,
+        session: &Run<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        let cleanup = cleanup(&self.parts.cx, self.parts.cleanup_budget)?;
+        let cx = cleanup.operation().effects().map_err(|error| {
+            EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+        })?;
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => run
+                .integration_snapshot(session, &cx)
+                .map_err(EnvError::Kernel),
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
+    pub(super) fn record_integration_step(
+        &self,
+        session: &mut Run<'_>,
+        cx: &EffectContext,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+        state: effigy_kernel::run::WorkspaceIntegrationState,
+    ) -> Result<(), EnvError> {
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => run
+                .record_integration_step(session, cx, step, state)
+                .map_err(EnvError::Kernel),
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
+    pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
+        std::ptr::eq(self.parts.root, root)
+    }
+
+    pub(super) fn settle(
+        self,
+        cleanup: &CleanupContext,
+    ) -> Result<CleanupOutcome, (EnvError, effigy_kernel::run::WorkspaceCleanupCustody<'r>)> {
+        use effigy_kernel::run::WorkspaceCleanupCustody;
+        match self.gate {
+            ParkedEnvGate::Parked(run) => run.settle(cleanup, &mut EnvSettlement),
+            ParkedEnvGate::Guarded(run) => run
+                .settle(cleanup, &mut EnvSettlement)
+                .map_err(|(error, custody)| (error, WorkspaceCleanupCustody::Guarded(custody))),
+        }
+        .map(|outcome| outcome.cleanup())
+        .map_err(|(error, custody)| (EnvError::Kernel(error), custody))
+    }
+
+    pub(super) fn reacquire(
+        self,
+        session: &Run<'_>,
+        backend: &mut dyn super::EnvironmentBackend,
+        observe: impl FnOnce(
+            &effigy_kernel::run::WorkspaceResumeView<'_>,
+            Instant,
+            &mut dyn super::EnvironmentBackend,
+        ) -> Observed<effigy_kernel::run::WorkspaceResumeFacts>,
+    ) -> Result<EnvRun<'r>, (EnvError, Box<Self>)> {
+        let Self { gate, parts } = self;
+        let guarded = match gate {
+            ParkedEnvGate::Parked(run) => match run.reacquire() {
+                Ok(guarded) => Box::new(guarded),
+                Err((error, parked)) => {
+                    return Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self {
+                            gate: ParkedEnvGate::Parked(parked),
+                            parts,
+                        }),
+                    ))
+                }
+            },
+            ParkedEnvGate::Guarded(guarded) => guarded,
+        };
+        let observation = (|| -> Result<_, EnvError> {
+            let view = guarded.view().map_err(EnvError::Kernel)?;
+            let facts = view.facts();
+            let mut ids = parts
+                .receipt
+                .created_ids()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            ids.sort();
+            if facts.target != parts.target
+                || facts.session != *parts.plan.binding()
+                || parts.plan.environment_run() != Some(facts.environment_run)
+                || facts.reservation != parts.plan.reservation_id()
+                || facts.environment != *parts.plan.environment()
+                || facts.environment_generation != parts.plan.environment_generation()
+                || facts.created_ids != ids
+            {
+                return Err(EnvError::Invalid(
+                    "parked workspace evidence differs from its owner snapshot".into(),
+                ));
+            }
+            // Decode the entire v5 record through #510's owner, then compare
+            // the reconstructed receipt with the one retained before parking.
+            let stored = super::creation::decode_stored(&facts.creator_receipt)
+                .map_err(EnvError::Invalid)?;
+            let decoded = super::creation::outcome(
+                &parts.env.resource,
+                facts.environment_run,
+                stored.record().clone(),
+            );
+            if decoded.receipt() != Some(&parts.receipt) {
+                return Err(EnvError::Invalid(
+                    "workspace creator receipt changed while parked".into(),
+                ));
+            }
+            parts
+                .receipt
+                .reobserve(backend, view.deadline())
+                .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+            let observed = observe(&view, view.deadline(), backend);
+            parts
+                .receipt
+                .reobserve(backend, view.deadline())
+                .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+            Ok(observed)
+        })();
+        let observed = match observation {
+            Ok(observed) => observed,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(guarded),
+                        parts,
+                    }),
+                ))
+            }
+        };
+        let run = match guarded.resume(session, observed) {
+            Ok(run) => run,
+            Err((error, guarded)) => {
+                return Err((
+                    EnvError::Kernel(error),
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(guarded),
+                        parts,
+                    }),
+                ))
+            }
+        };
+        Ok(EnvRun {
+            run,
+            cx: parts.cx,
+            root: parts.root,
+            env: parts.env,
+            cleanup_budget: parts.cleanup_budget,
+            began: parts.began,
+            published: parts.published,
+            failed: parts.failed,
+            transitioned: parts.transitioned,
+            progress: parts.progress,
+            step: parts.step,
+        })
+    }
+}
+
 impl<'r> EnvRun<'r> {
+    pub(super) fn park_for_cleanup(
+        self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session: &Run<'_>,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+    ) -> Result<effigy_kernel::run::ParkedWorkspaceRun<'r>, (EnvError, Box<Self>)> {
+        let Self {
+            run,
+            cx,
+            root,
+            env,
+            cleanup_budget,
+            began,
+            published,
+            failed,
+            transitioned,
+            progress,
+            step,
+        } = self;
+        match run.park_workspace_for_cleanup(reservation, session, cleanup) {
+            Ok(parked) => Ok(parked),
+            Err((error, run)) => Err((
+                EnvError::Kernel(error),
+                Box::new(Self {
+                    run: *run,
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                }),
+            )),
+        }
+    }
+
+    /// Park only after target binding and a complete journalled creator receipt.
+    /// Any refusal returns the still-guarded owner for explicit settlement.
+    pub(super) fn park_workspace(
+        mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session: &effigy_kernel::workspace_session::SessionRef,
+        deadline: Instant,
+    ) -> Result<ParkedEnvRun<'r>, (EnvError, Box<Self>)> {
+        let deadline = self.observation_deadline(deadline);
+        let snapshot = (|| {
+            if Instant::now() >= deadline {
+                return Err(EnvError::Invalid(
+                    "workspace activation deadline expired".into(),
+                ));
+            }
+            let plan = self.workspace_plan_until(reservation, deadline)?;
+            if &plan.session() != session {
+                return Err(EnvError::Invalid(
+                    "activation session changed before parking".into(),
+                ));
+            }
+            let target = self
+                .run
+                .workspace_bound_target(reservation)
+                .map_err(EnvError::Kernel)?;
+            let receipt = self
+                .journalled_creation()?
+                .and_then(|outcome| outcome.receipt().cloned())
+                .ok_or_else(|| {
+                    EnvError::Invalid("activation has no complete creator receipt".into())
+                })?;
+            if receipt.workspace_id() != Some(target.container_id.as_str()) {
+                return Err(EnvError::Invalid(
+                    "bound target differs from the creator receipt".into(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(EnvError::Invalid(
+                    "workspace activation deadline expired".into(),
+                ));
+            }
+            Ok::<_, EnvError>((plan, target, receipt))
+        })();
+        let (plan, target, receipt) = match snapshot {
+            Ok(value) => value,
+            Err(error) => return Err((error, Box::new(self))),
+        };
+        let Self {
+            run,
+            cx,
+            root,
+            env,
+            cleanup_budget,
+            began,
+            published,
+            failed,
+            transitioned,
+            progress,
+            step,
+        } = self;
+        match run.park_workspace(reservation, deadline) {
+            Ok(run) => Ok(ParkedEnvRun {
+                gate: ParkedEnvGate::Parked(Box::new(run)),
+                parts: ParkedEnvParts {
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                    receipt,
+                    target,
+                    plan,
+                },
+            }),
+            Err((error, run)) => Err((
+                EnvError::Kernel(error),
+                Box::new(Self {
+                    run: *run,
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                }),
+            )),
+        }
+    }
     /// Admits the operation: takes `Gate(Env)`, settles an interrupted
     /// predecessor (K5) and commits `Admitted` before any effect (K3).
     pub fn begin(
@@ -615,6 +1009,19 @@ impl<'r> EnvRun<'r> {
         Self::admit(ctx, env, op, wait, Some(claim))
     }
 
+    pub(super) fn begin_claimed_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<Self, EnvAdmissionFailure<'r>> {
+        let claim = reservation
+            .claim()
+            .map_err(|error| EnvError::from_run(&env.name, error))?;
+        Self::admit_recoverable(ctx, env, op, wait, Some(claim))
+    }
+
     fn admit(
         ctx: &EnvContext<'r>,
         env: &EnvRef,
@@ -622,8 +1029,32 @@ impl<'r> EnvRun<'r> {
         wait: Wait,
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
     ) -> Result<Self, EnvError> {
+        Self::admit_recoverable(ctx, env, op, wait, claim).map_err(|failure| {
+            if let Some(owner) = failure.owner {
+                if let Ok(cleanup) = ctx.cleanup() {
+                    match owner {
+                        EnvAdmissionOwner::Run(run) => {
+                            let _ = run.settle(&cleanup, &mut EnvSettlement);
+                        }
+                        EnvAdmissionOwner::Guarded(guarded) => {
+                            let _ = guarded.settle(&cleanup, &mut EnvSettlement);
+                        }
+                    }
+                }
+            }
+            failure.error
+        })
+    }
+
+    fn admit_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
+    ) -> Result<Self, EnvAdmissionFailure<'r>> {
         if ctx.cx.operation().placement() != Placement::Host {
-            return Err(EnvError::HostAuthorityRequired);
+            return Err(EnvError::HostAuthorityRequired.into());
         }
         let invocation = ResolvedInvocation::new(InvocationSpec {
             task: TaskId::new(env.checkout, "", Surface::Published, op.name(), None)
@@ -663,7 +1094,7 @@ impl<'r> EnvRun<'r> {
             custody: None,
         };
         let admitted = admit_under_gate_probe(ctx.root, env, &progress, || match claim {
-            Some(claim) => Run::begin_claimed(
+            Some(claim) => Run::begin_claimed_recoverable(
                 &ctx.cx,
                 ctx.root,
                 &invocation,
@@ -674,7 +1105,11 @@ impl<'r> EnvRun<'r> {
                 },
                 &mut EnvSettlement,
                 claim,
-            ),
+            )
+            .map_err(|(error, guarded)| EnvAdmissionFailure {
+                error: admission_error(env, wait, started, error),
+                owner: guarded.map(EnvAdmissionOwner::Guarded),
+            }),
             None => Run::begin_with_fresh_cleanup(
                 &ctx.cx,
                 ctx.root,
@@ -685,9 +1120,12 @@ impl<'r> EnvRun<'r> {
                         .map_err(|error| RunError::broken(error.to_string()))
                 },
                 &mut EnvSettlement,
-            ),
-        })
-        .map_err(|error| admission_error(env, wait, started, error));
+            )
+            .map_err(|error| EnvAdmissionFailure {
+                error: admission_error(env, wait, started, error),
+                owner: None,
+            }),
+        });
         let run = match admitted {
             Ok(run) => {
                 progress.update(
@@ -710,16 +1148,16 @@ impl<'r> EnvRun<'r> {
                     Observed::Unknown(reason) => format!("{reason}"),
                     _ => "row missing after admission".to_owned(),
                 };
-                if let Ok(cleanup) = ctx.cleanup() {
-                    let _ = run.settle(&cleanup, &mut EnvSettlement);
-                }
                 step.fail(&format!(
                     "environment `{}` record is unreadable after admission",
                     env.name
                 ));
-                return Err(EnvError::Invalid(format!(
-                    "environment record unreadable after admission: {reason}"
-                )));
+                return Err(EnvAdmissionFailure {
+                    error: EnvError::Invalid(format!(
+                        "environment record unreadable after admission: {reason}"
+                    )),
+                    owner: Some(EnvAdmissionOwner::Run(Box::new(run))),
+                });
             }
         };
         Ok(Self {
@@ -990,6 +1428,16 @@ impl<'r> EnvRun<'r> {
         request: super::creation::CreationRequest<'_>,
         apply: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<super::creation::CreationOutcome, EnvError> {
+        self.create_with_owned(backend, selection, request, |_, _, _| apply())
+    }
+
+    pub(super) fn create_with_owned(
+        &mut self,
+        backend: &mut dyn super::backend::EnvironmentBackend,
+        selection: &BackendSelection,
+        request: super::creation::CreationRequest<'_>,
+        apply: impl FnOnce(&mut Run<'_>, &EffectContext, Instant) -> Result<(), BackendError>,
+    ) -> Result<super::creation::CreationOutcome, EnvError> {
         use super::creation::{self, RecordedCreation};
         let mut request = request;
         if let Deadline::At(deadline) = self.cx.operation().deadline() {
@@ -1066,7 +1514,8 @@ impl<'r> EnvRun<'r> {
         let outcome = match fault("EnvBackendBefore") {
             Err(error) => Err(BackendError::NotStarted(error.to_string())),
             Ok(()) => {
-                let outcome = apply();
+                let effect = self.cx.child_until(request.deadline);
+                let outcome = apply(&mut self.run, &effect, request.deadline);
                 match (outcome, fault("EnvBackendAfter")) {
                     (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
                     (outcome, _) => outcome,
@@ -1189,6 +1638,13 @@ impl<'r> EnvRun<'r> {
                 state.label()
             )))),
         }
+    }
+
+    /// The complete creator receipt already recorded by this exact run.
+    pub fn workspace_creation_receipt(&mut self) -> Result<super::CreationReceipt, EnvError> {
+        self.journalled_creation()?
+            .and_then(|outcome| outcome.receipt().cloned())
+            .ok_or_else(|| EnvError::Invalid("activation has no complete creator receipt".into()))
     }
 
     /// The one backend stop: journalled under a permit, then published
@@ -1353,9 +1809,27 @@ impl<'r> EnvRun<'r> {
         &self,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
     ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
+        self.workspace_plan_until(reservation, Instant::now() + Duration::from_secs(30))
+    }
+
+    /// Read the target already bound by this exact reserved owner.
+    pub fn workspace_bound_target(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::workspace_session::ContainerIdentity, EnvError> {
+        self.run
+            .workspace_bound_target(reservation)
+            .map_err(EnvError::Kernel)
+    }
+
+    fn workspace_plan_until(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        deadline: Instant,
+    ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
         let observe = self
             .cx
-            .child(Duration::from_secs(30))
+            .child_until(deadline)
             .operation()
             .observe()
             .map_err(|_| {
@@ -1506,6 +1980,8 @@ impl<'r> EnvRun<'r> {
         }
         let checked = permit(&mut self.run, None).map(|_| ());
         self.kernel(checked)?;
+        let checked = self.run.verify_workspace_reservation(reservation);
+        self.kernel(checked)?;
         let outcome = self.journalled_creation()?.ok_or_else(|| {
             EnvError::Invalid("activation has no journalled apply inventory".into())
         })?;
@@ -1521,6 +1997,8 @@ impl<'r> EnvRun<'r> {
             .reobserve(backend, deadline)
             .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
         let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        let checked = self.run.verify_workspace_reservation(reservation);
         self.kernel(checked)?;
         // The journal's binding transaction checks the live gate and fence;
         // callers must still bind within this EnvRun, never carry this result
@@ -1712,7 +2190,33 @@ impl<'r> EnvRun<'r> {
     /// found, so an inspection never makes an active environment inactive.
     /// For a live mapped workspace this retains the predecessor's applied
     /// generation, including after HeldByRuns; only its successor commit replaces it.
-    pub fn finish(mut self, ok: bool) -> Result<CleanupOutcome, EnvError> {
+    pub fn finish(self, ok: bool) -> Result<CleanupOutcome, EnvError> {
+        self.finish_recoverable(ok).map_err(|(error, _run)| error)
+    }
+
+    /// Retain the exact Env run if its settlement fails.
+    pub fn finish_recoverable(self, ok: bool) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
+        self.finish_with_policy(ok, false)
+    }
+
+    /// A workspace activation must retain the run even when cleanup is
+    /// incomplete; ordinary environment settlement keeps its existing policy.
+    pub(super) fn finish_workspace_recoverable(
+        self,
+        ok: bool,
+    ) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
+        self.finish_with_policy(ok, true)
+    }
+
+    pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
+        std::ptr::eq(self.root, root)
+    }
+
+    fn finish_with_policy(
+        mut self,
+        ok: bool,
+        workspace: bool,
+    ) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
         if ok
             && !self.published
             && !self.failed
@@ -1720,7 +2224,9 @@ impl<'r> EnvRun<'r> {
             && self.began.state == EnvState::Active
         {
             let result = Attachments::publish_active(&mut self.run);
-            self.kernel(result)?;
+            if let Err(error) = self.kernel(result) {
+                return Err((error, Box::new(self.run)));
+            }
         }
         let workload = if ok && !self.failed {
             WorkloadOutcome::Succeeded
@@ -1740,19 +2246,25 @@ impl<'r> EnvRun<'r> {
             Err(error) => {
                 self.step
                     .fail(&format!("environment `{env}` could not settle: {error}"));
-                return Err(error);
+                return Err((error, Box::new(self.run)));
             }
         };
-        let outcome = match self.run.settle(&cleanup, &mut EnvSettlement) {
+        let settled = if workspace {
+            self.run
+                .settle_workspace_recoverable(&cleanup, &mut EnvSettlement)
+        } else {
+            self.run.settle_recoverable(&cleanup, &mut EnvSettlement)
+        };
+        let outcome = match settled {
             Ok(outcome) => {
                 self.step.succeed(&format!("environment `{env}` settled"));
                 Ok(outcome)
             }
-            Err(error) => {
+            Err((error, run)) => {
                 self.step.fail(&format!(
                     "settling environment `{env}` did not complete: {error}"
                 ));
-                Err(EnvError::from_run(&env, error))
+                Err((EnvError::from_run(&env, error), run))
             }
         }?;
         Ok(outcome.cleanup())

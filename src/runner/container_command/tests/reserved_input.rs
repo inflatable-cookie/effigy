@@ -198,13 +198,16 @@ struct FakeBackend {
     addressing: Observed<ReservedAddressing>,
     predecessor: Observed<PredecessorCompatibility>,
     binding: Observed<VerifiedBinding>,
+    primary_reads: std::collections::VecDeque<Observed<Option<VerifiedBinding>>>,
     identity: Observed<WorkspaceContainerIdentity>,
+    identity_reads: std::collections::VecDeque<Observed<WorkspaceContainerIdentity>>,
     image: Observed<ObservedImagePlatform>,
     artifact: Observed<PathBuf>,
     /// How long each observation pretends to take, so expiry can be exercised
     /// while one is in flight.
     takes: Option<Duration>,
     reads: Rc<Cell<usize>>,
+    guest_calls: Rc<Cell<usize>>,
     guest: Option<Rc<std::cell::RefCell<crate::runner::workspace_client::guest_fake::FakeGuest>>>,
 }
 
@@ -218,14 +221,18 @@ impl FakeBackend {
                 VerifiedBinding {
                     container_id: CONTAINER_ID.to_owned(),
                     selected: selection.clone(),
+                    workload: None,
                 },
                 evidence(),
             ),
+            primary_reads: std::collections::VecDeque::new(),
             identity: Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
+            identity_reads: std::collections::VecDeque::new(),
             image: Observed::Verified(image_facts(), evidence()),
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
             takes: None,
             reads: Rc::new(Cell::new(0)),
+            guest_calls: Rc::new(Cell::new(0)),
             guest: None,
         }
     }
@@ -273,6 +280,24 @@ impl FakeBackend {
 }
 
 impl ReservedBackendObservation for FakeBackend {
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        _selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        if let Some(read) = self.primary_reads.pop_front() {
+            self.call();
+            return read;
+        }
+        match self.binding(policy, deadline) {
+            Observed::Verified(binding, evidence) => Observed::Verified(Some(binding), evidence),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "no primary inventory proof".into(),
+            )),
+        }
+    }
     fn selection(
         &mut self,
         _: &EffectiveContainerPolicy,
@@ -309,11 +334,14 @@ impl ReservedBackendObservation for FakeBackend {
     fn identity(
         &mut self,
         _: &EffectiveContainerPolicy,
+        _: &BackendSelection,
         _: &str,
         _: PublicationDeadline,
     ) -> Observed<WorkspaceContainerIdentity> {
         self.call();
-        self.identity.clone()
+        self.identity_reads
+            .pop_front()
+            .unwrap_or_else(|| self.identity.clone())
     }
     fn image_platform(
         &mut self,
@@ -339,6 +367,7 @@ impl ReservedBackendObservation for FakeBackend {
         _: &ContainerIdentity,
         _: PublicationDeadline,
     ) -> Result<Box<dyn GuestWorkspace + 'a>, EnvError> {
+        self.guest_calls.set(self.guest_calls.get() + 1);
         if let Some(guest) = &self.guest {
             return Ok(crate::runner::workspace_command::provisioning::reserved_guest::tests::creator_guest(guest.clone()));
         }
@@ -520,6 +549,130 @@ fn plan_for(
         },
         backend,
     )
+}
+
+#[test]
+fn decision_primary_observation_preserves_absence_identity_and_refusals() {
+    let (_fixture, root, home) = checkout("decision-primary");
+    let policy = rendered_policy(&root);
+    let mut backend = FakeBackend::colima();
+    let mut plan =
+        effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend))
+            .unwrap()
+            .unwrap();
+    backend.primary_reads.extend([
+        Observed::Verified(None, evidence()),
+        Observed::Verified(None, evidence()),
+    ]);
+    assert!(matches!(
+        observe_decision_target(&plan, &mut backend).unwrap(),
+        TargetEvidence::Absent { .. }
+    ));
+    assert!(
+        matches!(observe_decision_target(&plan, &mut backend).unwrap(), TargetEvidence::Observed(identity) if identity.container_id == CONTAINER_ID && identity.vm_boot_id == BOOT_ID)
+    );
+    let original = VerifiedBinding {
+        container_id: CONTAINER_ID.into(),
+        selected: colima_selection("effigy"),
+        workload: None,
+    };
+    let replaced = VerifiedBinding {
+        container_id: OTHER_CONTAINER_ID.into(),
+        selected: colima_selection("effigy"),
+        workload: None,
+    };
+    backend.primary_reads.extend([
+        Observed::Verified(Some(original), evidence()),
+        Observed::Verified(Some(replaced), evidence()),
+    ]);
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "replacement cannot pass"
+    );
+    backend
+        .primary_reads
+        .push_back(Observed::Unknown(UnknownReason::Inconsistent(
+            "backend unavailable".into(),
+        )));
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "unknown is not absence"
+    );
+    let mut rebooted = host_identity(host_machine(), "gnu");
+    rebooted.vm_boot_id = OTHER_BOOT_ID.into();
+    backend.identity_reads.extend([
+        Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
+        Observed::Verified(rebooted, evidence()),
+    ]);
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "a changed boot refuses"
+    );
+    backend.identity = Observed::Verified(host_identity(host_machine(), "gnu"), evidence());
+    if let Observed::Verified(identity, _) = &mut backend.identity {
+        identity.vm_boot_id.clear();
+    }
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "missing boot identity refuses"
+    );
+    let before = backend.count();
+    plan.deadline = PublicationDeadline::new(Instant::now() - Duration::from_millis(1));
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "expired deadline refuses"
+    );
+    assert_eq!(
+        backend.count(),
+        before,
+        "expired decision performs no observation"
+    );
+}
+
+#[test]
+fn pinned_primary_uses_retained_checkout_and_scoped_token() {
+    use effigy_kernel::id::{CheckoutId, CheckoutKind};
+    let (_fixture, root, _) = checkout("pinned-primary");
+    let policy = rendered_policy(&root);
+    let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
+    let state = effigy_kernel::root::StateRoot::effects(&cx, &root).unwrap();
+    let checkout = CheckoutId::new(CheckoutKind::LinkedWorktree, [0x2a; 16]);
+    let token = "2a".repeat(16);
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert(
+        "com.docker.compose.project".into(),
+        policy.project_name.clone(),
+    );
+    labels.insert(
+        "com.docker.compose.service".into(),
+        policy.primary_service.clone(),
+    );
+    labels.insert("com.docker.compose.oneoff".into(), "False".into());
+    labels.insert("com.effigy.scope".into(), token);
+    labels.insert("com.effigy.checkout".into(), root.display().to_string());
+    let mut row = effigy_containers::environment::Workload {
+        id: CONTAINER_ID.into(),
+        name: "primary".into(),
+        running: true,
+        labels,
+        binds: vec![],
+        image: String::new(),
+        image_reference: String::new(),
+    };
+    let backend = colima_selection("pinned");
+    let binding = verify_pinned_primary(&state, checkout, &policy, &backend, &row).unwrap();
+    assert_eq!(binding.container_id, CONTAINER_ID);
+    assert_eq!(binding.selected, backend);
+    row.labels
+        .insert("com.effigy.scope".into(), "00".repeat(16));
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
+    row.labels
+        .insert("com.effigy.scope".into(), "2a".repeat(16));
+    row.id = "short".into();
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
+    row.id = CONTAINER_ID.into();
+    row.labels.remove("com.docker.compose.oneoff");
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
 }
 
 // ------------------------------------------------------- the mode boundary
@@ -989,6 +1142,97 @@ fn planned_in_home(
 }
 
 #[test]
+fn reserved_reobservation_reads_fresh_evidence_without_guest_or_secret() {
+    let fixture = observation_checkout("fresh-reobserve");
+    let artifact = produced_artifact(&fixture.root, host_family());
+    let mut backend = FakeBackend::colima().with_artifact(artifact);
+    let policy = rendered_policy(&fixture.root);
+    let mut plan = planned_in_home(&fixture, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let facts = reobserved_decision(&plan, bound_container());
+    let before = backend.count();
+    let (target, platform) = reobserve_reserved(
+        ReservedObservationRequest {
+            repo_root: &fixture.root,
+        },
+        &plan,
+        &rendered,
+        &facts,
+        &mut backend,
+        plan.deadline().at(),
+    )
+    .expect("fresh observation succeeds");
+    assert!(matches!(target, Observed::Verified(ref candidates, _) if candidates.len() == 1));
+    assert!(matches!(platform, Observed::Verified(_, _)));
+    assert!(backend.count() > before, "the backend was actually reread");
+    assert_eq!(backend.guest_calls.get(), 0, "no guest handle was staged");
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at() - Duration::from_millis(1),
+        )
+        .is_err(),
+        "a different deadline is not accepted"
+    );
+    backend.identity = Observed::Verified(host_identity(host_machine(), "gnu"), evidence());
+    if let Observed::Verified(identity, _) = &mut backend.identity {
+        identity.vm_boot_id = OTHER_BOOT_ID.into();
+    }
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "a changed guest boot cannot reuse the prior result"
+    );
+    backend.identity = Observed::Unknown(UnknownReason::GuardUnavailable);
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "unknown does not reuse earlier evidence"
+    );
+    plan.deadline = PublicationDeadline::new(Instant::now() - Duration::from_millis(1));
+    let reads = backend.count();
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "an expired observation refuses"
+    );
+    assert_eq!(backend.count(), reads, "expired observation reads nothing");
+}
+
+#[test]
 fn a_guest_that_names_another_container_is_refused_as_a_raced_binding() {
     let observation = observation_checkout("raced");
     let mut backend = FakeBackend::colima();
@@ -1365,11 +1609,9 @@ fn the_production_selection_observation_reads_an_absent_record_as_a_policy_choic
     let policy = rendered_policy(&root);
     // No environment record exists yet: the policy's own source is the verified
     // selection, and it is an observation rather than a `None` collapse.
-    let observed = crate::runner::environment::observed_backend(
-        &root,
-        &policy,
-        Instant::now() + Duration::from_secs(10),
-    );
+    let prepared = crate::runner::environment::PreparedEnvironmentObservation::prepare(&policy)
+        .expect("prepare checkout identity");
+    let observed = prepared.backend(&policy, Instant::now() + Duration::from_secs(10));
     let Observed::Verified(selected, _) = observed else {
         panic!("a policy selection is a verified observation, not a default");
     };
@@ -1449,6 +1691,7 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
         VerifiedBinding {
             container_id: CONTAINER_ID.to_owned(),
             selected: colima_selection("another-profile"),
+            workload: None,
         },
         evidence(),
     );
@@ -1844,7 +2087,7 @@ fn a_stalled_colima_profile_refuses_at_the_deadline() {
         "COLIMA_HOME",
         Some(colima_home.display().to_string()),
     )]);
-    let mut observation = ContainerBackendObservation;
+    let mut observation = ContainerBackendObservation::prepare(&policy).expect("prepared identity");
 
     let started = Instant::now();
     let observed = observation.addressing(
@@ -1961,3 +2204,47 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
 
 #[path = "reserved_creator_binding.rs"]
 mod creator_binding;
+
+#[test]
+fn a_timed_out_backend_observer_never_creates_a_checkout_token_late() {
+    let (_fixture, root, home) = checkout("late-observer");
+    let policy = rendered_policy(&root);
+    let prepared = effigy_containers::with_test_effigy_home(&home, || {
+        crate::runner::environment::PreparedEnvironmentObservation::prepare(&policy)
+            .expect("establish checkout identity")
+    });
+    let token = root
+        .join(".git")
+        .join(effigy_core::worktree_scope::SCOPE_FILE);
+    if token.exists() {
+        std::fs::remove_file(&token).expect("remove fixture token");
+    }
+    assert!(!token.exists());
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    effigy_containers::with_test_effigy_home(&home, || {
+        let result = bounded_publication_read(
+            "late-backend",
+            Instant::now() + Duration::from_millis(100),
+            move || {
+                let _ = release_rx.recv();
+                let _ = observed_backend_bounded(
+                    &prepared,
+                    &policy,
+                    PublicationDeadline::new(Instant::now() + Duration::from_secs(5)),
+                );
+                let _ = done_tx.send(());
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(BoundedReadRefusal::TimedOut)));
+        release_tx.send(()).expect("release observer");
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("observer finished");
+        assert!(
+            !token.exists(),
+            "an abandoned reader must never mint a checkout identity"
+        );
+    });
+}
