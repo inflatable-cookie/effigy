@@ -628,7 +628,7 @@ impl<'a> Run<'a> {
                 // is admitted or its session generation ends.
                 workspace::refuse_unkeyed(txn, opts.id)?;
             }
-            let identity = if admission.is_some() || session_binding.is_some() {
+            let identity = if admission.is_some() || claim.is_some() {
                 Some(serde_json::to_string(
                     &crate::ident::process_identity(std::process::id())
                         .verified()

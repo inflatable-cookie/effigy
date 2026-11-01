@@ -861,6 +861,74 @@ fn admit_activation<'a>(
     run
 }
 
+/// Admit the reserved Env run in an actual child, then exit without dropping
+/// its owner. The parent reaps it before exercising dead-owner recovery.
+#[test]
+fn reserved_environment_crash_fixture() {
+    let Some(home) = std::env::var_os("EFFIGY_RESERVED_CRASH_HOME") else {
+        return;
+    };
+    let mode = std::env::var("EFFIGY_RESERVED_CRASH_MODE").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, std::path::Path::new(&home)).unwrap();
+    let reader = read_journal(&cx, &root);
+    let reservation = WorkspaceActivationReservation::recover(&reader, &environment())
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reserved activation");
+    drop(reader);
+    match mode.as_str() {
+        "published" => {
+            let _run = admit_activation(&cx, &root, &reservation, run_id(73));
+            std::process::exit(0);
+        }
+        "stopping" => {
+            let mut run = admit_activation(&cx, &root, &reservation, run_id(151));
+            run.interrupt(
+                &cleanup(&cx),
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            )
+            .unwrap();
+            std::process::exit(0);
+        }
+        "unknown" => {
+            let mut run = Run::begin_claimed(
+                &cx,
+                &root,
+                &inv(environment(), "environment:up"),
+                opts(run_id(153)),
+                || Ok(cleanup(&cx)),
+                &mut adapter(),
+                reservation.claim().unwrap(),
+            )
+            .unwrap();
+            let ticket = Attachments::intend_guest_publication(&mut run).unwrap();
+            Attachments::guest_publication_unknown(&mut run, &ticket, UnknownReason::Injected)
+                .unwrap();
+            std::process::exit(0);
+        }
+        _ => panic!("unknown crash fixture"),
+    }
+}
+
+fn crash_reserved_environment(home: &std::path::Path, mode: &str) {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "workspace_session::tests::reserved_environment_crash_fixture",
+            "--nocapture",
+        ])
+        .env("EFFIGY_RESERVED_CRASH_HOME", home)
+        .env("EFFIGY_RESERVED_CRASH_MODE", mode)
+        .status()
+        .expect("start and reap the reserved owner");
+    assert!(status.success(), "reserved owner fixture failed: {status}");
+}
+
 /// One complete activation: reserve, freeze and admit the successor, admit the
 /// environment run at E, publish and commit.
 fn activate<'a>(
@@ -1176,8 +1244,41 @@ fn a_competitor_must_not_recover_a_reserved_environment_run() {
         reservation.claim().unwrap(),
     )
     .expect("reserved run");
+    let reader = read_journal(&cx, &root);
+    let recorded: Option<String> = reader
+        .conn()
+        .query_row(
+            "SELECT owner_identity FROM runs WHERE run_id=?1",
+            [run_id(23).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let recorded: crate::ident::ProcessIdentity = serde_json::from_str(
+        recorded
+            .as_deref()
+            .expect("reserved owner identity must be recorded"),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::ident::process_identity(std::process::id()).verified(),
+        Some(&recorded)
+    );
+    drop(reader);
     // Simulate the gate-free interval; do not settle the reserved run.
     drop(run);
+    let recovery = crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(23),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        recovery.is_err(),
+        "explicit recovery must not settle a live owner"
+    );
     let result = Run::begin(
         &cx,
         &root,
@@ -1231,6 +1332,139 @@ fn a_competitor_must_not_recover_a_reserved_environment_run() {
         )
         .unwrap();
     assert_eq!(phase, "admitted", "the reserved run was not settled");
+}
+
+#[test]
+fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+
+    const CHILD_HOME: &str = "EFFIGY_RESERVED_OWNER_RECOVERY_TEST_HOME";
+    let cx = context();
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        let root = StateRoot::effects(&cx, std::path::Path::new(&home)).unwrap();
+        let reservation =
+            WorkspaceActivationReservation::reserve(&cx, &root, &environment(), Wait::FailFast)
+                .unwrap();
+        let run = Run::begin_claimed(
+            &cx,
+            &root,
+            &inv(environment(), "environment:up"),
+            opts(run_id(27)),
+            || Ok(cleanup(&cx)),
+            &mut adapter(),
+            reservation.claim().unwrap(),
+        )
+        .unwrap();
+        // This only simulates releasing Env: the owning process remains alive.
+        drop(run);
+        println!("effigy-reserved-owner-ready");
+        std::io::stdout().flush().unwrap();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        return;
+    }
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = pending_environment(&cx, &root);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "workspace_session::tests::a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can", "--nocapture"])
+        .env(CHILD_HOME, fixture.path())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    let ready = loop {
+        line.clear();
+        match stdout.read_line(&mut line) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) if line.contains("effigy-reserved-owner-ready") => break true,
+            _ => {}
+        }
+    };
+    let live = ready.then(|| {
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &environment,
+            run_id(27),
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let competing = ready.then(|| {
+        Run::begin(
+            &cx,
+            &root,
+            &inv(environment.clone(), "environment:down"),
+            opts(run_id(28)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let aliased = ready.then(|| {
+        let alias = environment
+            .with_checkout(CheckoutId::new(CheckoutKind::Primary, [8; 16]))
+            .unwrap();
+        let mut spec = inv(alias, "environment:down").spec().clone();
+        spec.gates.push(environment.clone());
+        Run::begin(
+            &cx,
+            &root,
+            &ResolvedInvocation::new(spec).unwrap(),
+            opts(run_id(30)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let _ = child.kill();
+    let status = child
+        .wait()
+        .expect("reap exactly the child this test started");
+    assert!(ready, "child admitted the reserved run");
+    assert!(
+        matches!(live, Some(Err(RunError::Refused(_)))),
+        "live owner is protected"
+    );
+    assert!(
+        matches!(competing, Some(Err(RunError::Refused(_)))),
+        "competitor cannot recover live owner"
+    );
+    assert!(
+        matches!(aliased, Some(Err(RunError::Refused(_)))),
+        "alias competitor cannot recover live owner"
+    );
+    assert!(!status.success());
+    crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(27),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("exact dead owner can be settled");
+    let reader = read_journal(&cx, &root);
+    let reservation = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reservation remains recoverable");
+    drop(reader);
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("settled reservation can be cancelled");
+    let successor = Run::begin(
+        &cx,
+        &root,
+        &inv(environment, "environment:down"),
+        opts(run_id(29)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("recovery does not permanently wedge the environment");
+    drop(successor);
 }
 
 #[test]
@@ -1724,7 +1958,7 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     // Boundary: the guest pointer is published, before the commit. The
     // activation run advances the environment to E; the predecessor's record is
     // still authoritative.
-    let environment_run = admit_activation(&cx, &root, &reservation, run_id(73));
+    crash_reserved_environment(fixture.path(), "published");
     assert_eq!(resource_row(&reader, &environment).0, 2);
     let reader = read_journal(&cx, &root);
     let (_, state, _) = resource_row(&reader, &environment);
@@ -1734,8 +1968,7 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
         "an uncommitted publication advertises nothing"
     );
     authoritative(&reader);
-    // Crash here: the run is gone and nothing was committed.
-    drop(environment_run);
+    // The child has exited with its run unsettled and nothing committed.
     let reader = read_journal(&cx, &root);
     authoritative(&reader);
     assert_eq!(mapping(&reader, &environment).map(|row| row.2), Some(1));
@@ -2428,15 +2661,11 @@ fn cancellation_waits_for_stopping_and_incomplete_runs_to_settle() {
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reserve");
     let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(150));
-    let mut activation = admit_activation(&cx, &root, &reservation, run_id(151));
+    crash_reserved_environment(fixture.path(), "stopping");
     let cancelled = || WorkloadOutcome::Cancelled {
         cause: StopCause::Requested,
         signal: None,
     };
-    activation
-        .interrupt(&cleanup(&cx), cancelled())
-        .expect("activation stopping");
-    drop(activation);
     assert!(
         reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
         "a dropped Stopping activation still needs settlement"
@@ -2606,21 +2835,7 @@ fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work()
     );
     let reservation = decided(&cx, &root, &environment);
     let (successor, _) = admit_staged(&cx, &root, &reservation, run_id(152));
-    let mut activation = Run::begin_claimed(
-        &cx,
-        &root,
-        &inv(environment.clone(), "environment:up"),
-        opts(run_id(153)),
-        || Ok(cleanup(&cx)),
-        &mut adapter(),
-        reservation.claim().expect("claim"),
-    )
-    .expect("successor Env admission advances transition fence");
-    let ticket =
-        Attachments::intend_guest_publication(&mut activation).expect("publication intent");
-    Attachments::guest_publication_unknown(&mut activation, &ticket, UnknownReason::Injected)
-        .expect("uncertain publication");
-    drop(activation); // crash before commit; the successor never becomes active
+    crash_reserved_environment(fixture.path(), "unknown");
     let fence = Fence {
         resource: environment.clone(),
         generation: first.environment_generation(),

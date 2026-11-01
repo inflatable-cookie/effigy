@@ -3165,6 +3165,47 @@ pub(crate) fn refuse_bound_reservation_recovery(
     Ok(())
 }
 
+/// Explicit settlement of a bound activation is allowed only with positive
+/// evidence that the exact process which admitted it is gone. A free Env gate
+/// alone is not liveness evidence during the integration interval.
+pub(crate) fn verify_reserved_owner_dead(
+    conn: &rusqlite::Connection,
+    owner: &ResourceId,
+    run: RunId,
+) -> Result<(), RunError> {
+    if owner.kind() != ResourceKind::Env {
+        return Ok(());
+    }
+    let Some(reservation) = recoverable_reservation(conn, owner)? else {
+        return Ok(());
+    };
+    if reservation.state != ActivationReservationState::Reserved
+        || reservation.environment_run != Some(run)
+    {
+        return Ok(());
+    }
+    let identity: Option<String> = conn.query_row(
+        "SELECT owner_identity FROM runs WHERE run_id=?1",
+        [run.to_string()],
+        |row| row.get(0),
+    )?;
+    let identity: crate::ident::ProcessIdentity = serde_json::from_str(
+        identity.as_deref().ok_or_else(|| {
+            RunError::unavailable("reserved activation owner identity is unavailable; reservation remains recoverable")
+        })?,
+    ).map_err(|_| RunError::unavailable("reserved activation owner identity is unreadable; reservation remains recoverable"))?;
+    match crate::ident::process_identity(identity.pid) {
+        Observed::Absent(_) => Ok(()),
+        Observed::Verified(current, _) if current != identity => Ok(()),
+        Observed::Verified(_, _) => Err(RunError::refused(
+            "reserved workspace activation owner is still alive; reservation remains recoverable",
+        )),
+        Observed::Unknown(_) => Err(RunError::unavailable(
+            "reserved workspace activation owner liveness is unknown; reservation remains recoverable",
+        )),
+    }
+}
+
 /// The guest publication an activation run recorded must be applied and carry
 /// a receipt: `active` may only follow a completed required obligation (§8.11).
 fn published_receipt(environment_run: &Run<'_>) -> Result<WorkspacePublicationReceipt, RunError> {

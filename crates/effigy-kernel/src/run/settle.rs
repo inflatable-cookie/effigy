@@ -585,6 +585,7 @@ pub(crate) fn settle_interrupted_wait(
     if crate::workspace_session::session_run_gate(store.conn(), owner, id)? != gate_owner {
         return Err(RunError::broken("workspace recovery slot changed"));
     }
+    crate::workspace_session::verify_reserved_owner_dead(store.conn(), owner, id)?;
     let record = journal::run(store.conn(), id)?;
     if record.owner != owner.name().to_string() {
         return Err(RunError::broken("wrong run owner"));
