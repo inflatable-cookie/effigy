@@ -3984,8 +3984,7 @@ fn a_replaced_attachment_is_refused_and_the_bound_one_still_types() {
     terminal_session_row(&cx, &root);
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
-    let mut owner_server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut owner_server, &cx, &observe, &root, capability());
+    let _owner = live_admission(&cx, &observe, &root, calls.clone());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
@@ -4032,17 +4031,9 @@ fn a_replaced_attachment_is_refused_and_the_bound_one_still_types() {
 
     // Reversible failing safety assertion: the very same frame through the
     // owning attachment is accepted, and the writer is still bound to it.
-    let attach = RequestId::new([5; 16]);
-    let frames = {
-        let mut frames = terminal_hello(capability());
-        frames.push(terminal_attach(attach, run, None));
-        frames.push(typed(attach, 0, b"the owning client types"));
-        frames
-    };
-    let (mut transport, _written) = scripted(&frames);
-    owner_server
-        .serve(&mut transport, &cx, &observe, &root, &mut custody)
-        .expect("the owning connection is served");
+    custody
+        .input(&owning, b"the owning client types")
+        .expect("the original owning attachment types");
     wait_until("the owning client's frame", || {
         written(&log) == b"the owning client types"
     });
@@ -4391,8 +4382,7 @@ fn replacement_input_and_resize_are_refused_through_the_channel_loop() {
     terminal_session_row(&cx, &root);
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
-    let mut owner_server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut owner_server, &cx, &observe, &root, capability());
+    let _owner = live_admission(&cx, &observe, &root, calls.clone());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
@@ -4475,8 +4465,7 @@ fn the_serving_owner_refuses_replacement_input_and_resize() {
         // owner's dispatcher has not admitted it: its attach opens a second
         // terminal, which is the attachment the kernel's replacement path can
         // replace.
-        let mut admitting = terminal_server(root, calls.clone(), &[9], capability());
-        admit_over_channel(&mut admitting, cx, observe, root, capability());
+        let _owner = live_admission(cx, observe, root, calls.clone());
 
         let mut acceptor_connections = VecDeque::new();
         let mut replacements = Vec::new();
