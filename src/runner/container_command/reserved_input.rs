@@ -191,6 +191,21 @@ pub(in crate::runner) trait ReservedBackendObservation {
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<VerifiedBinding>;
+    /// A complete primary inventory; absence is distinct from an unavailable read.
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        _selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        match self.binding(policy, deadline) {
+            Observed::Verified(binding, evidence) => Observed::Verified(Some(binding), evidence),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "primary inventory did not prove absence".into(),
+            )),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
+    }
     /// The guest's own boot, machine type and C library in that exact container.
     fn identity(
         &mut self,
@@ -242,6 +257,63 @@ impl ContainerBackendObservation {
 }
 
 impl ReservedBackendObservation for ContainerBackendObservation {
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        if deadline.remaining().is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "primary inventory".into(),
+            });
+        }
+        let rows = match effigy_containers::exec::decision_project_inventory(
+            &policy.repo_root,
+            policy,
+            selected,
+            deadline.at(),
+        ) {
+            Ok(rows) => rows,
+            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        };
+        let project_empty = rows.is_empty();
+        let primary: Vec<_> = rows
+            .into_iter()
+            .filter(|row| {
+                !row.oneoff && row.service.as_deref() == Some(policy.primary_service.as_str())
+            })
+            .collect();
+        if deadline.remaining().is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "primary inventory".into(),
+            });
+        }
+        if primary.is_empty() {
+            return if project_empty {
+                Observed::Verified(None, evidence())
+            } else {
+                Observed::Unknown(UnknownReason::Inconsistent(
+                    "sibling-only inventory does not prove primary absence".into(),
+                ))
+            };
+        }
+        if primary.len() != 1 {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "ambiguous primary inventory".into(),
+            ));
+        }
+        if !effigy_containers::exec::compose_status_is_running(&primary[0].status) {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "primary container state is not running".into(),
+            ));
+        }
+        // The existing checkout ownership verifier independently re-selects a
+        // backend by path, so it cannot authenticate this pinned inventory.
+        Observed::Unknown(UnknownReason::ToolUnavailable(
+            "primary ownership verification on the pinned backend is unavailable".into(),
+        ))
+    }
     fn selection(
         &mut self,
         policy: &EffectiveContainerPolicy,
@@ -670,6 +742,93 @@ impl ReservedPublicationPlan {
             guest: Some(self.guest.clone()),
         })
     }
+}
+
+/// Observe the primary for a decision. The caller must invoke this while the
+/// kernel decision holds the environment gate. All reads share the plan budget.
+pub(in crate::runner) fn observe_decision_target(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<TargetEvidence, EnvError> {
+    let deadline = plan.deadline;
+    deadline.remaining()?;
+    let selected = verified(
+        observation.selection(&plan.policy, deadline),
+        "decision backend",
+    )?;
+    if selected != plan.selected {
+        return Err(refused("decision backend differs from the frozen plan"));
+    }
+    let primary = verified(
+        observation.primary(&plan.policy, &plan.selected, deadline),
+        "decision primary inventory",
+    )?;
+    let target = match primary {
+        None => TargetEvidence::Absent {
+            project: plan.policy.project_name.clone(),
+            backend: plan.backend_label.clone(),
+        },
+        Some(binding) => {
+            if binding.selected != plan.selected {
+                return Err(refused("primary backend differs from the frozen plan"));
+            }
+            let identity = verified(
+                observation.identity(&plan.policy, &binding.container_id, deadline),
+                "decision guest identity",
+            )?;
+            if identity.container_id.len() != 64
+                || !identity
+                    .container_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+                || identity.container_id != binding.container_id
+                || identity.vm_boot_id.trim().is_empty()
+                || identity.vm_boot_id.contains('\0')
+            {
+                return Err(refused(
+                    "decision guest identity differs from the verified primary",
+                ));
+            }
+            TargetEvidence::Observed(ContainerIdentity {
+                container_id: identity.container_id,
+                vm_boot_id: identity.vm_boot_id,
+                backend: plan.backend_label.clone(),
+            })
+        }
+    };
+    let fresh = verified(
+        observation.primary(&plan.policy, &plan.selected, deadline),
+        "decision primary recheck",
+    )?;
+    match (&target, fresh) {
+        (TargetEvidence::Absent { .. }, None) => {}
+        (TargetEvidence::Observed(identity), Some(binding))
+            if binding.container_id == identity.container_id
+                && binding.selected == plan.selected =>
+        {
+            let repeated = verified(
+                observation.identity(&plan.policy, &binding.container_id, deadline),
+                "decision guest identity recheck",
+            )?;
+            if repeated.container_id != identity.container_id
+                || repeated.vm_boot_id != identity.vm_boot_id
+            {
+                return Err(refused(
+                    "primary guest identity changed during decision observation",
+                ));
+            }
+        }
+        _ => return Err(refused("primary changed during decision observation")),
+    }
+    let selected = verified(
+        observation.selection(&plan.policy, deadline),
+        "decision backend recheck",
+    )?;
+    if selected != plan.selected {
+        return Err(refused("decision backend changed during observation"));
+    }
+    deadline.remaining()?;
+    Ok(target)
 }
 
 /// Plan the publication from the backend and the host's provisioning records.

@@ -198,7 +198,9 @@ struct FakeBackend {
     addressing: Observed<ReservedAddressing>,
     predecessor: Observed<PredecessorCompatibility>,
     binding: Observed<VerifiedBinding>,
+    primary_reads: std::collections::VecDeque<Observed<Option<VerifiedBinding>>>,
     identity: Observed<WorkspaceContainerIdentity>,
+    identity_reads: std::collections::VecDeque<Observed<WorkspaceContainerIdentity>>,
     image: Observed<ObservedImagePlatform>,
     artifact: Observed<PathBuf>,
     /// How long each observation pretends to take, so expiry can be exercised
@@ -221,7 +223,9 @@ impl FakeBackend {
                 },
                 evidence(),
             ),
+            primary_reads: std::collections::VecDeque::new(),
             identity: Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
+            identity_reads: std::collections::VecDeque::new(),
             image: Observed::Verified(image_facts(), evidence()),
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
             takes: None,
@@ -273,6 +277,24 @@ impl FakeBackend {
 }
 
 impl ReservedBackendObservation for FakeBackend {
+    fn primary(
+        &mut self,
+        policy: &EffectiveContainerPolicy,
+        _selected: &BackendSelection,
+        deadline: PublicationDeadline,
+    ) -> Observed<Option<VerifiedBinding>> {
+        if let Some(read) = self.primary_reads.pop_front() {
+            self.call();
+            return read;
+        }
+        match self.binding(policy, deadline) {
+            Observed::Verified(binding, evidence) => Observed::Verified(Some(binding), evidence),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "no primary inventory proof".into(),
+            )),
+        }
+    }
     fn selection(
         &mut self,
         _: &EffectiveContainerPolicy,
@@ -313,7 +335,9 @@ impl ReservedBackendObservation for FakeBackend {
         _: PublicationDeadline,
     ) -> Observed<WorkspaceContainerIdentity> {
         self.call();
-        self.identity.clone()
+        self.identity_reads
+            .pop_front()
+            .unwrap_or_else(|| self.identity.clone())
     }
     fn image_platform(
         &mut self,
@@ -520,6 +544,82 @@ fn plan_for(
         },
         backend,
     )
+}
+
+#[test]
+fn decision_primary_observation_preserves_absence_identity_and_refusals() {
+    let (_fixture, root, home) = checkout("decision-primary");
+    let policy = rendered_policy(&root);
+    let mut backend = FakeBackend::colima();
+    let mut plan =
+        effigy_containers::with_test_effigy_home(&home, || plan_for(&policy, &mut backend))
+            .unwrap()
+            .unwrap();
+    backend.primary_reads.extend([
+        Observed::Verified(None, evidence()),
+        Observed::Verified(None, evidence()),
+    ]);
+    assert!(matches!(
+        observe_decision_target(&plan, &mut backend).unwrap(),
+        TargetEvidence::Absent { .. }
+    ));
+    assert!(
+        matches!(observe_decision_target(&plan, &mut backend).unwrap(), TargetEvidence::Observed(identity) if identity.container_id == CONTAINER_ID && identity.vm_boot_id == BOOT_ID)
+    );
+    let original = VerifiedBinding {
+        container_id: CONTAINER_ID.into(),
+        selected: colima_selection("effigy"),
+    };
+    let replaced = VerifiedBinding {
+        container_id: OTHER_CONTAINER_ID.into(),
+        selected: colima_selection("effigy"),
+    };
+    backend.primary_reads.extend([
+        Observed::Verified(Some(original), evidence()),
+        Observed::Verified(Some(replaced), evidence()),
+    ]);
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "replacement cannot pass"
+    );
+    backend
+        .primary_reads
+        .push_back(Observed::Unknown(UnknownReason::Inconsistent(
+            "backend unavailable".into(),
+        )));
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "unknown is not absence"
+    );
+    let mut rebooted = host_identity(host_machine(), "gnu");
+    rebooted.vm_boot_id = OTHER_BOOT_ID.into();
+    backend.identity_reads.extend([
+        Observed::Verified(host_identity(host_machine(), "gnu"), evidence()),
+        Observed::Verified(rebooted, evidence()),
+    ]);
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "a changed boot refuses"
+    );
+    backend.identity = Observed::Verified(host_identity(host_machine(), "gnu"), evidence());
+    if let Observed::Verified(identity, _) = &mut backend.identity {
+        identity.vm_boot_id.clear();
+    }
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "missing boot identity refuses"
+    );
+    let before = backend.count();
+    plan.deadline = PublicationDeadline::new(Instant::now() - Duration::from_millis(1));
+    assert!(
+        observe_decision_target(&plan, &mut backend).is_err(),
+        "expired deadline refuses"
+    );
+    assert_eq!(
+        backend.count(),
+        before,
+        "expired decision performs no observation"
+    );
 }
 
 // ------------------------------------------------------- the mode boundary

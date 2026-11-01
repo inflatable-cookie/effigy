@@ -102,6 +102,8 @@ def control():
 
 
 def command_of(args):
+    if len(args) >= 2 and args[0] in ("--context", "--host"):
+        args = args[2:]
     if args and args[0] == "nerdctl":
         args = args[args.index("--") + 1:] if "--" in args else args[1:]
     if not args:
@@ -184,6 +186,17 @@ def main():
             sys.stdout.flush()
             while True:
                 time.sleep(0.05)
+        if mode["mode"] == "empty":
+            return 0
+        if mode["mode"] == "sibling":
+            sys.stdout.write("%s\tUp 5 seconds\t\t%s\t%s\tworker\t\n" % (CONTAINER, PROJECT, os.path.realpath(FIXTURE)))
+            return 0
+        if mode["mode"] == "stopped":
+            sys.stdout.write("%s\tExited (0)\t\t%s\t%s\t%s\t\n" % (CONTAINER, PROJECT, os.path.realpath(FIXTURE), SERVICE))
+            return 0
+        if mode["mode"] == "malformed":
+            sys.stdout.write("unlabelled Up\n")
+            return 0
         if mode["mode"] != "running":
             sys.stderr.write("strict fake runtime refuses ps mode %r\n" % mode["mode"])
             return 90
@@ -827,6 +840,45 @@ fn inventory_and_ownership_child() {
             "{unknown}"
         );
 
+        let selected = crate::environment::BackendSelection {
+            kind: crate::environment::BackendKind::DockerDesktop,
+            engine: crate::BackendId::docker_compose(),
+            context: "decision-fixture".into(),
+            reason: crate::environment::BackendReason::EnvironmentVariable("docker".into()),
+        };
+        for mode in ["empty", "sibling", "stopped", "malformed", "unavailable"] {
+            fixture.control(
+                json!({ "ps": {"mode": mode}, "inspect": {"mode": "owned"}, "up": {"mode": "ok"} }),
+            );
+            let observed = crate::exec::decision_project_inventory(
+                &root,
+                &policy,
+                &selected,
+                Instant::now() + Duration::from_secs(10),
+            );
+            match mode {
+                "empty" => assert!(observed.unwrap().is_empty()),
+                "sibling" => assert_eq!(observed.unwrap()[0].service.as_deref(), Some("worker")),
+                "stopped" => assert_eq!(observed.unwrap()[0].status, "Exited (0)"),
+                _ => assert!(
+                    observed.is_err(),
+                    "malformed or failed runtime cannot prove absence"
+                ),
+            }
+        }
+        let before = fixture.calls().len();
+        assert!(crate::exec::decision_project_inventory(
+            &root,
+            &policy,
+            &selected,
+            Instant::now() - Duration::from_millis(1)
+        )
+        .is_err());
+        assert_eq!(
+            fixture.calls().len(),
+            before,
+            "expired deadline never spawns"
+        );
         for call in fixture.calls() {
             assert!(
                 !matches!(

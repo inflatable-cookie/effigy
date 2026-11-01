@@ -390,6 +390,39 @@ pub fn list_running_compose_containers_for_policy_with_deadline(
     )
 }
 
+/// Complete project inventory, including stopped rows, for a primary decision.
+/// Unlike the general listing, incomplete labels and invalid UTF-8 refuse.
+pub fn decision_project_inventory(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    selected: &crate::environment::BackendSelection,
+    deadline: Instant,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let (program, args) = selected
+        .compose_invocation(&project_ps_args(&policy.project_name, true))
+        .map_err(|error| ContainerExecError::Failure {
+            command: "runtime ps decision inventory".into(),
+            code: None,
+            stdout: String::new(),
+            stderr: error.to_string(),
+        })?;
+    let output = run_backend_invocation_until(
+        repo_root,
+        &program,
+        &args,
+        "runtime ps decision inventory",
+        &[],
+        deadline,
+    )?;
+    let text = std::str::from_utf8(&output.stdout).map_err(|_| ContainerExecError::Failure {
+        command: "runtime ps decision inventory".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "inventory is not UTF-8".to_owned(),
+    })?;
+    super::parse::strict_project_inventory(text, &policy.project_name)
+}
+
 /// Deadline-aware compose `ps` probe for an arbitrary Compose project in
 /// this checkout — used by the `data_from` handover to discover a peer
 /// environment's running services. The policy only selects the runtime

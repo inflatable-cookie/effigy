@@ -38,9 +38,9 @@ pub use healthcheck_pidfiles::{
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
     capture_running_container_stats_for_profile, compose_stack_is_running,
-    container_last_log_line_for_policy, discover_compose_containers_all_states,
-    discover_running_compose_containers, infer_host_working_dir_for_container,
-    inspect_containers_for_policy, inspect_image_for_policy,
+    container_last_log_line_for_policy, decision_project_inventory,
+    discover_compose_containers_all_states, discover_running_compose_containers,
+    infer_host_working_dir_for_container, inspect_containers_for_policy, inspect_image_for_policy,
     list_compose_containers_for_policy_including_stopped,
     list_compose_containers_for_policy_including_stopped_with_deadline,
     list_compose_containers_for_policy_including_stopped_with_timeout,
