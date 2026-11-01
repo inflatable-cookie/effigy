@@ -373,13 +373,65 @@ fn layered_helper_identities(log: &str) -> Result<Vec<ProcessIdentity>, serde_js
         .collect()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "child entry for the image-observation fixture"]
 fn image_observation_child() {
     use std::io::Read;
     let mut byte = [0u8; 1];
     let _ = std::io::stdin().read(&mut byte);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_self_exe_child_uses_literal_path_and_refuses_other_image() {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    let mut home = LayeredHome::new();
+    let image = crate::supervise::image_identity::TestCreatorImage::capture()
+        .expect("creator image observation");
+    let path = image.launch_path().expect("creator path");
+    assert_eq!(path, Path::new("/proc/self/exe"), "no fallback path");
+    let mut command = Command::new(path);
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "run::lifecycle::tests::image_observation_child",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut same = LayeredChild::spawn(&mut command, home.path()).expect("same-image child");
+    let identity = same.identity.clone().expect("same-image child identity");
+    assert!(
+        same.child().try_wait().unwrap().is_none(),
+        "child must be live"
+    );
+    image.verify(&identity).expect("matching child observation");
+    drop(same.child().stdin.take());
+    assert!(same
+        .wait(Duration::from_secs(3))
+        .expect("reap same child")
+        .success());
+
+    let mut other_command = Command::new("/bin/sleep");
+    other_command
+        .arg("30")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut other = LayeredChild::spawn(&mut other_command, home.path()).expect("different child");
+    let other_identity = other.identity.clone().expect("different child identity");
+    assert_eq!(
+        image.verify(&other_identity).unwrap_err().to_string(),
+        "helper image or process identity changed"
+    );
+    other.kill().expect("stop exact different child");
+    other
+        .wait(Duration::from_secs(3))
+        .expect("reap different child");
+    home.finish();
 }
 
 #[cfg(target_os = "macos")]
