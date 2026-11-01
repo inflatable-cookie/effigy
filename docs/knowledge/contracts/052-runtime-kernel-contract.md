@@ -3154,7 +3154,7 @@ cannot authorize a guest selection without `qualify_guest` evidence.
 
 This is the normative production seam (effigy#481). The guest client, the pinned TLS transport (effigy#483), the host
 channel dispatcher (effigy#452) and the serving owner are implemented. Not implemented: the production activation caller
-(`environment::workspace::up_prepared` has only test call sites), the wider Observe surface beyond `runs:list` and run-specific `runs:status`, backend/consumer qualification, and the end-to-end container-mode proof. The Level 1 surface is required by §8.6; Level 2 is deferred. Only APIs marked implemented below
+(`environment::workspace::up_prepared` has only test call sites), run-specific `runs:status` (in progress in #512), the wider Observe surface beyond `runs:list`, backend/consumer qualification, and the end-to-end container-mode proof. The Level 1 surface is required by §8.6; Level 2 is deferred. Only APIs marked implemented below
 are merged seams. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
 E-step/fault/retry proposals remain [non-normative,
 unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates), with no acceptance claims; [existing API
@@ -3735,9 +3735,10 @@ no run, no resolution and no second credential.
 - **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
   authentication) and a request-level refusal both return an error that names
   lane A's stable code; nothing falls back to guest state or guest execution.
-  One request is one `Intent` — its id and body together — so a connection that
-  dies before answering is replayed on a fresh connection under the same id and
-  the host answers from its record instead of admitting a second run. Detach is
+  One request is one `Intent` — its id and body together. If a connection dies
+  before answering, the client reports `Unknown` and must not resend the request.
+  A separately authorized read may inspect an existing outcome without admitting
+  another run. Detach is
   accepted only for the run this connection admitted, so a secondary terminal
   leaving writes no control frame. Stream frames are acknowledged and dropped:
   output belongs to the session front end that attaches.
@@ -3912,8 +3913,8 @@ another lane's.
   (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
   `managed_run::start_reserved` with the exact ticket, serves `runs:list`
   under the supplied host `ObserveContext`, and refuses every operation it does not serve.
-  `runs:status` accepts an explicit run identity and returns only a matching checkout-scoped run.
-  Legacy Observe reads omit the optional identity; old strict peers refuse the extended request.
+  Run-specific `runs:status` and its optional identity wire extension are in progress
+  in #512; they are not a merged production capability.
   `host_dispatch::production_server` composes it into `channel::Server`, and
   `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
@@ -3922,7 +3923,7 @@ another lane's.
 - **The production activation caller.** `environment::workspace::up_prepared` still has
   only test call sites, so nothing in a released command prepares a guest context and
   a qualified locator yet. The wider Observe surface (every observation beyond
-  `runs:list` and run-specific `runs:status`), the guest-side entry for non-task invocations and native
+  `runs:list`, including run-specific `runs:status`), the guest-side entry for non-task invocations and native
   backend qualification remain unmerged.
 
 **Guest entry (v2, bound).** The guest's context read is one
@@ -5713,36 +5714,15 @@ failure before it leaves the predecessor's pointer where it was.
 | Two invocations at once | the winner's decision and its reservation | the loser either attaches or is refused by name and invalidates nothing |
 | Guest holds an older context generation | the published pointer | the guest re-reads `current`, re-verifies and reconnects; its old requests refuse `stale_context` |
 
-**Reconnect.** A broken connection is never a reason to admit twice or to fall
-back. `src/runner/workspace_client.rs` keeps one pending intent and re-enters the
-same order:
-
-```rust
-pub(crate) struct PendingIntent {
-    intent: Intent,                        // id + body, one canonical digest
-    session: WorkspaceSessionBinding,
-    context_generation: u64,
-}
-impl<T: Transport> WorkspaceClient<T> {
-    pub(crate) fn reconnect(&mut self, /* re-read context, identity, transport */)
-        -> Result<(), ChannelError>;
-}
-```
-
-Reconnect re-observes the guest identity, re-reads `current`, re-verifies, opens
-a new connection, re-checks the pin before any frame, negotiates, authenticates
-with the same capability and replays the same `Intent`. A session binding that
-changed, a session record that no longer resolves, or a capability the host
-revoked refuses `identity_mismatch`/`unauthenticated`; the client then reports
-`Unknown` for every unfinished run and refuses further Mutate (R3) and never
-executes locally. An unchanged binding at a newer context generation continues
-under the new generation. The host answers the replayed id from its admission
-record (`completed`, `accepted` or `unknown`) and a different digest is
-`id_conflict`; `observe` re-observes and never returns a recorded result. A
-stream resumes by `AttachBody.cursor`, a rotated-away range is a `gap` and never
-complete output, terminal input is not replayed and resize is latest-wins.
-Attempts are bounded by the invocation's own `OperationContext` budget, and an
-exhausted budget is `unavailable`, never an unbounded retry.
+**Reconnect (historical proposal, superseded).** The earlier candidate proposed
+resending the same `Intent` on a fresh connection. The Operator ruling in §8.6
+supersedes that proposal: after an indeterminate request the client reports
+`Unknown` and does not resend it or execute locally. A separately authorized,
+read-only inspection may discover an already recorded outcome without admitting
+a new operation. A new attachment to an existing run may resume from the
+consumed cursor after rechecking identity, pin, authentication and authority;
+terminal input is never replayed and resize is latest-wins. A rotated-away range
+is a `gap`, not complete output.
 
 **Owners and serialization.** These are the minimal disjoint tasks; the order is
 the dependency order, and the last column names the file that forces

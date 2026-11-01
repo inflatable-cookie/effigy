@@ -134,11 +134,12 @@ Host-dispatched tasks bound to that workspace run as its declared user and
 home. They do not run as root or leave root-owned files in bind-mounted
 workspace volumes for the later `dev` handoff to trip over.
 
-In v0.15, workspace-client commands follow the staged Level 1 surface in
+The v0.15 release requires workspace-client commands to follow the staged Level 1 surface in
 [contract 052 §8.6](../knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
-Unsupported guest commands refuse by name with instructions to run a separate
-host CLI invocation; they never fall back to a guest engine or resend an
-indeterminate request after `Unknown`. The session production path and each
+Unsupported guest commands must refuse by name with instructions to run a separate
+host CLI invocation; they must not fall back to a guest engine or resend an
+indeterminate request after `Unknown`. Implementation and enforcement remain in
+progress. The session production path and each
 native backend still require their qualification; a prepared guest artifact
 alone is not that proof.
 

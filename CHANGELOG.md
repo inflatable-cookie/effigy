@@ -724,14 +724,15 @@ During v0.x, MINOR bumps may include breaking changes.
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.
 
-- **A container-mode guest runs Effigy through its published context and the one
-  host channel.** Static reads (`effigy tasks`, the pinned identity and the
+- **Workspace-client host-channel coverage is staged for v0.15.** The required
+  design serves static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and
-  never open a connection or write anything. Supported Level 1 commands with
-  host authority are sent as typed channel requests that the host re-resolves,
-  gates and journals; unsupported guest commands refuse by name. Neither path
-  falls back to guest state or a guest engine. `effigy skill run --stdio passthrough`
-  is refused in a guest because it would run a task without host authority.
+  without opening a connection or writing. Level 1 requires typed channel requests
+  that the host re-resolves, gates and journals; unsupported guest commands must
+  refuse by name. Neither path may fall back to guest state or a guest engine.
+  Guest `effigy skill run --stdio passthrough` must refuse because it would run
+  a task without host authority. This is a release requirement, not a claim that
+  all Level 1 routes are implemented or qualified.
   The guest transport, the guest-local container observation and the published
   session generation are merged; what remains missing is the production
   activation caller that publishes a qualified locator and the recorded native
@@ -741,10 +742,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **The workspace channel checks its pinned host identity before it speaks.**
   A guest client compares the server identity the context pinned against the
   identity its transport verified before writing a single byte, so a mispinned
-  peer receives no hello, version, digest or capability. A connection that dies
-  before answering reports `Unknown`; it is not resent or run locally. An
-  attach may reconnect under the session protocol at the cursor the client
-  actually consumed, and a gap never advances it.
+  peer receives no hello, version, digest or capability. The v0.15 policy requires
+  a connection that dies before answering to report `Unknown` without resending
+  or running locally; full policy enforcement remains in progress. An attachment
+  may reconnect at its consumed cursor, and a gap never advances it.
 
 - **The frozen workspace activation hands its channel to a serving owner.** The
   environment's committed session run, listener, key and advertised locator
