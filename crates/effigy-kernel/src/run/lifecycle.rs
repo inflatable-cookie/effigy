@@ -275,6 +275,13 @@ mod tests {
                 placement: crate::supervise::Placement::Detached,
             };
             crate::fault::arm_from_env();
+            let stage = std::env::var("EFFIGY_LAYERED_STAGE").unwrap();
+            let marker = home.join("fault-stage");
+            crate::fault::hook(Some(Box::new(move |point| {
+                if format!("{point:?}") == stage {
+                    std::fs::write(&marker, &stage).expect("write exact fault-stage marker");
+                }
+            })));
             let result = run.enable_workspace_custody(&plan);
             panic!("owner fault did not kill process: {result:?}");
         }
@@ -398,24 +405,118 @@ mod tests {
         }
     }
 
-    fn wait_layered_child(
-        child: &mut std::process::Child,
-        limit: Duration,
-    ) -> std::io::Result<std::process::ExitStatus> {
-        let deadline = Instant::now() + limit;
-        loop {
-            if let Some(status) = child.try_wait()? {
-                return Ok(status);
+    struct LayeredHome {
+        dir: Option<tempfile::TempDir>,
+        complete: bool,
+    }
+    impl LayeredHome {
+        fn new() -> Self {
+            Self {
+                dir: Some(effigy_test_support::short_tempdir("lr-").unwrap()),
+                complete: false,
             }
-            if Instant::now() >= deadline {
-                child.kill()?;
-                let _ = child.wait();
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "owned fixture child timed out",
-                ));
+        }
+        fn path(&self) -> &std::path::Path {
+            self.dir.as_ref().unwrap().path()
+        }
+        fn finish(&mut self) {
+            self.complete = true;
+        }
+    }
+    impl Drop for LayeredHome {
+        fn drop(&mut self) {
+            if !self.complete {
+                if let Some(dir) = self.dir.take() {
+                    let path = dir.keep();
+                    match std::fs::read_to_string(path.join("helpers.jsonl"))
+                        .ok()
+                        .and_then(|text| layered_helper_identities(&text).ok())
+                    {
+                        Some(helpers) if !helpers.is_empty() => {
+                            let deadline = Instant::now() + Duration::from_secs(35);
+                            while !helpers.iter().all(layered_helper_gone)
+                                && Instant::now() < deadline
+                            {
+                                std::thread::sleep(Duration::from_millis(20));
+                            }
+                            if !helpers.iter().all(layered_helper_gone) {
+                                eprintln!("helper custody Unknown: {helpers:?}");
+                            }
+                        }
+                        _ => eprintln!("helper identity inventory Unknown"),
+                    }
+                    eprintln!("unsettled fixture retained at {path:?}");
+                }
             }
-            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    struct LayeredChild {
+        child: Option<std::process::Child>,
+        fixture: std::path::PathBuf,
+    }
+    impl LayeredChild {
+        fn new(child: std::process::Child, fixture: &std::path::Path) -> Self {
+            Self {
+                child: Some(child),
+                fixture: fixture.into(),
+            }
+        }
+        fn child(&mut self) -> &mut std::process::Child {
+            self.child.as_mut().unwrap()
+        }
+        fn wait(&mut self, limit: Duration) -> std::io::Result<std::process::ExitStatus> {
+            let deadline = Instant::now() + limit;
+            loop {
+                if let Some(status) = self.child().try_wait()? {
+                    self.child.take();
+                    return Ok(status);
+                }
+                if Instant::now() >= deadline {
+                    let pid = self.child().id();
+                    let kill = self.child().kill();
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("owned fixture child {pid} timed out; kill result {kill:?}; custody retained for cleanup")));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+    impl Drop for LayeredChild {
+        fn drop(&mut self) {
+            let Some(child) = self.child.as_mut() else {
+                return;
+            };
+            let pid = child.id();
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!(
+                        "owned child {pid} state Unknown: {error}; fixture {:?}",
+                        self.fixture
+                    );
+                    return;
+                }
+            }
+            let kill = child.kill();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(error) => {
+                        eprintln!(
+                            "owned child {pid} wait Unknown: {error}; fixture {:?}",
+                            self.fixture
+                        );
+                        return;
+                    }
+                }
+            }
+            eprintln!(
+                "owned child {pid} reap Unknown after kill {kill:?}; fixture {:?}",
+                self.fixture
+            );
         }
     }
 
@@ -432,7 +533,40 @@ mod tests {
     }
 
     fn layered_helper_identities(log: &str) -> Result<Vec<ProcessIdentity>, serde_json::Error> {
-        log.lines().map(serde_json::from_str).collect()
+        log.lines()
+            .map(|line| serde_json::from_str(line.strip_prefix("backup ").unwrap_or(line)))
+            .collect()
+    }
+
+    #[test]
+    fn layered_fixture_unwind_reaps_its_exact_owned_child() {
+        let mut path = std::path::PathBuf::new();
+        let mut pid = 0u32;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let home = LayeredHome::new();
+            path = home.path().into();
+            let child = std::process::Command::new("/bin/sleep")
+                .arg("30")
+                .spawn()
+                .unwrap();
+            pid = child.id();
+            let _owner = LayeredChild::new(child, home.path());
+            panic!("test-only unwind after owned child spawn");
+        }));
+        assert_ne!(pid, 0, "fixture spawn failed; retained fixture {path:?}");
+        let mut status = 0;
+        // SAFETY: this is our exact child; WNOHANG does not block or signal it.
+        let waited = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+        let already_reaped =
+            waited == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD);
+        if waited == pid as i32 || already_reaped {
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+        assert!(outcome.is_err());
+        assert!(
+            waited == pid as i32 || already_reaped,
+            "exact child {pid} not reaped; retained fixture {path:?}"
+        );
     }
 
     #[test]
@@ -445,12 +579,13 @@ mod tests {
             crate::fault::Point::WorkspaceSentinelAfterConfig,
             crate::fault::Point::WorkspaceSentinelAfterAck,
         ] {
-            let home = effigy_test_support::short_tempdir("lr-").unwrap();
+            let mut home = LayeredHome::new();
             let log = home.path().join("helpers.jsonl");
-            let mut owner = Command::new(std::env::current_exe().unwrap())
+            let child = Command::new(std::env::current_exe().unwrap())
                 .args([RECOVERY_CHILD, "--exact", "--ignored", "--test-threads=1"])
                 .env("EFFIGY_LAYERED_RECOVERY_HOME", home.path())
                 .env("EFFIGY_LAYERED_RECOVERY_MODE", "owner")
+                .env("EFFIGY_LAYERED_STAGE", format!("{point:?}"))
                 .env("EFFIGY_KERNEL_TEST_HELPERS", &log)
                 .env(
                     "EFFIGY_KERNEL_TEST_FAULT",
@@ -460,15 +595,17 @@ mod tests {
                 .stderr(Stdio::inherit())
                 .spawn()
                 .unwrap();
+            let mut owner = LayeredChild::new(child, home.path());
+            let owner_pid = owner.child().id();
             let deadline = Instant::now() + Duration::from_secs(30);
             let stopped = loop {
                 if matches!(
-                    crate::ident::process_state(owner.id()),
+                    crate::ident::process_state(owner_pid),
                     Observed::Verified(crate::ident::ProcessState::Stopped, _)
                 ) {
                     break true;
                 }
-                if Instant::now() >= deadline || matches!(owner.try_wait(), Ok(Some(_))) {
+                if Instant::now() >= deadline || matches!(owner.child().try_wait(), Ok(Some(_))) {
                     break false;
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -478,7 +615,12 @@ mod tests {
                     if !stopped {
                         return Err("owner did not stop at the fault".into());
                     }
-                    let actual = crate::ident::process_identity(owner.id())
+                    let marker = std::fs::read_to_string(home.path().join("fault-stage"))
+                        .map_err(|error| error.to_string())?;
+                    if marker != format!("{point:?}") {
+                        return Err(format!("fault-stage marker differs: {marker}"));
+                    }
+                    let actual = crate::ident::process_identity(owner_pid)
                         .verified()
                         .cloned()
                         .ok_or("owner identity unavailable")?;
@@ -541,35 +683,35 @@ mod tests {
                         other => Err(format!("exact stopped owner gate not observed: {other:?}")),
                     }
                 })();
-            let kill = owner.kill();
-            let owner_status = wait_layered_child(&mut owner, Duration::from_secs(40));
+            let kill = owner.child().kill();
+            let owner_status = owner.wait(Duration::from_secs(40));
             let log_text = match std::fs::read_to_string(&log) {
                 Ok(text) => text,
                 Err(error) => {
-                    let path = home.keep();
-                    panic!("{point:?}: helper identity log unavailable ({error}); retained fixture {path:?}");
+                    panic!("{point:?}: helper identity log unavailable ({error}); fixture {:?} retained", home.path());
                 }
             };
             let helpers = match layered_helper_identities(&log_text) {
                 Ok(helpers) => helpers,
                 Err(error) => {
-                    let path = home.keep();
                     panic!(
-                        "{point:?}: invalid helper identity ({error}); retained fixture {path:?}"
+                        "{point:?}: invalid helper identity ({error}); fixture {:?} retained",
+                        home.path()
                     );
                 }
             };
             if helpers.is_empty() {
-                let path = home.keep();
-                panic!("{point:?}: no verified helper identity; retained fixture {path:?}");
+                panic!(
+                    "{point:?}: no verified helper identity; fixture {:?} retained",
+                    home.path()
+                );
             }
             let deadline = Instant::now() + Duration::from_secs(40);
             while !helpers.iter().all(layered_helper_gone) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
             if !helpers.iter().all(layered_helper_gone) {
-                let path = home.keep();
-                panic!("{point:?}: helper custody remains live or unknown; retained fixture {path:?}, identities {helpers:?}");
+                panic!("{point:?}: helper custody remains live or unknown; fixture {:?} retained, identities {helpers:?}", home.path());
             }
             let (owner_identity, checkout_fence) = evidence
                 .unwrap_or_else(|error| panic!("{point:?}: pre-kill evidence failed: {error}"));
@@ -596,7 +738,7 @@ mod tests {
                 "{point:?}: owner gate not free"
             );
             drop(root);
-            let mut recovery = Command::new(std::env::current_exe().unwrap())
+            let child = Command::new(std::env::current_exe().unwrap())
                 .args([
                     RECOVERY_CHILD,
                     "--exact",
@@ -606,38 +748,51 @@ mod tests {
                 ])
                 .env("EFFIGY_LAYERED_RECOVERY_HOME", home.path())
                 .env("EFFIGY_LAYERED_RECOVERY_MODE", "recover")
+                .env("EFFIGY_LAYERED_BACKUP_ROLES", "1")
                 .env("EFFIGY_KERNEL_TEST_HELPERS", &log)
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .spawn()
                 .unwrap();
-            let recovered = wait_layered_child(&mut recovery, Duration::from_secs(45));
+            let mut recovery = LayeredChild::new(child, home.path());
+            let recovered = recovery.wait(Duration::from_secs(45));
             let all_log = match std::fs::read_to_string(&log) {
                 Ok(text) => text,
                 Err(error) => {
-                    let path = home.keep();
-                    panic!("{point:?}: fresh helper log unavailable ({error}); retained fixture {path:?}");
+                    panic!(
+                        "{point:?}: fresh helper log unavailable ({error}); fixture {:?} retained",
+                        home.path()
+                    );
                 }
             };
             let all_helpers = match layered_helper_identities(&all_log) {
                 Ok(helpers) => helpers,
                 Err(error) => {
-                    let path = home.keep();
-                    panic!("{point:?}: invalid fresh helper identity ({error}); retained fixture {path:?}");
+                    panic!(
+                        "{point:?}: invalid fresh helper identity ({error}); fixture {:?} retained",
+                        home.path()
+                    );
                 }
             };
+            let roles: Vec<bool> = all_log
+                .lines()
+                .map(|line| line.starts_with("backup "))
+                .collect();
             let deadline = Instant::now() + Duration::from_secs(40);
             while !all_helpers.iter().all(layered_helper_gone) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
             if !all_helpers.iter().all(layered_helper_gone) {
-                let path = home.keep();
-                panic!("{point:?}: fresh helper custody remains live or unknown; retained fixture {path:?}, identities {all_helpers:?}");
+                panic!("{point:?}: fresh helper custody remains live or unknown; fixture {:?} retained, identities {all_helpers:?}", home.path());
             }
             if all_helpers.len() != 3 {
-                let path = home.keep();
-                panic!("{point:?}: expected old sentinel, fresh sentinel and fresh backup identities; observed {all_helpers:?}, recovery {recovered:?}; retained fixture {path:?}");
+                panic!("{point:?}: expected old sentinel, fresh sentinel and fresh backup identities; observed {all_helpers:?}, recovery {recovered:?}; fixture {:?} retained", home.path());
             }
+            assert_eq!(
+                roles,
+                [false, false, true],
+                "{point:?}: original/fresh sentinel and backup roles must be explicit"
+            );
             assert_eq!(
                 all_helpers.first(),
                 helpers.first(),
@@ -660,7 +815,8 @@ mod tests {
                 Gate::checkout_retirement(&cx, &root, &token, checkout_fence, Wait::FailFast)
                     .expect("exact checkout fence must have no remaining shared custody");
             drop(retirement);
-            eprintln!("{point:?}: stopped owner {:?} and reserved gate verified, exact owner killed, original helper {:?} exited, recovery entry and fresh Env sentinel/backup startup and settlement succeeded; all helpers {:?} exited", owner_identity, helpers[0], all_helpers);
+            eprintln!("{point:?}: stopped owner {:?} and reserved gate verified, exact owner killed, original helper {:?} not active, recovery entry and fresh Env sentinel/backup startup and settlement succeeded; observed helpers {:?} not active (zombie reaping not determined)", owner_identity, helpers[0], all_helpers);
+            home.finish();
         }
     }
 

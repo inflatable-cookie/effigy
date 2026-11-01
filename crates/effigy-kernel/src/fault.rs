@@ -364,6 +364,12 @@ pub(crate) fn events() -> Vec<Event> {
 pub(crate) fn note_helper(pid: u32) {
     note_child(pid, "");
 }
+/// Distinguish the checkout backup from sentinels in test-only evidence.
+pub(crate) fn note_backup(pid: u32) {
+    if std::env::var_os("EFFIGY_LAYERED_BACKUP_ROLES").is_some() {
+        note_child(pid, "backup ");
+    }
+}
 /// Anchors cannot write; recovery must run before waiting for them to exit.
 pub(crate) fn note_anchor(pid: u32) {
     note_child(pid, "anchor ");
