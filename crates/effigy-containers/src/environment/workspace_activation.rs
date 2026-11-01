@@ -421,6 +421,32 @@ impl<'r> ParkedWorkspaceActivation<'r> {
     /// Reacquire Env and require an actual fresh observation against the
     /// retained journal, session and creator facts before exposing effects.
     /// Failure returns this exact owner, parked or guarded, for retry/cleanup.
+    pub fn reacquire_target(
+        self,
+        backend: &mut dyn super::EnvironmentBackend,
+        observe: impl FnOnce(
+            &effigy_kernel::run::WorkspaceResumeView<'_>,
+            std::time::Instant,
+            &mut dyn super::EnvironmentBackend,
+        ) -> effigy_kernel::observe::Observed<(
+            effigy_kernel::workspace_session::ContainerIdentity,
+            effigy_kernel::workspace_session::BoundPlatform,
+        )>,
+    ) -> Result<WorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        self.reacquire(backend, |view, deadline, backend| {
+            observe(view, deadline, backend).map(|(target, platform)| {
+                // Creator receipt and inventory are checked by the facade on
+                // the same backend around this observation; the kernel then
+                // rechecks the captured journal and exact session owner.
+                let mut facts = view.facts().clone();
+                facts.target = target;
+                facts.platform = platform;
+                facts
+            })
+        })
+    }
+
+    /// Structural resume entry for callers that can freshly observe every fact.
     pub fn reacquire(
         self,
         backend: &mut dyn super::EnvironmentBackend,
