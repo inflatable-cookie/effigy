@@ -367,3 +367,52 @@ tests.
 - Update `docs/knowledge/contracts/052-runtime-kernel-contract.md` §8.11 with the
   fence guarantee, lock ownership, lock order, and the limitations above.
 - `CHANGELOG.md` `[Unreleased]`: a single entry, after review.
+
+## 13. File ownership and sequence
+
+Supervisor assignment (via Chatterbox): #512 A owns the custody spawn and
+output files. #525 owns terminal, release and flock. This section records the
+exact #525 file list so shared files are flagged before any edit.
+
+**#525 owns (implementation phase):**
+
+| File | Change |
+|---|---|
+| `src/runner/workspace_client/terminal.rs` | pump restructure, fence lease, manual `Debug` for `Outbox` |
+| `src/runner/workspace_client/tests.rs` | FakePty barriers, `T-*` pump tests |
+| `crates/effigy-kernel/src/run/workspace.rs` | release, liveness release, `closed()` fence, creation lock files |
+| `crates/effigy-kernel/src/run/workspace/tests.rs` | `T-PATHS`, `T-ISOLATION`, `T-LOCKFILE` |
+| `crates/effigy-kernel/src/run/workspace_fence.rs` (new) | fence files, `flock`, `fstatfs` checks |
+| `crates/effigy-kernel/tests/workspace_fence_holder.rs` (new) | separate-process holder for `T-SEPARATE-PROCESS` and `T-CLOEXEC` |
+| `docs/knowledge/contracts/052-runtime-kernel-contract.md` | §8.11 guarantee, lock ownership, limitations |
+| `CHANGELOG.md` | `[Unreleased]` entry |
+
+**Shared or flagged (confirm before editing):**
+
+| File | Why | Rule |
+|---|---|---|
+| `crates/effigy-kernel/src/run/settle.rs` | #525 edits the close transaction (~357) and `settle_interrupted_wait`. Custody settlement (~178–243) uses `custody::settle_effect`. | #525 touches only the close and interrupted-settle regions. Any `settle_effect` change is A's, and must not share a hunk. |
+| `crates/effigy-kernel/src/supervise.rs` | #525 edits the liveness-watch release call site (~1460). A's spawn and handoff callers sit at ~8, ~226, ~1035+. | Shared. #525 edits only the liveness call site. A does not edit that control path. Rebase in sequence if both touch the file. |
+| `crates/effigy-kernel/src/run/mod.rs` | One-line module declaration for `workspace_fence`. | Shared only if A adds a module. Otherwise #525 alone. |
+| `crates/effigy-kernel/src/faults/scenarios.rs` | Fault points for the new protocol steps, if needed. | Not in A's list. Avoid unless a new fault point is required. |
+
+**Not touched by #525:** `custody.rs`, `custody/` (all files), `custody/tests.rs`,
+`crates/effigy-containers/**` (environment, `workspace_activation`, creation,
+reconcile, exec, process), the lifecycle caller, `crates/effigy-kernel/tests/support/custody-fixture.rs`,
+`host_dispatch.rs`, `workspace_channel.rs`. PR #659 touches none of the custody
+or containers paths.
+
+**Sequence (proposed):**
+
+1. PR #659 (#512) merges first. It touches `gate.rs`, `store.rs`, `supervise.rs`,
+   `workspace_channel.rs`, `workspace_session.rs`, `run/settle.rs`,
+   `run/workspace.rs` and `host_dispatch.rs`.
+2. A's custody spawn and output change lands or is reviewed next.
+3. #525 implementation starts on the post-#659 head, rebases onto A, and resolves
+   any `supervise.rs` or `settle.rs` hunk overlap. Each rebase needs the same
+   independent review.
+
+**Open items:** the exact file list for A's process-output tests is not in this
+doc. Confirm it does not overlap `workspace_client/tests.rs` or
+`run/workspace/tests.rs`. The lifecycle caller is not identified. Neither is
+expected to overlap, but both need confirmation before implementation.
