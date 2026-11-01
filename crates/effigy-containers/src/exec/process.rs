@@ -1849,7 +1849,7 @@ os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
                     assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
                     assert_eq!(error.to_string(), "private workspace Compose is unavailable until the reviewed same-Env capability lands");
                 }
-                other => panic!("private execution must refuse before parsing: {other:?}"),
+                other => panic!("private execution must refuse before parsing: {other}"),
             }
         }
         assert!(!fixture.path().join("unexpected").exists());

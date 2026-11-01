@@ -101,7 +101,15 @@ pub(super) fn record_unwind(
             .create(true)
             .open(c.export.with_extension("unwind"))
         {
-            let _ = writeln!(f, "{step:?}");
+            use crate::runner::container_command::workspace_integrations::WorkspaceIntegrationStep;
+            let name = match step {
+                WorkspaceIntegrationStep::Readiness => "Readiness",
+                WorkspaceIntegrationStep::Permissions => "Permissions",
+                WorkspaceIntegrationStep::Secrets => "Secrets",
+                WorkspaceIntegrationStep::Routes => "Routes",
+                WorkspaceIntegrationStep::HostIntegrations => "HostIntegrations",
+            };
+            let _ = writeln!(f, "{name}");
         }
     }
 }

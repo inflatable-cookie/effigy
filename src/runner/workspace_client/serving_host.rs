@@ -727,7 +727,8 @@ where
         Ok(retired) => retired,
         Err((error, retained)) => {
             let primary = RunError::unavailable(format!(
-                "workspace service ended ({end:?}); session cleanup failed: {error}",
+                "workspace service ended ({}); session cleanup failed: {error}",
+                end.as_str(),
             ));
             let error = retire_refused_service(
                 &mut session,
@@ -934,8 +935,12 @@ fn settle_failed_host(
             }
             Err((error, retained)) => {
                 run = *retained;
+                let mark_error = mark_error
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "none".into());
                 session.refused_message(error.category(), format!(
-                    "{primary}; recording refusal error: {mark_error:?}; cleanup failed: {error}; exact supervisor owner retained (supervisor_run={run_id}); request stop for that run to retry cleanup",
+                    "{primary}; recording refusal error: {mark_error}; cleanup failed: {error}; exact supervisor owner retained (supervisor_run={run_id}); request stop for that run to retry cleanup",
                 ));
                 await_cleanup_recovery(&mut session, &mut run, &mut owner_loss_handled);
             }
