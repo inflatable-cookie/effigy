@@ -82,6 +82,35 @@ impl HostDispatch {
     }
 }
 
+/// Fingerprint the composed values actually used by routing, not a later
+/// filesystem reread. An unknown source cannot qualify a reserved request.
+pub(in crate::runner) fn catalog_snapshot(
+    catalogs: &[effigy_manifest::LoadedCatalog],
+) -> Result<effigy_kernel::id::Digest, Refusal> {
+    let entries = catalogs
+        .iter()
+        .map(|catalog| {
+            let digest = catalog
+                .effective_digest
+                .as_ref()
+                .ok_or_else(|| Refusal::unavailable("workspace catalog snapshot is unavailable"))?;
+            Ok((
+                &catalog.alias,
+                &catalog.catalog_root,
+                &catalog.manifest_path,
+                &catalog.bundle_root,
+                catalog.depth,
+                digest,
+            ))
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
+    let bytes = serde_json::to_vec(&entries)
+        .map_err(|_| Refusal::unavailable("workspace catalog snapshot cannot be encoded"))?;
+    let mut domain = b"effigy.workspace.catalog-snapshot\0\x01".to_vec();
+    domain.extend(bytes);
+    Ok(effigy_kernel::id::Digest::of(&domain))
+}
+
 impl channel::RunIds for HostDispatch {
     fn next(&mut self) -> Result<RunId, Refusal> {
         fresh_run_id()
@@ -185,6 +214,10 @@ impl channel::Resolver for HostDispatch {
             .chain(body.args.iter().cloned())
             .map(std::ffi::OsString::from)
             .collect();
+        let provenance = BTreeMap::from([(
+            "workspace:catalog-snapshot".to_owned(),
+            catalog_snapshot(&preflight.catalogs)?,
+        )]);
         ResolvedInvocation::new(InvocationSpec {
             task,
             route: Route::Task,
@@ -197,7 +230,7 @@ impl channel::Resolver for HostDispatch {
             attachments: Vec::new(),
             class: EffectClass::Mutate,
             placement: Placement::Host,
-            provenance: BTreeMap::new(),
+            provenance,
         })
         .map_err(|error| Self::refuse(error.to_string()))
     }
@@ -288,6 +321,21 @@ impl channel::Admission for HostDispatch {
                 .filter_map(|arg| arg.to_str().map(str::to_owned))
                 .collect(),
         };
+        // Recheck the published directory immediately before launching its
+        // supervisor, and carry the exact resolved facts through its private
+        // owner channel for a second comparison before any fallback or run.
+        self.checkout_directory(".")?;
+        let identity = self
+            .root
+            .owning_directory()
+            .identity()
+            .map_err(|error| Self::refuse(error.to_string()))?;
+        let resolution = crate::runner::managed_run::WorkspaceResolution {
+            invocation: serde_json::to_vec(resolved)
+                .map_err(|_| Refusal::unavailable("workspace resolution cannot be encoded"))?,
+            checkout: self.host_checkout.clone(),
+            identity,
+        };
         // The engine re-resolves from the same host records; the working
         // directory it runs in is the resolved invocation's own catalog.
         let started = crate::runner::managed_run::start_reserved(
@@ -295,6 +343,7 @@ impl channel::Admission for HostDispatch {
             &invocation,
             self.host_checkout.join(&resolved.spec().cwd),
             ticket.clone(),
+            resolution,
         )
         .map_err(|error| Refusal::unavailable(error.to_string()))?;
         if started.run != ticket.run() {
@@ -615,6 +664,31 @@ mod checkout_boundary_tests {
             args,
             output: OutputMode::Text,
         }
+    }
+
+    #[test]
+    fn changed_task_definition_changes_the_reserved_resolution() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let checkout = fixture.path().join("checkout");
+        std::fs::create_dir(&checkout).expect("checkout");
+        let manifest = checkout.join("effigy.toml");
+        std::fs::write(&manifest, "[tasks]\nbuild = 'echo original'\n").expect("manifest");
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = StateRoot::effects(&cx, &checkout).expect("state");
+        let mut dispatch = HostDispatch::new(checkout, root);
+        let before = dispatch
+            .resolve(&cx, &invoke(".", vec![]))
+            .expect("first resolution");
+        std::fs::write(&manifest, "[tasks]\nbuild = 'echo replacement'\n")
+            .expect("changed manifest");
+        let after = dispatch
+            .resolve(&cx, &invoke(".", vec![]))
+            .expect("second resolution");
+        assert_ne!(
+            before.digest(),
+            after.digest(),
+            "a changed command must not retain the reserved resolution"
+        );
     }
 
     #[test]

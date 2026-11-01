@@ -61,6 +61,10 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     let root = crate::runner::command_context::active_runtime_context()
         .map(|context| context.command_root().to_path_buf())
         .unwrap_or_else(|| cwd.into());
+    // A reserved workspace engine must verify its dispatcher-owned selection
+    // before any preparation or fallback can produce effects. Its first
+    // resolver already observed the sources; missing sources now refuse.
+    let reserved_workspace = crate::runner::managed_run::workspace_resolution()?.is_some();
     if let Some(manifest) = root
         .ancestors()
         .map(|root| root.join("effigy.toml"))
@@ -77,7 +81,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             Command::Task(_) | Command::Tasks(_) => true,
             _ => false,
         };
-        if reads_sources {
+        if reads_sources && !reserved_workspace {
             if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
                 crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
             } else {
