@@ -248,6 +248,52 @@ mod tests {
     }
 
     #[test]
+    fn enabling_existing_custody_does_not_spawn_a_second_sentinel() {
+        let home = effigy_test_support::short_tempdir("ld-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "duplicate-sentinel-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        run.enable_custody(&plan).unwrap();
+        let identity = run.sentinel.as_ref().unwrap().identity.clone();
+        let helper_log = home.path().join("new-helpers.jsonl");
+        crate::fault::set_helper_log(Some(helper_log.clone()));
+        let retry = run.enable_custody(&plan);
+        crate::fault::set_helper_log(None);
+        let logged = std::fs::read_to_string(helper_log).unwrap_or_default();
+        let same = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        for line in logged.lines() {
+            if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
+                reap_test_child(&child);
+            }
+        }
+        assert!(retry.is_err());
+        assert_eq!(same, Some(identity));
+        assert!(
+            logged.is_empty(),
+            "duplicate enablement spawned a helper: {logged}"
+        );
+        assert!(cleanup.is_ok());
+    }
+
+    #[test]
     fn cancelled_registration_keeps_the_exact_sentinel_for_cleanup() {
         let home = effigy_test_support::short_tempdir("lc-").unwrap();
         let cx = super::super::tests::context();
