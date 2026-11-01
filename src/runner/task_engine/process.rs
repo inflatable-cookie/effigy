@@ -66,6 +66,9 @@ pub(in crate::runner) struct PlainExit {
     pub(in crate::runner) workload: WorkloadOutcome,
     /// The task's exit code; `128 + n` when a signal ended it.
     pub(in crate::runner) code: i32,
+    /// A stop of this run ended this workload: it never reported a result of
+    /// its own. Recorded per workload, never inferred from an exit status.
+    pub(in crate::runner) stopped: bool,
     pub(in crate::runner) stdout: Vec<u8>,
     pub(in crate::runner) stderr: Vec<u8>,
 }
@@ -98,6 +101,7 @@ fn run_plain_inner(
         return Ok(PlainExit {
             code,
             workload,
+            stopped: true,
             stdout: Vec::new(),
             stderr: Vec::new(),
         });
@@ -147,6 +151,7 @@ fn run_plain_inner(
                 return Ok(PlainExit {
                     code,
                     workload,
+                    stopped: true,
                     stdout: Vec::new(),
                     stderr: Vec::new(),
                 });
@@ -281,6 +286,7 @@ fn run_plain_inner(
     Ok(PlainExit {
         workload,
         code,
+        stopped: requested || own_request.is_some() || signalled.is_some(),
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })

@@ -1177,6 +1177,29 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- An interactive `effigy test` run that the operator stops can no longer report
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A run the operator stopped is cancelled even
+  when the stop arrived before any suite started, while a suite that reported
+  its own failure keeps that failure: a cancellation is the run's own record,
+  never a suite's exit status. An ordinary `130` or `143` exit is therefore a
+  failure, in a terminal or without one; a suite that died from a signal no
+  stop sends (`SIGSEGV`, `SIGABRT`) is a failure too. Only a suite the run that
+  owns it recorded as stopped is `cancelled`, and that attempt's own child run
+  closes as `cancelled` while a failed attempt closes with the code it
+  reported. A nested helper invocation keeps its own exit code instead of
+  collapsing to `1`, and a run's closeout uses that error's own outcome, so a
+  cancelled `effigy test` closes its run as `cancelled` instead of `failed` and
+  its step is recorded `Cancelled` with code `130`; a cancelled QA-group run
+  closes its durable kernel run the same way. The session summary no longer
+  renders a signal-terminated process as `OK`.
+
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
 - A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.

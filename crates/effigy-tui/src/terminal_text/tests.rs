@@ -7,8 +7,7 @@ use vt100::Parser as VtParser;
 use crate::core::LogEntryKind;
 
 use super::{
-    ansi_line, format_elapsed, ingest_log_payload, is_expected_shutdown_diagnostic,
-    runtime_meta_line, sanitize_log_text, vt_logs,
+    ansi_line, format_elapsed, ingest_log_payload, runtime_meta_line, sanitize_log_text, vt_logs,
 };
 
 #[test]
@@ -34,14 +33,6 @@ fn ansi_line_parses_truecolor_sequence() {
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].content.as_ref(), "shade");
     assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(12, 34, 56)));
-}
-
-#[test]
-fn expected_shutdown_diagnostics_are_ignored() {
-    assert!(is_expected_shutdown_diagnostic("signal=15"));
-    assert!(is_expected_shutdown_diagnostic("signal=9"));
-    assert!(!is_expected_shutdown_diagnostic("exit=1"));
-    assert!(!is_expected_shutdown_diagnostic("signal=11"));
 }
 
 #[test]
