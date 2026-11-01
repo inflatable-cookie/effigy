@@ -275,6 +275,15 @@ mod tests {
         let run_id = run.id();
         let fired = crate::fault::fired();
         crate::fault::arm(None);
+        let before_retry = run
+            .partial_sentinel
+            .as_ref()
+            .map(|partial| partial.child_id());
+        let retry = run.enable_workspace_custody(&plan);
+        let after_retry = run
+            .partial_sentinel
+            .as_ref()
+            .map(|partial| partial.child_id());
         crate::fault::set_helper_log(None);
         let settlement =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
@@ -297,6 +306,8 @@ mod tests {
         drop(settlement); // Fixture teardown, not a cleanup receipt.
         assert!(fired && start.is_err());
         assert_eq!(recorded.len(), 1);
+        assert!(retry.is_err(), "unsettled startup must refuse retry");
+        assert_eq!(before_retry, after_retry);
         assert_eq!(retained, Some((run_id, recorded[0])));
         assert!(matches!(
             gate,
