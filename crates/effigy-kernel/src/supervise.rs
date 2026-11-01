@@ -2187,6 +2187,38 @@ mod client_order_tests {
     use std::cell::Cell;
 
     #[test]
+    fn workspace_handshake_io_stops_at_deadline_on_full_and_empty_pipes() {
+        let (mut writer, _peer) = UnixStream::pair().unwrap();
+        writer.set_nonblocking(true).unwrap();
+        let block = [1u8; 8192];
+        let mut full = false;
+        for _ in 0..4096 {
+            match writer.write(&block) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    full = true;
+                    break;
+                }
+                Err(error) => panic!("fill failed: {error}"),
+            }
+        }
+        assert!(full, "fixture must reach a full socket");
+        let op = context(CancelToken::default(), Duration::from_millis(30));
+        let started = Instant::now();
+        let error = write_all_with(&mut writer, &[1], &op).unwrap_err();
+        assert!(error.to_string().contains("TimedOut"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let (mut reader, _peer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let op = context(CancelToken::default(), Duration::from_millis(30));
+        let started = Instant::now();
+        let error = read_exact_with(&mut reader, &mut [0], &op).unwrap_err();
+        assert!(error.to_string().contains("TimedOut"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
     fn detach_committed_at_eof_is_included_before_owner_loss_decision() {
         struct Eof<'a>(&'a Cell<bool>);
         impl Read for Eof<'_> {
