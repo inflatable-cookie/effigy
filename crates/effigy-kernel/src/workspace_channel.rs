@@ -2347,15 +2347,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
                 // this key, so a later retry reads `unknown` instead of
                 // admitting a second run under a fresh id.
                 self.admission.admit(cx, &ticket, &resolved)?;
+                self.admitted.insert(ticket.run());
                 AdmissionReply::Accepted(Accepted {
                     run: ticket.run(),
                     placement: Placement::Host,
                 })
             }
         };
-        if let AdmissionReply::Accepted(accepted) = &reply {
-            self.admitted.insert(accepted.run);
-        }
         Ok(reply)
     }
 
@@ -2396,8 +2394,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         session: Session,
         run: RunId,
     ) -> Result<Attachment, Refusal> {
+        if !self.admitted.contains(&run) {
+            return Err(Refusal::forbidden("this connection did not admit the run"));
+        }
         let handle = run::resume_owner(cx, root, session, run).map_err(refusal_from)?;
-        self.admitted.insert(run);
         Ok(handle)
     }
 
@@ -2412,12 +2412,18 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         handle: Option<&Attachment>,
         body: &RunBody,
     ) -> Result<(), Refusal> {
-        let id = self.ids.next()?;
         match handle {
             Some(handle) if handle.run() == body.run => {
+                let id = self.ids.next()?;
                 handle.control(cx, root, id, RequestAction::Stop)
             }
             _ => {
+                if !self.admitted.contains(&body.run) {
+                    return Err(Refusal::forbidden(
+                        "this connection has no attachment to the run",
+                    ));
+                }
+                let id = self.ids.next()?;
                 let owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
                 // The stop request is the whole effect: the handle is not
                 // released here, so this client cannot end another client's
@@ -2437,6 +2443,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         session: Session,
         body: &RunBody,
     ) -> Result<(), Refusal> {
+        if !self.admitted.contains(&body.run) {
+            return Err(Refusal::forbidden("this connection did not admit the run"));
+        }
         let mut owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
         owner
             .release(cx, root, Release::Detach)
@@ -2620,6 +2629,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
 
     /// Drop everything the previous connection left queued.
     fn begin_connection(&mut self) {
+        // Admission ownership belongs only to the connection that admitted it.
+        // A replay on another connection cannot recover an owner attachment.
+        self.dispatcher.admitted.clear();
         self.outbound = Outbound::new();
         self.attach = None;
         self.carry = None;

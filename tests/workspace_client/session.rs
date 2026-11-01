@@ -150,6 +150,179 @@ fn attached(session: run::Session) -> Vec<Frame> {
     )));
     frames
 }
+
+#[test]
+fn reused_server_does_not_transfer_owner_to_a_fresh_connection() {
+    for different_credential in [false, true] {
+        let host = Host::new();
+        let (owner, session) = host.session();
+        let ledger = Rc::new(RefCell::new(Ledger::default()));
+        let runs = Rc::new(RefCell::new(vec![]));
+        expect_admission(&ledger);
+        let mut server = server(
+            &host,
+            session.session(),
+            ledger.clone(),
+            runs.clone(),
+            session_operations(),
+        );
+        let other = Secret::new([42; 32]);
+        server.grants_mut().issue(
+            other.clone(),
+            GrantBinding {
+                host_user: "operator".into(),
+                checkout: "fixture".into(),
+                session: session.session(),
+                environment_generation: effigy_kernel::id::Generation::new(4),
+                container_id: "full-container-id".into(),
+                vm_boot_id: "boot-1".into(),
+            },
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut first = authenticated(session.session());
+        first.push(Frame::Request(request(
+            session.session(),
+            1,
+            RequestBody::Invoke(body()),
+        )));
+        server
+            .serve(
+                &mut Pipe::new(&first),
+                &host.cx,
+                &host.observe(),
+                &host.root,
+                &mut NoStreams,
+            )
+            .expect("admit on first connection");
+        let mut second = authenticated(session.session());
+        if different_credential {
+            second[1] = Frame::Authenticate(other);
+        }
+        second.push(Frame::Request(request(
+            session.session(),
+            1,
+            RequestBody::Invoke(body()),
+        )));
+        second.push(Frame::Request(request(
+            session.session(),
+            2,
+            RequestBody::Attach(AttachBody {
+                run: id(10),
+                streams: vec![StreamKind::TerminalOutput],
+                cursor: None,
+                cursors: None,
+            }),
+        )));
+        let mut pipe = Pipe::new(&second);
+        server
+            .serve(
+                &mut pipe,
+                &host.cx,
+                &host.observe(),
+                &host.root,
+                &mut NoStreams,
+            )
+            .expect("attach on second connection");
+        let replayed = pipe.frames().iter().any(|frame| {
+            matches!(frame,
+        Frame::Response(Response { id: request_id, outcome: ResponseOutcome::Accepted(accepted) })
+            if *request_id == RequestId::new([1; 16]) && accepted.run == id(10))
+        });
+        let stops = host.stops(id(10));
+        settle(&host, &runs);
+        owner
+            .settle(&cleanup(&host.cx), &mut NoEffects)
+            .expect("session cleanup");
+        host.assert_foreign();
+        ledger.borrow().done();
+        assert!(replayed, "replay must return the original admission");
+        assert_eq!(
+            stops, 0,
+            "a fresh connection's EOF stopped the first connection's run"
+        );
+    }
+}
+
+#[test]
+fn fresh_connection_cannot_detach_another_connections_owner() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut first = authenticated(session.session());
+    first.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    server
+        .serve(
+            &mut Pipe::new(&first),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("admission");
+    let mut second = authenticated(session.session());
+    second.push(Frame::Request(request(
+        session.session(),
+        3,
+        RequestBody::Cancel(RunBody { run: id(10) }),
+    )));
+    second.push(Frame::Request(request(
+        session.session(),
+        2,
+        RequestBody::Detach(RunBody { run: id(10) }),
+    )));
+    let mut pipe = Pipe::new(&second);
+    server
+        .serve(
+            &mut pipe,
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("second connection");
+    let refusals = pipe
+        .frames()
+        .iter()
+        .filter(|frame| {
+            matches!(
+                frame,
+                Frame::Response(Response {
+                    outcome: ResponseOutcome::Refused(_),
+                    ..
+                })
+            )
+        })
+        .count();
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert_eq!(
+        refusals, 2,
+        "a fresh connection used another connection's owner"
+    );
+    assert_eq!(
+        stops, 0,
+        "a fresh connection stopped another connection's run"
+    );
+}
 fn input() -> StreamFrame {
     StreamFrame {
         id: RequestId::new([2; 16]),
