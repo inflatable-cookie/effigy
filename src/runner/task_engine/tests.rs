@@ -1361,6 +1361,9 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
             {
                 failures.push(format!("{profile}: supervisor reap retry: {retry_error}"));
+                if let Err(cleanup_error) = started.client.fixture_terminate_and_reap() {
+                    failures.push(format!("{profile}: fixture termination: {cleanup_error}"));
+                }
             }
         }
         let post_wait_observation = kernel::observe();

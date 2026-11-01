@@ -895,6 +895,17 @@ impl SupervisorClient {
     pub fn close_input(&mut self) {
         self.writer.take();
     }
+
+    /// Stop and reap this exact disposable fixture child after a failed wait.
+    /// This says nothing about journal settlement or descendant processes.
+    #[cfg(feature = "test-support")]
+    pub fn fixture_terminate_and_reap(&mut self) -> io::Result<()> {
+        self.writer.take();
+        if self.child.try_wait()?.is_none() {
+            self.child.kill()?;
+        }
+        self.child.wait().map(|_| ())
+    }
     pub fn event(&mut self, cx: &OperationContext) -> io::Result<Event> {
         loop {
             if self.buffer.len() >= 4 {

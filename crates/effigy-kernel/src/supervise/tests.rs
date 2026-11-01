@@ -281,6 +281,55 @@ fn timed_out_wait_keeps_exact_child_for_fresh_budget_reap() {
     assert!(reaped, "fresh budget reaps the same child after EOF");
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+fn exhausted_fixture_waits_terminate_and_reap_exact_child() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let helper = world.helper("exec sleep 60");
+    let mut child = Command::new(&helper.executable.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let writer = child.stdin.take().unwrap();
+    let events = child.stdout.take().unwrap();
+    nonblocking(events.as_raw_fd()).unwrap();
+    let mut client = SupervisorClient {
+        child,
+        writer: Some(writer),
+        events,
+        buffer: Vec::new(),
+        run: RunId::new(1, [6; 10]).unwrap(),
+        fence: Fence {
+            resource: owner("wait-exhaustion"),
+            generation: Generation::new(1),
+        },
+        root,
+        active: false,
+        closed: false,
+    };
+    let first = client
+        .wait_recoverable(&cx.operation().child(Duration::from_millis(20)))
+        .is_err();
+    let second = client
+        .wait_recoverable(&cx.operation().child(Duration::from_millis(20)))
+        .is_err();
+    let retained = client.child.id() == pid;
+    let cleanup = client.fixture_terminate_and_reap();
+    let reaped = client.child.try_wait().unwrap().is_some();
+    assert!(
+        first && second && retained,
+        "both exhausted waits retain the same child"
+    );
+    assert!(
+        cleanup.is_ok() && reaped,
+        "fixture cleanup kills and reaps that child"
+    );
+}
+
 /// A helper death reads as unavailable and names the helper, how it ended and
 /// the stderr tail it left.
 fn helper_exited(error: RunError, helper: &str, exit: &HelperExit) {
