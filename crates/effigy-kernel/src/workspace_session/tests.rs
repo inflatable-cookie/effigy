@@ -9294,6 +9294,58 @@ fn split_decision_times_out_external_observation_without_finalizing() {
 }
 
 #[test]
+fn split_timeout_reacquires_gate_before_releasing_stalled_observer() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (done, completed) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(300),
+        move |_| {
+            let _ = started.send(());
+            let _ = blocked.recv_timeout(Duration::from_secs(5));
+            let _ = done.send(());
+            Ok(1)
+        },
+        |_, _| panic!("expired data must not be finalized"),
+    );
+    let competing = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    );
+    let was_started = ready.try_recv().is_ok();
+    let was_still_blocked = matches!(
+        completed.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
+    let was_released = release.send(()).is_ok();
+    let finished = completed.recv_timeout(Duration::from_secs(5)).is_ok();
+    match result {
+        Err(RunError::Unavailable(reason)) => {
+            assert!(reason.contains("deadline expired"), "{reason}");
+        }
+        Err(RunError::Interrupted(crate::ctx::Interrupt::TimedOut { .. })) => {}
+        _ => panic!("expected a named timeout"),
+    }
+    assert!(was_started, "the observer must have started");
+    assert!(was_still_blocked, "observer completed before release");
+    assert!(
+        was_released && finished,
+        "release and completion must succeed"
+    );
+    assert!(competing.is_ok(), "the decision gate must be available");
+}
+
+#[test]
 fn decision_observes_inputs_while_holding_the_environment_gate() {
     let cx = context();
     let fixture = home();
