@@ -1,4 +1,10 @@
-# 037 - Workspace Terminal Attachment Release Authority (design v4, draft)
+# 037 - Workspace Terminal Attachment Release Authority (design v4.1, draft)
+
+v4.1 (2026-11-01) amends v4 after review: detach revokes without closing the
+master (§18); dead-owner release is disabled until #519 proof (§6); typed
+attachment requests with atomic resolution (§19); a full writer and fd map (§17);
+the mixed-writer gate is a schema decision, not a workspace-channel version (§7).
+Where a v4 section and a v4.1 section disagree, v4.1 wins.
 
 Status: **docs-only design, pre-implementation, for independent review.** Owner
 task: effigy#525. Design base: `6b72af5f6`. Implementation base: the independently
@@ -73,7 +79,7 @@ Every path that ends a terminal's authority, and where it runs at base.
 | # | Path (base location) | Calling process | v4 route | Proof or condition |
 |---|---|---|---|---|
 | 1 | Explicit release / EOF (`Attachment::release` → `release_attachment`, `run/workspace.rs` ~714, ~908) from `workspace_channel.rs` calls at ~2680, ~2748, ~3011 | client-serving host | owner-local if the caller is the owner incarnation; otherwise requested (`ReleaseAttachment`, §5) | owner alive: request; owner dead: §6 |
-| 2 | Acknowledged detach (`workspace_channel.rs` ~2412, ~3054 → `Release::Detach`; existing `RequestAction::Detach` ~1302) | client-serving host | requested, reusing the existing `Detach` request kind for the owner's ack | same as #1 |
+| 2 | Acknowledged detach (`workspace_channel.rs` ~2412, ~3054 → `Release::Detach`; existing `RequestAction::Detach` ~1302) | client-serving host | requested as a typed, attachment-specific `DetachAttachment` request (v4.1, §5). The existing `RequestAction::Detach` is **not** reused: it only sets the owning channel's detached flag and changes EOF handling. Detach revokes input and geometry and never closes the master (§18) | same as #1, plus §18 survival |
 | 3 | Transport failure / replacement / retry (`workspace_channel.rs` ~2748 and ~3011 call sites) | client-serving host | same as #1 | same as #1 |
 | 4 | Liveness-watch loss (`supervise.rs` `Control::control` ~1448-1461 → `Run::release_workspace_attachment`, `run/workspace.rs` ~1440) | owner incarnation | owner-local, no request | none beyond owner identity |
 | 5 | Normal child or run closure (`run/settle.rs` ~357 → `workspace::closed`, `run/workspace.rs` ~482) | owner incarnation | owner-local | none beyond owner identity |
@@ -109,9 +115,12 @@ front of `pending`, or set `applied` to the snapshot); clear `in_flight`; notify
 3. Under M: move `pending` and `latest` into `quarantine` (not discarded, not
    delivered). Record `quarantined_input` and `quarantined_geometry` counts.
 4. Commit the journal transition (`release_row` or the close transaction) in L2.
-5. Resolve the quarantine (§9). Close the writer fd, which retires the child's
-   terminal, only after the commit is verified.
-6. Reply to the requester (if requested) with the outcome and counts (§5).
+5. Resolve the quarantine (§9). **Close the master only at legitimate settlement
+   (§18).** Detach, client EOF, and secondary release never close the master.
+   Closing it can hang up the child (052 §8.11), so those paths revoke the client's
+   input and geometry and keep the master and output drain running.
+6. Reply to the requester (if requested) with the outcome and counts (§5), in the
+   same transaction that resolves the request (§5, v4.1).
 
 Bytes in `quarantine` are never delivered. They are either discarded after a
 verified commit or restored in exact order after a verified precommit failure.
@@ -130,8 +139,11 @@ newer-after-reconcile are both tested (§11).
 **Drop, retire and stop paths.** Only the owner incarnation's pump or the release
 path clears `pending`, `latest` or `quarantine`. `WorkspaceTerminal::drop` sets
 `stop` under M and joins the pump with a bounded wait. If the join times out, drop
-records Unknown for the pending counts and detaches the handle. It never clears
-state directly. Pump retirement on `Gone`, on writer `Closed`, on stop, and on panic
+**does not drop the writer or the handle**. It moves the writer, the in-flight
+reservation and the pending state into a retained custody record for the run, and
+reports Unknown for the unsettled counts (v4.1, §19). A drop that releases the
+sole writer while an effect may still run is forbidden. Drop never clears state
+directly. Pump retirement on `Gone`, on writer `Closed`, on stop, and on panic
 all go through the same owner-local path (§4 steps 3–5).
 
 ## 5. Requested protocol (cross-process release)
@@ -165,10 +177,17 @@ pending on Unknown (retry).
 Unknown. The request stays pending. It is not re-sent by the requester. The owner
 processes it when it can (§9, live-but-stuck).
 
-## 6. Death-proven path (dead owner only)
+## 6. Death-proven path (dead owner only) — **disabled until #519 proof (v4.1)**
 
-A non-owner process may perform a release or settlement without the owner only
-when all of these hold, checked in order:
+v4.1 disables this path. Dead-owner release returns **named Unknown** until #519
+proves process and fd closure, or a stronger reviewed primitive exists. Reasons,
+from review: openpty's initial fds and fork-inherited copies are not fully tracked;
+a fork held before exec can keep the master despite `CLOEXEC`; arbitrary `dup` or
+transfer is not tracked. Death of the recorded identity and its recorded custody
+members does not prove those holders are gone. The conditions below are the
+*future* gate, and nothing in v4.1 runs them.
+
+Conditions for a future enablement, checked in order:
 
 1. **Exact incarnation dead.** `runs.owner_identity` is checked with
    `ident::process_identity(pid).verified()` against the recorded identity. The
@@ -203,13 +222,16 @@ directly. That residual is stated in §13.
 - **One authority at a time.** A new owner incarnation (recovery after death,
   §6) is authority only after the predecessor is proven dead. A live predecessor
   keeps authority, and the new incarnation's `resume_owner` must refuse.
-- **Mixed-version gate.** A pre-v4 host binary calls `Attachment::release` directly
-  from `workspace_channel.rs`, bypassing the owner. A v4 owner cannot stop that call
-  in-process. Without a gate, a v4 owner and a pre-v4 host can both commit releases
-  for the same run. The gate must be durable and checked before a v4 owner starts
-  effects and before a pre-v4 host can attach. The mechanism needs a schema field
-  (for example, `runs.owner_protocol`) or a workspace channel protocol version
-  check. **This is a decision (§12), not solved here.**
+- **Mixed-version gate (v4.1).** A pre-v4 local binary can call
+  `Attachment::release` or settle directly, bypassing the owner. A workspace channel
+  version cannot fence those calls, because they never touch the channel. The only
+  store-level fence verified at base is the schema version: `SCHEMA_VERSION = 1`
+  (`store.rs` ~30), and open refuses any other `found` version (`store.rs` ~815–816,
+  `UnknownSchema` ~131, ~171). An old binary refuses a bumped store, but accepts a
+  store with the same version. So a mixed-writer gate needs a schema bump (or
+  verified quiescence of every local binary), and that is a migration decision
+  (§12). Until it is ruled, v4.1 claims no mixed-writer protection, and fails
+  closed by refusing to rely on any version field.
 - **Pre-existing rows.** Rows and runs created before v4 have no protocol marker.
   They are treated as pre-v4: a pre-v4 owner or host may still release them
   directly. Recovery for these rows goes through §6 only, and only after the gate
@@ -392,3 +414,134 @@ The sole integrator coordinates, and the #512 merge hold stays in place.
   authority, the request action, the death-proven path, the mixed-version gate, and
   the limitations in §13.
 - `CHANGELOG.md` `[Unreleased]`: one entry after review.
+
+## 17. Writer, clone and fd handoff map (v4.1, verified at base)
+
+Every path that can write to the terminal, clone its master, or hand off an fd.
+"Gate" is what v4.1 requires before a path may be relied on. Nothing here is
+inferred from `runs.owner_identity`.
+
+| # | Path (base location) | What it holds or does | Process | Gate |
+|---|---|---|---|---|
+| W1 | PTY pair (`custody/spawn.rs` ~326–341, `pty()` ~827–851) | `pty()` returns `(master, slave)`. The parent keeps `out_read = master`. The slave is duplicated to stdio (~330–332) | the process that calls custody spawn (the spawner). **Not verified** as the run owner | record the holder's identity; do not infer |
+| W2 | `ProcessCore.stdout` (`custody.rs` ~257–290) | the master for a PTY child, drained for output | spawner | must stay open until settlement (§18) |
+| W3 | `ProcessCore::write_input` (`custody.rs` ~1476–1490) | writes to the master in a loop with a **1 s deadline**, under `lock(&self.core)` | spawner | not nonblocking pump semantics. It holds the core lock, so output drain and release contend. **Needs A's coordination (custody.rs is A's file)** |
+| W4 | `Custody::write_input` (`custody.rs` ~1250) | the public input entry | spawner | callers below |
+| W4a | managed engine `ClientFrame::Input` (`src/runner/managed_run/engine.rs` ~992–999) | `owned.write_input(&bytes)`, errors ignored (`let _`) | managed engine process | a second input route, separate from the workspace terminal |
+| W4b | builtin test harness (`src/runner/builtin_ports/test_session.rs` ~399) | test input | test only | out of scope for production |
+| W4c | TUI `ClientFrame::Input` producers (`src/runner/managed_run/tui.rs` ~144, ~381) | client-side frame producer | client | not a writer; sends to W4a |
+| W5 | `ProcessCore.stdin` and `Custody::write_stdin` (`custody.rs` ~289, ~1256) | pipe stdin for `Terminal::Pipe`, deadline-bounded | spawner | not a PTY. A separate input writer. Callers not traced yet |
+| W6 | `Custody::forward(signal)` (`custody.rs` ~1245) and `ClientFrame::Terminate` (`engine.rs` ~1000) | signals to the child. Can end the child and so drive closure | spawner / engine | not a release. Closure from exit is owner-local (§4) |
+| W7 | `TerminalWriter` injected into `WorkspaceTerminal::open` (`workspace_client/terminal.rs` ~86, ~196–202) | the #485 pump's writer | serving process | **no production implementation at base**. FakePty only (`workspace_client/tests.rs` ~2703). Not connected to W1–W3 |
+| C1 | `supervise/anchor.rs` ~201–202 `private_dup(3)`, `(4)` | go and ready pipes for the supervisor handshake | supervisor | not the master |
+| C2 | `custody/spawn.rs` ~27, ~827 `F_DUPFD_CLOEXEC` | CLOEXEC duplicates used for stdio and the master path | spawner | CLOEXEC is required; does not stop pre-exec fork copies |
+| C3 | `supervise.rs` ~226–227 `dup2(raw, HANDOFF_FD)` and `F_SETFD` 0 | a handoff fd deliberately **made inheritable** | supervisor | **must be proven not to carry W1.** Not verified |
+| C4 | `fs.rs` ~789 directory fd dup | directory fds | any | not the master |
+| C5 | `custody/merged/atomic.rs` ~114 `try_clone` | log file | spawner | not the master |
+| C6 | `ident.rs` ~905 `dup(STDIN)` | identity probe | any | not the master |
+| C7 | `SCM_RIGHTS` (`src/runner/host_process.rs` ~3386–3424) | appears only inside embedded Python fixture scripts | fixtures | not production. `workspace_client/supervisor.rs` ~110 states that the channel carries no descriptors |
+| C8 | `ProcessCore.registration` (`custody.rs` ~290) | remote registration stream | spawner | not the master |
+
+**Consequences for v4.1:**
+
+- W3 is the only verified PTY write path, and it is not nonblocking. The §10
+  contract therefore does not hold for it at base.
+- W4a is a second input route to the same child. Any gate must cover it, or it
+  bypasses the single authority.
+- W7 is not connected to a real master at base, so the owner-local pump in §4 is a
+  design, not a description of existing code.
+- C3 may let a handoff process inherit the master. This is the main unverified
+  fd-inheritance question, and it blocks any death-based claim.
+- The spawner's identity (W1–W3) is still unknown. §21 decision 1 asks for it.
+
+## 18. Detach, revocation and retained custody (v4.1)
+
+Detach and EOF of a secondary, and acknowledged detach of the owner, **revoke
+client authority only**. They never close the master or stop the child.
+
+- **Revoke.** The attachment row goes `released`, with `release='detach'` (or
+  `eof`). Owner memory marks the client revoked. Input and geometry from that
+  client are refused from then on. Its queued input moves to quarantine and is
+  discarded with an exact count (§4 steps 3–5).
+- **Keep.** The master (W2), the output drain, and the child stay running. Output
+  continues into run logs. This is 052 §8.11 detached survival.
+- **Close only at legitimate settlement.** The master closes only after the child
+  exits or a stop or escalation settles the run (owner-local, §4), or after an
+  interrupted settlement that has its own proof (§6, currently disabled).
+- **No successor typing without a claim.** After owner detach, there is no owning
+  claim. Owner input is refused (`NoOwner`, as today's `TerminalRefusal`). A new owner
+  needs an admitted claim through `resume_owner`, which requires an attached owning
+  row. Secondary attachments never type.
+- **Tests.** T-DETACH-SURVIVE: a real PTY child keeps producing output after
+  detach, and input is refused. T-SUCCESSOR-NO-CLAIM: after detach, no attachment
+  types. Both need the real PTY binding (#519). FakePty proves ordering only, and
+  the design does not claim production proof.
+
+## 19. Request semantics, drop retention and failure (v4.1)
+
+This section supersedes §5's "requester re-reads row state" and the `Detach` reuse in §3.
+
+- **Typed, attachment-specific request.** `RequestAction::ReleaseAttachment` and
+  `RequestAction::DetachAttachment`, carrying `{cause, session, run, attachment,
+  fence, client lifetime}` in the serialized `Request` (TEXT `action` column, no
+  DDL). `requests` has `requester` and `cause` columns (`store.rs` ~1894–1903). The
+  request is written through `request_bounded` (`run/mod.rs` ~1389), which requires
+  `HostAuthority` and `Mutate`. Resolution checks that the identity inside still
+  matches the attachment row.
+- **Atomic resolution.** The release commit and the request's `resolved` state are
+  **one transaction**. Today `resolve_request` runs in a separate transaction
+  (`run/mod.rs` ~1509–1517). That gap lets a request be resolved without its effect,
+  or the effect committed without resolution.
+- **No outcome after close.** Close bulk-resolves pending requests
+  (`run/mod.rs` ~1338, `machine_lifecycle` only) without recording an outcome. A
+  resolved request after close is **named Unknown** for its requester. A missing or
+  released row after compaction does not prove the request's outcome. An outcome
+  reaches the requester only by the owner's channel reply, or by a durable result
+  (decision §21.3).
+- **Delayed processing.** An owner may process a request after the requester has
+  timed out. Processing is idempotent by request id. A released or closed row is a
+  no-op. The requester's Unknown stands.
+- **Drop with a join timeout.** The writer, in-flight reservation and pending state
+  move to a retained custody record for the run. The sole writer is never dropped
+  while an effect may run. Counts stay Unknown until settlement.
+
+**Failure additions:**
+
+| Point | Result |
+|---|---|
+| Release commit lands, request not resolved in the same transaction | forbidden by atomic resolution. Test T-ATOMIC-RESOLVE |
+| Close bulk-resolves a pending release request | requester Unknown. Test T-CLOSE-RESOLVE |
+| Owner processes a request after requester timeout | idempotent, no second effect. Test T-DELAYED |
+
+## 20. Tests added by v4.1 (named, deterministic, process-level where stated)
+
+- **T-FORK-PREEXEC (process).** A child forked before exec holds a copy of the master.
+  The owner is killed. The master stays open. No death proof. Release returns Unknown.
+- **T-INHERITED-FD (process).** A workload inherits the master through a non-CLOEXEC
+  dup (C3 shape). The owner is killed. The child survives. Release returns Unknown.
+- **T-HUNG-EFFECT.** The writer blocks in W3's deadline loop, or in a stub. Drop joins
+  with timeout. Retained custody holds the writer. Counts Unknown. No writer drop.
+- **T-RECOVERY-HUNG.** After a hung effect, a later owner-local step returns Unknown
+  or runs after the effect completes. It never drops the writer early.
+- **T-DROP-IN-FLIGHT.** Drop while a reservation is in flight. The reservation
+  reconciles first. The count is exact.
+- **T-ATOMIC-RESOLVE, T-CLOSE-RESOLVE, T-DELAYED.** As in §19.
+- **T-DETACH-SURVIVE, T-SUCCESSOR-NO-CLAIM.** As in §18.
+- **T-MIXED-STORE (only if §21.2 selects a schema bump).** A bumped store refuses an
+  old binary's open. Same-version mixed writers stay unprotected until the bump.
+- Process tests use recorded PIDs and clean up by recorded PID. No pattern kills.
+
+## 21. Open decisions (v4.1)
+
+1. **Master holder.** Which process holds W1–W3 for a given run. It must be recorded
+   from the spawner's own handle at spawn time, verified against the process
+   identity, and gated against C3. It is not inferred from `runs.owner_identity`.
+2. **Mixed writers.** A schema bump (old binaries refuse to open), or verified
+   quiescence of every local binary. Neither is chosen here.
+3. **Request outcome.** Channel reply only (no durable result), or a result column.
+4. **Death-based release.** Stays disabled until #519 provides process and fd closure,
+   or a stronger reviewed primitive.
+5. **W3 blocking loop.** Whether `write_input` moves to nonblocking semantics. This
+   touches `custody.rs`, which is A's file. Coordinate before any change.
+6. **Inline-only alternative.** Pending Tom's decision (Supervisor, 2026-11-01). This
+   document does not define it. The source map for it waits for that definition.
