@@ -202,3 +202,27 @@ fn detached_route_success_removes_the_file() {
     assert_child_saw_private_modes(root.path(), "detached", "detached");
     assert_no_sentinel_persists(&home, "detached");
 }
+
+#[test]
+fn spawn_failure_removes_the_file_before_the_error_returns() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let home = home_with_fake_fixture(root.path());
+    let program = root
+        .path()
+        .join("missing")
+        .join("colima")
+        .to_string_lossy()
+        .into_owned();
+    let env = secret_env();
+    let result = crate::with_test_effigy_home(&home, || {
+        run_command_capture_os_with_env(
+            root.path(),
+            &program,
+            &compose_args(),
+            "spawn failure",
+            &env,
+        )
+    });
+    assert!(result.is_err(), "a program that cannot spawn is reported");
+    assert_no_sentinel_persists(&home, "spawn failure");
+}

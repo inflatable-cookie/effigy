@@ -128,3 +128,26 @@ fn workspace_route_removes_its_file_on_success_and_on_failure() {
         }
     }
 }
+
+#[test]
+fn workspace_route_spawn_failure_removes_its_file() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).expect("home");
+    let program = root.path().join("missing").join("colima");
+    let env = vec![(
+        "DATABASE_URL".to_owned(),
+        OsString::from(format!("postgres://fixture/{SENTINEL}")),
+    )];
+    let spawned = effigy_containers::with_test_effigy_home(&home, || {
+        spawn_compose_plan_inherit_with_env(&plan(root.path(), &program), &env).is_ok()
+    });
+    assert!(!spawned, "a program that cannot spawn is reported");
+    let remaining = fs::read_dir(home.join("compose-env"))
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0);
+    assert_eq!(
+        remaining, 0,
+        "the file is removed before the spawn error returns"
+    );
+}

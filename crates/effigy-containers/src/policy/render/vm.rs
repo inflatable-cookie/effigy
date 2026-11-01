@@ -59,6 +59,10 @@ static DEFERRED_NOTICE: std::sync::Once = std::sync::Once::new();
 thread_local! {
     /// Test seam: the next body write fails once, to prove cleanup on that path.
     static FAIL_NEXT_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test seam: the next removal fails before it touches the directory.
+    static FAIL_NEXT_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test seam: the next removal's quarantine entry vanishes after the move.
+    static VANISH_NEXT_QUARANTINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 /// Fresh names tried before an invocation gives up.
 const CREATE_ATTEMPTS: usize = 8;
@@ -261,7 +265,7 @@ impl InterpolationFile {
     ) -> io::Result<Option<Self>> {
         let stat = fstat(&file).map_err(io::Error::from)?;
         if !owned_file(&stat) {
-            discard(directory, name, &stat);
+            discard(directory, name, &stat)?;
             return Err(invalid(
                 "a Compose interpolation file was not created as an owned single-link file".into(),
             ));
@@ -269,27 +273,30 @@ impl InterpolationFile {
         let owned = match directory.try_clone() {
             Ok(owned) => owned,
             Err(error) => {
-                discard(directory, name, &stat);
+                discard(directory, name, &stat)?;
                 return Err(error);
             }
         };
         if let Err(error) = fchmod(&file, Mode::from_bits_truncate(0o600)) {
-            discard(directory, name, &stat);
+            discard(directory, name, &stat)?;
             return Err(error.into());
         }
         let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
             // A sweep holds the exclusive lock: it is removing this name.
-            discard(directory, name, &stat);
+            discard(directory, name, &stat)?;
             return Ok(None);
         };
         if !is_entry(directory, name, &stat) {
-            discard(directory, name, &stat);
+            discard(directory, name, &stat)?;
             return Ok(None);
         }
-        // From here the value may reach the file: every failure removes it.
+        // From here the value may reach the file: every failure removes it, and
+        // a failed removal is reported with the original error, never dropped.
         if let Err(error) = write_body(&mut locked, body).and_then(|()| locked.sync_all()) {
-            discard(directory, name, &stat);
-            return Err(error);
+            return Err(unknown_after_write(
+                error,
+                remove_owned(directory, name, &stat),
+            ));
         }
         Ok(Some(Self {
             path: path.join(name),
@@ -299,6 +306,20 @@ impl InterpolationFile {
             _lock: locked,
             removed: false,
         }))
+    }
+}
+
+/// A failed write whose cleanup also failed: the caller sees both, and the
+/// cleanup state is named as unknown rather than success.
+fn unknown_after_write(write_error: io::Error, cleanup: io::Result<()>) -> io::Error {
+    match cleanup {
+        Ok(()) => write_error,
+        Err(cleanup_error) => io::Error::new(
+            write_error.kind(),
+            format!(
+                "{write_error}; the Compose interpolation file's cleanup state is unknown ({cleanup_error})"
+            ),
+        ),
     }
 }
 
@@ -374,7 +395,7 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
     )
     .map_err(io::Error::from)?;
     let mut stat = fstat(&directory).map_err(io::Error::from)?;
-    if !is_directory(&stat) || stat.st_uid != geteuid().as_raw() {
+    if !owned_directory_for(&stat, geteuid().as_raw()) {
         return Err(invalid(
             "the Compose interpolation directory is not an owned directory".into(),
         ));
@@ -490,12 +511,26 @@ fn is_hex_name(name: &str, prefix: &str, digits: usize, suffix: &str) -> bool {
 /// unlink never follows a check: if the moved inode is not `expected`, it is
 /// put back with a no-overwrite link and never unlinked.
 fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_REMOVE.with(|armed| armed.replace(false)) {
+        return Err(io::Error::other("injected removal failure"));
+    }
     let quarantine = format!("{QUARANTINE_PREFIX}{}", random_hex(RANDOM_BYTES)?);
     match renameat(directory, name, directory, quarantine.as_str()) {
         Ok(()) => {}
-        // Nothing remains at the name, so there is nothing left to remove.
-        Err(Errno::ENOENT) => return Ok(()),
+        // The name is already gone. Nothing confirms that this invocation's
+        // inode was the one removed, so the caller decides whether that matters.
+        Err(Errno::ENOENT) => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "a Compose interpolation file was already gone; its removal is not confirmed",
+            ))
+        }
         Err(error) => return Err(error.into()),
+    }
+    #[cfg(test)]
+    if VANISH_NEXT_QUARANTINE.with(|armed| armed.replace(false)) {
+        let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
     }
     match fstatat(directory, quarantine.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
         Ok(moved) if same_object(&moved, expected) => {
@@ -532,9 +567,14 @@ fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Res
     }
 }
 
-/// Best-effort removal of a file this invocation just created but may not keep.
-fn discard(directory: &OwnedFd, name: &str, stat: &FileStat) {
-    let _ = remove_owned(directory, name, stat);
+/// Removal of a file that no value has reached yet. A name already gone is not
+/// an error here: nothing secret was written, and the caller retries or fails
+/// on its own terms. Any other failure is returned, never dropped.
+fn discard(directory: &OwnedFd, name: &str, stat: &FileStat) -> io::Result<()> {
+    match remove_owned(directory, name, stat) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 fn is_entry(directory: &OwnedFd, name: &str, stat: &FileStat) -> bool {
@@ -551,9 +591,18 @@ fn is_directory(stat: &FileStat) -> bool {
 
 /// A regular file owned by this user with exactly one link.
 fn owned_file(stat: &FileStat) -> bool {
+    owned_file_for(stat, geteuid().as_raw())
+}
+
+fn owned_file_for(stat: &FileStat, uid: u32) -> bool {
     SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
-        && stat.st_uid == geteuid().as_raw()
+        && stat.st_uid == uid
         && stat.st_nlink == 1
+}
+
+/// A directory owned by the given user.
+fn owned_directory_for(stat: &FileStat, uid: u32) -> bool {
+    is_directory(stat) && stat.st_uid == uid
 }
 
 /// `bytes` of `/dev/urandom`, as lowercase hex.
@@ -566,6 +615,7 @@ fn random_hex(bytes: usize) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nix::unistd::geteuid;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, SystemTime};
 
@@ -937,6 +987,120 @@ mod tests {
         assert!(
             entries(home.path()).is_empty(),
             "every file is removed with its invocation"
+        );
+    }
+
+    #[test]
+    fn a_failed_write_whose_removal_also_fails_reports_the_unknown_state() {
+        let home = tempfile::tempdir().expect("home");
+        FAIL_NEXT_WRITE.with(|armed| armed.set(true));
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        let error = invoke(home.path(), &args(&["up"]), &secret("partial-secret"))
+            .err()
+            .expect("the write failure is reported");
+        let message = error.to_string();
+        assert!(message.contains("injected write failure"), "{message}");
+        assert!(
+            message.contains("cleanup state is unknown"),
+            "a failed removal is never silent: {message}"
+        );
+        assert_eq!(
+            entries(home.path()).len(),
+            1,
+            "the unremoved file is left named, not hidden"
+        );
+    }
+
+    #[test]
+    fn a_name_gone_before_removal_is_not_reported_as_confirmed() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("gone")).expect("held");
+        fs::remove_file(env_path(&held)).expect("the name is removed out from under the holder");
+        let file = held.interpolation.expect("held file");
+        let error = file
+            .remove()
+            .expect_err("a missing name is not a confirmed removal");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_quarantine_that_vanishes_after_the_move_is_reported_unknown() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("vanish")).expect("held");
+        let file = held.interpolation.expect("held file");
+        VANISH_NEXT_QUARANTINE.with(|armed| armed.set(true));
+        let error = file
+            .remove()
+            .expect_err("a vanished quarantine is not a confirmed removal");
+        assert!(error.to_string().contains("state is unknown"), "{error}");
+    }
+
+    #[test]
+    fn a_symlinked_compose_candidate_is_never_followed_or_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let victim = outside.path().join("victim.env");
+        fs::write(&victim, "KEEP=me\n").expect("victim");
+        let link =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "2".repeat(32)));
+        std::os::unix::fs::symlink(&victim, &link).expect("symlink");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(link.symlink_metadata().is_ok(), "the symlink is kept");
+        assert_eq!(fs::read_to_string(&victim).expect("victim"), "KEEP=me\n");
+    }
+
+    #[test]
+    fn a_fifo_candidate_neither_blocks_the_sweep_nor_gets_removed() {
+        let home = tempfile::tempdir().expect("home");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let fifo =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "3".repeat(32)));
+        nix::unistd::mkfifo(&fifo, Mode::from_bits_truncate(0o600)).expect("fifo fixture");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            fifo.symlink_metadata().is_ok(),
+            "a non-regular candidate is kept"
+        );
+    }
+
+    #[test]
+    fn the_owner_predicates_refuse_a_foreign_owner() {
+        let root = tempfile::tempdir().expect("root");
+        let file = root.path().join("owned");
+        fs::write(&file, "x").expect("file");
+        let file_stat = fstat(File::open(&file).expect("open")).expect("stat");
+        let dir_stat = fstat(File::open(root.path()).expect("open dir")).expect("dir stat");
+        let me = geteuid().as_raw();
+        let foreign = me.wrapping_add(1);
+        assert!(
+            owned_file_for(&file_stat, me),
+            "the operator's own file is owned"
+        );
+        assert!(
+            !owned_file_for(&file_stat, foreign),
+            "a foreign-owned file is refused"
+        );
+        assert!(owned_directory_for(&dir_stat, me));
+        assert!(
+            !owned_directory_for(&dir_stat, foreign),
+            "a foreign-owned directory is refused"
+        );
+    }
+
+    #[test]
+    fn a_home_with_group_or_other_write_is_refused_before_anything_is_created() {
+        let home = tempfile::tempdir().expect("home");
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o775)).expect("mode");
+        let result = invoke(home.path(), &args(&["up"]), &secret("secret"));
+        assert!(result.is_err(), "a group-writable Effigy home is refused");
+        assert!(
+            !compose_dir(home.path()).exists(),
+            "nothing is created under a refused home"
         );
     }
 

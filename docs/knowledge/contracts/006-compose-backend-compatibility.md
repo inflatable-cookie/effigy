@@ -309,7 +309,9 @@ Effigy ownership:
   reaped, on success, failure, timeout, kill and spawn failure; removal first
   moves the name to a quarantine name and unlinks only the inode it created,
   and a name that another inode took is restored without overwrite and reported
-  as unknown
+  as unknown; a name already gone, or a quarantine that vanishes after the
+  move, is never reported as confirmed removal. A failed write whose removal
+  also fails returns the write error with the cleanup state named as unknown
 - before each creation a sweep removes only `compose-` files whose exclusive
   lock it can take (no live holder) and never follows a symlink or removes a
   hard-linked, non-regular, foreign-owned or unrecognised name. A legacy
