@@ -661,7 +661,7 @@ impl<'a> ParkedWorkspaceRun<'a> {
             .session
             .as_ref()
             .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
-        if !session.owns_workspace_session(self.run.root, binding)? {
+        if !session.owns_workspace_session_for_cleanup(self.run.root, binding)? {
             return Err(RunError::refused(
                 "retained workspace session owner does not hold its exact slot",
             ));
@@ -731,11 +731,15 @@ impl<'a> ParkedWorkspaceRun<'a> {
     pub fn integration_snapshot(
         &self,
         session: &Run<'_>,
+        cx: &EffectContext,
     ) -> Result<
         std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>,
         RunError,
     > {
-        self.integration_snapshot_on(session, session.store.conn())
+        cx.operation().check("workspace integration snapshot")?;
+        let result = self.integration_snapshot_on(session, session.store.conn())?;
+        cx.operation().check("workspace integration snapshot")?;
+        Ok(result)
     }
 
     /// Atomically append a bounded, non-secret integration custody record.
@@ -753,10 +757,14 @@ impl<'a> ParkedWorkspaceRun<'a> {
                 "workspace activation deadline expired",
             ));
         }
+        if state != WorkspaceIntegrationState::Cleared {
+            self.run.cx.operation().check("workspace integration")?;
+            session.can_effect()?;
+        }
         self.verify_integration_owner(session, session.store.conn())?;
         let owner = session.owner.clone();
         let run_id = session.id;
-        let snapshot = self.integration_snapshot(session)?;
+        let snapshot = self.integration_snapshot(session, cx)?;
         if state != WorkspaceIntegrationState::Attempted && !snapshot.contains_key(&step) {
             return Err(RunError::refused(
                 "workspace integration step was not attempted",
@@ -1816,10 +1824,21 @@ impl<'a> Run<'a> {
         binding: &crate::workspace_session::SessionBinding,
     ) -> Result<bool, RunError> {
         self.can_effect()?;
+        self.owns_workspace_session_for_cleanup(root, binding)
+    }
+
+    /// Cleanup verifies retained possession without relying on the operation
+    /// context that may have expired or been cancelled.
+    fn owns_workspace_session_for_cleanup(
+        &self,
+        root: &StateRoot,
+        binding: &crate::workspace_session::SessionBinding,
+    ) -> Result<bool, RunError> {
         Ok(self.root.path() == root.path()
             && self.id == binding.run
             && self.owner.resource == binding.owner
             && self.owner.generation == binding.generation
+            && journal::run(self.store.conn(), self.id)?.phase != Phase::Closed
             && self.holds_owner_gate()?)
     }
 

@@ -1541,6 +1541,59 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+fn parked_integration_cleanup_survives_session_context_expiry_and_cancel() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    for expired in [true, false] {
+        for attempted in [false, true] {
+            let fixture = home();
+            let cx = context().patience(Duration::from_secs(120));
+            let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+            let reservation = decided(&cx, &root, &environment());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let session_cx = context().child_until(deadline);
+            let (mut session, _) = admit_staged(&session_cx, &root, &reservation, run_id(247));
+            let run = admit_activation(&cx, &root, &reservation, run_id(248));
+            let parked = run
+                .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+                .unwrap();
+            if attempted {
+                parked
+                    .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+                    .unwrap();
+            }
+            if expired {
+                while Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            } else {
+                session_cx
+                    .operation()
+                    .cancel_token()
+                    .cancel(StopCause::Requested);
+            }
+            let steps = parked
+                .integration_snapshot(&session, &cx)
+                .expect("cleanup snapshot must survive the original session context");
+            assert_eq!(steps.contains_key(&Step::Routes), attempted);
+            let fresh = cleanup(&cx);
+            if attempted {
+                parked
+                    .record_integration_step(
+                        &mut session,
+                        &fresh.operation().effects().unwrap(),
+                        Step::Routes,
+                        State::Cleared,
+                    )
+                    .expect("fresh cleanup must clear the attempted step");
+            }
+            parked.settle(&fresh, &mut adapter()).unwrap();
+            session.settle(&fresh, &mut adapter()).unwrap();
+            reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+        }
+    }
+}
+
+#[test]
 fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
     use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
     let fixture = home();
@@ -1560,7 +1613,7 @@ fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
         .unwrap();
     assert_eq!(
         parked
-            .integration_snapshot(&session)
+            .integration_snapshot(&session, &cx)
             .unwrap()
             .get(&Step::Routes),
         Some(&State::Completed)
@@ -1575,7 +1628,10 @@ fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
     parked
         .record_integration_step(&mut session, &cleanup_effects, Step::Routes, State::Cleared)
         .unwrap();
-    assert!(parked.integration_snapshot(&session).unwrap().is_empty());
+    assert!(parked
+        .integration_snapshot(&session, &cx)
+        .unwrap()
+        .is_empty());
     parked.settle(&fresh, &mut adapter()).unwrap();
     session.settle(&fresh, &mut adapter()).unwrap();
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();

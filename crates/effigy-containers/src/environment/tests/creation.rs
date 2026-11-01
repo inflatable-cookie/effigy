@@ -1204,6 +1204,18 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
         )
         .unwrap();
     assert!(parked.integration_snapshot().unwrap().is_empty());
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'b')]));
+    let (error, parked) = parked
+        .reacquire(&mut fake, |view, _, _| {
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect_err("changed inventory after observation retains custody");
+    assert!(error
+        .to_string()
+        .contains("project inventory changed after apply"));
     for _ in 0..4 {
         fake.inventories
             .push_back(verified(vec![row(PRIMARY, 'a')]));

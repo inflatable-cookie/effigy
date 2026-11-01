@@ -664,10 +664,14 @@ impl<'r> ParkedEnvRun<'r> {
         >,
         EnvError,
     > {
+        let cleanup = cleanup(&self.parts.cx, self.parts.cleanup_budget)?;
+        let cx = cleanup.operation().effects().map_err(|error| {
+            EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+        })?;
         match &self.gate {
-            ParkedEnvGate::Parked(run) => {
-                run.integration_snapshot(session).map_err(EnvError::Kernel)
-            }
+            ParkedEnvGate::Parked(run) => run
+                .integration_snapshot(session, &cx)
+                .map_err(EnvError::Kernel),
             ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
                 "workspace integration requires Env to be free".into(),
             )),
