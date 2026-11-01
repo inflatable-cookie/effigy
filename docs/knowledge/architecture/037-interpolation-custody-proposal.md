@@ -93,6 +93,25 @@ distinguish success from foreign removal or substitution, it remains Unknown.
 The protocol must specify directory and journal sync semantics on each
 supported platform before enabling cleanup there.
 
+## Platform durability evidence still needed
+
+Linux documents that syncing the file alone does not sync its directory entry:
+[`fsync(2)`](https://man7.org/linux/man-pages/man2/fsync.2.html) requires an
+explicit directory `fsync` for the entry. A Linux implementation must sync the
+file and its containing directory in the binding and cleanup order above, and
+must treat unsupported or failed sync as Unknown. It must also establish the
+journal's durability ordering against those filesystem syncs.
+
+On macOS, the [Apple `fsync(2)` manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)
+says ordinary `fsync` does not guarantee the write ordering needed across power
+loss and identifies `F_FULLFSYNC` for stronger ordering. That statement alone
+does not establish that a directory descriptor's sync makes an added, renamed
+or removed entry durable. No such documented directory-entry guarantee has
+been established for this design. Until that guarantee and its filesystem and
+device limits are established, macOS crash recovery must preserve residue as
+Unknown; a successful file sync or a process-crash test cannot supply the
+missing power-loss guarantee. Neither platform is enabled by this proposal.
+
 ## Review and proof obligations
 
 The independent security review must assess the kernel authority, durable
