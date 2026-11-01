@@ -120,6 +120,36 @@ fn home_with_fake_fixture(root: &Path) -> PathBuf {
 }
 
 #[test]
+fn public_private_route_refuses_before_interpolation_or_child() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let home = home_with_fake_fixture(root.path());
+    let program = fake_colima(root.path(), "private", "exit 0");
+    let error = crate::with_test_effigy_home(&home, || {
+        super::implementation::run_backend_invocation_private_until(
+            root.path(),
+            program.as_os_str(),
+            &compose_args(),
+            "workspace apply",
+            &secret_env(),
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .expect_err("private path must refuse")
+    });
+    match error {
+        super::implementation::ContainerExecError::Launch { error, .. } => {
+            assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+            assert_eq!(
+                error.to_string(),
+                "private workspace Compose is unavailable until the reviewed same-Env capability lands"
+            );
+        }
+        other => panic!("unexpected private refusal: {other}"),
+    }
+    assert!(!root.path().join("private.observed").exists());
+    assert!(fs::read_dir(&home).unwrap().next().is_none());
+}
+
+#[test]
 fn ordinary_route_success_removes_the_file_and_regenerates_for_the_next_run() {
     let root = tempfile::tempdir().expect("fixture root");
     let home = home_with_fake_fixture(root.path());

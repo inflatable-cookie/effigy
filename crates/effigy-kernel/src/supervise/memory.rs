@@ -15,11 +15,27 @@ const GATE_MAX: usize = 64;
 pub(crate) struct MemoryGuard {
     child: Child,
     input: Option<ChildStdin>,
-    output: ChildStdout,
+    output: Option<ChildStdout>,
     pub(crate) identity: Option<ProcessIdentity>,
     cx: EffectContext,
     close_deadline: Option<Instant>,
     closure: Option<ClosurePin>,
+}
+
+/// Owns a helper whose startup did not complete. Deliberately exposes no
+/// process-registration operation; only bounded cleanup is available.
+#[derive(Debug)]
+pub(crate) struct PartialMemoryGuard(MemoryGuard);
+
+impl PartialMemoryGuard {
+    pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
+        self.0.close(cx)
+    }
+
+    #[cfg(all(test, feature = "fault-injection"))]
+    pub(crate) fn identity(&self) -> Option<ProcessIdentity> {
+        self.0.identity.clone()
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,99 +68,131 @@ impl MemoryGuard {
         fence: Fence,
         purpose: MemoryPurpose,
     ) -> Result<Self, RunError> {
-        // Memory custody never pins or copies an image into runtime state, and
-        // never refuses over one: a rebuilt or missing binary beside a
-        // foreground run is not a reason to stop it (K1).
-        cx.operation()
-            .check(if purpose == MemoryPurpose::Foreground {
-                "foreground guard startup"
-            } else {
-                "checkout lease backup startup"
-            })?;
-        let owner = ident::process_identity(std::process::id())
-            .verified()
-            .cloned()
-            .ok_or_else(|| RunError::unavailable("foreground owner identity unavailable"))?;
-        let mut copies = gate.share_custody()?;
-        for ancestor in ancestors {
-            copies.push(crate::gate::duplicate_custody(ancestor)?);
-        }
-        if copies.len() > GATE_MAX {
-            return Err(RunError::broken("too many foreground gates"));
-        }
-        let (watch, closure) = ClosurePin::new()?;
-        let config = Config {
-            protocol: HELPER_PROTOCOL,
-            memory: true,
-            owner,
-            gates: copies.len(),
-            run,
-            fence,
-            watch: watch.as_raw_fd(),
-        };
-        let mut command = helper(executable, SENTINEL)?;
-        command.stdout(Stdio::piped());
-        let raw: Vec<_> = copies.iter().map(AsRawFd::as_raw_fd).collect();
-        // SAFETY: only async-signal-safe dup2 runs after fork. Sources are live
-        // CLOEXEC duplicates >=128 owned by `copies` through spawn. Targets
-        // 20..84 are distinct, never overlap sources or stdio. dup2 creates
-        // the only inheritable gate fds, in this helper child only.
-        unsafe {
-            command.pre_exec(move || {
-                for (index, source) in raw.iter().enumerate() {
-                    if libc::dup2(*source, GATE_FD + index as RawFd) < 0 {
+        Self::start_recoverable(executable, gate, ancestors, cx, run, fence, purpose)
+            .map_err(|(error, _guard)| error)
+    }
+
+    /// Preserve an already-started helper on startup failure. A returned
+    /// partial guard is not qualified to register any process.
+    pub(crate) fn start_recoverable(
+        executable: &Executable,
+        gate: &mut GateGuard,
+        ancestors: &[OwnedFd],
+        cx: &EffectContext,
+        run: RunId,
+        fence: Fence,
+        purpose: MemoryPurpose,
+    ) -> Result<Self, (RunError, Option<Box<PartialMemoryGuard>>)> {
+        let (mut child, closure, config) = (|| -> Result<_, RunError> {
+            // Memory custody never pins or copies an image into runtime state, and
+            // never refuses over one: a rebuilt or missing binary beside a
+            // foreground run is not a reason to stop it (K1).
+            cx.operation()
+                .check(if purpose == MemoryPurpose::Foreground {
+                    "foreground guard startup"
+                } else {
+                    "checkout lease backup startup"
+                })?;
+            let owner = ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or_else(|| RunError::unavailable("foreground owner identity unavailable"))?;
+            let mut copies = gate.share_custody()?;
+            for ancestor in ancestors {
+                copies.push(crate::gate::duplicate_custody(ancestor)?);
+            }
+            if copies.len() > GATE_MAX {
+                return Err(RunError::broken("too many foreground gates"));
+            }
+            let (watch, closure) = ClosurePin::new()?;
+            let config = Config {
+                protocol: HELPER_PROTOCOL,
+                memory: true,
+                owner,
+                gates: copies.len(),
+                run,
+                fence,
+                watch: watch.as_raw_fd(),
+            };
+            let mut command = helper(executable, SENTINEL)?;
+            command.stdout(Stdio::piped());
+            let raw: Vec<_> = copies.iter().map(AsRawFd::as_raw_fd).collect();
+            // SAFETY: only async-signal-safe dup2 runs after fork. Sources are live
+            // CLOEXEC duplicates >=128 owned by `copies` through spawn. Targets
+            // 20..84 are distinct, never overlap sources or stdio. dup2 creates
+            // the only inheritable gate fds, in this helper child only.
+            unsafe {
+                command.pre_exec(move || {
+                    for (index, source) in raw.iter().enumerate() {
+                        if libc::dup2(*source, GATE_FD + index as RawFd) < 0 {
+                            return Err(io::Error::last_os_error());
+                        }
+                    }
+                    // This live descriptor is already allocated >=128 in the
+                    // parent. Clearing CLOEXEC cannot overwrite std's error pipe.
+                    if libc::fcntl(watch.as_raw_fd(), libc::F_SETFD, 0) < 0 {
                         return Err(io::Error::last_os_error());
                     }
-                }
-                // This live descriptor is already allocated >=128 in the
-                // parent. Clearing CLOEXEC cannot overwrite std's error pipe.
-                if libc::fcntl(watch.as_raw_fd(), libc::F_SETFD, 0) < 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let mut child = command.spawn()?;
-        let input = child
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::other("foreground guard input missing"))?;
-        let output = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+                    Ok(())
+                });
+            }
+            let child = command.spawn()?;
+            Ok((child, closure, config))
+        })()
+        .map_err(|error| (error, None))?;
+        #[cfg(all(test, feature = "fault-injection"))]
+        crate::fault::note_backup(child.id());
+        let input = child.stdin.take();
+        let output = child.stdout.take();
         let identity = ident::process_identity(child.id()).verified().cloned();
-        // Install EOF ownership immediately: every later error drops the
-        // writer and waits for this exact child, never an arbitrary pid.
+        // Install EOF ownership immediately. Recoverable startup returns this
+        // exact child and its pipes on any subsequent error.
         let mut guard = Self {
             child,
-            input: Some(input),
+            input,
             output,
             identity: identity.clone(),
             cx: cx.clone(),
             close_deadline: None,
             closure: Some(closure),
         };
-        nonblocking(
-            guard
+        let started = (|| -> Result<(), RunError> {
+            if purpose == MemoryPurpose::CheckoutLease {
+                crate::fault_point!(WorkspaceBackupAfterSpawn)?;
+            }
+            let input = guard
                 .input
                 .as_ref()
-                .expect("input just installed")
-                .as_raw_fd(),
-        )?;
-        nonblocking(guard.output.as_raw_fd())?;
-        memory_frame(
-            guard.input.as_mut().expect("input just installed"),
-            &config,
-            guard.cx.child(Duration::from_secs(30)).operation(),
-        )?;
-        guard.ack()?;
-        if identity.is_none() {
-            return Err(RunError::unavailable(
-                "foreground guard identity unavailable",
-            ));
+                .ok_or_else(|| io::Error::other("foreground guard input missing"))?;
+            let output = guard
+                .output
+                .as_ref()
+                .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+            nonblocking(input.as_raw_fd())?;
+            nonblocking(output.as_raw_fd())?;
+            memory_frame(
+                guard.input.as_mut().expect("input checked"),
+                &config,
+                guard.cx.child(Duration::from_secs(30)).operation(),
+            )?;
+            if purpose == MemoryPurpose::CheckoutLease {
+                crate::fault_point!(WorkspaceBackupAfterConfig)?;
+            }
+            guard.ack()?;
+            if purpose == MemoryPurpose::CheckoutLease {
+                crate::fault_point!(WorkspaceBackupAfterAck)?;
+            }
+            if identity.is_none() {
+                return Err(RunError::unavailable(
+                    "foreground guard identity unavailable",
+                ));
+            }
+            Ok(())
+        })();
+        match started {
+            Ok(()) => Ok(guard),
+            Err(error) => Err((error, Some(Box::new(PartialMemoryGuard(guard))))),
         }
-        Ok(guard)
     }
 
     pub(crate) fn closure_pin(&self) -> Result<ClosurePin, RunError> {
@@ -175,7 +223,11 @@ impl MemoryGuard {
         let cx = self.cx.child(Duration::from_secs(30));
         loop {
             cx.operation().check("foreground guard acknowledgement")?;
-            match self.output.read(&mut byte) {
+            let output = self
+                .output
+                .as_mut()
+                .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+            match output.read(&mut byte) {
                 Ok(1) => break,
                 Ok(_) => {
                     return Err(

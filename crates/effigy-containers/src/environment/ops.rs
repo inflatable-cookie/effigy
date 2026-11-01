@@ -115,6 +115,23 @@ pub(super) fn reconcile_in(
     apply: impl FnOnce() -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
 ) -> Result<BringUp, EnvError> {
+    reconcile_in_owned(run, request, sealed, |_, _, _| apply(), observe_holders)
+}
+
+pub(super) fn reconcile_in_owned(
+    run: &mut EnvRun<'_>,
+    request: Up<'_>,
+    sealed: Option<(
+        &effigy_kernel::objects::SealedPreflight,
+        &super::CreationPreflight,
+    )>,
+    apply: impl FnOnce(
+        &mut effigy_kernel::run::Run<'_>,
+        &effigy_kernel::ctx::EffectContext,
+        Instant,
+    ) -> Result<(), BackendError>,
+    observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
+) -> Result<BringUp, EnvError> {
     if let Some(closure) = request.render {
         match sealed {
             Some((sealed, _)) => {
@@ -157,7 +174,8 @@ pub(super) fn reconcile_in(
     let mut creation_request = request.creation_request();
     creation_request.preflight = sealed.map(|(_, preflight)| preflight);
     creation_request.required = sealed.is_some();
-    let creation = run.create_with(adapter.as_mut(), request.backend, creation_request, apply)?;
+    let creation =
+        run.create_with_owned(adapter.as_mut(), request.backend, creation_request, apply)?;
     Ok(BringUp {
         applied: match unreadable {
             Some(reason) => Applied::ReconciledUnreadableHolders(reason),

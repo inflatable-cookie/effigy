@@ -29,6 +29,103 @@ fn cx() -> EffectContext {
 fn id() -> RunId {
     RunId::new(1, [3; 10]).unwrap()
 }
+
+#[test]
+fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
+    let record = ProcessRecord {
+        process: ProcessReceipt {
+            identity: fixture_identity(std::process::id()),
+            pgid: std::process::id(),
+            nonce: "test".into(),
+            grace_millis: 10,
+        },
+        anchor: None,
+    };
+    let encoded = serde_json::to_value(StoredProcessRecord::Discard { discard_v1: record })
+        .expect("encode discard receipt");
+    assert!(serde_json::from_value::<ProcessRecord>(encoded.clone()).is_err());
+    assert!(matches!(
+        serde_json::from_value::<StoredProcessRecord>(encoded),
+        Ok(StoredProcessRecord::Discard { .. })
+    ));
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied older Effigy executable"]
+fn discard_old_sentinel_refuses_before_child_exec() {
+    let old_binary =
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut spec = inv().spec().clone();
+    spec.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "workspace-proof",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: crate::outcome::Invocation::validated(
+                vec!["effigy".into(), "container".into(), "down".into()],
+                |_| true,
+            )
+            .unwrap(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(Path::new(&old_binary)).unwrap(),
+                placement: crate::supervise::Placement::Inline,
+            }),
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .expect("old sentinel accepts the ordinary run");
+    let marker = home.path().join("discard-executed");
+    let result = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "touch \"$MARKER\"".into()],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "MARKER".into(),
+                EnvValue::Plain(marker.as_os_str().to_owned()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Discard,
+            label: "workspace apply".into(),
+        },
+        &cx,
+    );
+    let refused = result.is_err();
+    drop(result);
+    let process_effect_recorded = run
+        .effects()
+        .unwrap()
+        .iter()
+        .any(|effect| effect.spec.kind == KIND);
+    let cleanup = run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    );
+    assert!(refused, "an old sentinel accepted a discard receipt");
+    assert!(
+        !process_effect_recorded,
+        "capability refusal must precede process intent"
+    );
+    assert!(
+        !marker.exists(),
+        "the child ran without a compatible sentinel"
+    );
+    assert!(cleanup.is_ok(), "cleanup failed: {cleanup:?}");
+}
 fn next() -> crate::outcome::Invocation {
     crate::outcome::Invocation::validated(vec!["recover".into()], |a| a == ["recover"]).unwrap()
 }
@@ -484,6 +581,61 @@ fn journal_writes_are_owned_by_run_not_supervision_or_custody() {
             assert!(!source.contains(forbidden));
         }
     }
+}
+
+#[test]
+#[ignore = "requires verified discard helper capability"]
+fn discard_child_output_never_reaches_capture() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf '%s' \"$TOKEN\"; printf '%s' \"$TOKEN\" >&2".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Plain("private-discard-test".into()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Discard,
+            label: "workspace apply".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert!(report.group.verified().is_some(), "{report:?}");
+    assert!(child.tail().is_empty());
+    fn assert_absent(dir: &Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                assert_absent(&entry.path());
+            } else if kind.is_file() {
+                let bytes = std::fs::read(entry.path()).unwrap();
+                assert!(!bytes
+                    .windows(b"private-discard-test".len())
+                    .any(|part| { part == b"private-discard-test" }));
+            }
+        }
+    }
+    assert_absent(home.path());
 }
 
 #[test]

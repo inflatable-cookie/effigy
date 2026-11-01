@@ -4608,6 +4608,18 @@ transaction; persistent foreign or resolved request-ID collisions select another
 identity without deleting the existing row. Control and release deadlines also
 bound schema initialization and additive migration.
 
+If an attachment release commits but its response is lost, and the child run
+closes and compacts the release row before retry can verify its cause, the
+serving owner retains unresolved custody and reports `Unknown`. It must not
+infer EOF or detach, revive the attachment, or settle the child twice. The
+operator can attempt `effigy down` for this workspace; successful cleanup of
+this particular unresolved case has not yet been proven. Durable release
+cause retention and authenticated attachment claims are deferred to the Level 1
+lifecycle work; missing legacy evidence remains `Unknown`.
+The kernel fault controls are indexed by
+`run::workspace::tests::committed_owner_eof_retry_refuses_after_child_compacts_release_row`
+and `workspace_channel::tests::owner_release_fault_retains_exact_handle_and_reports_unknown`.
+
 During keyed predecessor recovery, the current owner gate and successor fence
 keep the predecessor's already-fenced escalation serviceable. New controls use
 the admitted successor's current RunId and fence; escalation there also shortens

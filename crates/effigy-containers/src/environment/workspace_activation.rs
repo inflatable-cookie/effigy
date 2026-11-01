@@ -1,6 +1,7 @@
 //! Reserved workspace activation. The owning session is admitted and retained
 //! before Env admission; no publication callback can reverse Task/Env order.
 
+use effigy_kernel::ctx::EffectContext;
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::ResolvedInvocation;
 use effigy_kernel::run::{BeginOpts, Run};
@@ -8,8 +9,13 @@ use effigy_kernel::workspace_session::{
     ActivationDecision, PublishInputs, SessionRef, SessionSupervisor,
     WorkspaceActivationReservation,
 };
+use std::time::Instant;
 
 use super::{EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation};
+
+pub(super) fn private_apply_failure(_: super::BackendError) -> super::BackendError {
+    super::BackendError::Uncertain("workspace private apply outcome unsettled".into())
+}
 
 #[derive(Debug)]
 pub enum WorkspaceBegin<'r> {
@@ -1216,6 +1222,24 @@ impl<'r> WorkspaceActivation<'r> {
             request,
             Some((sealed, preflight)),
             apply,
+            |run| run.holders(),
+        )
+    }
+
+    /// Apply using the exact guarded Env run. The callback runs only inside
+    /// the existing creation window and receives its effective deadline.
+    pub fn apply_sealed_with_owner(
+        &mut self,
+        request: super::Up<'_>,
+        sealed: &effigy_kernel::objects::SealedPreflight,
+        preflight: &super::CreationPreflight,
+        apply: impl FnOnce(&mut Run<'_>, &EffectContext, Instant) -> Result<(), super::BackendError>,
+    ) -> Result<super::BringUp, EnvError> {
+        super::ops::reconcile_in_owned(
+            &mut self.environment,
+            request,
+            Some((sealed, preflight)),
+            |run, effect, deadline| apply(run, effect, deadline).map_err(private_apply_failure),
             |run| run.holders(),
         )
     }

@@ -31,6 +31,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
+// Scaffolding only: no helper or workspace path may use it until the birth
+// receipt protocol and its exact-owner checks have been independently reviewed.
+#[allow(dead_code)]
+mod birth_hash;
+// Observation scaffold only; it does not qualify a helper or enable Discard.
+#[allow(dead_code)]
+mod image_identity;
 pub(crate) mod memory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +121,73 @@ pub(crate) struct SentinelLease {
     child: Child,
     writer: Option<ChildStdin>,
 }
+
+/// A workspace sentinel whose startup was not qualified. It has no operation
+/// that can register effects or turn it into a lease after an error.
+#[allow(dead_code)]
+pub(crate) struct PartialSentinel {
+    child: Child,
+    writer: Option<ChildStdin>,
+    ready: Option<std::process::ChildStdout>,
+    log: std::fs::File,
+    configuration_started: bool,
+}
+impl PartialSentinel {
+    /// Close the exact child's owner pipe and observe its exit. This receipt
+    /// does not establish that any environment effects have settled.
+    pub(crate) fn close_and_reap(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<std::process::ExitStatus, RunError> {
+        if self.configuration_started {
+            return Err(RunError::unavailable(
+                "workspace sentinel configuration remains unsettled",
+            ));
+        }
+        cleanup.operation().check("partial sentinel close")?;
+        self.writer.take();
+        self.child.stdin.take();
+        crate::fault_point!(WorkspaceSentinelCloseWait)?;
+        loop {
+            cleanup.operation().check("partial sentinel reap")?;
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+#[cfg(all(test, feature = "fault-injection"))]
+impl PartialSentinel {
+    pub(crate) fn child_id(&self) -> u32 {
+        self.child.id()
+    }
+    pub(crate) fn input_open(&self) -> bool {
+        self.writer.is_some() || self.child.stdin.is_some()
+    }
+}
 impl SentinelLease {
+    /// Read-only evidence that this exact retained lease still has its owner
+    /// pipe and the recorded process incarnation. This is not authority to
+    /// launch a workload or a guarantee that the process cannot exit later.
+    pub(crate) fn verify_retained(&self) -> Result<(), RunError> {
+        if self.writer.is_none()
+            || ident::process_identity(self.identity.pid).verified() != Some(&self.identity)
+            || !matches!(
+                ident::process_state(self.identity.pid),
+                Observed::Verified(
+                    ident::ProcessState::Active | ident::ProcessState::Stopped,
+                    _
+                )
+            )
+        {
+            return Err(RunError::unavailable(
+                "retained sentinel identity unavailable",
+            ));
+        }
+        Ok(())
+    }
+
     #[cfg(all(test, feature = "fault-injection"))]
     pub(crate) fn writer_fd(&self) -> RawFd {
         self.writer.as_ref().expect("live writer").as_raw_fd()
@@ -448,6 +521,105 @@ fn sentinel_attempt(
         writer: Some(writer),
     })
 }
+
+/// Opt-in workspace startup retains the exact child from spawn onwards.
+/// A partial child is cleanup-only; its existence is not a birth receipt.
+#[allow(dead_code)]
+pub(crate) fn spawn_workspace_sentinel(
+    run: &Run<'_>,
+    root: &StateRoot,
+    plan: &LifecyclePlan,
+    next: &Invocation,
+    cx: &EffectContext,
+) -> Result<SentinelLease, (RunError, Option<Box<PartialSentinel>>)> {
+    let prepare = || -> Result<_, RunError> {
+        if plan.placement == Placement::Guest {
+            return Err(RunError::refused("workspace sentinel needs host authority"));
+        }
+        let home = root
+            .path()
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| RunError::unavailable("invalid state root"))?;
+        let config = SentinelConfig {
+            protocol: HELPER_PROTOCOL,
+            home: home.into(),
+            machine: root.is_machine(),
+            machine_gates: root.machine_gate_address(),
+            owner: run.fence().resource.clone(),
+            run: run.id(),
+            next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
+            executable: plan.executable.clone(),
+        };
+        let log = helper_log(root)?;
+        let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
+            payload: Vec::new(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            env: std::env::vars_os().collect(),
+            handoff: None,
+            admission: None,
+        });
+        let child = spawn_helper(&plan.executable, SENTINEL, &log, inherited.as_ref())?;
+        Ok((
+            config,
+            PartialSentinel {
+                child,
+                writer: None,
+                ready: None,
+                log,
+                configuration_started: false,
+            },
+        ))
+    };
+    let (config, mut partial) = prepare().map_err(|error| (error, None))?;
+    #[cfg(all(test, feature = "fault-injection"))]
+    crate::fault::note_helper(partial.child.id());
+    let result = (|| -> Result<ProcessIdentity, RunError> {
+        crate::fault_point!(WorkspaceSentinelAfterSpawn)?;
+        partial.writer = partial.child.stdin.take();
+        partial.ready = partial.child.stdout.take();
+        // A partial write is indistinguishable from a complete frame consumed
+        // by the child. Never close it as a known pre-configuration child.
+        partial.configuration_started = true;
+        let writer = partial
+            .writer
+            .as_mut()
+            .ok_or_else(|| RunError::unavailable("sentinel pipe missing"))?;
+        let ready = partial
+            .ready
+            .as_mut()
+            .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
+        nonblocking(writer.as_raw_fd())?;
+        let op = cx.child(Duration::from_secs(30));
+        write_workspace_frame(writer, &config, op.operation())?;
+        crate::fault_point!(WorkspaceSentinelAfterConfig)?;
+        nonblocking(ready.as_raw_fd())?;
+        let mut ack = [0u8];
+        read_exact_with(ready, &mut ack, op.operation())?;
+        if ack != [1] {
+            return Err(RunError::unavailable(
+                "sentinel acknowledgement unavailable",
+            ));
+        }
+        crate::fault_point!(WorkspaceSentinelAfterAck)?;
+        op.operation().check("workspace sentinel acknowledgement")?;
+        let identity = ident::process_identity(partial.child.id())
+            .verified()
+            .cloned()
+            .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))?;
+        op.operation().check("workspace sentinel identity")?;
+        Ok(identity)
+    })();
+    match result {
+        Ok(identity) => Ok(SentinelLease {
+            identity,
+            executable: plan.executable.clone(),
+            child: partial.child,
+            writer: partial.writer,
+        }),
+        Err(error) => Err((error, Some(Box::new(partial)))),
+    }
+}
 fn context(cancel: CancelToken, budget: Duration) -> OperationContext {
     OperationContext::new(
         Deadline::At(Instant::now() + budget),
@@ -465,17 +637,50 @@ fn context(cancel: CancelToken, budget: Duration) -> OperationContext {
     )
 }
 fn write_frame(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
+    let op = context(CancelToken::default(), Duration::from_secs(30));
+    write_frame_with(writer, value, &op)
+}
+fn write_frame_with(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    op: &OperationContext,
+) -> io::Result<()> {
     let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
     if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
         return Err(io::Error::other("helper frame too large"));
     }
     let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
     frame.extend(bytes);
-    write_all(writer, &frame)
+    write_all_with(writer, &frame, op)
+}
+
+fn write_workspace_frame(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    op: &OperationContext,
+) -> Result<(), RunError> {
+    let bytes = serde_json::to_vec(value)?;
+    if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
+        return Err(RunError::broken("workspace sentinel frame too large"));
+    }
+    let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
+    frame.extend(bytes);
+    #[cfg(all(test, feature = "fault-injection"))]
+    {
+        write_all_with(writer, &frame[..1], op)?;
+        crate::fault_point!(WorkspaceSentinelPartialConfig)?;
+        write_all_with(writer, &frame[1..], op)?;
+    }
+    #[cfg(not(all(test, feature = "fault-injection")))]
+    write_all_with(writer, &frame, op)?;
+    Ok(())
 }
 /// A bounded write to a nonblocking helper pipe.
 fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
+    write_all_with(writer, frame, &op)
+}
+fn write_all_with(writer: &mut impl Write, frame: &[u8], op: &OperationContext) -> io::Result<()> {
     let mut offset = 0;
     while offset < frame.len() {
         op.check("helper write")
@@ -503,6 +708,13 @@ fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 }
 fn read_exact(reader: &mut impl Read, bytes: &mut [u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
+    read_exact_with(reader, bytes, &op)
+}
+fn read_exact_with(
+    reader: &mut impl Read,
+    bytes: &mut [u8],
+    op: &OperationContext,
+) -> io::Result<()> {
     let mut offset = 0;
     while offset < bytes.len() {
         op.check("helper read")
@@ -2009,6 +2221,38 @@ fn observe_client_requests(
 mod client_order_tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn workspace_handshake_io_stops_at_deadline_on_full_and_empty_pipes() {
+        let (mut writer, _peer) = UnixStream::pair().unwrap();
+        writer.set_nonblocking(true).unwrap();
+        let block = [1u8; 8192];
+        let mut full = false;
+        for _ in 0..4096 {
+            match writer.write(&block) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    full = true;
+                    break;
+                }
+                Err(error) => panic!("fill failed: {error}"),
+            }
+        }
+        assert!(full, "fixture must reach a full socket");
+        let op = context(CancelToken::default(), Duration::from_millis(30));
+        let started = Instant::now();
+        let error = write_all_with(&mut writer, &[1], &op).unwrap_err();
+        assert!(error.to_string().contains("TimedOut"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let (mut reader, _peer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let op = context(CancelToken::default(), Duration::from_millis(30));
+        let started = Instant::now();
+        let error = read_exact_with(&mut reader, &mut [0], &op).unwrap_err();
+        assert!(error.to_string().contains("TimedOut"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 
     #[test]
     fn detach_committed_at_eof_is_included_before_owner_loss_decision() {

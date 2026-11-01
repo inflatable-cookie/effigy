@@ -3,6 +3,83 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+pub(in crate::runner) mod workspace_private;
+
+/// Workspace preparation never forwards a step's raw error. Steps with known
+/// direct-output sinks remain refused until they have a private adapter.
+#[derive(Debug, Clone, Copy)]
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) enum WorkspacePreparationStep {
+    Validation,
+    Mounts,
+    Policy,
+    SecretResolution,
+    Runtime,
+    SharedServices,
+}
+
+impl WorkspacePreparationStep {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Validation => "validation",
+            Self::Mounts => "mounts",
+            Self::Policy => "policy",
+            Self::SecretResolution => "secret-resolution",
+            Self::Runtime => "runtime",
+            Self::SharedServices => "shared-services",
+        }
+    }
+}
+
+fn private_prepare_failure(step: &str, status: &str) -> RunnerError {
+    RunnerError::task_invocation(format!("workspace preparation unavailable: code=private-output-unavailable step={step} status={status}"))
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_validation(
+    _repo_root: &Path,
+    _policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    Err(private_prepare_failure("validation", "unsupported"))
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_mounts(
+    _policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    Err(private_prepare_failure("mounts", "unsupported"))
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_unavailable(
+    step: WorkspacePreparationStep,
+) -> Result<(), RunnerError> {
+    Err(private_prepare_failure(step.name(), "unsupported"))
+}
+
+/// Source preparation remains unavailable until manifest and overlay identity
+/// can be checked without a path-swap race and direct output is controlled.
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_sources(_repo_root: &Path) -> Result<(), RunnerError> {
+    Err(private_prepare_failure("sources", "unsupported"))
+}
+
 use effigy_catalog::volumes::{
     remove_volume_command, DockerCommand, VolumeClassification, VolumeIdentity,
 };
@@ -1586,6 +1663,49 @@ mod tests {
     use effigy_ui::steps::ProgressSource;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn workspace_preparation_adapter_refuses_before_helper_effects() {
+        use super::WorkspacePreparationStep as Step;
+        let fixture = tempfile::tempdir().unwrap();
+        let sentinel = fixture.path().join("sentinel");
+        std::fs::write(&sentinel, "unchanged").unwrap();
+        let policy = test_policy();
+        for step in [
+            Step::Validation,
+            Step::Mounts,
+            Step::Policy,
+            Step::SecretResolution,
+            Step::Runtime,
+            Step::SharedServices,
+        ] {
+            let error = super::workspace_prepare_unavailable(step).unwrap_err();
+            assert!(error.to_string().contains("status=unsupported"));
+        }
+        for error in [
+            super::workspace_prepare_validation(fixture.path(), &policy).unwrap_err(),
+            super::workspace_prepare_mounts(&policy).unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("status=unsupported"));
+        }
+        assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "unchanged");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn workspace_source_preparation_refuses_before_reading_or_effects() {
+        let fixture = tempfile::tempdir().unwrap();
+        let manifest = fixture.path().join("effigy.toml");
+        std::fs::write(&manifest, "[tasks]\nbuild = 'echo ok'\n").unwrap();
+        let error = super::workspace_prepare_sources(fixture.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("step=sources status=unsupported"));
+        assert_eq!(
+            std::fs::read_to_string(manifest).unwrap(),
+            "[tasks]\nbuild = 'echo ok'\n"
+        );
+    }
 
     #[test]
     fn shared_compose_receives_its_immutable_generation_root() {
