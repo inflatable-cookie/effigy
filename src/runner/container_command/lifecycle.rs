@@ -328,6 +328,12 @@ fn run_container_up_inner(
         None => crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?,
     };
 
+    if workspace_prevalidation.is_some() {
+        // A refreshed source closure can newly declare workspace mode. It
+        // must cross the same capability refusal before policy preparation.
+        crate::runner::workspace_client::container_up::require_private_preparation_output()
+            .map_err(|_| RunnerError::task_invocation("workspace private preparation output is unavailable; no workspace policy preparation or apply was attempted"))?;
+    }
     operation.stage = Some("preparation");
     operation.workspace_mode = workspace_prevalidation.is_some();
     let mut plan =
