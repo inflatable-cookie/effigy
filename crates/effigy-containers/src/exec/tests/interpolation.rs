@@ -1,8 +1,4 @@
-//! Child-route proofs for the VM-hosted Compose interpolation file. A fake
-//! `colima` records the directory and file modes it was handed, then runs its
-//! route-specific tail. The fixture secret is a sentinel; after each route
-//! returns, no file under the Effigy home may hold its bytes, and the next
-//! invocation names a fresh file.
+//! Direct-child routes refuse VM Compose secret delivery before spawn.
 
 use std::ffi::OsString;
 use std::fs;
@@ -40,10 +36,6 @@ fn fake_colima(root: &Path, name: &str, tail: &str) -> PathBuf {
     fs::write(&path, script).expect("fake colima");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("fake colima mode");
     path
-}
-
-fn observed(root: &Path, name: &str) -> String {
-    fs::read_to_string(root.join(format!("{name}.observed"))).unwrap_or_default()
 }
 
 fn compose_args() -> Vec<OsString> {
@@ -100,19 +92,6 @@ fn assert_no_sentinel_persists(home: &Path, route: &str) {
     }
 }
 
-/// The child saw a 0700 directory and a 0600 single-link file while it ran.
-fn assert_child_saw_private_modes(root: &Path, name: &str, route: &str) {
-    let log = observed(root, name);
-    assert!(
-        log.contains("drwx------"),
-        "{route}: directory 0700 while the child ran:\n{log}"
-    );
-    assert!(
-        log.contains("-rw-------"),
-        "{route}: file 0600 while the child ran:\n{log}"
-    );
-}
-
 fn home_with_fake_fixture(root: &Path) -> PathBuf {
     let home = root.join("home");
     fs::create_dir_all(&home).expect("home");
@@ -150,87 +129,32 @@ fn public_private_route_refuses_before_interpolation_or_child() {
 }
 
 #[test]
-fn ordinary_route_success_removes_the_file_and_regenerates_for_the_next_run() {
+fn direct_routes_refuse_secret_bearing_vm_compose_before_spawn() {
     let root = tempfile::tempdir().expect("fixture root");
     let home = home_with_fake_fixture(root.path());
-    let program = fake_colima(root.path(), "ok", "exit 0");
-    let program = program.to_string_lossy().into_owned();
     let env = secret_env();
-    let args = compose_args();
-    crate::with_test_effigy_home(&home, || {
-        run_command_capture_os_with_env(root.path(), &program, &args, "ordinary success", &env)
-            .expect("the ordinary route succeeds");
-        run_command_capture_os_with_env(root.path(), &program, &args, "ordinary success", &env)
-            .expect("the next invocation succeeds");
-    });
-    assert_child_saw_private_modes(root.path(), "ok", "ordinary success");
-    assert_eq!(
-        observed(root.path(), "ok").matches("-rw-------").count(),
-        2,
-        "each invocation names its own file"
-    );
-    assert_no_sentinel_persists(&home, "ordinary success");
-}
-
-#[test]
-fn ordinary_route_failure_removes_the_file() {
-    let root = tempfile::tempdir().expect("fixture root");
-    let home = home_with_fake_fixture(root.path());
-    let program = fake_colima(root.path(), "fail", "exit 3")
-        .to_string_lossy()
-        .into_owned();
-    let env = secret_env();
-    let result = crate::with_test_effigy_home(&home, || {
-        run_command_capture_os_with_env(
-            root.path(),
-            &program,
-            &compose_args(),
-            "ordinary failure",
-            &env,
-        )
-    });
-    assert!(result.is_err(), "the failing child is reported");
-    assert_child_saw_private_modes(root.path(), "fail", "ordinary failure");
-    assert_no_sentinel_persists(&home, "ordinary failure");
-}
-
-#[test]
-fn ordinary_route_timeout_removes_the_file_after_the_child_is_stopped() {
-    let root = tempfile::tempdir().expect("fixture root");
-    let home = home_with_fake_fixture(root.path());
-    let program = fake_colima(root.path(), "hang", "sleep 30")
-        .to_string_lossy()
-        .into_owned();
-    let env = secret_env();
-    let result = crate::with_test_effigy_home(&home, || {
-        run_command_capture_with_timeout_and_env(
-            root.path(),
-            &program,
-            &["compose", "-f", "compose.yml", "up"],
-            "ordinary timeout",
-            Duration::from_secs(1),
-            &env,
-        )
-    });
-    assert!(result.is_err(), "the timed-out child is reported");
-    assert_child_saw_private_modes(root.path(), "hang", "ordinary timeout");
-    assert_no_sentinel_persists(&home, "ordinary timeout");
-}
-
-#[test]
-fn detached_route_success_removes_the_file() {
-    let root = tempfile::tempdir().expect("fixture root");
-    let home = home_with_fake_fixture(root.path());
-    let program = fake_colima(root.path(), "detached", "exit 0")
-        .to_string_lossy()
-        .into_owned();
-    let env = secret_env();
-    crate::with_test_effigy_home(&home, || {
-        run_detached_command_with_env(root.path(), &program, &compose_args(), "detached", &env)
-            .expect("the detached route succeeds");
-    });
-    assert_child_saw_private_modes(root.path(), "detached", "detached");
-    assert_no_sentinel_persists(&home, "detached");
+    for route in ["capture", "timeout", "detached"] {
+        let program = fake_colima(root.path(), route, "exit 0")
+            .to_string_lossy()
+            .into_owned();
+        let result = crate::with_test_effigy_home(&home, || match route {
+            "capture" => {
+                run_command_capture_os_with_env(root.path(), &program, &compose_args(), route, &env)
+            }
+            "timeout" => run_command_capture_with_timeout_and_env(
+                root.path(),
+                &program,
+                &["compose", "up"],
+                route,
+                Duration::from_secs(2),
+                &env,
+            ),
+            _ => run_detached_command_with_env(root.path(), &program, &compose_args(), route, &env),
+        });
+        assert!(result.is_err(), "{route} must refuse");
+        assert!(!root.path().join(format!("{route}.observed")).exists());
+        assert_no_sentinel_persists(&home, route);
+    }
 }
 
 #[test]

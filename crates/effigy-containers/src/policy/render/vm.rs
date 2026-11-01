@@ -85,6 +85,19 @@ pub struct ComposeInvocation {
     pub interpolation: Option<InterpolationFile>,
 }
 
+impl ComposeInvocation {
+    /// Direct-child callers cannot safely transfer this owner into group custody.
+    /// Refuse before spawn until they can admit a retained kernel Run.
+    pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {
+        if self.interpolation.is_some() {
+            return Err(io::Error::other(
+                "VM Compose interpolation requires retained kernel custody",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// One Compose invocation's arguments, with the interpolation values a
 /// VM-hosted backend cannot inherit. A host backend already owns the caller's
 /// environment and is returned unchanged; an invocation that carries no value

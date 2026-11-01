@@ -8,6 +8,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Refuse secret-bearing VM Compose direct-child launches until retained kernel custody is available.
+
 - Serialize Compose interpolation file creation, sweep and removal with a cooperative directory lock.
 
 - Process custody proves the recorded group anchor before it records a receipt
