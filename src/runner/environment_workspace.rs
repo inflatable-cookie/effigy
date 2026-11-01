@@ -95,6 +95,12 @@ pub(in crate::runner) enum WorkspaceUpError {
         cause: Box<EnvError>,
         cleanup: Option<Box<EnvError>>,
     },
+    Finish {
+        cause: Box<EnvError>,
+        custody: Box<effigy_containers::environment::WorkspaceFinishCustody<'static>>,
+        channel: Box<PreparedHostChannel>,
+        serving: Box<crate::runner::workspace_client::ServingFacts>,
+    },
 }
 
 /// The real owner orchestration, with backend/qualified publication I/O
@@ -269,7 +275,17 @@ pub(in crate::runner) fn up<'a>(
             });
         }
     };
-    let (supervisor, session) = activation.finish_selected().map_err(owner_error)?;
+    let (supervisor, session) = match activation.finish_selected() {
+        Ok(value) => value,
+        Err((cause, custody)) => {
+            return Err(WorkspaceUpError::Finish {
+                cause: Box::new(cause),
+                custody,
+                channel: Box::new(channel),
+                serving: Box::new(serving),
+            })
+        }
+    };
     Ok(WorkspaceUp::Selected(Box::new(WorkspaceOwner {
         supervisor,
         session,

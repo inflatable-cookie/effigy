@@ -149,6 +149,15 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     pub(crate) root: &'a StateRoot,
 }
 
+impl std::fmt::Debug for OwnedWorkspaceChannel<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OwnedWorkspaceChannel")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The producer's frozen owner, moved in whole.
 ///
 /// `environment::workspace::WorkspaceUp::Selected(Box<WorkspaceOwner>)` is the
@@ -303,7 +312,20 @@ impl<'a>
     /// session grant book seeded with the enrolment credential, and the
     /// engine-owned resolver/admission/observer/id seams. A locator that does
     /// not name the same session and pin refuses before anything is served.
-    pub(crate) fn adopt_production(owned: OwnedWorkspaceChannel<'a>) -> Result<Self, AdoptError> {
+    pub(crate) fn adopt_production(
+        owned: OwnedWorkspaceChannel<'a>,
+    ) -> Result<Self, (AdoptError, Box<OwnedWorkspaceChannel<'a>>)> {
+        let locator = &owned.channel.locator;
+        let session = &owned.session;
+        let serving = &owned.serving;
+        if locator.session().run != session.run()
+            || locator.session().generation != session.generation()
+            || locator.bound().lease().pin() != &serving.pin
+            || locator.session().run != serving.fence.session.run
+            || locator.session().generation != serving.fence.session.generation
+        {
+            return Err((AdoptError::Facts, Box::new(owned)));
+        }
         let OwnedWorkspaceChannel {
             supervisor,
             session,
@@ -318,14 +340,6 @@ impl<'a>
             acceptor,
             locator,
         } = prepared;
-        if locator.session().run != session.run()
-            || locator.session().generation != session.generation()
-            || locator.bound().lease().pin() != &serving.pin
-            || locator.session().run != serving.fence.session.run
-            || locator.session().generation != serving.fence.session.generation
-        {
-            return Err(AdoptError::Facts);
-        }
         let (server, admitted) = super::host_dispatch::production_server(&serving, root.clone());
         let mut owner = Self::new(
             supervisor, session, launch, acceptor, server, effect, observe, root,

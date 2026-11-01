@@ -18,6 +18,20 @@ pub enum WorkspaceBegin<'r> {
     Activate(Box<WorkspaceActivation<'r>>),
 }
 
+/// Ownership retained when finalising an activation fails.
+#[derive(Debug)]
+pub enum WorkspaceFinishCustody<'r> {
+    Activation(Box<WorkspaceActivation<'r>>),
+    Session {
+        supervisor: Box<SessionSupervisor<'r>>,
+        session: SessionRef,
+        environment: Box<Run<'r>>,
+        /// The commit receipt identifies the selection; re-read its durable
+        /// state because this retained copy predates selector readback.
+        obligation: Box<Option<effigy_kernel::workspace_session::SelectionObligation>>,
+    },
+}
+
 /// Field order releases Env before Task if a crash/unwind interrupts the owner.
 /// Such a drop is interrupted evidence, never successful settlement.
 #[derive(Debug)]
@@ -307,26 +321,58 @@ impl<'r> WorkspaceActivation<'r> {
 
     /// Ends Env first, then hands the still-owning session to the supervisor.
     /// A pending obligation cannot be advertised as a completed activation.
-    pub fn finish_selected(self) -> Result<(SessionSupervisor<'r>, SessionRef), EnvError> {
+    pub fn finish_selected(
+        self,
+    ) -> Result<(SessionSupervisor<'r>, SessionRef), (EnvError, Box<WorkspaceFinishCustody<'r>>)>
+    {
         if !self.selected {
-            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
-                "workspace selection has not been verified",
-            )));
+            return Err((
+                EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                    "workspace selection has not been verified",
+                )),
+                Box::new(WorkspaceFinishCustody::Activation(Box::new(self))),
+            ));
         }
-        self.environment.finish(true)?;
+        if let Err((error, environment)) = self.environment.finish_recoverable(true) {
+            return Err((
+                error,
+                Box::new(WorkspaceFinishCustody::Session {
+                    supervisor: Box::new(self.supervisor),
+                    session: self.session,
+                    environment,
+                    obligation: Box::new(self.committed),
+                }),
+            ));
+        }
         Ok((self.supervisor, self.session))
     }
 
     /// An interrupted activation can hand its still-owned supervisor to the
     /// recovery driver without claiming successful selection. Env settles first;
     /// the durable Pending obligation continues to block successors.
-    pub fn interrupt_for_recovery(self) -> Result<(SessionSupervisor<'r>, SessionRef), EnvError> {
+    pub fn interrupt_for_recovery(
+        self,
+    ) -> Result<(SessionSupervisor<'r>, SessionRef), (EnvError, Box<WorkspaceFinishCustody<'r>>)>
+    {
         if self.committed.is_none() || self.selected {
-            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
-                "only an unfinished committed activation enters selection recovery",
-            )));
+            return Err((
+                EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                    "only an unfinished committed activation enters selection recovery",
+                )),
+                Box::new(WorkspaceFinishCustody::Activation(Box::new(self))),
+            ));
         }
-        self.environment.finish(false)?;
+        if let Err((error, environment)) = self.environment.finish_recoverable(false) {
+            return Err((
+                error,
+                Box::new(WorkspaceFinishCustody::Session {
+                    supervisor: Box::new(self.supervisor),
+                    session: self.session,
+                    environment,
+                    obligation: Box::new(self.committed),
+                }),
+            ));
+        }
         Ok((self.supervisor, self.session))
     }
 
@@ -806,9 +852,14 @@ mod tests {
         .expect("retry") else {
             panic!("unpublished retry")
         };
-        assert!(
-            retry.finish_selected().is_err(),
-            "no successful activation without selector readback"
-        );
+        let Err((_, custody)) = retry.finish_selected() else {
+            panic!("no successful activation without selector readback")
+        };
+        let WorkspaceFinishCustody::Activation(activation) = *custody else {
+            panic!("the activation must remain owned")
+        };
+        activation
+            .abort(&ctx, Wait::FailFast)
+            .expect("refused activation settles explicitly");
     }
 }

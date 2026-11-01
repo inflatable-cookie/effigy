@@ -1726,7 +1726,15 @@ impl<'r> EnvRun<'r> {
     /// found, so an inspection never makes an active environment inactive.
     /// For a live mapped workspace this retains the predecessor's applied
     /// generation, including after HeldByRuns; only its successor commit replaces it.
-    pub fn finish(mut self, ok: bool) -> Result<CleanupOutcome, EnvError> {
+    pub fn finish(self, ok: bool) -> Result<CleanupOutcome, EnvError> {
+        self.finish_recoverable(ok).map_err(|(error, _run)| error)
+    }
+
+    /// Retain the exact Env run if its settlement fails.
+    pub fn finish_recoverable(
+        mut self,
+        ok: bool,
+    ) -> Result<CleanupOutcome, (EnvError, Box<Run<'r>>)> {
         if ok
             && !self.published
             && !self.failed
@@ -1734,7 +1742,9 @@ impl<'r> EnvRun<'r> {
             && self.began.state == EnvState::Active
         {
             let result = Attachments::publish_active(&mut self.run);
-            self.kernel(result)?;
+            if let Err(error) = self.kernel(result) {
+                return Err((error, Box::new(self.run)));
+            }
         }
         let workload = if ok && !self.failed {
             WorkloadOutcome::Succeeded
@@ -1754,19 +1764,19 @@ impl<'r> EnvRun<'r> {
             Err(error) => {
                 self.step
                     .fail(&format!("environment `{env}` could not settle: {error}"));
-                return Err(error);
+                return Err((error, Box::new(self.run)));
             }
         };
-        let outcome = match self.run.settle(&cleanup, &mut EnvSettlement) {
+        let outcome = match self.run.settle_recoverable(&cleanup, &mut EnvSettlement) {
             Ok(outcome) => {
                 self.step.succeed(&format!("environment `{env}` settled"));
                 Ok(outcome)
             }
-            Err(error) => {
+            Err((error, run)) => {
                 self.step.fail(&format!(
                     "settling environment `{env}` did not complete: {error}"
                 ));
-                Err(EnvError::from_run(&env, error))
+                Err((EnvError::from_run(&env, error), run))
             }
         }?;
         Ok(outcome.cleanup())

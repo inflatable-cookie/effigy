@@ -23,6 +23,9 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug)]
 enum Case {
     Fresh,
+    #[cfg(feature = "fault-injection")]
+    FinishFault,
+    HandoffFault,
     Recreate,
     WrongId,
     WrongRun,
@@ -377,7 +380,14 @@ esac
             &facts,
             &mut external,
         );
-        if !matches!(case, Case::Fresh | Case::Recreate) {
+        let success = match case {
+            Case::Fresh | Case::Recreate => true,
+            Case::HandoffFault => true,
+            #[cfg(feature = "fault-injection")]
+            Case::FinishFault => true,
+            _ => false,
+        };
+        if !success {
             let text = prepared
                 .expect_err("unproved successor cannot reach publication")
                 .to_string();
@@ -453,7 +463,91 @@ esac
                 .as_deref(),
             Some("4")
         );
+        #[cfg(feature = "fault-injection")]
+        if matches!(case, Case::FinishFault) {
+            let environment_run = activation.environment_mut().id();
+            let result = effigy_kernel::fault_injection::with_hook(
+                |name| {
+                    if name == "SettleBefore" {
+                        Err(std::io::Error::other("finish fault"))
+                    } else {
+                        Ok(())
+                    }
+                },
+                || activation.finish_selected(),
+            );
+            let Err((_, custody)) = result else {
+                panic!("environment settlement must fail")
+            };
+            let effigy_containers::environment::WorkspaceFinishCustody::Session {
+                supervisor,
+                session,
+                environment,
+                ..
+            } = *custody
+            else {
+                panic!("selected session custody must be returned")
+            };
+            assert_eq!(session.run(), obligation.session_run());
+            assert_eq!(environment.id(), environment_run);
+            let reader = match effigy_kernel::store::Store::read(&ctx.observe(), ctx.root) {
+                Observed::Verified(reader, _) => reader,
+                other => panic!("journal unavailable: {other:?}"),
+            };
+            let stored =
+                effigy_kernel::workspace_session::committed_selection(&reader, &env.resource)
+                    .verified()
+                    .cloned()
+                    .flatten()
+                    .expect("durable selection");
+            assert_eq!(
+                stored.state(),
+                effigy_kernel::workspace_session::SelectionState::Switched
+            );
+            (*environment)
+                .settle(&ctx.cleanup().unwrap(), &mut EnvSettlement)
+                .unwrap();
+            publication.channel.launch.stop();
+            (*supervisor)
+                .settle(&ctx.cleanup().unwrap(), &mut EnvSettlement)
+                .unwrap();
+            return;
+        }
         let (supervisor, session) = activation.finish_selected().unwrap();
+        if matches!(case, Case::HandoffFault) {
+            let expected = session.run();
+            let endpoint = publication.channel.launch.endpoint().unwrap();
+            let owner = crate::runner::environment::workspace::WorkspaceOwner {
+                supervisor,
+                session,
+                channel: publication.channel,
+                serving: publication.serving,
+                creation: None,
+                effect: std::sync::Arc::new(ctx.cx.clone()),
+                observe: std::sync::Arc::new(ctx.observe()),
+                root: ctx.root,
+            };
+            let Err((error, mut owner)) =
+                crate::runner::workspace_client::supervisor::ServingHandoff::committed(
+                    owner, obligation,
+                )
+            else {
+                panic!("pending obligation must refuse")
+            };
+            assert!(matches!(
+                error,
+                crate::runner::workspace_client::supervisor::HandoffRefusal::Unswitched(_)
+            ));
+            assert_eq!(owner.session.run(), expected);
+            assert!(std::net::TcpStream::connect(endpoint).is_ok());
+            owner.channel.launch.stop();
+            owner
+                .supervisor
+                .settle(&ctx.cleanup().unwrap(), &mut EnvSettlement)
+                .unwrap();
+            assert!(std::net::TcpStream::connect(endpoint).is_err());
+            return;
+        }
         assert_ne!(
             session.environment_generation().get(),
             4,
@@ -473,6 +567,15 @@ esac
 #[test]
 fn creator_binding_fresh_successor_publishes_from_the_actual_receipt() {
     run(Case::Fresh);
+}
+#[cfg(feature = "fault-injection")]
+#[test]
+fn creator_binding_finish_failure_retains_selected_session_and_durable_obligation() {
+    run(Case::FinishFault);
+}
+#[test]
+fn creator_binding_pending_handoff_returns_exact_owner_for_settlement() {
+    run(Case::HandoffFault);
 }
 #[test]
 fn creator_binding_non_live_config_successor_publishes_its_new_id() {

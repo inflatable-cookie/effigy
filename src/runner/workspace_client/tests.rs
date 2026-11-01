@@ -2309,6 +2309,7 @@ fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
 fn the_production_owner_builds_its_server_only_from_matching_validated_facts() {
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint = prepared.launch.endpoint().expect("listener");
         // A pin the publication did not validate refuses before serving.
         let mut wrong = super::ServingFacts::fixture(
             &prepared.locator,
@@ -2324,9 +2325,21 @@ fn the_production_owner_builds_its_server_only_from_matching_validated_facts() {
             observe: Arc::new(observe.clone()),
             root,
         });
+        let Err((AdoptError::Facts, mut owned)) = refused else {
+            panic!("mismatched pin must refuse")
+        };
         assert!(
-            matches!(refused, Err(AdoptError::Facts)),
-            "a pin the publication did not validate is refused"
+            std::net::TcpStream::connect(endpoint).is_ok(),
+            "refusal retains custody for explicit settlement"
+        );
+        owned.channel.launch.stop();
+        owned
+            .supervisor
+            .settle(&cleanup(cx), &mut NoEffects)
+            .expect("settle the same session");
+        assert!(
+            std::net::TcpStream::connect(endpoint).is_err(),
+            "settlement closes the listener"
         );
     });
 

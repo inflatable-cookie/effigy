@@ -1360,6 +1360,20 @@ impl<'a> Run<'a> {
         self.run_settle_actions();
         self.settle_inner(cleanup, adapter)
     }
+
+    /// Keep the exact owner gate on a failed settlement so its caller can
+    /// reconcile the durable outcome instead of mistaking drop for closure.
+    pub fn settle_recoverable(
+        mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
+        self.run_settle_actions();
+        match self.settle_inner(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

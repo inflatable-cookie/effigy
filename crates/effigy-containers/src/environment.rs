@@ -17,7 +17,7 @@ mod remote;
 mod tests;
 mod view;
 mod workspace_activation;
-pub use workspace_activation::{WorkspaceActivation, WorkspaceBegin};
+pub use workspace_activation::{WorkspaceActivation, WorkspaceBegin, WorkspaceFinishCustody};
 
 pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,

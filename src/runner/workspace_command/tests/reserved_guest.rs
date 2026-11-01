@@ -811,6 +811,7 @@ home = "/home/vscode"
         } else if matches!(fault, Fault::ExpiredDeadline) {
             let error = match result.expect_err("an expired publication deadline refuses") {
                 WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Finish { cause, .. } => cause.to_string(),
                 WorkspaceUpError::Preparation(error) => error.to_string(),
             };
             assert!(error.contains("deadline expired"), "{error}");
@@ -1100,7 +1101,17 @@ fn recover_fixture<'a>(
         }
     }
     // The activation ends; the independently retained supervisor stays alive.
-    let (supervisor, session) = activation.interrupt_for_recovery().map_err(failure)?;
+    let (supervisor, session) = match activation.interrupt_for_recovery() {
+        Ok(value) => value,
+        Err((cause, custody)) => {
+            return Err(WorkspaceUpError::Finish {
+                cause: Box::new(cause),
+                custody,
+                channel: Box::new(publication.channel),
+                serving: Box::new(publication.serving),
+            })
+        }
+    };
     let mut owner = WorkspaceOwner {
         supervisor,
         session,

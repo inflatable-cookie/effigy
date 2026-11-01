@@ -467,6 +467,38 @@ fn a_custody_is_not_retained_under_another_sessions_lease() {
     });
 }
 
+#[test]
+fn service_adoption_refusal_returns_the_owned_session() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint = prepared.launch.endpoint().expect("bound");
+        let lease = published(&prepared);
+        let mut handoff = ServingHandoff::validated(
+            owner(supervisor, &session, prepared, cx, observe, root),
+            &lease,
+        )
+        .expect("valid handoff");
+        handoff.owner.serving.pin = Digest([1; 32]);
+        let Err(super::ServiceAdoptFailure::Before { error, mut owner }) =
+            ServiceOwner::adopt(handoff)
+        else {
+            panic!("mismatched facts must retain ownership")
+        };
+        assert!(matches!(
+            error,
+            crate::runner::workspace_client::serving::AdoptError::Facts
+        ));
+        assert_eq!(owner.session.run(), session.run());
+        assert!(TcpStream::connect(endpoint).is_ok());
+        owner.channel.launch.stop();
+        owner
+            .supervisor
+            .settle(&cleanup(cx), &mut NoEffects)
+            .expect("exact session settles");
+        assert!(TcpStream::connect(endpoint).is_err());
+    });
+}
+
 /// One session serves through exactly one owner: a second launch for the same
 /// session refuses at the kernel boundary instead of opening a second listener.
 #[test]
