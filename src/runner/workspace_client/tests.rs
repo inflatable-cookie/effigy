@@ -4608,6 +4608,7 @@ fn the_serving_owner_refuses_replacement_input_and_resize() {
         terminals.start(&owning, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
 
         for (frame, wire) in replacements {
+            _owner.assert_live();
             // A refused connection ends that connection only; the session keeps
             // serving.
             let served = owner.serve_pending(&mut terminals);
@@ -4634,6 +4635,7 @@ fn the_serving_owner_refuses_replacement_input_and_resize() {
                 )),
                 "the client was told why the replacement {frame} was refused: {wire:?}"
             );
+            _owner.assert_live();
         }
         assert_eq!(
             terminals
