@@ -13,6 +13,9 @@ pub(crate) use participation::docker_config_current_context;
 #[path = "exec/exit141_tests.rs"]
 mod exit141_tests;
 #[cfg(all(test, unix))]
+#[path = "exec/tests/interpolation.rs"]
+mod interpolation_tests;
+#[cfg(all(test, unix))]
 #[path = "exec/name_store_tests.rs"]
 mod name_store_tests;
 mod process;

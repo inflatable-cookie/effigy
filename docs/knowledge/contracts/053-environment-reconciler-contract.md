@@ -7,6 +7,11 @@ workspace session run and its host authority channel are implemented at the
 kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
 caller and native backend qualification are not.
 
+For v0.15, workspace Level 1 forwards non-interactive commands only;
+guest PTY, attach, reconnect and detach acknowledgement are deferred to
+Level 2 as specified in 052 §8.11. This does not remove the environment
+activation or its detached session supervisor.
+
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and

@@ -2896,7 +2896,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | App tasks with `run_in` `host`, `container` or `either`; shell commands; task references, sequences and setup steps; Rhai tasks and host APIs; `test` and suites; drafts; QA groups and members; heavy tasks; `skill run` | channel | Admission request. The host resolves placement, gates `Task(TaskId)` (K5 excludes host and guest runs alike), journals and runs: container targets in the target container through remote custody, host targets on the host. Rhai effects are classified on the host (§5.3). |
 | `defer` | local inside an admitted workload; otherwise channel | Inside a workload it is that run's command, under its custody. From a shell it is an admission request targeting the current container. |
 | Workspace-only tasks, `workspace`, `system` | channel | Attach to the live workspace session run (§8.7); never a second shell or session. Lifecycle operations are requests. |
-| Managed TUI and headless (`dev`, profiles) | channel | Admission of a `Detached` managed run, child of the session run. The guest renders events; the host supervisor owns workloads and attachments. |
+| Managed headless (`dev`, profiles) | channel | Non-interactive admission and output streaming, subject to the Level 1 limits in §8.11. A guest request that needs a TUI or terminal refuses with the Level 2 message. |
 | Managed `status`, `logs`, `stop`; `tasks status` | channel | Observe requests for status and logs; `stop` is a generation-fenced request (K7). Host and guest pids are never mixed. |
 | `tasks cache`, task-lock `unlock` | channel; `unlock` refused | Cache reads are host Observe requests; clears are RefreshDerived requests to the owning store engine. `unlock` refuses in both placements: there is no unlock command (I-G7). QA groups are in the admission row. |
 | `doctor` | local and channel | Manifest and tool checks local; runtime checks (backend, gateway, routes, ownership, volumes) are host Observe requests. |
@@ -2937,14 +2937,13 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   2026-10-18).
   Keep: the session run stays. Stop: the client requests `container down`,
   which follows the down path below.
-- Attach: the host `effigy workspace` and every guest terminal attach to the
-  same session run as secondary clients (§5.8), and a host UI and a guest UI
-  can attach to one managed child run. A secondary client's death stops
-  nothing.
-- An environment has one published workspace session, so another `workspace`
-  invocation attaches to that mapping. Generic Task admission keeps K5. The
-  typed activation reservation below is the only successor overlap; it does
-  not admit another ordinary task run.
+- Guest terminal attach and shared interactive writers are Level 2, not
+  offered by the v0.15 workspace client (§8.11). Existing host session and
+  generic secondary-client custody semantics remain unchanged.
+- An environment has one published workspace session. Guest re-attach to that
+  mapping is Level 2; generic Task admission keeps K5. The typed activation
+  reservation below is the only successor overlap; it does not admit another
+  ordinary task run.
 - **Reserved successor activation (Tom's ruling, 2026-10-29).** Preserve the live
   predecessor, its selected bytes, listener and holders until the successor's
   atomic commit. `WorkspaceActivationReservation::reserve` briefly takes and
@@ -3126,6 +3125,20 @@ the missing credential named, and local reads keep working.
 
 ### 8.11 Workspace-client interface v1
 
+**Level 1 scope (Tom, 2026-11-01).** The v0.15 workspace client is
+non-interactive: forwarded commands run without a PTY and receive closed
+stdin (EOF); stdout, stderr and exit status stream to the owning connection.
+Requests requiring an interactive terminal refuse with a named Level 2
+message directing the user to the host CLI. Guest attach, reconnect and
+detach acknowledgement are not offered in Level 1; each receives a named
+Level 2 refusal. Owner-connection EOF cancels the foreground workload and
+settles it through custody. Interactive terminals, re-attach and reconnect,
+and their v2 schema, durable acknowledgements, attachment claims and release
+tombstones are Level 2 work after v0.15. Earlier terminal and reconnect
+proposals in this section and its appendices describe that later scope, not
+Level 1 delivery or current production readiness. This ruling does not
+change ordinary host commands or the detached workspace session supervisor.
+
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
 guest for selection. `SessionLaunch::qualify_guest` issues a launch-local
@@ -3160,12 +3173,12 @@ within scope. Grants are memory-only, bound to host user, checkout, session run/
 container/boot and operations/targets (§8.3). Enrolment credentials: generation/container-bound, 0600 guest-private, revoked with
 generation. Observe creates no admission/access journal. Mutating requests record `(session generation, request id, canonical
 digest)` before admission: same-intent retry returns the record, conflicts `id_conflict`, indeterminate recovery `unknown`, never
-another admission; `lookup` before `reserve`. One connection/attachment; secondary EOF stops nothing; owner EOF without acked
-detach stops its owned workload through custody. Detach preserves a Detached run. Controls cannot target another client's run.
-Streams: one increasing sequence per stream id across kinds; retained log/cursor coordinates agree; rotation is `gap`, never
-complete output. ≤16 unacked data frames, ≤512 KiB queued decoded data; control remains serviceable. Never replay terminal input;
-resize latest-wins; check attachment lifetime before terminal writes; missing delivery refuses. Kernel record tests do not qualify
-a production terminal writer/serving loop/transport. §8.7 governs down and live holders.
+another admission; `lookup` before `reserve`. Level 1 uses the owning connection for each forwarded foreground command: its EOF cancels the owned workload through custody.
+Guest detach, attach, reconnect, input and resize are Level 2 and refuse by name in Level 1. Controls cannot target another
+client's run. Streams use increasing sequence numbers, bounded frames and acknowledgements; missing or rotated data reports
+`gap`, never complete output. Admission alone is not command success: stdout, stderr and the terminal outcome must be
+delivered or the result is Unknown. Kernel record tests do not qualify a production streaming transport. §8.7 governs down
+and live holders.
 
 **Guest-local identity — #482 (C).** The context-free reader is in `src/runner/workspace_client/identity.rs`:
 

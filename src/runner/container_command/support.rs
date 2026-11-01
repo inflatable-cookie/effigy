@@ -1241,7 +1241,8 @@ fn shared_compose_invocation_plan(
             format_args(&plan.args)
         ),
         error,
-    })?;
+    })?
+    .args;
     Ok(plan)
 }
 
