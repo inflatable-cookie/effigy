@@ -124,7 +124,7 @@ pub fn process_executable(pid: u32) -> std::io::Result<std::path::PathBuf> {
     {
         // `/proc/<pid>/exe` resolves to the file that was executed; a process we
         // may not inspect is unreadable rather than unknown-but-assumed.
-        return std::fs::read_link(format!("/proc/{pid}/exe"));
+        std::fs::read_link(format!("/proc/{pid}/exe"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -263,6 +263,23 @@ fn tty_name(fd: libc::c_int) -> Option<String> {
 }
 
 /// The device number a character-device descriptor refers to.
+///
+/// `st_rdev` is `u64` on Linux and `u32` on macOS, so a single `as u64` is
+/// necessary on one platform and `clippy::unnecessary_cast` on the other
+/// (effigy#520). Neither arm casts: the narrow platform widens with `u64::from`
+/// and the wide one needs nothing. The value is identical on both.
+#[cfg(all(test, target_os = "linux"))]
+fn device_number(device: libc::dev_t) -> u64 {
+    device
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+fn device_number(device: libc::dev_t) -> u64 {
+    // `dev_t` is a signed 32-bit value on macOS, so this widening is required
+    // there; the Linux arm above would make the same cast redundant.
+    device as u64
+}
+
 #[cfg(test)]
 fn device_of(fd: libc::c_int) -> Option<u64> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -272,7 +289,7 @@ fn device_of(fd: libc::c_int) -> Option<u64> {
     }
     // SAFETY: a successful fstat initialized the full output structure.
     let stat = unsafe { stat.assume_init() };
-    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(stat.st_rdev as u64)
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(device_number(stat.st_rdev))
 }
 
 /// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor
@@ -645,11 +662,65 @@ mod platform {
     }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
         // SSTOP and SZOMB from the macOS SDK's sys/proc.h.
-        Ok(match bsdinfo(pid)?.pbi_status {
+        let status = match bsdinfo(pid) {
+            Ok(info) => info.pbi_status as i32,
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+                return zombie_state(pid).and_then(|zombie| {
+                    if zombie {
+                        Ok(ProcessState::Zombie)
+                    } else {
+                        Err(error)
+                    }
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match status {
             4 => ProcessState::Stopped,
             5 => ProcessState::Zombie,
             _ => ProcessState::Active,
         })
+    }
+    // KERN_PROC_PID returns kinfo_proc beginning with extern_proc. libproc can
+    // reject zombies with ESRCH even while the BSD process table lists them.
+    fn zombie_state(pid: u32) -> io::Result<bool> {
+        #[repr(C)]
+        struct Prefix {
+            start_or_links: [usize; 2],
+            vmspace: usize,
+            sigacts: usize,
+            flags: libc::c_int,
+            status: libc::c_char,
+            pid: libc::pid_t,
+        }
+        let mut mib = [
+            libc::CTL_KERN,
+            libc::KERN_PROC,
+            libc::KERN_PROC_PID,
+            pid as i32,
+        ];
+        let mut storage = [0usize; 512];
+        let mut size = std::mem::size_of_val(&storage);
+        // SAFETY: storage is aligned and writable; sysctl writes at most size bytes.
+        let result = unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                4,
+                storage.as_mut_ptr().cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if size < std::mem::size_of::<Prefix>() {
+            return Ok(false);
+        }
+        // SAFETY: the kernel returned an extern_proc prefix in aligned storage.
+        let prefix = unsafe { &*storage.as_ptr().cast::<Prefix>() };
+        Ok(prefix.pid == pid as i32 && prefix.status == 5)
     }
     fn bsdinfo(pid: u32) -> io::Result<libc::proc_bsdinfo> {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();

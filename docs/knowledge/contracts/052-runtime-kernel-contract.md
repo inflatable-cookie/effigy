@@ -400,7 +400,7 @@ names the rule or invariant it relies on.
 | K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no group anchor outlives the group it evidences. An empty group proves closure for the *observer* (an `ESRCH` group, or an inventory in which every row was positively resolved — live or a positively observed zombie — and none is live, with no row unproven); the anchor retires on its own positively resolved round and stays alive otherwise, and neither observer's repeated scans are a proof. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. A remote workload binds its environment's generation at intent; its acknowledgement and completion check the owner fence and the environment's identity, because every bring-up advances that generation, while container identity and VM boot (I-RC2) and holder protection (R4) keep it off a replacement (planner ruling, 2026-10-20). A stale-target intent writes nothing and leaves the run usable, so the caller re-reads and retries, as an attach does. | A stale stop stopping a successor; a late callback deleting a successor's route; a concurrent reuse bring-up failing a running remote step. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -1082,12 +1082,41 @@ Spawn protocol:
 | Step | Action | If the owner dies here |
 | --- | --- | --- |
 | 1 | `intend(Process { spec digest, label })` | `Intended`, nothing spawned |
-| 2 | fork; child creates its group (`setsid` for a PTY), forks and waits for its anchor, then blocks on the barrier | barrier EOF exits child and pre-go anchor; no workload ran |
+| 2 | fork; child creates its group (and its own session when it owes the caller no terminal; `setsid` for a PTY), forks and waits for its anchor, then blocks on the barrier | barrier EOF exits child and pre-go anchor; no workload ran |
 | 3 | parent records `{pid, pgid, start identity, boot identity, anchor}` as `Applied` | child and pre-go anchor exit; settle observes closure |
 | 4 | parent writes go; child releases the anchor, then execs the workload | settle stops the workload and anchor by identity |
 
 Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
 environment; descendants inherit it. It is evidence, not a credential.
+The blocked leader creates the workload's process group, and for every route
+that owes the caller no terminal it gives that group a session of its own with
+`setsid`, so the run's payload and its anchor never join the caller's session.
+A nested task session, or a harness that censuses the session it started, then
+sees this run's group as another session instead of as unexplained members:
+one custody group, one session, no stray helper rows (effigy#520). A
+`Foreground` route keeps the caller's session because `tcsetpgrp` can hand a
+terminal only to a group in the terminal's own session, and an `Inherit` route
+with stdin on a terminal keeps it for the same reason: it takes that terminal's
+foreground lease. With stdin off a terminal there is no lease to take and the
+group is isolated like any other captured route. A PTY route already created its
+own session before this, and keeps taking its controlling terminal.
+
+Ruling (2026-10-31, Effigy Supervisor with the Oxide Supervisor): the eligible
+group's own session and the anchor's retirement with its group are the accepted
+fixes (effigy#520). What follows from them is narrow and does not change this
+contract's evidence rules: a pinned nested Oxide diagnostic against
+`proof:supervisor:qualify:diagnostic` still closes `UNCLOSED` with
+`census uncertain: N unvalidated rows`, that result is history, and it supplies no
+11/11 qualification and no census claim for this change. The remaining rows are
+the Oxide supervisor's own ancestor chain (Effigy runner, payload leader,
+sentinel, supervisor): those identities exist before the supervisor starts and are
+therefore not Effigy descendants it leaked. Oxide owns that separately, with a
+startup positive `(pid, start)` record of its ancestor chain excluded from its
+post-leader census and every other unreadable identity still `Unknown`; until
+that rule is qualified, Oxide natives run direct rather than under this wrapper.
+Nothing here licenses Effigy or any harness to drop an unexplained row: K6 still
+requires an empty group for closure, an unreadable process is still `Unknown`,
+and a killed-but-unreaped process is not closure.
 Before acknowledging the barrier, the blocked child forks an anchor inside
 its already-created process group (and its session for a PTY). A transient
 intermediate child reparents the anchor and is reaped before workload exec,
@@ -1100,12 +1129,33 @@ omit that field and deserialize unchanged; imports infer no anchor.
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.
 After the durable receipt and owner go byte, the child releases the anchor
-before execing the workload. The anchor closes its last descriptors and
-waits for custody settlement; owner or leader death alone cannot retire it.
-Tom's 2026-10-27 ruling (Q-014) makes SIGTERM a cooperative exit and leaves
-settlement as the other one. An idle anchor therefore ends within a bounded
-grace when a harness stops the tree it started, and a run that completes
-retires its anchor during settlement; no anchor outlives a settled run.
+before execing the workload. The anchor closes its last descriptors and then
+watches its own group: it is that group's evidence while any workload member is
+live, and it retires itself within a bounded deadline once a round **positively
+observes** that the group has no live member other than itself. It reads only the
+kernel's membership of the group it is in, so the number cannot be a stale
+recording and a member that is still present is never inferred away from a missing
+leader alone. A retirable round is one in which every listed row was positively
+resolved — the anchor's own row observed live, and every other row observed either
+live (not retirable) or positively not live. A row is positively not live when the
+kernel reports it as a zombie. A row unreadable at its state or identity read may
+have left the group inside the round after forking a member this inventory cannot
+see; it is `unproven` and the anchor stays alive. Any other read
+failure makes the inventory an error, never an absence. In both of those cases the
+anchor keeps retrying as the group's evidence and the observing path reports the
+named state `unproven group closure`. An inventory is not atomic with process
+creation, so a descendant forked and orphaned inside the window can be missed:
+repeated scans are **best effort**, never a proof of an empty group. On Linux,
+the inventory starts with all PIDs. If a PID disappears before `getpgid` can
+establish its membership, it is skipped; a member that forked before leaving can
+therefore hide a descendant. The contract does not claim otherwise (effigy#520).
+That self-retirement is what keeps no anchor beyond its group when an owner is killed without
+settling (effigy#520), and it is why a nested task session or a harness census
+does not meet a stranger it cannot account for. Tom's 2026-10-27 ruling (Q-014)
+keeps SIGTERM as the cooperative exit; settlement remains the other. An idle
+anchor therefore also ends within a bounded grace when a harness stops the tree
+it started, and a run that completes retires its anchor during settlement; no
+anchor outlives a settled run.
 SIGINT and SIGHUP stay ignored, because a terminal delivers them to the whole
 foreground group where the anchor is only the group's evidence.
 Settlement stops the workload and verifies group closure before retiring the
@@ -1193,7 +1243,7 @@ leader was reparented and its number is no longer pinned.
 | --- | --- |
 | Recorded anchor has its start and boot identity, custody nonce and recorded group membership | Its continuous presence pins the original group. Signal workload members individually after fresh identity and membership checks; Linux uses per-process pidfds, macOS has the documented check/signal window. Exclude the anchor from workload closure and stop it last. |
 | Recorded anchor missing, killed, replaced or unreadable; workload members remain | `Unknown`; no anchor-derived signal, never a numeric group signal. An empty group still proves closure. |
-| No anchor in the receipt; leader alive with the recorded start and boot identity | signal the group. On Linux 6.9 or later: open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. |
+| No anchor in the receipt; leader alive with the recorded start and boot identity | signal the group, and only with that live identity (`pid` and start) verified immediately before the signal: leader authority, not anchor authority. On Linux 6.9 or later, where the runtime probe confirms support (the `EINVAL` capability probe), open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. When neither the anchor nor the leader can be verified, no group signal is sent. |
 | Leader gone or identity differs, and `kill(-pgid, 0)` returns `ESRCH` | none needed: `Absent` |
 | Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a per-process pidfd opened before the check. A member that has provably left the group since the inventory (its pid is gone or a zombie) is re-inventoried, never residue. Other members: `Unknown`, residue, never signalled. |
 | Process table or member environment unreadable | `Unknown`, residue |
@@ -1201,10 +1251,29 @@ leader was reparented and its number is no longer pinned.
 Where no descriptor operation exists (macOS for any signal; Linux before
 6.9 for group signals), a window between the identity check and the numeric
 signal remains. It is documented, as contract 049 documents macOS identity
-limits, and closed nowhere by guessing. Holding a pidfd never reserves a
-numeric pid or group id: once the last task using a number is gone, the
-number can be reused while the descriptor stays open. An open pidfd
-therefore never justifies a numeric `kill(-pgid)`.
+limits, and closed nowhere by guessing. The check is the last operation before the
+signal and nothing widens the window, but the window is real: a leader reaped by
+another process between that read and the call, followed by reuse of the group
+number inside the same window, is not excluded. Effigy therefore makes **no
+absolute no-recycled-PGID guarantee** on those platforms; the residual is tracked
+as lead `0453e055` and carried in the pre-freeze security evidence as lead
+`b013f65a`. A receiver that is not ours can only be reached by that reuse.
+
+Owners that hold their unreaped child are not subject to that window at all: the
+settle path signals the group while this process still holds the unreaped direct
+leader, so the pid and the group number are pinned by it and `leader already
+reaped` is `Unknown`; the pre-`go` drop signals the group of a child that cannot
+have execed, changed credentials or been reaped. Those are owned-child authority.
+
+Group closure is decided by two observers, and both use positively resolved rows.
+The **owner** holds the leader unreaped and drives the kill, so it re-inventories
+until no positively live member remains and no row stayed unproven; a row that was
+live and then unreadable, or any read failure, means `Unknown` and the named state
+`unproven group closure` rather than closure. An **anchor** is a bystander with no
+kill loop of its own, so it retires only on a round that positively resolves every
+row as described above and otherwise stays alive in the same named state. In both cases an
+unreadable row is `Unknown`, never absence, and repeated snapshots are best-effort
+observations rather than proofs.
 
 Signal handling by placement:
 
@@ -1271,7 +1340,10 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
 - I-P8: a process that creates a new session escapes the group and remains
-  outside custody. Clearing the environment loses the nonce but no longer
+  outside custody. The one exception is custody's own blocked leader, which
+  creates the group's session before the anchor joins the group: nothing escapes,
+  the recorded PGID is still the workload's group, and the anchor's membership
+  proof is unchanged. Clearing the environment loses the nonce but no longer
   escapes recovery when the recorded anchor is verified: the anchor proves
   uninterrupted group continuity after the leader is reaped. If the anchor
   was killed externally, or the receipt predates anchors (including v0.14.1

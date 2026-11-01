@@ -725,9 +725,41 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Group closure and anchor retirement are honest about their limits.** An anchor
+  retires only when one inventory round positively accounts for every in-group row
+  (a zombie cannot fork) and positively observes the anchor itself. A listed row
+  unreadable at its state or identity read, a failed read, or an inventory without
+  the anchor's own row keeps it alive. An unresolved row reports `unproven group
+  closure`. Group closure observed through an inventory follows the same rule.
+  Group signals keep their authority rules unchanged:
+  a verified anchor (member by member), a leader whose live identity is verified
+  immediately before the signal, or an owner that holds its unreaped child; on
+  macOS and Linux before 6.9 the numeric check-to-signal window remains and is
+  documented rather than papered over, so Effigy makes no absolute
+  no-recycled-PGID guarantee there (leads `0453e055`, `b013f65a`).
+
 - Clarify workspace artifact source selection, the separate dev and workspace
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.
+
+- **Kernel custody keeps its helpers inside its own group and session, and no
+  anchor outlives its group.** A workload group that owes the caller no terminal
+  now gets a session of its own, so a nested task session or a harness censusing
+  the session it started sees one custody group as another session rather than
+  as helper rows it cannot account for. `Foreground` routes and `Inherit` routes
+  whose stdin is a terminal keep the caller's session, because a terminal can
+  only be handed to a group of its own session. After go, a group anchor watches
+  the kernel's membership of the group it is in: it stays while any workload
+  member is live, and once a round positively resolves that the group has no live
+  member it retires itself within a bounded deadline instead of waiting for an
+  owner that may have been killed, whose checkout may be gone, or whose volume may
+  be unmounted. Positive resolution means every row was observed live or as a
+  zombie. A listed row unreadable at its state or identity read may have forked a
+  descendant a snapshot cannot see, so it is `unproven`, the anchor stays alive as
+  the group's evidence, and the observing path reports the named state `unproven
+  group closure`. Repeated snapshots are best effort, never a proof. Identity rules
+  are unchanged: nonce, PID generation, PGID membership and fail-closed signals
+  are exactly as strict, and nothing is ever signalled to close an anchor.
 
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the

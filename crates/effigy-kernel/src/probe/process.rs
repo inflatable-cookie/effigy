@@ -174,7 +174,7 @@ fn execute(
             if let Some(exit) = spawn::peek(pin.receipt.identity.pid).map_err(failure)? {
                 // Leader exit alone never proves process or stream closure.
                 if matches!(
-                    platform::group_closed(pin.receipt.pgid, Some(pin.receipt.identity.pid)),
+                    platform::group_closed(pin.receipt.pgid, &[&pin.receipt.identity]),
                     Observed::Verified(..) | Observed::Absent(_)
                 ) {
                     return Ok(exit);
@@ -244,7 +244,7 @@ impl Pin {
             };
             if !self.reaped
                 && matches!(
-                    platform::group_closed(self.receipt.pgid, Some(self.receipt.identity.pid)),
+                    platform::group_closed(self.receipt.pgid, &[&self.receipt.identity]),
                     Observed::Verified(..) | Observed::Absent(_)
                 )
                 && matches!(spawn::reap(self.receipt.identity.pid), Ok(Some(_)))

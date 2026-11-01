@@ -403,7 +403,7 @@ mod tests {
     fn generations_messages_and_tap_share_one_redaction_and_durability_boundary() {
         let home = effigy_test_support::short_tempdir("ho-").unwrap();
         let path = home.path().join("app.log");
-        std::fs::write(&path, b"\x1b[31mlegacy-secret\n").unwrap();
+        effigy_test_support::write_private(&path, b"\x1b[31mlegacy-secret\n").unwrap();
         let output = CanonicalOutput::with_secrets(
             MergedLog::prepare_test(&path).unwrap(),
             vec![b"supersecret".to_vec()],
