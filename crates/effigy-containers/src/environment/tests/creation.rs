@@ -807,7 +807,9 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
 #[test]
 fn activation_parks_the_real_claimed_run_after_target_binding() {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
-    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    use effigy_kernel::workspace_session::{
+        BoundPlatform, ContainerIdentity, GuestObject, ImagePlatform, LoaderFamily, TargetCandidate,
+    };
     use effigy_test_support::process::FixtureCommandExt;
     use std::collections::BTreeMap;
     use std::io::Write;
@@ -1095,6 +1097,35 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap();
+    let target = ContainerIdentity {
+        container_id: id('a'),
+        vm_boot_id: "boot".into(),
+        backend: "fixture".into(),
+    };
+    let platform = ImagePlatform {
+        os: "linux".into(),
+        architecture: "amd64".into(),
+        variant: String::new(),
+        loader: LoaderFamily::Gnu,
+    };
+    let digest = effigy_kernel::id::Digest::of(b"fixture artifact");
+    activation
+        .environment_mut()
+        .bind_platform(
+            &reservation,
+            verified(BoundPlatform {
+                target,
+                platform: platform.clone(),
+                artifact_platform: platform,
+                artifact: GuestObject {
+                    path: format!("/run/effigy/objects/bin/{digest}"),
+                    digest,
+                },
+                artifact_version: "0.15.0".into(),
+                execution_available: true,
+            }),
+        )
+        .unwrap();
     let session = activation.session().clone();
     let parked = activation
         .park(Instant::now() + Duration::from_secs(60))
@@ -1124,9 +1155,43 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     .unwrap();
     let mut input = String::new();
     let _ = std::io::stdin().read_line(&mut input);
-    parked
+    let original_context = fake.selection.context.clone();
+    fake.selection.context = "foreign-context".into();
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("wrong backend must refuse before observation")
+        })
+        .expect_err("wrong backend retains custody");
+    assert!(error.to_string().contains("backend differs"));
+    fake.selection.context = original_context;
+    for _ in 0..4 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            Observed::Unknown(UnknownReason::Injected)
+        })
+        .expect_err("unknown reobservation retains custody");
+    assert!(error.to_string().contains("observation is unknown"));
+    assert!(effigy_kernel::gate::Gate::acquire(
+        &ctx.cx,
+        &state,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast
+    )
+    .is_err());
+    let activation = parked
+        .reacquire(&mut fake, |view, _, _| {
+            // Structural fixture only: production builds fresh target/platform
+            // observations rather than treating the expected view as evidence.
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect("guarded owner resumes after fixture reobservation");
+    assert_eq!(activation.session(), &session);
+    activation
         .abort(&ctx, Wait::FailFast)
-        .expect("parked owners settle and cancel");
+        .expect("resumed owners settle and cancel");
     std::fs::write(
         std::path::Path::new(&child_home).join("settled-ready"),
         b"ready",

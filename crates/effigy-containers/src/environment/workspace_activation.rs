@@ -84,6 +84,53 @@ impl<'r> ParkedWorkspaceActivation<'r> {
         &self.session
     }
 
+    /// Reacquire Env and require an actual fresh observation against the
+    /// retained journal, session and creator facts before exposing effects.
+    /// Failure returns this exact owner, parked or guarded, for retry/cleanup.
+    pub fn reacquire(
+        self,
+        backend: &mut dyn super::EnvironmentBackend,
+        observe: impl FnOnce(
+            &effigy_kernel::run::WorkspaceResumeView<'_>,
+            std::time::Instant,
+            &mut dyn super::EnvironmentBackend,
+        ) -> effigy_kernel::observe::Observed<
+            effigy_kernel::run::WorkspaceResumeFacts,
+        >,
+    ) -> Result<WorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        let Self {
+            _environment,
+            _supervisor,
+            session,
+            _reservation,
+            _supervisor_id,
+            _attempt,
+        } = self;
+        match _environment.reacquire(&_supervisor, backend, observe) {
+            Ok(environment) => Ok(WorkspaceActivation {
+                environment,
+                supervisor: _supervisor,
+                session,
+                reservation: _reservation,
+                selected: false,
+                committed: None,
+                supervisor_id: _supervisor_id,
+                attempt: _attempt,
+            }),
+            Err((error, environment)) => Err((
+                error,
+                Box::new(Self {
+                    _environment: *environment,
+                    _supervisor,
+                    session,
+                    _reservation,
+                    _supervisor_id,
+                    _attempt,
+                }),
+            )),
+        }
+    }
+
     /// Settle both exact owners before attempting tagged reservation cleanup.
     /// Unknown or incomplete cleanup leaves the reservation recoverable.
     pub fn abort(

@@ -487,10 +487,13 @@ impl<'a> ReacquiredWorkspaceRun<'a> {
         })
     }
 
-    /// Resume only when the adapter's fresh observation and the current
-    /// journal both match the exact facts captured under the original gate.
+    /// Perform the kernel's structural resume checks against the exact facts
+    /// captured under the original gate. The caller must first run the creator
+    /// owner's full receipt validation and bounded backend reobservation; this
+    /// kernel method does not qualify a backend or authenticate an adapter.
     pub fn resume(
         self,
+        session: &Run<'_>,
         observed: crate::observe::Observed<WorkspaceResumeFacts>,
     ) -> Result<Run<'a>, (RunError, Box<Self>)> {
         let checked = (|| {
@@ -532,6 +535,15 @@ impl<'a> ReacquiredWorkspaceRun<'a> {
             if current != self.owner.snapshot {
                 return Err(RunError::refused(
                     "workspace reservation changed during revalidation",
+                ));
+            }
+            let binding = current
+                .session
+                .as_ref()
+                .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
+            if !session.owns_workspace_session(self.owner.run.root, binding)? {
+                return Err(RunError::refused(
+                    "retained workspace session owner does not hold its exact slot",
                 ));
             }
             self.owner.verify_session()?;
@@ -815,6 +827,147 @@ impl<'a> Run<'a> {
                 "workspace creator receipt is malformed or stale",
             ));
         }
+        // The kernel checks the complete v5 record's shape and target
+        // correspondence. Backend-specific creator qualification remains the
+        // container owner's responsibility before calling `resume`.
+        let text = |key: &str| record_value.get(key).and_then(Value::as_str);
+        let project = text("project")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| RunError::unavailable("workspace creator project unavailable"))?;
+        let primary = text("primary_service")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                RunError::unavailable("workspace creator primary service unavailable")
+            })?;
+        if text("engine").is_none_or(str::is_empty)
+            || text("context").is_none()
+            || text("workdir").is_none_or(str::is_empty)
+            || record_value.get("workspace_predecessor").is_none()
+            || [
+                "expected_created",
+                "image_identities",
+                "reference_resolutions",
+            ]
+            .iter()
+            .any(|key| record_value.get(key).and_then(Value::as_object).is_none())
+            || ["observed", "compose_files", "created", "attached"]
+                .iter()
+                .any(|key| record_value.get(key).and_then(Value::as_array).is_none())
+        {
+            return Err(RunError::unavailable(
+                "workspace creator receipt is incomplete",
+            ));
+        }
+        if let TargetEvidence::Absent {
+            project: expected, ..
+        } = &inputs.target
+        {
+            if expected != project {
+                return Err(RunError::refused(
+                    "workspace creator project differs from frozen decision",
+                ));
+            }
+        }
+        let observed = record_value
+            .get("observed")
+            .and_then(Value::as_array)
+            .ok_or_else(|| RunError::unavailable("workspace creator inventory unavailable"))?;
+        let mut observed_ids = std::collections::BTreeSet::new();
+        let mut target_rows = 0;
+        for row in observed {
+            let id = row
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .ok_or_else(|| RunError::unavailable("workspace creator inventory is malformed"))?;
+            let labels = row
+                .get("labels")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    RunError::unavailable("workspace creator inventory labels unavailable")
+                })?;
+            if row.get("name").and_then(Value::as_str).is_none()
+                || row.get("running").and_then(Value::as_bool).is_none()
+                || row.get("binds").and_then(Value::as_array).is_none()
+                || row.get("image").and_then(Value::as_str).is_none()
+                || row.get("image_reference").and_then(Value::as_str).is_none()
+                || !observed_ids.insert(id.to_owned())
+                || labels
+                    .get("com.docker.compose.project")
+                    .and_then(Value::as_str)
+                    != Some(project)
+            {
+                return Err(RunError::unavailable(
+                    "workspace creator inventory is incomplete or ambiguous",
+                ));
+            }
+            if id == target.container_id {
+                if labels
+                    .get("com.docker.compose.service")
+                    .and_then(Value::as_str)
+                    != Some(primary)
+                {
+                    return Err(RunError::refused(
+                        "workspace creator target is not the primary service",
+                    ));
+                }
+                target_rows += 1;
+            }
+        }
+        if target_rows != 1
+            || !record_value
+                .get("image_identities")
+                .and_then(Value::as_object)
+                .is_some_and(|images| images.contains_key(primary))
+        {
+            return Err(RunError::unavailable(
+                "workspace creator target or image identity unavailable",
+            ));
+        }
+        let images = record_value
+            .get("image_identities")
+            .and_then(Value::as_object)
+            .ok_or_else(|| RunError::unavailable("workspace creator images unavailable"))?;
+        for image in images.values() {
+            let capability = image.get("capability").and_then(Value::as_str);
+            if image
+                .get("rendered_reference")
+                .and_then(Value::as_str)
+                .is_none()
+                || image
+                    .get("observed_reference")
+                    .and_then(Value::as_str)
+                    .is_none()
+                || image.get("resolved_id").is_none()
+                || image.get("config_hash").is_none()
+                || !matches!(
+                    capability,
+                    Some(
+                        "container_image_id"
+                            | "reference_resolved_id"
+                            | "digest_reference"
+                            | "attached_reference_config_hash"
+                    )
+                )
+            {
+                return Err(RunError::unavailable(
+                    "workspace creator image identity is incomplete",
+                ));
+            }
+        }
+        if record_value
+            .get("compose_files")
+            .and_then(Value::as_array)
+            .is_none_or(|rows| rows.iter().any(|row| row.as_str().is_none()))
+            || record_value
+                .get("attached")
+                .and_then(Value::as_array)
+                .is_none_or(|rows| rows.iter().any(|row| row.as_str().is_none()))
+        {
+            return Err(RunError::unavailable(
+                "workspace creator attachment or compose list is malformed",
+            ));
+        }
         let created = record_value
             .get("created")
             .and_then(Value::as_array)
@@ -826,6 +979,21 @@ impl<'a> Run<'a> {
                 .and_then(Value::as_str)
                 .filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
                 .ok_or_else(|| RunError::unavailable("workspace creator ID set is malformed"))?;
+            if [
+                "name",
+                "service",
+                "image_id",
+                "image_reference",
+                "image_capability",
+            ]
+            .iter()
+            .any(|key| entry.get(key).and_then(Value::as_str).is_none())
+                || !observed_ids.contains(id)
+            {
+                return Err(RunError::unavailable(
+                    "workspace creator ID record is incomplete or absent from inventory",
+                ));
+            }
             created_ids.push(id.to_owned());
         }
         created_ids.sort();

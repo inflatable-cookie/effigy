@@ -1579,7 +1579,13 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
             serde_json::json!({
                 "schema": "effigy.environment.gate-scoped-creation.v5",
                 "record": {"state": "attributed", "generation": reservation.generation().get(),
-                           "created": [{"container_id": target.identity.container_id}]}
+                    "engine": "docker", "context": "fixture", "project": "fixture", "primary_service": "workspace",
+                    "workdir": ".", "expected_created": {"workspace": null}, "workspace_predecessor": null,
+                    "compose_files": [], "attached": [], "reference_resolutions": {"fixture:latest": "image"},
+                    "image_identities": {"workspace": {"rendered_reference": "fixture:latest", "observed_reference": "fixture:latest", "resolved_id": "image", "config_hash": null, "capability": "container_image_id"}},
+                    "observed": [{"id": target.identity.container_id, "name": "workspace", "running": true,
+                        "labels": {"com.docker.compose.project": "fixture", "com.docker.compose.service": "workspace"}, "binds": [], "image": "image", "image_reference": "fixture:latest"}],
+                    "created": [{"container_id": target.identity.container_id, "name": "workspace", "service": "workspace", "image_id": "image", "image_reference": "fixture:latest", "image_capability": "container_image_id"}]}
             }),
         )
         .unwrap();
@@ -1589,13 +1595,16 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
     let guarded = parked.reacquire().unwrap();
     let facts = guarded.view().unwrap().facts().clone();
     let (error, guarded) = guarded
-        .resume(Observed::Unknown(UnknownReason::Injected))
+        .resume(&session, Observed::Unknown(UnknownReason::Injected))
         .expect_err("unknown never resumes");
     assert!(error.to_string().contains("observation is unknown"));
     let (error, mut guarded) = guarded
-        .resume(Observed::Absent(AbsenceProof::NoRow {
-            table: "fixture".into(),
-        }))
+        .resume(
+            &session,
+            Observed::Absent(AbsenceProof::NoRow {
+                table: "fixture".into(),
+            }),
+        )
         .expect_err("absent observation never resumes");
     assert!(error.to_string().contains("observation is absent"));
     let mut changed_ids = facts.clone();
@@ -1616,12 +1625,32 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
         changed_selection,
     ] {
         let (error, retained) = guarded
-            .resume(Observed::Verified(changed, evidence()))
+            .resume(&session, Observed::Verified(changed, evidence()))
             .expect_err("changed resume evidence never resumes");
         assert!(error.to_string().contains("observation changed"));
         guarded = retained;
     }
     let mut store = Store::open(&cx, &root).unwrap();
+    let mut conflicting_receipt = facts.creator_receipt.clone();
+    conflicting_receipt["record"]["project"] = serde_json::json!("foreign-project");
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&conflicting_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, retained) = guarded
+        .resume(&session, Observed::Verified(facts.clone(), evidence()))
+        .expect_err("conflicting creator project never resumes");
+    assert!(error.to_string().contains("creator project"));
+    guarded = retained;
     let mut changed_receipt = facts.creator_receipt.clone();
     changed_receipt["record"]["extra"] = serde_json::json!("changed after reobservation");
     store
@@ -1638,7 +1667,7 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
         })
         .unwrap();
     let (error, retained) = guarded
-        .resume(Observed::Verified(facts.clone(), evidence()))
+        .resume(&session, Observed::Verified(facts.clone(), evidence()))
         .expect_err("changed journal receipt never resumes");
     assert!(error
         .to_string()
@@ -1665,12 +1694,145 @@ fn parked_resume_requires_matching_observed_creator_and_target_facts() {
     )
     .is_err());
     let run = guarded
-        .resume(Observed::Verified(facts, evidence()))
+        .resume(&session, Observed::Verified(facts, evidence()))
         .expect("matching fixture observation resumes");
     assert_eq!(run.id(), run_id(254));
     run.settle(&cleanup(&cx), &mut adapter()).unwrap();
     session.settle(&cleanup(&cx), &mut adapter()).unwrap();
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn parked_resume_refuses_incomplete_creator_receipt() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                           "created": [{"container_id": target.identity.container_id}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let error = guarded
+        .view()
+        .expect_err("incomplete v5 creator receipt must never restore authority");
+    assert!(error.to_string().contains("evidence was incomplete"));
+    drop(session);
+}
+
+#[test]
+fn parked_resume_refuses_foreign_holder_of_session_slot() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                    "engine": "docker", "context": "fixture", "project": "fixture", "primary_service": "workspace",
+                    "workdir": ".", "expected_created": {"workspace": null}, "workspace_predecessor": null,
+                    "compose_files": [], "attached": [], "reference_resolutions": {"fixture:latest": "image"},
+                    "image_identities": {"workspace": {"rendered_reference": "fixture:latest", "observed_reference": "fixture:latest", "resolved_id": "image", "config_hash": null, "capability": "container_image_id"}},
+                    "observed": [{"id": target.identity.container_id, "name": "workspace", "running": true,
+                        "labels": {"com.docker.compose.project": "fixture", "com.docker.compose.service": "workspace"}, "binds": [], "image": "image", "image_reference": "fixture:latest"}],
+                    "created": [{"container_id": target.identity.container_id, "name": "workspace", "service": "workspace", "image_id": "image", "image_reference": "fixture:latest", "image_capability": "container_image_id"}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let foreign_task = TaskId::new(checkout(), "", Surface::Published, "foreign", None).unwrap();
+    let foreign = Run::begin(
+        &cx,
+        &root,
+        &inv(foreign_task.resource(), "foreign"),
+        opts(run_id(255)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let facts = guarded.view().unwrap().facts().clone();
+    let slot = {
+        let reader = read_journal(&cx, &root);
+        session_run_gate(reader.conn(), &facts.session.owner, facts.session.run).unwrap()
+    };
+    drop(session);
+    let _impostor = crate::gate::Gate::acquire(&cx, &root, &[slot], Wait::FailFast).unwrap();
+    let (_error, _custody) = guarded
+        .resume(&foreign, Observed::Verified(facts, evidence()))
+        .expect_err("a raw slot holder is not the retained session owner");
+    assert!(_error
+        .to_string()
+        .contains("retained workspace session owner"));
+    foreign.settle(&cleanup(&cx), &mut adapter()).unwrap();
 }
 
 #[test]
