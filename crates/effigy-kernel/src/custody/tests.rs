@@ -221,6 +221,62 @@ fn workspace_partial_marker_ambiguous_commit_keeps_owner_gate() {
 }
 
 #[test]
+fn workspace_partial_marker_refuses_another_live_target() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let invocation = |name| {
+        let mut spec = inv().spec().clone();
+        spec.owner = ResourceId::environment(
+            CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+            name,
+        )
+        .unwrap();
+        ResolvedInvocation::new(spec).unwrap()
+    };
+    let options = |run_id| BeginOpts {
+        id: run_id,
+        wait: crate::gate::Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: None,
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut owner = Run::begin(
+        &cx,
+        &root,
+        &invocation("marker-owner"),
+        options(id()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    let other = Run::begin(
+        &cx,
+        &root,
+        &invocation("marker-other"),
+        options(RunId::new(1, [4; 10]).unwrap()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    let ticket = owner
+        .intend_process(EffectSpec {
+            target: other.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    let result = owner.mark_workspace_partial_fork(&ticket);
+    let effect = owner.effects().unwrap().pop().unwrap();
+    assert!(result.is_err(), "a different live target must be refused");
+    assert_eq!(effect.state, EffectState::Intended);
+    assert!(effect.receipt.is_none());
+}
+
+#[test]
 fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
     let record = ProcessRecord {
         process: ProcessReceipt {

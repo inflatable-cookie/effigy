@@ -2216,7 +2216,8 @@ impl<'a> Run<'a> {
                     journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
-                    if effect.spec.kind != crate::custody::KIND
+                    if effect.spec.target != self.owner
+                        || effect.spec.kind != crate::custody::KIND
                         || effect.state != EffectState::Intended
                         || effect.receipt.is_some()
                     {
