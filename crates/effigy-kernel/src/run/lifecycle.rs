@@ -30,6 +30,61 @@ impl<'a> Run<'a> {
     }
 }
 impl Run<'_> {
+    /// Inspect the same retained Env sentinel after an ambiguous registration.
+    /// This does not clear poison, start a backup, qualify a helper birth or
+    /// grant permission for any new effect.
+    #[allow(dead_code)]
+    pub(crate) fn inspect_workspace_lifecycle(&self) -> Result<(), RunError> {
+        if self.root.is_machine() || self.owner.resource.kind() != crate::id::ResourceKind::Env {
+            return Err(RunError::refused(
+                "workspace lifecycle needs a checkout environment",
+            ));
+        }
+        self.require_environment_gate()?;
+        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        let row = journal::run(self.store.conn(), self.id)?;
+        if row.owner != self.owner.resource.name().to_string()
+            || row.generation != self.owner.generation
+            || matches!(row.phase, Phase::Stopping | Phase::Closed)
+        {
+            return Err(RunError::unavailable("workspace lifecycle run differs"));
+        }
+        let lease = self
+            .sentinel
+            .as_ref()
+            .ok_or_else(|| RunError::unavailable("retained sentinel unavailable"))?;
+        lease.verify_retained()?;
+        let owner = ident::process_identity(std::process::id())
+            .verified()
+            .cloned()
+            .ok_or_else(|| RunError::unavailable("workspace owner identity unavailable"))?;
+        let (kind, placement, recorded_owner, recorded_supervisor, recorded_sentinel): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = self.store.conn().query_row(
+            "SELECT kind, placement, owner_identity, supervisor_identity, sentinel_identity FROM runs WHERE run_id=?1",
+            [self.id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+        let parse = |raw: Option<String>| -> Result<Option<ProcessIdentity>, RunError> {
+            Ok(raw.map(|value| serde_json::from_str(&value)).transpose()?)
+        };
+        if kind != "custody"
+            || placement != "detached"
+            || parse(recorded_owner)? != Some(owner.clone())
+            || parse(recorded_supervisor)? != Some(owner)
+            || parse(recorded_sentinel)? != Some(lease.identity.clone())
+        {
+            return Err(RunError::unavailable(
+                "workspace lifecycle evidence differs",
+            ));
+        }
+        Ok(())
+    }
+
     /// The lease is transferred only after the one fenced transaction commits.
     /// On refusal its sole write end closes, so an unregistered helper cannot
     /// outlive the failed registration. No second journal writer is exposed.
@@ -141,6 +196,97 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn after_commit_fault_preserves_same_env_sentinel_for_readback() {
+        let home = effigy_test_support::short_tempdir("lf-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "workspace-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        crate::fault::arm_point(
+            crate::fault::Point::LifecycleAfter,
+            crate::fault::Fault::Enospc,
+        );
+        let enabled = run.enable_custody(&plan);
+        let fired = crate::fault::fired();
+        crate::fault::arm(None);
+        let exact = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let readback = run.inspect_workspace_lifecycle();
+        let saved_sentinel: Option<String> = run
+            .store
+            .conn()
+            .query_row(
+                "SELECT sentinel_identity FROM runs WHERE run_id=?1",
+                [run.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        run.store
+            .conn()
+            .execute(
+                "UPDATE runs SET sentinel_identity=NULL WHERE run_id=?1",
+                [run.id.to_string()],
+            )
+            .unwrap();
+        let mismatch = run.inspect_workspace_lifecycle();
+        run.store
+            .conn()
+            .execute(
+                "UPDATE runs SET sentinel_identity=?2 WHERE run_id=?1",
+                rusqlite::params![run.id.to_string(), saved_sentinel],
+            )
+            .unwrap();
+        run.store
+            .conn()
+            .execute(
+                "UPDATE runs SET generation=generation+1 WHERE run_id=?1",
+                [run.id.to_string()],
+            )
+            .unwrap();
+        let wrong_generation = run.inspect_workspace_lifecycle();
+        run.store
+            .conn()
+            .execute(
+                "UPDATE runs SET generation=generation-1 WHERE run_id=?1",
+                [run.id.to_string()],
+            )
+            .unwrap();
+        let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let poisoned = run.can_effect().is_err();
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        assert!(enabled.is_err());
+        assert!(fired, "the post-commit lifecycle fault must fire");
+        assert!(exact.is_some());
+        assert_eq!(retained, exact);
+        assert!(mismatch.is_err(), "missing sentinel identity must refuse");
+        assert!(
+            wrong_generation.is_err(),
+            "run generation mismatch must refuse"
+        );
+        assert!(poisoned, "readback alone must not restore effect authority");
+        assert!(cleanup.is_ok(), "the same Env Run must remain recoverable");
+        assert!(
+            readback.is_ok(),
+            "same-lease lifecycle readback must be available"
+        );
+    }
     #[test]
     fn descriptor_closes_once_after_closed_commit_before_gate_release() {
         let home = super::super::tests::home();

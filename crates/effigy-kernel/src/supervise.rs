@@ -119,6 +119,27 @@ pub(crate) struct SentinelLease {
     writer: Option<ChildStdin>,
 }
 impl SentinelLease {
+    /// Read-only evidence that this exact retained lease still has its owner
+    /// pipe and the recorded process incarnation. This is not authority to
+    /// launch a workload or a guarantee that the process cannot exit later.
+    pub(crate) fn verify_retained(&self) -> Result<(), RunError> {
+        if self.writer.is_none()
+            || ident::process_identity(self.identity.pid).verified() != Some(&self.identity)
+            || !matches!(
+                ident::process_state(self.identity.pid),
+                Observed::Verified(
+                    ident::ProcessState::Active | ident::ProcessState::Stopped,
+                    _
+                )
+            )
+        {
+            return Err(RunError::unavailable(
+                "retained sentinel identity unavailable",
+            ));
+        }
+        Ok(())
+    }
+
     #[cfg(all(test, feature = "fault-injection"))]
     pub(crate) fn writer_fd(&self) -> RawFd {
         self.writer.as_ref().expect("live writer").as_raw_fd()
