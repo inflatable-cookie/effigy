@@ -3694,7 +3694,6 @@ pub(in crate::runner) struct WorkspacePreparedEffects {
     secrets: ResolvedContainerSecretRuntime,
 }
 
-#[allow(dead_code)] // Connected by the pending reviewed production caller.
 impl WorkspacePreparedEffects {
     pub(in crate::runner) fn prepare(
         policy: EffectiveContainerPolicy,
@@ -3729,10 +3728,6 @@ impl WorkspacePreparedEffects {
 }
 
 impl WorkspaceUpEffects {
-    #[expect(
-        dead_code,
-        reason = "Detached production activation is connected after reviewed owner APIs land"
-    )]
     pub(in crate::runner) fn startup_report(
         &self,
     ) -> crate::runner::workspace_client::serving_host::ContainerStartupReport {

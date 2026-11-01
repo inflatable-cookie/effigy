@@ -15,6 +15,7 @@ mod cli_preflight;
 mod declaration;
 pub(in crate::runner) mod integrations;
 mod plan;
+mod production;
 mod supervisor_preflight;
 pub(crate) use cli_preflight::{prevalidate_cli, PreparedIntent};
 pub(crate) use declaration::PostPrepDeclaration;

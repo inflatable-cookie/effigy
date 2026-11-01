@@ -31,7 +31,6 @@ pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_credentials,
     run_container_exec_operation_capture, run_container_exec_stream,
 };
-#[allow(unused_imports)] // Connected by the pending reviewed production caller.
 pub(in crate::runner) use lifecycle::{WorkspacePreparedEffects, WorkspaceUpEffects};
 pub(in crate::runner) use liveness::{
     is_primary_service_running, is_primary_service_running_with_deadline,
