@@ -1552,6 +1552,39 @@ fn environment_exempt_permit_admits_only_the_settling_holder_own_stop() {
 }
 
 #[test]
+fn settling_one_environment_holder_preserves_the_other_run_fence() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let active = active_environment(&cx, &root, &mut fake);
+    let mut first = begin(&cx, &root, owner(), 1, &mut fake);
+    let mut second = begin(
+        &cx,
+        &root,
+        TaskId::new(checkout(), "", Surface::Published, "other", None)
+            .unwrap()
+            .resource(),
+        2,
+        &mut fake,
+    );
+    Attachments::attach(&mut first, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    Attachments::attach(&mut second, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let second_id = second.id();
+    first.finish(WorkloadOutcome::Succeeded).unwrap();
+    first.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    let blocked = Attachments::permit(&mut down);
+    assert!(
+        matches!(blocked, Err(RunError::HeldBy(ref holders)) if holders.len() == 1 && holders[0].run == second_id)
+    );
+    second.finish(WorkloadOutcome::Succeeded).unwrap();
+    second.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(Attachments::permit(&mut down).is_ok());
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+
+#[test]
 fn run_children_recover_and_require_positive_completion() {
     let home = home();
     let cx = context();
