@@ -269,9 +269,8 @@ pub(crate) enum ClosureRound {
     Empty,
     /// A member other than the anchor is positively live.
     Live,
-    /// A row could not be resolved: it was live and then vanished, or the kernel
-    /// lists it in the group with no readable identity. It may hide a member this
-    /// inventory cannot see, so nothing is proved.
+    /// A listed row was unreadable at its state or identity read. It may hide a
+    /// member this inventory cannot see, so nothing is proved.
     Unproven,
     /// An observation failed, or the anchor's own row was not positively seen.
     Unknown,
