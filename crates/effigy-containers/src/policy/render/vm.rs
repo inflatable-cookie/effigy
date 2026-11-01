@@ -15,26 +15,27 @@
 //! opens. The invocation keeps a shared `flock` on the file until the Compose
 //! child that reads it has been reaped, then removes it by identity.
 //!
-//! A sweep, run before each creation, removes crash residue only when it can
-//! prove the file idle: a `compose-` file whose exclusive lock it can take has
-//! no live holder. Legacy `<16 hex>.env` files from earlier development builds
-//! carry no lock and cannot be proven idle, so they are never removed; the sweep
-//! counts them in a one-time notice instead.
+//! A sweep, run before each creation, removes nothing. Crash residue (`compose-`
+//! files, quarantine names left by an interrupted removal, and legacy
+//! `<16 hex>.env` files from earlier development builds) stays in place, and the
+//! sweep counts it in a one-time notice. A free file lock does not prove that the
+//! Compose group behind a file has closed, so removal waits for a durable binding
+//! between each file and its invocation.
 //!
 //! Failures never leave a secret behind on this path: a value is written only
 //! after the lock and the name agree, and any failure after that removes the
 //! file before returning.
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
-use nix::fcntl::{openat, renameat, AtFlags, Flock, FlockArg, OFlag};
+use nix::fcntl::{openat, AtFlags, Flock, FlockArg, OFlag};
 use nix::sys::stat::{fchmod, fstat, fstatat, mkdirat, FileStat, Mode, SFlag};
 use nix::unistd::{geteuid, linkat, unlinkat, UnlinkatFlags};
 
@@ -63,6 +64,9 @@ thread_local! {
     static FAIL_NEXT_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal's quarantine entry vanishes after the move.
     static VANISH_NEXT_QUARANTINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test seam: the next removal's quarantine name is this one, so a test can
+    /// occupy the destination before the move.
+    static FORCE_NEXT_QUARANTINE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 /// Fresh names tried before an invocation gives up.
 const CREATE_ATTEMPTS: usize = 8;
@@ -226,7 +230,7 @@ impl InterpolationFile {
         })?;
         let directory = open_private_directory(&home)?;
         let directory_path = home.join(DIRECTORY);
-        sweep(&directory, &directory_path);
+        sweep(&directory_path);
         for _ in 0..CREATE_ATTEMPTS {
             let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", random_hex(RANDOM_BYTES)?);
             let flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW;
@@ -412,86 +416,35 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
     Ok(directory)
 }
 
-/// Remove crash residue this layout owns. Only names this layout creates are
-/// candidates, and each is reached through the verified directory descriptor. A
-/// `compose-` or quarantine file is removed only when its exclusive lock is free:
-/// a live invocation holds the shared lock for the file's lifetime. A legacy
-/// `<16 hex>.env` file carries no lock and no proof of idleness, so it is never
-/// removed; its names are counted in a one-time notice. A sweep that cannot read
-/// the directory removes nothing.
-fn sweep(directory: &OwnedFd, path: &Path) {
+/// Count the residue this layout can name and leave it in place. A free file
+/// lock does not prove that the invocation which wrote a file has closed its
+/// Compose group, so no lock-based removal happens here. A `compose-` file, a
+/// quarantine name left by a crashed removal, and a legacy `<16 hex>.env` file
+/// are all preserved and counted in a one-time notice. Removal waits for durable
+/// attempt and group binding. A directory that cannot be read yields no notice.
+fn sweep(path: &Path) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
     };
-    let mut removed = 0_usize;
-    let mut deferred = 0_usize;
-    for entry in entries.flatten() {
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        match Candidate::of(&name) {
-            Some(Candidate::Locked) => {}
-            Some(Candidate::Legacy) => {
-                deferred += 1;
-                continue;
-            }
-            None => continue,
-        }
-        let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
-        let Ok(fd) = openat(directory, name.as_str(), flags, Mode::empty()) else {
-            continue;
-        };
-        let file = File::from(fd);
-        let Ok(stat) = fstat(&file) else {
-            continue;
-        };
-        if !owned_file(&stat) {
-            continue;
-        }
-        let Ok(_exclusive) = Flock::lock(file, FlockArg::LockExclusiveNonblock) else {
-            continue;
-        };
-        if is_entry(directory, &name, &stat) && remove_owned(directory, &name, &stat).is_ok() {
-            removed += 1;
-        }
-    }
-    if removed > 0 {
-        eprintln!(
-            "effigy: removed {removed} stale Compose interpolation file(s) from {}",
-            path.display()
-        );
-    }
-    if deferred > 0 {
+    let residue = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_str().is_some_and(is_residue))
+        .count();
+    if residue > 0 {
         DEFERRED_NOTICE.call_once(|| {
             eprintln!(
-                "effigy: {deferred} legacy Compose interpolation file(s) in {} predate per-invocation files and cannot be proven idle; they are left in place",
+                "effigy: {residue} Compose interpolation file(s) in {} are left in place: a live invocation or an earlier crash may own them, and a free lock does not prove their Compose group closed",
                 path.display()
             );
         });
     }
 }
 
-/// The kinds of name a sweep may consider.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Candidate {
-    /// A per-invocation file or a quarantine name: protected by its lock.
-    Locked,
-    /// A content-named file from an earlier build: never removed.
-    Legacy,
-}
-
-impl Candidate {
-    fn of(name: &str) -> Option<Self> {
-        if is_hex_name(name, FILE_PREFIX, 32, FILE_SUFFIX)
-            || is_hex_name(name, QUARANTINE_PREFIX, 32, "")
-        {
-            Some(Self::Locked)
-        } else if is_hex_name(name, "", LEGACY_DIGITS, FILE_SUFFIX) {
-            Some(Self::Legacy)
-        } else {
-            None
-        }
-    }
+/// Whether `name` is a per-invocation file, a quarantine name, or a legacy file.
+fn is_residue(name: &str) -> bool {
+    is_hex_name(name, FILE_PREFIX, 32, FILE_SUFFIX)
+        || is_hex_name(name, QUARANTINE_PREFIX, 32, "")
+        || is_hex_name(name, "", LEGACY_DIGITS, FILE_SUFFIX)
 }
 
 /// Whether `name` is `prefix`, then `digits` lowercase hex digits, then `suffix`.
@@ -506,27 +459,112 @@ fn is_hex_name(name: &str, prefix: &str, digits: usize, suffix: &str) -> bool {
         })
 }
 
+/// Move `from` to `to` inside `directory` without ever replacing `to`. An
+/// occupied `to` fails with `AlreadyExists` and neither entry changes. The
+/// move is one kernel rename, so no check can race it. Where the platform has
+/// no no-replace rename, the move is refused before anything changes; nothing
+/// falls back to a replacing rename.
+fn move_without_replace(directory: &OwnedFd, from: &str, to: &str) -> io::Result<()> {
+    let from = c_name(from)?;
+    let to = c_name(to)?;
+    no_replace_rename(directory.as_raw_fd(), &from, &to)
+}
+
+/// A single path component as a C string for the rename call.
+fn c_name(name: &str) -> io::Result<CString> {
+    CString::new(name)
+        .map_err(|_| invalid(format!("`{name}` is not a Compose interpolation file name")))
+}
+
+/// The Apple no-replace rename: `renameatx_np` with `RENAME_EXCL`.
+#[cfg(target_os = "macos")]
+fn no_replace_rename(directory: RawFd, from: &CString, to: &CString) -> io::Result<()> {
+    // SAFETY: `from` and `to` are NUL-terminated CStrings that this call only
+    // reads, and both outlive the synchronous call. `directory` is the live,
+    // verified compose-env descriptor, passed as both source and target. The
+    // only flag is RENAME_EXCL, the documented no-replace bit. The call
+    // changes directory entries and mutates no Rust memory.
+    // Contract: Apple xnu bsd/man/man2/rename.2, renameatx_np RENAME_EXCL.
+    let result = unsafe {
+        nix::libc::renameatx_np(
+            directory,
+            from.as_ptr(),
+            directory,
+            to.as_ptr(),
+            nix::libc::RENAME_EXCL,
+        )
+    };
+    rename_result(result)
+}
+
+/// The Linux no-replace rename: `renameat2` with `RENAME_NOREPLACE`.
+#[cfg(target_os = "linux")]
+fn no_replace_rename(directory: RawFd, from: &CString, to: &CString) -> io::Result<()> {
+    // SAFETY: as for the macOS call above. The CStrings are NUL-terminated and
+    // unmodified through the call, the descriptor is live, and the only flag is
+    // RENAME_NOREPLACE, which the kernel checks atomically before the move.
+    // Contract: Linux rename(2), renameat2 RENAME_NOREPLACE.
+    let result = unsafe {
+        nix::libc::renameat2(
+            directory,
+            from.as_ptr(),
+            directory,
+            to.as_ptr(),
+            nix::libc::RENAME_NOREPLACE,
+        )
+    };
+    rename_result(result)
+}
+
+/// Platforms without a no-replace rename refuse before anything moves.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn no_replace_rename(_directory: RawFd, _from: &CString, _to: &CString) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "this platform has no no-replace rename; the Compose interpolation file is left in place",
+    ))
+}
+
+fn rename_result(result: nix::libc::c_int) -> io::Result<()> {
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// A fresh quarantine name for one removal.
+fn quarantine_name() -> io::Result<String> {
+    #[cfg(test)]
+    if let Some(name) = FORCE_NEXT_QUARANTINE.with(|forced| forced.borrow_mut().take()) {
+        return Ok(name);
+    }
+    Ok(format!("{QUARANTINE_PREFIX}{}", random_hex(RANDOM_BYTES)?))
+}
+
 /// Remove the entry `name` only if it still names the inode described by
-/// `expected`. The entry is first moved to a fresh quarantine name, so the
-/// unlink never follows a check: if the moved inode is not `expected`, it is
-/// put back with a no-overwrite link and never unlinked.
+/// `expected`. The entry is first moved to a fresh quarantine name by a
+/// no-replace rename, so an occupied quarantine name is refused and nothing
+/// moves. The unlink never follows a check: if the moved inode is not
+/// `expected`, it is put back with a no-overwrite link and never unlinked.
 fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Result<()> {
     #[cfg(test)]
     if FAIL_NEXT_REMOVE.with(|armed| armed.replace(false)) {
         return Err(io::Error::other("injected removal failure"));
     }
-    let quarantine = format!("{QUARANTINE_PREFIX}{}", random_hex(RANDOM_BYTES)?);
-    match renameat(directory, name, directory, quarantine.as_str()) {
+    let quarantine = quarantine_name()?;
+    match move_without_replace(directory, name, &quarantine) {
         Ok(()) => {}
         // The name is already gone. Nothing confirms that this invocation's
         // inode was the one removed, so the caller decides whether that matters.
-        Err(Errno::ENOENT) => {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "a Compose interpolation file was already gone; its removal is not confirmed",
             ))
         }
-        Err(error) => return Err(error.into()),
+        // An occupied quarantine name is refused with nothing moved.
+        Err(error) => return Err(error),
     }
     #[cfg(test)]
     if VANISH_NEXT_QUARANTINE.with(|armed| armed.replace(false)) {
@@ -882,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn a_held_file_survives_a_sweep_and_crash_residue_is_swept() {
+    fn a_held_file_survives_a_sweep_and_crash_residue_is_preserved() {
         let home = tempfile::tempdir().expect("home");
         let live = invoke(home.path(), &args(&["up"]), &secret("live")).expect("live");
         let live_path = env_path(&live);
@@ -890,15 +928,25 @@ mod tests {
             compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "0".repeat(32)));
         fs::write(&residue, "CRASH=residue\n").expect("residue");
         fs::set_permissions(&residue, fs::Permissions::from_mode(0o600)).expect("mode");
+        let quarantine =
+            compose_dir(home.path()).join(format!("{QUARANTINE_PREFIX}{}", "5".repeat(32)));
+        fs::write(&quarantine, "CRASH=quarantine\n").expect("quarantine residue");
+        fs::set_permissions(&quarantine, fs::Permissions::from_mode(0o600)).expect("mode");
         let _next = invoke(home.path(), &args(&["logs"]), &secret("next")).expect("next");
         assert_eq!(
             fs::read_to_string(&live_path).expect("live file"),
             "DATABASE_URL=live\n",
             "a held file is never swept"
         );
-        assert!(
-            !residue.exists(),
-            "an unlocked crash residue is swept by the next invocation"
+        assert_eq!(
+            fs::read_to_string(&residue).expect("residue"),
+            "CRASH=residue\n",
+            "an unlocked crash residue is preserved: a free lock does not prove its group closed"
+        );
+        assert_eq!(
+            fs::read_to_string(&quarantine).expect("quarantine residue"),
+            "CRASH=quarantine\n",
+            "an interrupted removal's quarantine name is preserved too"
         );
     }
 
@@ -1033,6 +1081,116 @@ mod tests {
             .remove()
             .expect_err("a vanished quarantine is not a confirmed removal");
         assert!(error.to_string().contains("state is unknown"), "{error}");
+    }
+
+    #[test]
+    fn an_occupied_quarantine_name_is_refused_and_its_occupant_is_kept() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("occupied")).expect("held");
+        let path = env_path(&held);
+        let quarantine = format!("{QUARANTINE_PREFIX}{}", "4".repeat(32));
+        let occupant = compose_dir(home.path()).join(&quarantine);
+        fs::write(&occupant, "FOREIGN=kept\n").expect("occupant");
+        fs::set_permissions(&occupant, fs::Permissions::from_mode(0o600)).expect("mode");
+        FORCE_NEXT_QUARANTINE.with(|forced| *forced.borrow_mut() = Some(quarantine));
+        let file = held.interpolation.expect("held file");
+        assert!(
+            file.remove().is_err(),
+            "an occupied quarantine name is refused, not confirmed"
+        );
+        assert_eq!(
+            fs::read_to_string(&occupant).expect("occupant"),
+            "FOREIGN=kept\n",
+            "the occupant is never replaced"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("owned file"),
+            "DATABASE_URL=occupied\n",
+            "the owned file never moved and is still named"
+        );
+    }
+
+    fn open_directory(path: &Path) -> OwnedFd {
+        nix::fcntl::open(
+            path,
+            OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .expect("directory")
+    }
+
+    fn inode(path: &Path) -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(path).expect("metadata").ino()
+    }
+
+    #[test]
+    fn a_no_replace_move_refuses_an_occupied_destination_and_changes_neither_entry() {
+        let dir = tempfile::tempdir().expect("dir");
+        let directory = open_directory(dir.path());
+        let source = dir.path().join("source.env");
+        let occupant = dir.path().join("occupant.env");
+        fs::write(&source, "SOURCE=kept\n").expect("source");
+        fs::write(&occupant, "OCCUPANT=kept\n").expect("occupant");
+        let (source_inode, occupant_inode) = (inode(&source), inode(&occupant));
+        let error = move_without_replace(&directory, "source.env", "occupant.env")
+            .expect_err("an occupied destination is refused");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&source).expect("source"),
+            "SOURCE=kept\n"
+        );
+        assert_eq!(inode(&source), source_inode, "the source did not move");
+        assert_eq!(
+            fs::read_to_string(&occupant).expect("occupant"),
+            "OCCUPANT=kept\n"
+        );
+        assert_eq!(
+            inode(&occupant),
+            occupant_inode,
+            "the occupant was not replaced"
+        );
+    }
+
+    #[test]
+    fn a_no_replace_move_to_a_free_name_moves_the_exact_inode() {
+        let dir = tempfile::tempdir().expect("dir");
+        let directory = open_directory(dir.path());
+        let source = dir.path().join("source.env");
+        let moved = dir.path().join("moved.env");
+        fs::write(&source, "SOURCE=moved\n").expect("source");
+        let source_inode = inode(&source);
+        move_without_replace(&directory, "source.env", "moved.env").expect("free destination");
+        assert!(!source.exists(), "the source name is gone");
+        assert_eq!(fs::read_to_string(&moved).expect("moved"), "SOURCE=moved\n");
+        assert_eq!(inode(&moved), source_inode, "the same inode moved");
+    }
+
+    #[test]
+    fn a_no_replace_move_of_a_missing_source_changes_nothing() {
+        let dir = tempfile::tempdir().expect("dir");
+        let directory = open_directory(dir.path());
+        let occupant = dir.path().join("occupant.env");
+        fs::write(&occupant, "OCCUPANT=kept\n").expect("occupant");
+        let error = move_without_replace(&directory, "missing.env", "occupant.env")
+            .expect_err("a missing source is refused");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            fs::read_to_string(&occupant).expect("occupant"),
+            "OCCUPANT=kept\n"
+        );
+    }
+
+    #[test]
+    fn a_name_with_an_interior_nul_is_refused_before_any_rename() {
+        let dir = tempfile::tempdir().expect("dir");
+        let directory = open_directory(dir.path());
+        let source = dir.path().join("source.env");
+        fs::write(&source, "SOURCE=kept\n").expect("source");
+        let error = move_without_replace(&directory, "source\0.env", "moved.env")
+            .expect_err("an interior NUL is refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(source.exists(), "nothing moved");
     }
 
     #[test]
