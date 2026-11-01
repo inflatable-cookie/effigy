@@ -26,7 +26,9 @@ const STEPS: [WorkspaceIntegrationStep; 5] = [
 
 /// Implementations must use the absolute integration deadline and frozen inputs.
 /// Effects must be safe to reconcile again after interruption. Neither errors
-/// nor retained handles may contain secret values.
+/// nor retained handles may contain secret values. These calls are synchronous:
+/// deadline checks refuse overshoots after control returns, but cannot interrupt
+/// a hung adapter. The adapter must bound any operation that promises a bound.
 pub trait WorkspaceIntegrationAdapter {
     type Error;
     fn integration_deadline(&self) -> Instant;
@@ -60,6 +62,8 @@ pub struct WorkspaceIntegrationOutcome {
 impl WorkspaceIntegrationOutcome {
     /// Restore attempted steps from the durable journal after interruption.
     /// The journal reader must fail closed on unknown or malformed records.
+    /// Gaps are valid after reverse cleanup has cleared some later effects; the
+    /// remaining steps must be unique and in their original order.
     pub fn from_attempted(attempted: Vec<WorkspaceIntegrationStep>) -> Result<Self, &'static str> {
         let indices: Vec<_> = attempted
             .iter()
@@ -131,7 +135,8 @@ pub fn run_workspace_integrations<A: WorkspaceIntegrationAdapter>(
     Ok(())
 }
 
-/// Best effort in reverse order using a fresh, bounded cleanup deadline.
+/// Best effort in reverse order with a fresh cleanup deadline. Synchronous
+/// adapter calls cannot be interrupted here and may overrun that deadline.
 /// Failed withdrawals remain in the outcome;
 /// the caller must retain custody and report the named recoverable refusal.
 pub fn unwind_workspace_integrations<A: WorkspaceIntegrationAdapter>(
