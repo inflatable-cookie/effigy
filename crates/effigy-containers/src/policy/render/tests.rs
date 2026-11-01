@@ -782,6 +782,19 @@ fn workspace_host_alias_render_is_pure_frozen_idempotent_and_refuses_conflicts()
                 .compose_files
                 .iter()
                 .all(|file| file.starts_with(&render.path)));
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&render.closure.files()["inputs/environment.json"])
+                    .expect("frozen Compose inventory");
+            let names: Vec<String> = serde_json::from_value(metadata["compose_files"].clone())
+                .expect("ordered input list");
+            assert_eq!(
+                next.compose_files,
+                names
+                    .iter()
+                    .map(|name| render.path.join(name))
+                    .collect::<Vec<_>>(),
+                "the alias append and the sealed publisher must agree on every argv input"
+            );
             let override_path = next.compose_files.last().expect("override");
             let document: serde_yaml::Value =
                 serde_yaml::from_str(&next.read_compose(override_path).expect("in-memory closure"))
@@ -809,5 +822,23 @@ fn workspace_host_alias_render_is_pure_frozen_idempotent_and_refuses_conflicts()
         for address in ["", "guessed-host", "0.0.0.0", "::", "224.0.0.1"] {
             assert!(policy.with_workspace_host_alias(address).is_err());
         }
+    });
+}
+
+#[test]
+fn frozen_backend_keeps_the_recorded_context_when_the_current_context_changes() {
+    let _lock = crate::test_env_lock();
+    let (_fixture, checkout, home) = fixture();
+    let _context = effigy_test_support::env::ScopedEnv::set("DOCKER_CONTEXT", "remote-A");
+    crate::with_test_effigy_home(&home, || {
+        crate::compose::with_test_compose_backend(crate::compose::ComposeBackend::Docker, || {
+            prepare_container_policy(&checkout, None).unwrap();
+        });
+        std::env::set_var("DOCKER_CONTEXT", "default");
+        let policy = load_container_policy(&checkout, None).unwrap();
+        let bytes = &policy.render.as_ref().unwrap().closure.files()["inputs/environment.json"];
+        let metadata: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(metadata["backend_context"], "remote-A");
+        assert_eq!(metadata["backend_id"], "docker-compose");
     });
 }

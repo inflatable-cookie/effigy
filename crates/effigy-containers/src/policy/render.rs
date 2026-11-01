@@ -153,6 +153,33 @@ impl EffectiveContainerPolicy {
         if files.insert(name.into(), bytes).is_some() {
             return Err(error("workspace alias render path is already occupied"));
         }
+        // The publisher compares its exact ordered argv inputs with this
+        // inventory. Adding the alias file must freeze that same list in the
+        // closure, rather than leave the original render's inventory behind.
+        let mut compose_names = self
+            .compose_files
+            .iter()
+            .map(|file| {
+                file.strip_prefix(&render.path)
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                    .map_err(error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        compose_names.push(name.to_owned());
+        let mut metadata: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(
+            files
+                .get("inputs/environment.json")
+                .ok_or_else(|| error("workspace alias render has no Compose input inventory"))?,
+        )
+        .map_err(error)?;
+        metadata.insert(
+            "compose_files".into(),
+            serde_json::to_value(compose_names).map_err(error)?,
+        );
+        files.insert(
+            "inputs/environment.json".into(),
+            serde_json::to_vec(&metadata).map_err(error)?,
+        );
         let closure = Closure::new(files).map_err(error)?;
         let path = publication::object_directory(&self.repo_root)?.join(closure.digest());
         let mut next = self.clone();
@@ -399,12 +426,29 @@ impl Draft {
             files.insert(names[&path].clone(), bytes);
         }
         files.insert("inputs/manifest.toml".into(), manifest.as_bytes().to_vec());
+        let recorded = match recorded_backend(&policy.repo_root, &policy.name) {
+            effigy_kernel::observe::Observed::Verified(Some(metadata), _) => {
+                match crate::environment::BackendSelection::from_metadata(&metadata) {
+                    effigy_kernel::observe::Observed::Verified(selection, _) => Some(selection),
+                    effigy_kernel::observe::Observed::Absent(proof) => return Err(error(proof)),
+                    effigy_kernel::observe::Observed::Unknown(reason) => return Err(error(reason)),
+                }
+            }
+            effigy_kernel::observe::Observed::Verified(None, _)
+            | effigy_kernel::observe::Observed::Absent(_) => None,
+            effigy_kernel::observe::Observed::Unknown(reason) => return Err(error(reason)),
+        };
+        let frozen_backend =
+            crate::environment::effective_backend(&policy.repo_root, policy, recorded.as_ref());
         files.insert(
             "inputs/environment.json".into(),
             serde_json::to_vec(&serde_json::json!({
                 "repo_root":policy.repo_root,"name":policy.name,"profile":policy.profile,
                 "project_name":policy.project_name,"primary_service":policy.primary_service,
+                "compose_files":policy.compose_files.iter().map(|path| names[path].clone()).collect::<Vec<_>>(),
                 "backend":backend_name(backend),
+                "backend_id":frozen_backend.engine.as_str(),
+                "backend_context":frozen_backend.context,
             }))
             .map_err(error)?,
         );

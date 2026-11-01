@@ -902,6 +902,23 @@ fn wait_for_listener_state(
                             if error.kind() == std::io::ErrorKind::NotFound
                                 || error.raw_os_error() == Some(libc::ESRCH)
                             {
+                                // The supervisor may have written its final
+                                // `failed` state just before it exited. That
+                                // diagnostic is the answer, not the vanished
+                                // supervisor's bare exit.
+                                if let Some(final_state) = fs::read(path)
+                                    .ok()
+                                    .and_then(|raw| {
+                                        serde_json::from_slice::<HostListenerState>(&raw).ok()
+                                    })
+                                    .filter(|final_state| final_state.status == "failed")
+                                {
+                                    return Ok(ListenerWait::Withheld {
+                                        diagnostic: final_state.diagnostic.unwrap_or_default(),
+                                        observed_status: final_state.observed_status,
+                                        budget_expired: false,
+                                    });
+                                }
                                 return Err(RunnerError::task_invocation(format!(
                                     "managed host listener `{process_name}` stopped starting: its supervisor (pid {}) exited before publishing readiness; its log names what it did",
                                     state.supervisor_pid

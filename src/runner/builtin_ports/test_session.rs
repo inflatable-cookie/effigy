@@ -11,7 +11,7 @@ use effigy_kernel::observe::Observed;
 use effigy_process::{
     ProcessEvent, ProcessEventKind, ProcessManagerError, ProcessSpec, ShutdownProgress,
 };
-use effigy_tui::multiprocess::SessionProcesses;
+use effigy_tui::multiprocess::{SessionEntryState, SessionProcesses};
 
 use crate::runner::task_engine::{self, EnvOverride, TaskRun};
 
@@ -60,7 +60,35 @@ pub(super) fn source<'p, 'r>(
 struct Entry {
     spec: ProcessSpec,
     process: Option<OwnedProcess>,
-    exit: Option<String>,
+    exit: Option<EntryExit>,
+}
+
+/// How one attempt ended, as this session observed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryExit {
+    /// The suite itself reported this exit status.
+    Reported(String),
+    /// The session ended the suite: it never reported its own status, so the
+    /// attempt is a cancellation rather than a failure.
+    Stopped,
+}
+
+impl EntryExit {
+    fn record(&self) -> &str {
+        match self {
+            Self::Reported(record) => record,
+            Self::Stopped => "stopped by the session",
+        }
+    }
+
+    fn state(&self) -> SessionEntryState {
+        match self {
+            Self::Reported(record) => SessionEntryState::from_record(record),
+            Self::Stopped => SessionEntryState::Stopped {
+                detail: "stopped by the session".into(),
+            },
+        }
+    }
 }
 struct State<'p, 'r> {
     run: RefMut<'p, &'r mut TaskRun>,
@@ -174,7 +202,7 @@ impl State<'_, '_> {
             if let Some(name) = self.pending.pop_front() {
                 if let Err(error) = self.start(&name) {
                     self.entries.get_mut(&name).expect("queued suite").exit =
-                        Some("not started".into());
+                        Some(EntryExit::Reported("not started".into()));
                     self.push(event(
                         &name,
                         ProcessEventKind::StartupFailed,
@@ -205,15 +233,22 @@ impl State<'_, '_> {
                     // Stop uses an independent cleanup context, even after a
                     // workload deadline or the invoking terminal is lost.
                     process.stop(&task_engine::cleanup_context(CLEANUP));
-                    entry.exit = Some("timed out".into());
+                    entry.exit = Some(EntryExit::Reported("timed out".into()));
                 } else if let Observed::Verified(exit, _) = process.poll() {
-                    entry.exit = Some(match self.run.complete(process, exit) {
-                        Ok(()) => format!("exit={}", exit.code),
-                        Err(error) => format!("unrecorded exit: {error}"),
-                    });
+                    entry.exit = Some(EntryExit::Reported(
+                        match self.run.complete(process, exit) {
+                            Ok(()) => format!("exit={}", exit.code),
+                            Err(error) => format!("unrecorded exit: {error}"),
+                        },
+                    ));
                 }
                 if let Some(exit) = &entry.exit {
-                    events.push(event(name, ProcessEventKind::Exit, exit.clone(), None));
+                    events.push(event(
+                        name,
+                        ProcessEventKind::Exit,
+                        exit.record().to_owned(),
+                        None,
+                    ));
                 }
             }
         }
@@ -224,6 +259,7 @@ impl State<'_, '_> {
     fn stop_one(&mut self, name: &str) -> Result<(), ProcessManagerError> {
         self.stop_with(name, &task_engine::cleanup_context(CLEANUP))
     }
+    /// Preserve an already-completed attempt before delivering any stop signal.
     fn stop_with(
         &mut self,
         name: &str,
@@ -236,6 +272,16 @@ impl State<'_, '_> {
                     process: name.into(),
                 })?;
         if let Some(process) = entry.process.as_mut() {
+            if entry.exit.is_none() {
+                if let Observed::Verified(exit, _) = process.poll() {
+                    entry.exit = Some(EntryExit::Reported(
+                        match self.run.complete(process, exit) {
+                            Ok(()) => format!("exit={}", exit.code),
+                            Err(error) => format!("unrecorded exit: {error}"),
+                        },
+                    ));
+                }
+            }
             let report = process.stop(cleanup);
             if report
                 .signals
@@ -245,12 +291,28 @@ impl State<'_, '_> {
                 self.forced.insert(name.to_owned());
             }
             if entry.exit.is_none() {
+                // Contract 052: a process a stop ended reports the interrupted
+                // convention `128 + signal`. Only such an exit is this stop's
+                // doing; any other exit status is the suite's own result, so a
+                // completed failure is never relabelled as a cancellation.
+
                 entry.exit = Some(match report.leader {
                     Observed::Verified(exit, _) => match self.run.complete(process, exit) {
-                        Ok(()) => format!("exit={}", exit.code),
-                        Err(error) => format!("unrecorded exit: {error}"),
+                        Ok(()) if exit.code == 0 => {
+                            EntryExit::Reported(format!("exit={}", exit.code))
+                        }
+                        Ok(())
+                            if report
+                                .signals
+                                .iter()
+                                .any(|sent| exit.code == 128 + sent.signal) =>
+                        {
+                            EntryExit::Stopped
+                        }
+                        Ok(()) => EntryExit::Reported(format!("exit={}", exit.code)),
+                        Err(error) => EntryExit::Reported(format!("unrecorded exit: {error}")),
                     },
-                    _ => "unknown exit".into(),
+                    _ => EntryExit::Reported("unknown exit".into()),
                 });
             }
             if !matches!(report.group, Observed::Verified(..) | Observed::Absent(_))
@@ -266,27 +328,30 @@ impl State<'_, '_> {
                 ));
             }
         } else if entry.exit.is_none() {
-            entry.exit = Some("not started".into());
+            entry.exit = Some(EntryExit::Reported("not started".into()));
         }
-        let exit = entry.exit.clone().unwrap_or_else(|| "unknown exit".into());
-        self.push(event(name, ProcessEventKind::Exit, exit, None));
+        let exit = entry
+            .exit
+            .clone()
+            .unwrap_or_else(|| EntryExit::Reported("unknown exit".into()));
+        self.push(event(
+            name,
+            ProcessEventKind::Exit,
+            exit.record().to_owned(),
+            None,
+        ));
         self.pending.retain(|pending| pending != name);
         Ok(())
     }
     fn stop_all(&mut self) {
         self.cancelled = true;
         self.pending.clear();
-        // Deliver TERM to every owned group before waiting for any one.
-        for entry in self.entries.values_mut() {
-            if let Some(process) = entry.process.as_mut() {
-                let _ = process.forward(libc::SIGTERM);
-            }
-        }
         let names = self.entries.keys().cloned().collect::<Vec<_>>();
         let cleanup = task_engine::cleanup_context(CLEANUP);
         for name in names {
             if let Err(error) = self.stop_with(&name, &cleanup) {
-                self.entries.get_mut(&name).expect("known suite").exit = Some(error.to_string());
+                self.entries.get_mut(&name).expect("known suite").exit =
+                    Some(EntryExit::Reported(error.to_string()));
             }
         }
     }
@@ -365,16 +430,19 @@ impl SessionProcesses for Source<'_, '_> {
     fn take_startup_error(&self) -> Option<ProcessManagerError> {
         self.state.borrow_mut().startup_error.take()
     }
-    fn exit_diagnostics(&self) -> Vec<(String, String)> {
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)> {
         self.state
             .borrow()
             .entries
             .iter()
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    entry.exit.clone().unwrap_or_else(|| "unknown exit".into()),
-                )
+                let state = match &entry.exit {
+                    // The session never started this attempt, so it has no
+                    // result to report.
+                    None => SessionEntryState::NotStarted,
+                    Some(exit) => exit.state(),
+                };
+                (name.clone(), state)
             })
             .collect()
     }
@@ -432,8 +500,8 @@ mod tests {
             }
         }
         panic!(
-            "suite event not observed; diagnostics: {:?}",
-            source.exit_diagnostics()
+            "suite event not observed; entry states: {:?}",
+            source.entry_states()
         );
     }
     #[test]
@@ -462,8 +530,8 @@ mod tests {
                 event.kind == ProcessEventKind::Exit
             });
             assert_eq!(
-                source.exit_diagnostics(),
-                vec![("suite".into(), "exit=0".into())]
+                source.entry_states(),
+                vec![("suite".into(), SessionEntryState::Passed)]
             );
             assert_eq!(
                 std::fs::read_to_string(fixture.path().join("answer")).expect("answer"),
@@ -486,8 +554,8 @@ mod tests {
                 event.kind == ProcessEventKind::Exit
             });
             assert_eq!(
-                source.exit_diagnostics(),
-                vec![("suite".into(), "exit=0".into())]
+                source.entry_states(),
+                vec![("suite".into(), SessionEntryState::Passed)]
             );
             assert_eq!(
                 std::fs::read_to_string(fixture.path().join("answer")).expect("answer"),
@@ -513,10 +581,163 @@ mod tests {
                 event.kind == ProcessEventKind::Started
             });
             source.terminate_process("suite").expect("verified stop");
-            assert_eq!(source.exit_diagnostics().len(), 1);
-            assert_ne!(source.exit_diagnostics()[0].1, "exit=0");
+            // The session ended this suite itself. It is a stop the caller
+            // reads as a cancellation, never a pass and never a failure the
+            // suite reported.
+            assert_eq!(
+                source.entry_states(),
+                vec![(
+                    "suite".into(),
+                    SessionEntryState::Stopped {
+                        detail: "stopped by the session".into()
+                    }
+                )]
+            );
         }
         assert!(run.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+    }
+
+    fn named_spec(root: &std::path::Path, name: &str, command: &str) -> ProcessSpec {
+        ProcessSpec {
+            name: name.into(),
+            run: command.into(),
+            cwd: root.into(),
+            start_after_ms: 0,
+            shutdown_on_exit: false,
+            pty: true,
+            env: BTreeMap::new(),
+        }
+    }
+
+    /// The production interactive stop: a suite that finished keeps its own
+    /// pass and the suite the session ended is a stop. These are the states
+    /// the builtin projects to `passed` / `cancelled`.
+    #[test]
+    fn a_production_session_stop_keeps_a_pass_and_records_the_stop() {
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let mut run =
+            TaskRun::standalone_foreground(fixture.path(), "effigy test").expect("memory owner");
+        {
+            let parent = RefCell::new(&mut run);
+            let source = source(
+                &parent,
+                vec![
+                    named_spec(fixture.path(), "finished", "printf 'READY\\n'; exit 0"),
+                    named_spec(
+                        fixture.path(),
+                        "stopped",
+                        "printf 'READY\\n'; exec sleep 60",
+                    ),
+                ],
+            )
+            .expect("source");
+            // The custody source starts one suite per pump turn.
+            let mut finished = false;
+            for expected in ["finished", "stopped"] {
+                wait(source.as_ref(), |event| {
+                    finished |= event.kind == ProcessEventKind::Exit && event.process == "finished";
+                    event.kind == ProcessEventKind::Started && event.process == expected
+                });
+            }
+            if !finished {
+                wait(source.as_ref(), |event| {
+                    event.kind == ProcessEventKind::Exit && event.process == "finished"
+                });
+            }
+            source.cancel_startup();
+            assert_eq!(
+                source.entry_states(),
+                vec![
+                    ("finished".into(), SessionEntryState::Passed),
+                    (
+                        "stopped".into(),
+                        SessionEntryState::Stopped {
+                            detail: "stopped by the session".into()
+                        }
+                    ),
+                ]
+            );
+        }
+        assert!(run
+            .close(WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::Requested,
+                signal: None,
+            })
+            .is_empty());
+    }
+
+    /// A suite that reported its own failure is a failed check even when the
+    /// session's stop arrives before the session observed that exit: the stop
+    /// never produced the exit, so the result keeps its own code.
+    #[test]
+    fn a_suite_that_reported_its_own_failure_keeps_the_failure_across_a_stop() {
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let mut run =
+            TaskRun::standalone_foreground(fixture.path(), "effigy test").expect("memory owner");
+        {
+            let parent = RefCell::new(&mut run);
+            let source = source(
+                &parent,
+                vec![named_spec(
+                    fixture.path(),
+                    "failed",
+                    "touch failed.done; exit 143",
+                )],
+            )
+            .expect("source");
+            wait(source.as_ref(), |event| {
+                event.kind == ProcessEventKind::Started
+            });
+            // The suite finishes on its own; the session is not pumped, so the
+            // stop is its first observation of the attempt.
+            let done = fixture.path().join("failed.done");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !done.exists() {
+                assert!(Instant::now() < deadline, "suite never finished");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            source.cancel_startup();
+            assert_eq!(
+                source.entry_states(),
+                vec![(
+                    "failed".into(),
+                    SessionEntryState::Failed {
+                        detail: "exit=143".into()
+                    }
+                )],
+                "a completed failure is not a cancellation"
+            );
+        }
+        assert!(run.close(WorkloadOutcome::Failed { code: 143 }).is_empty());
+    }
+
+    /// A stop before the session started an attempt leaves it never started,
+    /// not failed and not passed.
+    #[test]
+    fn a_production_session_that_never_starts_an_attempt_reports_not_started() {
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let mut run =
+            TaskRun::standalone_foreground(fixture.path(), "effigy test").expect("memory owner");
+        {
+            let parent = RefCell::new(&mut run);
+            let source = source(
+                &parent,
+                vec![named_spec(fixture.path(), "queued", "exec sleep 60")],
+            )
+            .expect("source");
+            source.cancel_startup();
+            assert_eq!(
+                source.entry_states(),
+                vec![("queued".into(), SessionEntryState::NotStarted)]
+            );
+        }
+        assert!(run
+            .close(WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::Requested,
+                signal: None,
+            })
+            .is_empty());
     }
 }
 

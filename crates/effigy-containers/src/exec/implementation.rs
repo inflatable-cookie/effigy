@@ -1477,6 +1477,30 @@ pub fn inspect_containers_for_policy(
     )
 }
 
+/// `runtime image inspect` for one exact image. The caller reads the platform
+/// the backend reports for the image itself; a container's own report, a host
+/// default or a guess never substitutes for it.
+pub fn inspect_image_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    image: &str,
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let args = vec![
+        OsString::from("image"),
+        OsString::from("inspect"),
+        OsString::from(image),
+    ];
+    capture_runtime_command(
+        repo_root,
+        policy,
+        &args,
+        "runtime image inspect",
+        Some(COMPOSE_PS_TIMEOUT),
+        deadline,
+    )
+}
+
 /// The one line that says why a container stopped: the last line it logged
 /// that names a cause, else the last line it logged. Read on demand for one
 /// failure diagnostic; only exited or unhealthy services are read this way, so
@@ -1550,6 +1574,29 @@ pub fn run_backend_invocation(
         return run_detached_command_with_env(workdir, &program, args, label, env);
     }
     run_command_capture_os_with_env(workdir, &program, args, label, env)
+}
+
+/// [`run_backend_invocation`] bounded by the caller's absolute deadline.
+/// Detached Compose keeps regular-file output custody and retained logs;
+/// observations use bounded capture. Both share the activation's deadline.
+pub fn run_backend_invocation_until(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    if args.iter().any(|arg| arg == "up") && args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return super::process::run_detached_command_with_env_until(
+            workdir, &program, args, label, env, deadline,
+        );
+    }
+    super::process::run_command_capture_os_with_env_until(
+        workdir, &program, args, label, env, deadline,
+    )
 }
 
 pub fn run_compose_invocation_capture(

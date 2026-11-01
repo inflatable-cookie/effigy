@@ -31,7 +31,9 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
 
     let err = run_builtin_err(root, "test", &["--json"]);
     match err {
-        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+        RunnerError::BuiltinTestNonZero {
+            failures, rendered, ..
+        } => {
             assert_eq!(failures, vec![("catalog_a".to_owned(), Some(1))]);
             let parsed = parse_json_output_with_schema(&rendered, "effigy.test.results.v1");
             assert_json_string_field_eq(&parsed["failures"][0], "target", "catalog_a");
@@ -48,9 +50,80 @@ fn run_manifest_task_builtin_test_json_failure_includes_results_and_failures() {
                 .expect("targets array")
                 .iter()
                 .all(|entry| entry["cargo_env_match"].is_string()));
+            // Every target names its outcome, and only the suite that ran and
+            // passed reports `passed`.
+            let outcomes = parsed["targets"]
+                .as_array()
+                .expect("targets array")
+                .iter()
+                .map(|entry| {
+                    (
+                        entry["target"].as_str().unwrap_or_default().to_owned(),
+                        entry["outcome"].as_str().unwrap_or_default().to_owned(),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<String, String>>();
+            assert_eq!(outcomes["catalog_a"], "failed");
+            assert_eq!(outcomes["catalog_b"], "passed");
         }
         other => panic!("unexpected error: {other}"),
     }
+}
+
+/// The run that owns a cancelled builtin test closes as cancelled; an ordinary
+/// builtin failure still closes as a failed check. A closeout that guessed
+/// `Failed { code: 1 }` would record a cancellation as a failure.
+#[test]
+fn a_builtin_test_error_records_the_outcome_its_run_closes_with() {
+    use effigy_kernel::outcome::WorkloadOutcome;
+
+    let cancelled = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), None)],
+        cancelled: true,
+        rendered: "{}".to_owned(),
+    };
+    assert!(
+        matches!(
+            cancelled.workload_outcome(),
+            WorkloadOutcome::Cancelled { .. }
+        ),
+        "a cancelled builtin test closes its run as cancelled: {:?}",
+        cancelled.workload_outcome()
+    );
+
+    let failed = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), Some(7))],
+        cancelled: false,
+        rendered: "{}".to_owned(),
+    };
+    assert!(matches!(
+        failed.workload_outcome(),
+        WorkloadOutcome::Failed { code: 1 }
+    ));
+}
+
+/// An operator stop is a cancellation, not a failed check: the task carries
+/// the interrupted exit code so durable run records read the same outcome the
+/// text and JSON do, and a plain failure keeps the ordinary exit.
+#[test]
+fn a_cancelled_builtin_test_run_carries_the_interrupted_exit_code() {
+    let cancelled = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), None)],
+        cancelled: true,
+        rendered: "{}".to_owned(),
+    };
+    assert_eq!(cancelled.process_exit_code(), 130);
+    assert!(
+        cancelled.to_string().contains("cancelled"),
+        "the failure names the cancellation: {cancelled}"
+    );
+
+    let failed = RunnerError::BuiltinTestNonZero {
+        failures: vec![("suite".to_owned(), Some(7))],
+        cancelled: false,
+        rendered: "{}".to_owned(),
+    };
+    assert_eq!(failed.process_exit_code(), 1);
 }
 
 #[test]

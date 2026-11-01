@@ -75,10 +75,20 @@ pub(super) fn execute_group_run(
     if let Err(error) = finalize_qa_group_run_record(root, &record) {
         eprintln!("warning: qa-group run {run_id}: {error}");
     }
-    for warning in run.close(match outcome {
+    // The run's durable closeout carries the outcome the ledger recorded: a
+    // cancelled group closes as cancelled, never as a failed check, so
+    // `run status` and the group record agree.
+    let workload = match &outcome {
         Ok(()) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
+        Err(_) if record.outcome == Some(QaGroupOutcome::Cancelled) => {
+            effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::Requested,
+                signal: None,
+            }
+        }
         Err(_) => effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
-    }) {
+    };
+    for warning in run.close(workload) {
         eprintln!("warning: qa-group run {run_id}: {warning}");
     }
     let rendered = if output_json {

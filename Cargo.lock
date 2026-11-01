@@ -917,6 +917,7 @@ dependencies = [
  "effigy-test-support",
  "effigy-tui",
  "effigy-ui",
+ "getrandom 0.4.3",
  "globset",
  "http-body-util",
  "hyper",

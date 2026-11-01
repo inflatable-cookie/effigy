@@ -38,6 +38,9 @@ pub enum BuiltinError {
     TaskLockConflict(Box<TaskLockConflict>),
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
+        /// The operator stopped the run before its suites reported results:
+        /// the failure is a cancellation, not a failed check.
+        cancelled: bool,
         rendered: String,
     },
     BuiltinScanNonZero {
@@ -93,8 +96,20 @@ impl std::fmt::Display for BuiltinError {
             BuiltinError::TaskLockConflict(details) => {
                 write!(f, "lock conflict on scope `{}`", details.scope)
             }
-            BuiltinError::BuiltinTestNonZero { failures, .. } => {
-                write!(f, "{} builtin test failure(s)", failures.len())
+            BuiltinError::BuiltinTestNonZero {
+                failures,
+                cancelled,
+                ..
+            } => {
+                if *cancelled {
+                    write!(
+                        f,
+                        "builtin test run cancelled with {} unfinished suite(s)",
+                        failures.len()
+                    )
+                } else {
+                    write!(f, "{} builtin test failure(s)", failures.len())
+                }
             }
             BuiltinError::BuiltinScanNonZero { finding_count, .. } => {
                 write!(f, "{finding_count} scan finding(s)")

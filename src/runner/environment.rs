@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{
-    self as engine, Applied, BackendError, BackendSelection, EnvContext, EnvError, EnvRecord,
-    EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
+    self as engine, Applied, BackendError, BackendSelection, CreationOutcome, EnvContext, EnvError,
+    EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::RunId;
-use effigy_kernel::observe::Observed;
+use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::AttachMode;
 
 use crate::runner::error::RunnerError;
@@ -112,14 +112,85 @@ pub(in crate::runner) fn env_ref(policy: &EffectiveContainerPolicy) -> Result<En
 /// The environment's record, read without effects; `None` when there is
 /// no record yet or it cannot be read.
 pub(in crate::runner) fn record(policy: &EffectiveContainerPolicy) -> Option<EnvRecord> {
-    let env = EnvRef::for_policy(policy).ok()?;
-    let cx = super::task_engine::observe_context(Duration::from_secs(10));
-    let observed = engine::observe_root(&cx, &policy.repo_root);
-    let root = observed.verified()?;
-    match EnvRecord::read(&cx, root, &env.resource) {
+    match record_until(policy, Instant::now() + Duration::from_secs(10)) {
         Observed::Verified(record, _) => Some(record),
         _ => None,
     }
+}
+
+/// The environment's record, read within the caller's own absolute deadline.
+///
+/// Unlike [`record`], this keeps the three outcomes apart: a missing store or
+/// row is `Absent` with its proof, and an unreadable state root or record is
+/// `Unknown`. A publication that must not promote a default asks this one.
+pub(in crate::runner) fn record_until(
+    policy: &EffectiveContainerPolicy,
+    until: Instant,
+) -> Observed<EnvRecord> {
+    // Refuse an expired budget before any filesystem work: establishing the
+    // checkout token writes and resolving the environment reads.
+    let remaining = until.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Observed::Unknown(UnknownReason::TimedOut {
+            phase: "environment record".into(),
+        });
+    }
+    // The environment resource is scoped by this checkout's identity token, which
+    // a prepare establishes. Failing to establish or resolve it is unknown
+    // evidence, never an absent record.
+    if let Err(error) = effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root) {
+        return Observed::Unknown(UnknownReason::Inconsistent(format!(
+            "the environment's checkout identity cannot be established: {error}"
+        )));
+    }
+    let Ok(env) = EnvRef::for_policy(policy) else {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            "the environment has no resolvable checkout identity".into(),
+        ));
+    };
+    let remaining = until.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Observed::Unknown(UnknownReason::TimedOut {
+            phase: "environment record".into(),
+        });
+    }
+    let cx = super::task_engine::observe_context(remaining);
+    let root = match engine::observe_root(&cx, &policy.repo_root) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    EnvRecord::read(&cx, &root, &env.resource)
+}
+
+/// The exact backend this environment will apply with, as an observation.
+///
+/// The selection precedence is [`backend`]'s: an explicit backend for this
+/// invocation, then the record's, then the policy's own source. What changes is
+/// the failure mode: an unreadable state root, an unreadable recorded backend or
+/// an unknown recorded engine stays `Unknown` instead of collapsing into the
+/// policy default, so a caller that must prove the selected backend refuses
+/// rather than publishing under a backend nobody observed.
+pub(in crate::runner) fn observed_backend(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    until: Instant,
+) -> Observed<BackendSelection> {
+    let recorded = match record_until(policy, until) {
+        Observed::Verified(record, _) => match record.backend {
+            Some(Observed::Verified(recorded, _)) => Some(recorded),
+            Some(Observed::Absent(proof)) => return Observed::Absent(proof),
+            Some(Observed::Unknown(reason)) => return Observed::Unknown(reason),
+            None => None,
+        },
+        Observed::Absent(_) => None,
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    Observed::Verified(
+        engine::effective_backend(repo_root, policy, recorded.as_ref()),
+        effigy_kernel::observe::Evidence::new("environment backend selection".into(), None)
+            .expect("fixed evidence"),
+    )
 }
 
 /// The exact backend: the record's, unless this invocation names one.
@@ -191,6 +262,10 @@ fn evidence() -> effigy_kernel::observe::Evidence {
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
     repo_root: PathBuf,
+    /// The apply's creation evidence. Ordinary unsealed applies report an
+    /// unproven outcome; only the sealed workspace route can attribute IDs.
+    /// `None` when the environment was held and no apply ran.
+    pub(in crate::runner) creation: Option<CreationOutcome>,
 }
 
 /// The retention a task's ensure gives a stack it starts.
@@ -228,7 +303,7 @@ pub(in crate::runner) fn reconcile(
             ))
         },
     )?;
-    let applied = engine::reconcile(
+    let outcome = engine::reconcile(
         &ctx,
         &env,
         Up {
@@ -236,11 +311,14 @@ pub(in crate::runner) fn reconcile(
             project: &policy.project_name,
             backend: &backend(repo_root, policy),
             retention,
+            workdir: repo_root,
+            primary_service: &policy.primary_service,
+            compose_files: &policy.compose_files,
         },
         apply,
     )
     .map_err(error)?;
-    match &applied {
+    match &outcome.applied {
         Applied::HeldByRuns(holders) => eprintln!(
             "[warn] environment `{}` is held by {}; the edit applies on the next up. The runs using it stay attached",
             policy.name,
@@ -259,6 +337,7 @@ pub(in crate::runner) fn reconcile(
     Ok(BringUp {
         env,
         repo_root: policy.repo_root.clone(),
+        creation: outcome.creation,
     })
 }
 

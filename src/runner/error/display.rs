@@ -260,9 +260,11 @@ pub(super) fn fmt_runner_error(
             "task `{task}` in {} is missing `run` command (required for non-managed tasks)",
             path.display()
         ),
-        RunnerError::BuiltinTestNonZero { failures, .. } => {
-            write_builtin_test_non_zero(f, failures)
-        }
+        RunnerError::BuiltinTestNonZero {
+            failures,
+            cancelled,
+            ..
+        } => write_builtin_test_non_zero(f, failures, *cancelled),
         RunnerError::BuiltinScanNonZero { finding_count, .. } => {
             write_builtin_scan_non_zero(f, *finding_count)
         }

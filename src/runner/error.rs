@@ -242,6 +242,7 @@ pub enum RunnerError {
     },
     BuiltinTestNonZero {
         failures: Vec<(String, Option<i32>)>,
+        cancelled: bool,
         rendered: String,
     },
     BuiltinScanNonZero {
@@ -289,9 +290,41 @@ impl RunnerError {
                     .filter(|code| (1..=255).contains(code))
                     .unwrap_or(1)
             }
+            // An operator stop is the interrupted convention (128 + SIGINT),
+            // the same code a cancelled QA-group member records, so text, JSON
+            // and durable run records agree that the run was cancelled.
+            RunnerError::BuiltinTestNonZero {
+                cancelled: true, ..
+            } => 130,
             RunnerError::TaskLockConflict(_) => 75,
             _ => 1,
         }
+    }
+
+    /// The workload outcome this error records for the run that owns it.
+    ///
+    /// A cancellation the error itself names stays a cancellation, a command's
+    /// own exit code becomes the run's result, and everything else is a failed
+    /// check. A run closeout that guessed `Failed { code: 1 }` instead would
+    /// record a cancelled builtin test as a failure.
+    pub fn workload_outcome(&self) -> effigy_kernel::outcome::WorkloadOutcome {
+        use effigy_kernel::outcome::WorkloadOutcome;
+        if matches!(
+            self,
+            RunnerError::BuiltinTestNonZero {
+                cancelled: true,
+                ..
+            }
+        ) {
+            return WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::Requested,
+                signal: None,
+            };
+        }
+        let code = self
+            .task_exit_status()
+            .unwrap_or_else(|| self.process_exit_code());
+        crate::runner::task_engine::workload_for_exit(code)
     }
 
     /// The kernel's category a person reads for this failure. An admission
@@ -965,9 +998,15 @@ impl From<effigy_builtin::BuiltinError> for RunnerError {
             B::TaskManifestCompose { path, detail } => Self::TaskManifestCompose { path, detail },
             B::TaskCommandLaunch { command, error } => Self::TaskCommandLaunch { command, error },
             B::TaskLockConflict(details) => Self::TaskLockConflict(details),
-            B::BuiltinTestNonZero { failures, rendered } => {
-                Self::BuiltinTestNonZero { failures, rendered }
-            }
+            B::BuiltinTestNonZero {
+                failures,
+                cancelled,
+                rendered,
+            } => Self::BuiltinTestNonZero {
+                failures,
+                cancelled,
+                rendered,
+            },
             B::BuiltinScanNonZero {
                 finding_count,
                 rendered,

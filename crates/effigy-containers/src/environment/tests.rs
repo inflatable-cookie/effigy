@@ -73,10 +73,12 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 }
 
 mod adapters;
+pub(in crate::environment) mod creation;
 mod faults;
 mod guest_publication;
+mod native_creation;
 
-const PROJECT: &str = "acme-stack";
+pub(in crate::environment) const PROJECT: &str = "acme-stack";
 
 pub(super) fn home() -> effigy_test_support::Fixture {
     effigy_test_support::Fixture::new("effigy-environment-").expect("private home")
@@ -311,7 +313,7 @@ pub(super) fn bring_up(
     retention: Retention,
     holders: &[(RunId, AttachMode)],
 ) -> Result<Applied, EnvError> {
-    let applied = reconcile(
+    let brought_up = reconcile(
         ctx,
         env,
         Up {
@@ -319,11 +321,28 @@ pub(super) fn bring_up(
             project: PROJECT,
             backend: &selection(),
             retention,
+            workdir: std::path::Path::new("."),
+            primary_service: "app",
+            compose_files: &[],
         },
         || fake.apply(),
     )?;
     activate(ctx, env, holders)?;
-    Ok(applied)
+    Ok(brought_up.applied)
+}
+
+/// What one create effect needs from its caller, for the fixture checkout.
+pub(super) fn create_request() -> crate::environment::CreationRequest<'static> {
+    crate::environment::CreationRequest {
+        workdir: std::path::Path::new("."),
+        project: PROJECT,
+        primary_service: "app",
+        compose_files: &[],
+        render: None,
+        preflight: None,
+        required: false,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+    }
 }
 
 pub(super) fn take_down(
@@ -420,6 +439,9 @@ fn an_unreadable_holder_list_applies_and_says_so() {
         project: PROJECT,
         backend: &backend,
         retention: Retention::Held,
+        workdir: std::path::Path::new("."),
+        primary_service: "app",
+        compose_files: &[],
     };
     let fake = Fake::new();
     let observer = |_: &EnvRun<'_>| {
@@ -428,7 +450,7 @@ fn an_unreadable_holder_list_applies_and_says_so() {
     let applied =
         super::ops::reconcile_observing(&ctx, &stack, up(), || fake.apply(), observer).unwrap();
     assert_eq!(
-        applied,
+        applied.applied,
         Applied::ReconciledUnreadableHolders(UnknownReason::StoreUnreadable(
             "fake observer".to_owned()
         ))
@@ -443,7 +465,9 @@ fn an_unreadable_holder_list_applies_and_says_so() {
         Observed::Verified(Vec::new(), evidence)
     };
     assert_eq!(
-        super::ops::reconcile_observing(&ctx, &stack, up(), || quiet.apply(), empty).unwrap(),
+        super::ops::reconcile_observing(&ctx, &stack, up(), || quiet.apply(), empty)
+            .unwrap()
+            .applied,
         Applied::Reconciled
     );
     assert_eq!(quiet.calls(), ["apply"]);
@@ -933,10 +957,14 @@ fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
                 project: PROJECT,
                 backend: &selection(),
                 retention: Retention::Persistent,
+                workdir: std::path::Path::new("."),
+                primary_service: "app",
+                compose_files: &[],
             },
             || fake.apply(),
         )
-        .unwrap(),
+        .unwrap()
+        .applied,
         Applied::Reconciled
     );
     // Interrupted here: no activation ran.
@@ -1107,6 +1135,9 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
+            workdir: std::path::Path::new("."),
+            primary_service: "app",
+            compose_files: &[],
         },
         || {
             // A cold stack's bring-up, longer than the settlement budget.
@@ -1114,7 +1145,8 @@ fn a_bring_up_that_outlives_its_budget_still_settles() {
             fake.apply()
         },
     )
-    .unwrap();
+    .unwrap()
+    .applied;
     assert_eq!(applied, Applied::Reconciled);
     // The activation run that follows the slow apply also settles on a budget
     // of its own, and publishes `active`.
@@ -1153,13 +1185,17 @@ fn an_activation_past_the_sixty_second_budget_still_settles() {
                 project: PROJECT,
                 backend: &selection(),
                 retention: Retention::Held,
+                workdir: std::path::Path::new("."),
+                primary_service: "app",
+                compose_files: &[],
             },
             || {
                 std::thread::sleep(ACTIVATION);
                 fake.apply()
             },
         )
-        .unwrap(),
+        .unwrap()
+        .applied,
         Applied::Reconciled
     );
     assert!(
@@ -1221,8 +1257,11 @@ fn an_interrupted_activation_settles_without_another_effect() {
     let fake = Fake::new();
     let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
     run.publish_desired(&closure("one")).unwrap();
-    run.apply_with(&selection(), PROJECT, || fake.apply())
-        .unwrap();
+    let mut backend = fake.clone();
+    run.create_with(&mut backend, &selection(), create_request(), || {
+        fake.apply()
+    })
+    .unwrap();
     // The operator stops the activation after the backend acted.
     cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
     std::thread::sleep(std::time::Duration::from_millis(900));
@@ -1263,6 +1302,9 @@ fn a_failed_activation_settles_on_its_own_budget() {
             project: PROJECT,
             backend: &selection(),
             retention: Retention::Held,
+            workdir: std::path::Path::new("."),
+            primary_service: "app",
+            compose_files: &[],
         },
         || {
             std::thread::sleep(std::time::Duration::from_millis(900));

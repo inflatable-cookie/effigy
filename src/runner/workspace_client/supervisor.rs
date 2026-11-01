@@ -148,6 +148,7 @@ use effigy_kernel::workspace_session::{
 
 use super::host_dispatch::HostDispatch;
 use super::serving::{AdoptError, OwnedWorkspaceChannel, ServeError, ServingOwner};
+use super::terminal::TerminalCustody;
 use crate::runner::environment::workspace::WorkspaceOwner;
 use crate::runner::workspace_transport::listener::{HostChannelAcceptor, ServerTlsTransport};
 
@@ -593,6 +594,11 @@ where
             owner.stop();
             return Err(AdoptError::WrongSession);
         }
+        if owner.session() != &session {
+            let mut owner = owner;
+            owner.stop();
+            return Err(AdoptError::WrongSession);
+        }
         if let Some(locator) = owner.locator() {
             if locator.bound().lease() != &lease {
                 let mut owner = owner;
@@ -611,6 +617,20 @@ where
     /// The session in service.
     pub(crate) fn session(&self) -> &SessionRef {
         &self.session
+    }
+
+    /// The session's terminal custody: one terminal owner and one retained
+    /// reader per admitted run (effigy#485).
+    ///
+    /// #452's container-up caller opens one entry per run it admits
+    /// ([`TerminalCustody::open`]) — the run's captured-stream plan and the
+    /// writer its guest types into — and retains the custody across
+    /// [`Self::serve_pending`] and [`Self::serve`] turns. It is bound to this
+    /// session's identity, so no other session's client can type into a
+    /// terminal opened here, and a run with no entry refuses terminal frames
+    /// instead of dropping them. The live child-PTY writer is effigy#519.
+    pub(crate) fn terminal_custody(&self, observe: &ObserveContext) -> TerminalCustody {
+        self.owner.terminal_custody(observe)
     }
 
     /// The lease in service: one commit, one locator, one key.

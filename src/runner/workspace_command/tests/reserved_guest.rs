@@ -94,6 +94,14 @@ impl GuestWorkspace for Guest {
 #[derive(Clone, Copy, Debug)]
 enum Fault {
     None,
+    LongObservationBudget,
+    ExpiredDeadline,
+    /// The gated re-observation sees a replaced target.
+    GatedChangedTarget,
+    /// The gated re-observation names another valid full id.
+    GatedIdMismatch,
+    /// The absolute deadline is spent before the gated read can run.
+    GatedExpiredDeadline,
     Identity,
     UnknownIdentity,
     Alias,
@@ -110,11 +118,12 @@ enum Fault {
     RecoveryUnknown,
     Hybrid,
 }
+#[derive(Clone)]
 struct Probe {
     identity: GuestSelfObservation,
     fault: Fault,
     guest: Rc<RefCell<FakeGuest>>,
-    context_probed: bool,
+    context_probed: std::rc::Rc<std::cell::Cell<bool>>,
 }
 impl WorkspaceGuestProbe for Probe {
     fn context_dial(
@@ -124,7 +133,7 @@ impl WorkspaceGuestProbe for Probe {
         context: &GuestObject,
         budget: Duration,
     ) -> Observed<GuestDialEvidence> {
-        self.context_probed = true;
+        self.context_probed.set(true);
         if matches!(self.fault, Fault::ContextProbe) {
             return Observed::Unknown(UnknownReason::Inconsistent(
                 "context probe interrupted".into(),
@@ -272,6 +281,12 @@ fn run(fault: Fault) -> usize {
     effigy_containers::with_test_effigy_home(&fixture.path().join("home"), || {
         let repo = fixture.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
+        // This producer requires explicit checkout-scoped ownership labels.
+        std::fs::write(
+            repo.join(".git/config"),
+            "[effigy]\n runtimeScope = ephemeral\n",
+        )
+        .unwrap();
         std::fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -293,15 +308,61 @@ home = "/home/vscode"
 "#,
         )
         .unwrap();
-        let mut policy = crate::runner::test_support::effective_container_policy(
-            "dev",
-            "dev",
-            "app",
+        std::fs::write(
             repo.join("compose.yml"),
-        );
-        policy.repo_root = repo.clone();
+            "services:\n  app:\n    image: fixture:latest\n",
+        )
+        .unwrap();
+        let bin = fixture.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut test_path = bin.as_os_str().to_os_string();
+        test_path.push(":");
+        test_path.push(inherited_path);
+        let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
+            ("PATH", test_path),
+            ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
+            ("DOCKER_CONTEXT", "fixture-context".into()),
+        ]);
+        let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());
         policy.workspace_home = Some("/home/vscode".into());
+        let mut labels = serde_json::Map::new();
+        for file in &policy.compose_files {
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(file).unwrap()).unwrap();
+            if let Some(mapping) = document
+                .get("services")
+                .and_then(|services| services.get("app"))
+                .and_then(|service| service.get("labels"))
+                .and_then(|value| value.as_mapping())
+            {
+                for (key, value) in mapping {
+                    let value = match value {
+                        serde_yaml::Value::String(value) => value.clone(),
+                        serde_yaml::Value::Bool(value) => value.to_string(),
+                        _ => continue,
+                    };
+                    labels.insert(key.as_str().unwrap().into(), value.into());
+                }
+            }
+        }
+        labels.insert(
+            "com.docker.compose.project".into(),
+            policy.project_name.clone().into(),
+        );
+        labels.insert("com.docker.compose.service".into(), "app".into());
+        labels.insert("com.docker.compose.oneoff".into(), "False".into());
+        let inspect = fixture.path().join("inspect.json");
+        let container_id = "a1".repeat(32);
+        std::fs::write(&inspect, serde_json::to_vec(&serde_json::json!([{
+            "Id":container_id, "Name":format!("/{}-app-1",policy.project_name), "Image":format!("sha256:{}","c".repeat(64)),
+            "State":{"Running":true}, "Config":{"Image":"fixture:latest","Labels":labels}
+        }])).unwrap()).unwrap();
+        let docker = bin.join("docker");
+        std::fs::write(&docker, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \" $* \" in\n *' image inspect '*) echo '[{{\"Id\":\"sha256:{}\"}}]' ;;\n *' ps '*) echo {} ;;\n *' inspect '*) cat '{}' ;;\nesac\n", fixture.path().join("docker.calls").display(), "c".repeat(64), "a1".repeat(32), inspect.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(docker, std::fs::Permissions::from_mode(0o755)).unwrap();
         if matches!(fault, Fault::Hybrid) {
             let text = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
             std::fs::write(
@@ -335,6 +396,12 @@ home = "/home/vscode"
             user: "vscode".into(),
             home: "/home/vscode".into(),
         };
+        let identity = WorkspaceContainerIdentity {
+            container_id: "a1".repeat(32),
+            vm_boot_id: "3a7c86df-0045-472e-b065-c1295816ab22".into(),
+            platform: "x86_64".into(),
+            libc: "gnu".into(),
+        };
         let inputs = PublishInputs {
             artifact: ArtifactEvidence::Unselected {
                 image_reference: "fixture".into(),
@@ -342,10 +409,13 @@ home = "/home/vscode"
             },
             selection: Digest::of(b"selection"),
             inputs_digest: Digest::of(b"inputs"),
-            target: TargetEvidence::Absent {
-                project: policy.project_name.clone(),
+            // Selection/staging fixtures start from an independently observed
+            // container; creation authority is proved by the #510 producer tests.
+            target: TargetEvidence::Observed(ContainerIdentity {
+                container_id: identity.container_id.clone(),
+                vm_boot_id: identity.vm_boot_id.clone(),
                 backend: "docker".into(),
-            },
+            }),
             platform: None,
             guest: Some(GuestContextInputs {
                 version: version.clone(),
@@ -361,12 +431,7 @@ home = "/home/vscode"
                 sources: vec![],
             }),
         };
-        let identity = WorkspaceContainerIdentity {
-            container_id: "a1".repeat(32),
-            vm_boot_id: "3a7c86df-0045-472e-b065-c1295816ab22".into(),
-            platform: "x86_64".into(),
-            libc: "gnu".into(),
-        };
+
         let mut guest = FakeGuest::new().with_container(identity.clone());
         // A predecessor inode and selectors are retained throughout staging failures.
         guest.put_file(BINARY_CURRENT_PATH, b"/predecessor", 0o644);
@@ -392,7 +457,8 @@ home = "/home/vscode"
         let alias =
             ChannelAliasPlan::observed(Backend::LinuxDocker, "default", None, None).unwrap();
         let shared = Rc::new(RefCell::new(guest));
-        let mut probe = Probe {
+        let probed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let probe = Probe {
             identity: GuestSelfObservation {
                 container_id: identity.container_id.clone(),
                 vm_boot_id: identity.vm_boot_id.clone(),
@@ -401,7 +467,7 @@ home = "/home/vscode"
             },
             fault,
             guest: shared.clone(),
-            context_probed: false,
+            context_probed: probed.clone(),
         };
         let minted = Cell::new(0);
         let io_count = Rc::new(Cell::new(0));
@@ -428,9 +494,13 @@ home = "/home/vscode"
             },
             supervisor_id: "fixture-supervisor",
         };
-        let probe_ref = &mut probe;
+        let gated_reads = std::rc::Rc::new(Cell::new(0));
+        let gated_reads_for_closure = gated_reads.clone();
+        let probe_identity = probe.identity.clone();
+        let probe_guest = probe.guest.clone();
+        let probe_probed = probe.context_probed.clone();
+        let probe_fault = probe.fault;
         let observe = |activation: &mut WorkspaceActivation<'static>| {
-            let probe = probe_ref;
             let target = ContainerIdentity {
                 container_id: identity.container_id.clone(),
                 vm_boot_id: identity.vm_boot_id.clone(),
@@ -487,6 +557,15 @@ home = "/home/vscode"
             } else {
                 vec![]
             };
+            let reobserved_target = target.clone();
+            let reobserved_image = image.clone();
+            let reobserved_project = policy.project_name.clone();
+            let reobserved_object = object.clone();
+            let reobserved_version = version.clone();
+            let creating_run = activation.environment_mut().id();
+            let original_deadline = activation.environment_mut().observation_deadline(
+                std::time::Instant::now() + Duration::from_secs(24 * 60 * 60),
+            );
             Ok(ReservedGuestInput {
                 guest: Box::new(Guest(
                     shared.clone(),
@@ -494,7 +573,53 @@ home = "/home/vscode"
                     io_count.clone(),
                     fired.clone(),
                 )),
-                artifact: &artifact,
+                artifact: artifact.clone(),
+                reobserve: Box::new({
+                    let gated_reads = gated_reads_for_closure;
+                    move |deadline| {
+                        gated_reads.set(gated_reads.get() + 1);
+                        assert!(std::time::Instant::now() < deadline);
+                        assert!(
+                            deadline <= original_deadline,
+                            "callback exceeded the activation deadline"
+                        );
+                        Ok((
+                            Observed::Verified(
+                                vec![TargetCandidate {
+                                    identity: match fault {
+                                        // A replaced target keeps the shape and changes
+                                        // the boot id.
+                                        Fault::GatedChangedTarget => ContainerIdentity {
+                                            vm_boot_id: "ff".repeat(32),
+                                            ..reobserved_target.clone()
+                                        },
+                                        // Another valid full id: individually a good
+                                        // observation, but not the frozen one.
+                                        Fault::GatedIdMismatch => ContainerIdentity {
+                                            container_id: "ee".repeat(32),
+                                            ..reobserved_target.clone()
+                                        },
+                                        _ => reobserved_target.clone(),
+                                    },
+                                    project: reobserved_project,
+                                    created_by: Some(creating_run),
+                                }],
+                                evidence(),
+                            ),
+                            Observed::Verified(
+                                BoundPlatform {
+                                    target: reobserved_target,
+                                    platform: reobserved_image.clone(),
+                                    artifact_platform: reobserved_image,
+                                    artifact: reobserved_object,
+                                    artifact_version: reobserved_version,
+                                    execution_available: true,
+                                },
+                                evidence(),
+                            ),
+                        ))
+                    }
+                }),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
                         identity: target.clone(),
@@ -514,8 +639,13 @@ home = "/home/vscode"
                     },
                     evidence(),
                 ),
-                alias: &alias,
-                probe,
+                alias: alias.clone(),
+                probe: Box::new(Probe {
+                    identity: probe_identity.clone(),
+                    fault: probe_fault,
+                    guest: probe_guest.clone(),
+                    context_probed: probe_probed.clone(),
+                }),
                 context,
                 snapshots,
                 credential: Box::new(|session, g| {
@@ -534,7 +664,19 @@ home = "/home/vscode"
                         "ab".repeat(32),
                     ))
                 }),
-                budget: Duration::from_secs(20),
+                deadline: match fault {
+                    // The one absolute deadline is already past: the producer must
+                    // refuse rather than measure a fresh budget from now.
+                    Fault::ExpiredDeadline | Fault::GatedExpiredDeadline => {
+                        std::time::Instant::now() - Duration::from_secs(1)
+                    }
+                    // The gated re-observation must still see the activation's own
+                    // deadline however far out this one is.
+                    Fault::LongObservationBudget => {
+                        std::time::Instant::now() + Duration::from_secs(24 * 60 * 60)
+                    }
+                    _ => std::time::Instant::now() + Duration::from_secs(20),
+                },
             })
         };
         let result = match fault {
@@ -544,25 +686,75 @@ home = "/home/vscode"
             Fault::RecoveryDead | Fault::RecoveryUnknown => {
                 recover_fixture(request, observe, shared.clone(), 0, fault)
             }
-            _ => up_prepared(request, || Ok(()), observe),
+            _ => up_prepared(request, &[], observe),
         };
+        if matches!(fault, Fault::None | Fault::LongObservationBudget) {
+            let calls = std::fs::read_to_string(fixture.path().join("docker.calls")).unwrap();
+            let applies = calls
+                .lines()
+                .filter(|line| line.contains(" up -d "))
+                .collect::<Vec<_>>();
+            assert_eq!(applies.len(), 1, "one ordinary Compose apply");
+            assert!(applies[0].starts_with("--context fixture-context compose "));
+            assert!(applies[0].contains("--build --remove-orphans"));
+            for file in &policy.compose_files {
+                assert!(applies[0].contains(file.to_str().unwrap()));
+            }
+        }
+        if matches!(
+            fault,
+            Fault::GatedChangedTarget | Fault::GatedIdMismatch | Fault::GatedExpiredDeadline
+        ) {
+            match &result {
+                Err(error) => {
+                    let text = format!("{error:?}");
+                    if matches!(fault, Fault::GatedExpiredDeadline) {
+                        // A spent deadline refuses before the read, so the read
+                        // never happens and the message names the deadline.
+                        assert!(
+                            text.contains("deadline") || text.contains("expired"),
+                            "{text}"
+                        );
+                    } else {
+                        assert!(
+                            text.contains("preflight and gated target/image identities"),
+                            "{text}"
+                        );
+                    }
+                }
+                Ok(_) => panic!("a gated re-observation that differs must refuse"),
+            }
+            assert_eq!(minted.get(), 0, "no credential is minted");
+            if matches!(fault, Fault::GatedExpiredDeadline) {
+                assert_eq!(
+                    gated_reads.get(),
+                    0,
+                    "a spent absolute deadline must refuse before the gated read runs"
+                );
+            } else {
+                assert_eq!(gated_reads.get(), 1, "the gated read ran exactly once");
+            }
+        }
         let mut guest = shared.borrow_mut();
         assert_eq!(guest.text("/predecessor").as_deref(), Some("old bytes"));
         if matches!(fault, Fault::Hybrid) {
             assert!(matches!(result, Ok(WorkspaceUp::Hybrid)));
             assert_eq!(minted.get(), 0);
             assert_eq!(io_count.get(), 0);
-            assert!(!probe.context_probed);
+            assert!(!probed.get());
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
         } else if matches!(
             fault,
-            Fault::None | Fault::Recovery(_) | Fault::RecoveryUnknown
+            Fault::None
+                | Fault::LongObservationBudget
+                | Fault::Recovery(_)
+                | Fault::RecoveryUnknown
         ) {
             let WorkspaceUp::Selected(mut owner) = result.expect("selected") else {
                 panic!("selected owner")
             };
             assert_eq!(minted.get(), 1);
-            assert!(probe.context_probed);
+            assert!(probed.get());
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("4"));
             let doc =
                 WorkspaceContextV2::parse(&guest.read_file(&context_path(4)).unwrap().unwrap())
@@ -588,7 +780,7 @@ home = "/home/vscode"
                 context_generation: 4,
             };
             let verified = doc
-                .verify(&mut IndependentIdentity(probe.identity.clone()), &live)
+                .verify(&mut IndependentIdentity(probe_identity.clone()), &live)
                 .expect("actual produced document independently verified");
             assert_eq!(
                 verified.session_generation,
@@ -597,7 +789,7 @@ home = "/home/vscode"
             let mut stale = live.clone();
             stale.session_generation = Some(owner.session.generation().get() + 1);
             assert!(doc
-                .verify(&mut IndependentIdentity(probe.identity.clone()), &stale)
+                .verify(&mut IndependentIdentity(probe_identity.clone()), &stale)
                 .is_err());
             assert_eq!(
                 crate::runner::workspace_client::context::v2::read_published_v2(&mut *guest)
@@ -616,6 +808,35 @@ home = "/home/vscode"
                 .supervisor
                 .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
                 .unwrap();
+        } else if matches!(fault, Fault::ExpiredDeadline) {
+            let error = match result.expect_err("an expired publication deadline refuses") {
+                WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Preparation(error) => error.to_string(),
+            };
+            assert!(error.contains("deadline expired"), "{error}");
+            assert_eq!(minted.get(), 0, "no credential is minted past the deadline");
+            assert_eq!(io_count.get(), 0, "an expired budget performs no guest I/O");
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+            assert_eq!(
+                guest.text(BINARY_CURRENT_PATH).as_deref(),
+                Some("/predecessor")
+            );
+            assert_eq!(
+                guest.link_target(ENTRY_SELECTOR).as_deref(),
+                Some("/predecessor")
+            );
+            // The refused publication is recorded unknown, so it neither
+            // publishes nor leaves a selection obligation a successor must settle.
+            let ctx = environment::context(&repo).unwrap();
+            let observed = effigy_kernel::store::Store::read(&ctx.observe(), ctx.root);
+            let journal = observed.verified().expect("journal");
+            assert!(
+                !matches!(
+                    effigy_kernel::workspace_session::unfinished_selection(journal, &env.resource),
+                    Observed::Verified(Some(_), _)
+                ),
+                "a publication that never started leaves no pending selection"
+            );
         } else if matches!(fault, Fault::Io(..)) {
             assert!(
                 fired.get(),
@@ -656,7 +877,14 @@ home = "/home/vscode"
                 guest.link_target(ENTRY_SELECTOR).as_deref(),
                 Some("/predecessor")
             );
-            if matches!(fault, Fault::Identity | Fault::UnknownIdentity) {
+            if matches!(
+                fault,
+                Fault::Identity
+                    | Fault::UnknownIdentity
+                    | Fault::GatedChangedTarget
+                    | Fault::GatedIdMismatch
+                    | Fault::GatedExpiredDeadline
+            ) {
                 assert_eq!(minted.get(), 0);
             } else {
                 assert_eq!(
@@ -665,8 +893,26 @@ home = "/home/vscode"
                     "fault reached its intended boundary: {fault:?}"
                 );
             }
+            // The gated re-observation refuses before anything is staged, which is
+            // exactly the point: no byte reaches the guest on a changed target.
             assert!(
-                guest.file_sha256(&object.path).unwrap().is_some(),
+                guest.file_sha256(&object.path).unwrap().is_none()
+                    || !matches!(
+                        fault,
+                        Fault::GatedChangedTarget
+                            | Fault::GatedIdMismatch
+                            | Fault::GatedExpiredDeadline
+                    ),
+                "a gated refusal must not stage the artifact"
+            );
+            assert!(
+                guest.file_sha256(&object.path).unwrap().is_some()
+                    || matches!(
+                        fault,
+                        Fault::GatedChangedTarget
+                            | Fault::GatedIdMismatch
+                            | Fault::GatedExpiredDeadline
+                    ),
                 "actual staging ran before injected fault"
             );
         }
@@ -753,6 +999,29 @@ fn recover_fixture<'a>(
     };
     let ctx = environment::context(&request.policy.repo_root).unwrap();
     let env = environment::env_ref(request.policy).unwrap();
+    let backend = environment::backend(&request.policy.repo_root, request.policy);
+    let closure = &request.policy.render.as_ref().unwrap().closure;
+    let prepare = Up {
+        render: Some(closure),
+        project: &request.policy.project_name,
+        backend: &backend,
+        retention: request.retention,
+        workdir: &request.policy.repo_root,
+        primary_service: &request.policy.primary_service,
+        compose_files: &request.policy.compose_files,
+    };
+    let preflight = effigy_containers::environment::CreationPreflight::observe(
+        backend.adapter().as_mut(),
+        prepare.creation_request(),
+    )
+    .map_err(|error| failure(EnvError::Invalid(error.to_string())))?;
+    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+        &ctx.cx,
+        ctx.root,
+        closure,
+        Instant::now() + Duration::from_secs(20),
+    )
+    .map_err(|error| failure(EnvError::Kernel(error)))?;
     let WorkspaceBegin::Activate(mut activation) = WorkspaceActivation::begin(
         &ctx,
         &env,
@@ -790,13 +1059,18 @@ fn recover_fixture<'a>(
     assert_eq!(before, shared.borrow().tree_digest());
     let backend = environment::backend(&request.policy.repo_root, request.policy);
     activation
-        .apply_with(
+        .apply_sealed_with(
             Up {
                 render: request.policy.render.as_ref().map(|render| &render.closure),
                 project: &request.policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &request.policy.repo_root,
+                primary_service: &request.policy.primary_service,
+                compose_files: &request.policy.compose_files,
             },
+            &sealed,
+            &preflight,
             || Ok(()),
         )
         .map_err(failure)?;
@@ -835,6 +1109,7 @@ fn recover_fixture<'a>(
             std::path::PathBuf::from("/workspace"),
         ),
         channel: publication.channel,
+        creation: None,
         effect: std::sync::Arc::new(ctx.cx.clone()),
         observe: std::sync::Arc::new(ctx.observe()),
         root: ctx.root,
@@ -931,4 +1206,56 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_of_a_replaced_target_refuses() {
+    run(Fault::GatedChangedTarget);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_of_another_valid_id_refuses() {
+    run(Fault::GatedIdMismatch);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_past_the_deadline_refuses_without_reading() {
+    run(Fault::GatedExpiredDeadline);
+}
+
+#[test]
+fn workspace_reserved_expired_publication_deadline_refuses_without_guest_io() {
+    run(Fault::ExpiredDeadline);
+}
+
+#[test]
+fn workspace_reserved_callback_keeps_the_original_activation_deadline() {
+    run(Fault::LongObservationBudget);
+}
+
+// Shared external-I/O doubles for the creator producer/consumer integration.
+pub(in crate::runner) fn creator_guest(shared: Rc<RefCell<FakeGuest>>) -> Box<dyn GuestWorkspace> {
+    Box::new(Guest(
+        shared,
+        None,
+        Rc::new(Cell::new(0)),
+        Rc::new(Cell::new(false)),
+    ))
+}
+
+pub(in crate::runner) fn creator_probe(
+    identity: WorkspaceContainerIdentity,
+    guest: Rc<RefCell<FakeGuest>>,
+) -> Box<dyn WorkspaceGuestProbe> {
+    Box::new(Probe {
+        identity: GuestSelfObservation {
+            container_id: identity.container_id,
+            vm_boot_id: identity.vm_boot_id,
+            platform: identity.platform,
+            libc: identity.libc,
+        },
+        fault: Fault::None,
+        guest,
+        context_probed: Rc::new(Cell::new(false)),
+    })
 }

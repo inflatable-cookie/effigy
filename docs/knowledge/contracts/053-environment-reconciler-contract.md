@@ -2,8 +2,10 @@
 
 Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
-`data_from` data claim, retire as a transition, the workspace session run and
-its host authority channel are later work (§9).
+`data_from` data claim and retire as a transition are later work (§9). The
+workspace session run and its host authority channel are implemented at the
+kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
+caller and native backend qualification are not.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -70,7 +72,7 @@ coverage limits (052 §7.6).
 | --- | --- | --- |
 | Generation, state | `resources` row | `active` (attachable at the current generation), `stopped`, or neither while a run is in progress |
 | Backend | `resources.backend` | exact engine, context and the policy source that chose it, written by Prepare (§6) |
-| Engine fields | `resources.engine` | `{schema, retention, project, imported}` |
+| Engine fields | `resources.engine` | `{schema, retention, project}` |
 | Desired | `object_refs` | the render this environment points at (#229) |
 | Holders | `attachments` | runs attached to the environment, with liveness from their owner gates |
 
@@ -83,8 +85,8 @@ runtime's own: Running, Stopped or Absent.
 ## 3. Transitions
 
 Every transition is one `EnvRun`: a kernel run owned by the environment, so
-up, down, handover, reset, reap and import serialise on `Gate(Env)`.
-A transition waits up to 10 minutes for the gate; idle stop and import do not wait.
+up, down, handover, reset and reap serialise on `Gate(Env)`.
+A transition waits up to 10 minutes for the gate; idle stop does not wait.
 
 - **Permit.** A backend effect needs a `TransitionPermit`. It is refused
   (`HeldBy`) while any holder remains. Before asking, the transition settles
@@ -98,11 +100,70 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   backend and releases nobody, and it adds no JSON payload beyond the command's
   error: `HeldBy` (a live holder protects the environment) and kernel journal
   contention stay distinct refusals.
-- **Effects.** An apply is journalled `environment:apply` with `Retain`
-  settlement; a stop is `environment:stop`, `Irreversible`. Recording either
+- **Effects.** An ordinary or reserved apply is journalled
+  `environment:gate-scoped-id-difference` with `Retain` settlement; a stop is
+  `environment:stop`, `Irreversible`. Recording either
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
+- **Creation inference.** That apply record uses the same permit, gate,
+  retention and one caller deadline. Ordinary unsealed applies produce an explicit
+  unproven
+  outcome; only the sealed workspace route may attribute creation. Complete
+  before/after project inventories bind exact
+  full IDs to frozen service, project, managed, scope and checkout labels and
+  explicit image capabilities (052 §8.12): container image ID; reference plus
+  stable resolved image-inspect ID only for IDs created in this gate; digest-pinned
+  reference; or attached reference/config-hash with no resolved container-image ID.
+  Attached reference-only rows must match Compose's config hash for the merged
+  frozen render. A pre-window tag move underneath an attached container is
+  undetectable on this engine: the current lookup is never claimed as that
+  container's actual image (Supervisor under Tom’s standing delegation, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)). Nerdctl's absent one-off
+  flag requires actual project/service, name and frozen network corroboration.
+  Observed tag moves refuse; same-user retag/restore inside the gate is outside
+  the narrowed guarantee (Supervisor under Tom’s standing delegation, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+  The post-apply service set must equal the frozen
+  set. Before apply, the workspace predecessor is allowed to remain attached or
+  be replaced for any Compose reason, including environment, mount and entrypoint
+  changes at the same image reference. Replacement requires its predecessor to
+  disappear and one new full ID absent from the complete pre-apply set. The
+  new-ID difference must equal that optional workspace replacement plus the
+  required fresh/recreated services; other attached dependencies retain their
+  exact IDs (Supervisor under Tom’s standing delegation, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.12). The record is
+  explicitly a gate-scoped inference, never an engine create response. A same-user
+  actor forging identical labels inside this exclusive window is outside the
+  v0.15 guarantee (Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation);
+  [Q-017](../questions.md#q-017-workspace-client-and-operator-feedback-at-v015)).
+  An `Absent` reservation names an unknown desired successor,
+  including an authorized non-live predecessor replacement, and binds only this
+  run's exact new ID; an `Observed` target must retain its exact ID. #506's gated
+  compatibility check must refuse recreation of a live protected predecessor. The
+  unmerged integration retains the activation's owned artifact, alias and boxed
+  probe and its one absolute deadline; the gated reobserve is an independent
+  fresh backend read on that same deadline, fenced to the exact ID, never a
+  pass-through of an earlier observation, and it fails closed on unknown, changed
+  or missing evidence (Supervisor under Tom’s standing delegation, 2026-11-01;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.11).
+  Every actual Compose input, including the generated Compose file, belongs to
+  the frozen render closure. Before hashing/apply the adapter verifies the file
+  list and exact bytes against that closure; a missing input refuses rather than
+  extending the seal from containers (Supervisor under Tom's standing delegation,
+  2026-11-01; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+  Failed apply or incomplete observations produce no creation
+  receipt. A retry reads only this run's journalled result and never reapplies or
+  invents a later receipt. `created_by(project, full_id)` reads that journal;
+  missing evidence is Unknown, never a global NoCreator claim. Bare Active
+  publication refuses a reserved generation, including its claiming run; the
+  sanctioned reserved Active route is the merged `commit_selection`/
+  `commit_activation` transaction with guest/serving receipts (052 §8.11), while
+  the production activation caller (#506) and native guest E2E (#512) stay
+  separate, unmerged work. #510's native target-binding proof does NOT prove
+  guest workspace-session
+  commit/publication. Retained records
+  remain readable after settle (effigy#510, 052 §8.12).
 - **Settlement budget.** Settlement is bounded on its own clock: admission
   makes its window once `Gate(Env)` is held, after a wait that may take ten
   minutes, and each settling holder and the run's own settle make theirs when
@@ -141,7 +202,10 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
   edited image, environment or mount is applied by the next `up` without a
-  `down`. Effigy adds no per-service digest label and no comparison pass. An
+  `down`. Effigy adds no per-service digest label. Attached reference-only image
+  evidence requires a bounded read of Compose's own `config --hash` over the
+  ordered frozen files; this observation is not a second apply. Partial
+  extra-hosts overrides inherit the base service's network declarations. An
   apply failure is an error naming the service and Compose's own output; no
   failure is logged as a warning and continued.
 - **Down** stops host processes, then the backend, publishes `stopped` with a
@@ -332,7 +396,10 @@ a projection, never authority (effigy#458).
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
-- The workspace session run and host authority channel (052 §8.3, §8.7).
+- The production workspace activation caller, the wider guest Observe surface
+  beyond `runs:list` and `runs:status`, and native backend qualification (052
+  §8.11, §8.12). The workspace session run and its host authority channel are
+  themselves implemented at the kernel and runner seam, not pending here.
 
 ## 10. Proofs
 
@@ -357,8 +424,9 @@ on Docker Desktop, with cbs and Acowtancy:
    keeps the next one running.
 5. Kill a task with SIGKILL mid-run, then `container down`: it settles the
    interrupted holder and stops.
-6. Upgrade from v0.14.1 with stacks running: no container restarts; the
-   record imports; marker files are byte-identical.
+6. Upgrade from v0.14.1 with stacks running: the first `up` reconciles the
+   running stack in one apply, recreating each changed service once on its
+   unchanged named volume; no importer runs and marker files stay byte-identical.
 7. With both engines installed, the unselected engine sees no call.
 
 Q-010 adds crash recovery for each durable class, multi-checkout concurrency,

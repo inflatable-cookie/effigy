@@ -843,15 +843,18 @@ pub struct TargetCandidate {
     pub created_by: Option<RunId>,
 }
 
-/// What a decision knows about the target. A fresh project has no container
-/// yet, so absence is its own evidence, recorded with the project and backend
-/// it names (052 §8.11).
+/// What a decision knows about the desired successor target. It is absent
+/// before a fresh apply or an authorized recreation of a non-live predecessor.
+/// The successor must be a new ID created by this activation, with the recorded
+/// project/backend. A live protected predecessor cannot be recreated (052 §8.11;
+/// Effigy Supervisor owner ruling, 2026-10-31).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TargetEvidence {
     /// Re-observed under the decision's gate.
     Observed(ContainerIdentity),
-    /// A project with no container yet: the activation creates and binds it.
+    /// The desired successor is unknown until apply, even if an authorized
+    /// non-live predecessor exists. Binding requires this run's exact new ID.
     Absent { project: String, backend: String },
 }
 impl TargetEvidence {

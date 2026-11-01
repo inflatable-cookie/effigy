@@ -225,8 +225,17 @@ container mode. We shouldn't need a `*:tui` selector at all."
   everything it starts (environment `up`, host processes, nested Effigy
   work), with no tab or child prompts and no persisted sealed credential.
 
-Implementation is planned in the v0.15 environment lane (the
-environment-owned host-process and unified-session work after effigy#235).
+Host-process sidecars are adopted as environment-owned detached kernel runs
+([053 §8.1](contracts/053-environment-reconciler-contract.md#81-host-sidecars-adopted),
+effigy#320). The workspace session is a separate detached run that outlives
+`dev`; under [052 §8.7](contracts/052-runtime-kernel-contract.md#87-workspace-session-run),
+a workspace-invoked `dev` is its child and host/guest UIs can attach to that
+managed child. The kernel and runner session/channel/client/serving seams are
+implemented; the production activation caller and native qualification remain
+missing. See [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1)
+for implementation and coverage limits; this does not make the managed dev run
+the workspace session or claim the intended terminal relationship is wired in
+production.
 
 ## Q-008 — Program fallback (for example oxide → cargo)
 
@@ -587,6 +596,10 @@ staging exception. Once the mount works, move those fixtures to Builds scratch
 and close papercut `62e6b400-03df-411b-9368-846ccffbad4a`. Barge may later
 own this under Barge Q-009; that does not change the interim install gate.
 
+Assessed 2026-10-31 (effigy#515): no repository-side fix. Effigy writes no
+Colima mounts, and the `effigy` profile's `colima.yaml` still has `mounts: []`.
+The change stays a host edit behind a profile restart, so it waits for this gate.
+
 ## Q-017: Workspace client and operator feedback at v0.15
 
 Status: answered
@@ -601,14 +614,45 @@ Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
 orders this work after Q-011 simplification; it does not waive the release
 criterion.
 
-Tom's 2026-10-31 creator-attribution amendment keeps the workspace client in
-v0.15 with the narrow, gate-scoped ID-set rule in
+Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation):
+the creator-attribution amendment keeps the workspace client in v0.15 with the
+narrow, gate-scoped ID-set rule in
 [contract 052](contracts/052-runtime-kernel-contract.md). It forbids adopting a
 container from another checkout, project or stale generation and requires a
 complete before/after exact-ID set under the exclusive environment gate. A
 same-user actor able to create an identically labelled container during that
 window is explicitly outside the v0.15 threat model. This does not qualify a
 backend or waive the native Colima, Docker Desktop and Linux Docker checks.
+Tom answered “Go with your recommendation” to the Supervisor that day;
+`c18c3d2c2` recorded the ruling in 052 and Q-017. The earlier exact-created-ID
+direction was an operator ruling by Tom on 2026-10-30.
+
+### Workspace activation amendments
+
+Tom's base creator-attribution ruling above and the Effigy Supervisor's
+implementation amendments are distinct. Sources: Queue-held effigy#510 brief,
+“Owner ruling on configuration-only recreation (2026-10-31)” and its subsequent
+backend-capability amendments; Queue-held effigy#506 brief, “Cross-owner merge
+ruling (Supervisor 2026-11-01)”.
+
+- **Supervisor under Tom’s standing delegation, 2026-10-31:**
+  configuration-only Compose recreation must support the new exact workspace
+  ID, including at the same image reference. The subsequent capability and
+  desired-successor amendments preserve the narrowed foreign-creator exclusion.
+  [052 §8.11–§8.12](contracts/052-runtime-kernel-contract.md#812-gate-scoped-creation-inference-effigy510)
+  owns the exact identity, replacement and capability rules. These amendments
+  do not replace Tom's base threat-model ruling or qualify a backend.
+- **Supervisor under Tom’s standing delegation, 2026-11-01 — cross-owner merge ruling for #506:**
+  retain the activation's owned artifact, alias, boxed probe and one absolute
+  deadline. Gated reobserve must use an independent fresh backend read with
+  that same deadline and exact ID/fence, never pass through an earlier
+  observation, and fail closed on unknown, changed or missing evidence.
+  [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1)
+  and [053 §3](contracts/053-environment-reconciler-contract.md#3-transitions)
+  apply this requirement to the integration. This records the existing
+  Queue-held direction; it does not claim #506 or native #512 behavior is shipped.
+
+### Operator feedback
 
 The complete human-facing feedback ruling also blocks v0.15. Every command
 plane must show the live, subject-named terminal steps and actionable errors
@@ -788,9 +832,9 @@ remains a finding. A changed blob gets scanned again.
 
 ## Q-021: Guest facts the workspace client channel still needs
 
-Status: open (kernel owner seam implemented by #488; guest identity, transport and glue implementation and qualification outstanding)
+Status: open (kernel, guest identity, TLS transport, publication and serving seams implemented; production activation, wider command coverage and native qualification outstanding)
 Asked: 2026-10-29
-Owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
+Original seam owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
 Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
 
 Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
@@ -799,54 +843,24 @@ crash/fault/retry and ownership-transfer draft is explicitly
 [non-normative, unimplemented/post-v0.15 candidate material](contracts/052-runtime-kernel-contract.md#appendix-b-non-normative-post-v015-sequence-candidates),
 with no acceptance claims. It does not qualify any backend or waive Q-017.
 
-Three production facts remain to implement and prove:
+The three originally missing facts now have implemented seams in
+[052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1):
 
-- **Guest-local identity.** Observe the full container id, boot, platform and
-  libc independently of the context, using qualified guest-local sources.
-  Cgroup is diagnostic only under §8.2: even a matching full cgroup id cannot
-  prove placement. Cgroup-only availability refuses; backend fixture/native
-  qualification must distinguish it from a qualified mountinfo observation.
-  The host selects the first artifact from the bound image; executing it verifies
-  that selection. Prepare compares the staged binary's own observation with the
-  host-bound target before publication. Unknown/conflicting facts refuse before
-  credential access; no Docker socket, fabricated identity or context-as-proof.
-- **Qualified TLS locator.** One session-owned key/listener; verify SPKI pin and
-  key possession before Hello or any credential frame. Colima, Docker Desktop
-  and Linux Docker each need bounded local and native qualification. §8.11 pins
-  the typed alias/bind → session key/listener → qualified locator handoff and
-  reconnect interface; only the verified locator reaches context publication.
-  A fresh Linux project renders its alias before creation, applies to create the network
-  and guest, then resolves/probes from that guest; it never needs the missing
-  network first or guesses its IPAM gateway as the daemon's host-gateway address.
-- **Actual session publication.** Use #484's reservation, frozen
-  `SessionBinding {owner, run, generation}`, `admit_reserved`, typed publication
-  receipt and atomic commit of active(E), mapping and Borrow. The immutable v2
-  context publishes the actual session run and S, separate from environment E.
-  Preserve canonical Task-before-Env order and the predecessor's live holders.
-  The kernel seam for all of this landed in effigy#488
-  (`WorkspaceActivationReservation::decide`, `commit_selection`,
-  `Attachments::selection_switched`, `unfinished_selection`,
-  `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
-  `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
-  the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
-  that publishes a generation: it needs the session's live launch, a parsed and
-  validated v2 context document, and inputs a decision froze — a fresh
-  project's unselected artifact is frozen by its first publication), the
-  per-selector readback switch/recovery order (the kernel reads selectors and
-  objects through a `SelectorReader` under `Gate(Env)` and records only what it
-  observed) and the settled-successor abandonment are implemented and
-  fault-proven against the real journal, including concurrent decision callers.
-  Listener/key custody is rooted in the detached session owner: a launch needs
-  a mutable admitted session `Run` and its exact `SessionRef`; `SessionOwner` is
-  identity evidence, not duplicate gate custody. Both `selection_switched` and
-  `selection_recovered` require the retained `SessionLaunch`; recovery also takes
-  target and serving probes. `SelectionReceipt::new` takes the session Run and
-  an exact-target prior-selector reader, while `SelectorReader::target` binds
-  readback to the committed backend/container/boot. Deserialized receipts carry
-  no constructor-validation authority. What remains for #482 is the container/runner typed wrapper and
-  guest selector switching, for #483 the transport, server-key generation and
-  TLS qualification, and for #452 the glue and supervisor ownership transfer. The
-  detailed appendix is still non-normative.
+- **Guest-local identity:** `ProcGuestIdentity` and strict v2 context verification
+  compare independently observed container/boot/platform/libc before credential
+  access. Native qualification of those sources remains required.
+- **Qualified TLS locator:** `workspace_transport` implements pinned TLS and the
+  session-owned listener/key, with bounded private qualification fixtures for
+  Colima, Docker Desktop and Linux Docker. These are not native backend proofs.
+- **Session publication and serving:** the kernel reservation/selection APIs,
+  container/runner publication adapter, `ServingOwner` and production dispatcher
+  are implemented. The production activation caller, enrolment mint site and
+  wider command coverage remain absent; the dispatcher currently serves only
+  host `runs:list`/`runs:status` observations. The merged seams do not establish
+  that an ordinary command publishes a qualified context or serves a guest.
+
+The owning contract records the exact APIs, ordering, refusal rules and proof
+limits. Its historical design sketches are not further implementation evidence.
 
 Recovery judges listener liveness independently of session and target. A bounded
 pinned TLS-only probe must be available while selection is unfinished, including
@@ -862,5 +876,19 @@ Code-first tasks own crash-family, concurrent-decision, fresh-network and
 mispinned-peer zero credential/Hello-byte proofs. Proposed test names and #452's
 239 fake tests supply no production evidence. Q-017's Colima, Docker Desktop and
 Linux Docker qualification gate remains; safe refusal is not qualification.
-Rootless Linux and Apple Containers have no qualification claim. No production
-code or stop condition changes in this design-only seam.
+Rootless Linux and Apple Containers have no qualification claim. These
+implementation seams do not waive the production activation or native
+qualification gates.
+
+`052` §8.11 carries the current #506 detail: the answered render-preflight seal
+(`Objects::seal_for_preflight` -> retained `SealedPreflight` -> the one apply
+promoting it through `EnvRun::publish_sealed_desired` under `Gate(Env)`) and the
+creator adapter that reads #510's journal-bound exact-new-ID receipt. Unknown
+successors reserve `Absent`, including authorized non-live config recreation;
+only a receipt naming the current activation's exact new ID permits attribution.
+An attached ID is never attributed as created, and an `Observed` target retains
+its exact old identity. Missing, ambiguous or foreign evidence still refuses.
+The remaining gate is production lifecycle integration and native qualification
+under #452, rather than a missing creator receipt; the receipt alone proves no
+guest-session publication.
+

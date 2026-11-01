@@ -792,9 +792,9 @@ fn a_built_in_suite_settles_its_process_tree_before_the_scratch_is_released() {
                 .run(&command, work.path(), &suite_env, false)
                 .expect("the suite ran");
             assert_eq!(outcome.code, Some(0));
-            // The suite's verdict closes its child run, which stops the
+            // The attempt's own outcome closes its child run, which stops the
             // suite's whole process group.
-            custody.settle(true);
+            custody.settle(&outcome);
         }
         assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
     });
