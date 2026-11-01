@@ -491,7 +491,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No production activation caller or native backend qualification is wired to it
   yet; the pinned TLS transport, the guest client and the guest dispatch are
-  merged (§8.11, §8.12).
+  merged (contract 052 §8.11).
 - The workspace channel binds one attachment's streams to its terminal
   (contract 052 §8.11). Output sequence numbers are one series per stream id
   shared by every kind on it, so a stream's stdout and stderr no longer restart

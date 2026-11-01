@@ -623,6 +623,33 @@ same-user actor able to create an identically labelled container during that
 window is explicitly outside the v0.15 threat model. This does not qualify a
 backend or waive the native Colima, Docker Desktop and Linux Docker checks.
 
+### Workspace activation amendments
+
+Tom's base creator-attribution ruling above and the Effigy Supervisor's
+implementation amendments are distinct. Sources: Queue-held effigy#510 brief,
+“Owner ruling on configuration-only recreation (2026-10-31)” and its subsequent
+backend-capability amendments; Queue-held effigy#506 brief, “Cross-owner merge
+ruling (Supervisor 2026-11-01)”.
+
+- **2026-10-31 — Effigy Supervisor, under Tom's standing v0.15 authority:**
+  configuration-only Compose recreation must support the new exact workspace
+  ID, including at the same image reference. The subsequent capability and
+  desired-successor amendments preserve the narrowed foreign-creator exclusion.
+  [052 §8.11–§8.12](contracts/052-runtime-kernel-contract.md#812-gate-scoped-creation-inference-effigy510)
+  owns the exact identity, replacement and capability rules. These amendments
+  do not replace Tom's base threat-model ruling or qualify a backend.
+- **2026-11-01 — Effigy Supervisor, cross-owner merge ruling for #506:**
+  retain the activation's owned artifact, alias, boxed probe and one absolute
+  deadline. Gated reobserve must use an independent fresh backend read with
+  that same deadline and exact ID/fence, never pass through an earlier
+  observation, and fail closed on unknown, changed or missing evidence.
+  [052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1)
+  and [053 §3](contracts/053-environment-reconciler-contract.md#3-transitions)
+  apply this requirement to the integration. This records the existing
+  Queue-held direction; it does not claim #506 or native #512 behavior is shipped.
+
+### Operator feedback
+
 The complete human-facing feedback ruling also blocks v0.15. Every command
 plane must show the live, subject-named terminal steps and actionable errors
 defined in the product guardrails. Existing feedback work (#312 and #315) is a

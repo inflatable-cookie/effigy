@@ -3649,8 +3649,8 @@ no run, no resolution and no second credential.
   success or a refusal. Neither becomes a different claim on the way out.
 
 Three facts this section once recorded as unavailable to a guest are bound by
-the bullets under **Bound** below: `ProcGuestIdentity` observes the container
-itself, the pinned TLS adapter is the transport, and the strict v2 document
+the *Bound (merged implementation)* block below: `ProcGuestIdentity` observes
+the container itself, the pinned TLS adapter is the transport, and the strict v2 document
 publishes `session { run_id, generation }`. What a merged head still does not
 give a guest is a *production* activation: no production caller of
 `up_prepared` publishes a qualified locator, the host dispatcher is constructed
@@ -3893,7 +3893,8 @@ crash or a stopped listener before the close keeps the row, so a successor still
 finds the recorded owner and settles or refuses instead of silently dropping
 authority, and a settled session is never an owner.
 
-**Desired successor absence (owner ruling, 2026-10-31).**
+**Desired successor absence (Effigy Supervisor, 2026-10-31;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).**
 `TargetEvidence::Absent { project, backend }` means that the desired successor
 identity is unknown before apply, for a fresh project or an authorized recreation
 of a non-live predecessor. It does not assert that the project inventory is empty.
@@ -3906,8 +3907,9 @@ activation's own owned artifact, alias and boxed probe and its one absolute
 deadline; its gated reobserve is an independent fresh backend read under that same
 deadline, fenced to the exact ID, never a pass-through of an earlier observation,
 and it fails closed as `Unknown` when the evidence is unknown, changed or missing
-(Supervisor ruling, 2026-11-01). This clarifies target evidence without changing
-#509's kernel fence. No workspace-session publication may bypass its reserved
+(Effigy Supervisor, 2026-11-01;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)). This records
+the reobserve requirement without changing #509's kernel fence. No workspace-session publication may bypass its reserved
 `Absent` successor and the remaining staging/serving/commit gates.
 
 ### 8.12 Gate-scoped creation inference (effigy#510)
@@ -3935,15 +3937,15 @@ Receipts name the actual backend capability for each service:
   container. Independent reference-resolution observations still detect moves
   during this activation. A tag moved X→Y before activation may leave a running
   container on X with the same reference/config hash; that move is undetectable
-  on this engine, so the receipt never claims the old container runs Y (owner
-  ruling, 2026-10-31).
+  on this engine, so the receipt never claims the old container runs Y
+  (Effigy Supervisor, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 - `digest_reference`: the same exact repository/digest reference is immutable;
   its image-inspect resolution is still recorded and rechecked.
 
 Observed tag moves refuse. A same-user engine actor retagging and restoring a tag
-inside the gate is explicitly excluded, alongside forged identical labels (owner
-ruling, 2026-10-31). The gate excludes competing Effigy activations, not foreign
-same-user engine activity. These capability rules replace the reference-only
+inside the gate is explicitly excluded, alongside forged identical labels
+(Effigy Supervisor, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+The gate excludes competing Effigy activations, not foreign same-user engine activity. These capability rules replace the reference-only
 Colima refusal; Docker still requires its container image ID.
 
 The observations verify every row's exact full ID, Compose project/service,
@@ -3967,7 +3969,8 @@ exactly one verified workspace row must remain. The complete new-ID difference
 must equal the required creations plus that one workspace replacement, if any.
 No extra service or foreign ID is adopted. Zero-change re-up stays attached.
 This replaces the image-reference-only prediction that refused routine workspace
-configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
+configuration changes (Effigy Supervisor, 2026-10-31;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).
 Container-attested image IDs must match their reference lookups before and after
 apply. For reference-only predecessors, those lookups prove reference stability,
 not the old container's actual image; attached rows use the scoped reference/config-hash
@@ -3996,8 +3999,9 @@ adapter rechecks the complete project/image inventory immediately before
 `bind_target`. Each of those rechecks is an independent fresh backend read on the
 activation's one absolute deadline, fenced to the exact full ID; none reuses an
 earlier observation, and unknown, changed or missing evidence refuses as `Unknown`
-(Supervisor ruling, 2026-11-01). Only this run's created workspace ID can satisfy an absent target;
-a caller-supplied creator run ID is never authority. Attached IDs remain attached.
+(Effigy Supervisor, 2026-11-01;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).
+Only this run's created workspace ID can satisfy an absent target; a caller-supplied creator run ID is never authority. Attached IDs remain attached.
 Missing attribution is Unknown, not proof of no creator. The original activation
 deadline bounds the final observation callback and the pinned backend runs the
 ordinary Compose apply.

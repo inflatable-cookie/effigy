@@ -118,10 +118,12 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   Attached reference-only rows must match Compose's config hash for the merged
   frozen render. A pre-window tag move underneath an attached container is
   undetectable on this engine: the current lookup is never claimed as that
-  container's actual image (owner ruling, 2026-10-31). Nerdctl's absent one-off
+  container's actual image (Effigy Supervisor, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)). Nerdctl's absent one-off
   flag requires actual project/service, name and frozen network corroboration.
   Observed tag moves refuse; same-user retag/restore inside the gate is outside
-  the narrowed guarantee (owner ruling, 2026-10-31).
+  the narrowed guarantee (Effigy Supervisor, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments)).
   The post-apply service set must equal the frozen
   set. Before apply, the workspace predecessor is allowed to remain attached or
   be replaced for any Compose reason, including environment, mount and entrypoint
@@ -129,7 +131,8 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   disappear and one new full ID absent from the complete pre-apply set. The
   new-ID difference must equal that optional workspace replacement plus the
   required fresh/recreated services; other attached dependencies retain their
-  exact IDs (owner ruling, 2026-10-31; 052 §8.12). The record is
+  exact IDs (Effigy Supervisor, 2026-10-31;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.12). The record is
   explicitly a gate-scoped inference, never an engine create response. A same-user
   actor forging identical labels inside this exclusive window is outside the
   v0.15 guarantee. An `Absent` reservation names an unknown desired successor,
@@ -140,7 +143,8 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   probe and its one absolute deadline; the gated reobserve is an independent
   fresh backend read on that same deadline, fenced to the exact ID, never a
   pass-through of an earlier observation, and it fails closed on unknown, changed
-  or missing evidence (Supervisor ruling, 2026-11-01; 052 §8.11).
+  or missing evidence (Effigy Supervisor, 2026-11-01;
+  [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.11).
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;
