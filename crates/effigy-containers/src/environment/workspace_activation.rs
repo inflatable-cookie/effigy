@@ -395,6 +395,8 @@ pub struct ParkedWorkspaceActivation<'r> {
 #[derive(Debug)]
 pub enum ParkedAbortCustody<'r> {
     Activation(Box<ParkedWorkspaceActivation<'r>>),
+    CleanupActivation(Box<CleanupParkedWorkspaceActivation<'r>>),
+    Guarded(Box<GuardedAbortCustody<'r>>),
     Environment {
         environment: effigy_kernel::run::WorkspaceCleanupCustody<'r>,
         supervisor: Box<SessionSupervisor<'r>>,
@@ -410,6 +412,133 @@ pub enum ParkedAbortCustody<'r> {
         reservation: WorkspaceActivationReservation,
         attempt: effigy_kernel::run::RequestId,
     },
+}
+
+/// A gate-free owner restricted to inspecting and clearing integration work.
+/// It cannot reacquire publication authority.
+#[derive(Debug)]
+pub struct CleanupParkedWorkspaceActivation<'r> {
+    environment: effigy_kernel::run::ParkedWorkspaceRun<'r>,
+    supervisor: SessionSupervisor<'r>,
+    root: &'r effigy_kernel::root::StateRoot,
+    reservation: WorkspaceActivationReservation,
+    attempt: effigy_kernel::run::RequestId,
+}
+
+impl<'r> CleanupParkedWorkspaceActivation<'r> {
+    pub fn integration_snapshot(
+        &self,
+        ctx: &EnvContext<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        if !std::ptr::eq(self.root, ctx.root) {
+            return Err(EnvError::Invalid(
+                "workspace cleanup uses a different state root".into(),
+            ));
+        }
+        let cleanup = ctx.cleanup()?;
+        let cx = cleanup
+            .operation()
+            .effects()
+            .map_err(|e| EnvError::Invalid(format!("cleanup authority unavailable: {e}")))?;
+        self.environment
+            .integration_snapshot(&self.supervisor, &cx)
+            .map_err(EnvError::Kernel)
+    }
+
+    pub fn clear_step(
+        &mut self,
+        ctx: &EnvContext<'_>,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+    ) -> Result<(), EnvError> {
+        if !std::ptr::eq(self.root, ctx.root) {
+            return Err(EnvError::Invalid(
+                "workspace cleanup uses a different state root".into(),
+            ));
+        }
+        let cleanup = ctx.cleanup()?;
+        let cx = cleanup
+            .operation()
+            .effects()
+            .map_err(|e| EnvError::Invalid(format!("cleanup authority unavailable: {e}")))?;
+        self.environment
+            .record_integration_step(
+                &mut self.supervisor,
+                &cx,
+                step,
+                effigy_kernel::run::WorkspaceIntegrationState::Cleared,
+            )
+            .map_err(EnvError::Kernel)
+    }
+
+    pub fn abort(
+        self,
+        ctx: &EnvContext<'r>,
+        wait: Wait,
+    ) -> Result<(), (EnvError, Box<ParkedAbortCustody<'r>>)> {
+        match self.integration_snapshot(ctx) {
+            Ok(steps) if steps.is_empty() => {}
+            Ok(_) => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+        };
+        let Self {
+            environment,
+            supervisor,
+            root,
+            reservation,
+            attempt,
+        } = self;
+        if let Err((error, environment)) = environment.settle(&cleanup, &mut EnvSettlement) {
+            return Err((
+                EnvError::Kernel(error),
+                Box::new(ParkedAbortCustody::Environment {
+                    environment,
+                    supervisor: Box::new(supervisor),
+                    reservation,
+                    attempt,
+                }),
+            ));
+        }
+        GuardedAbortState::Session {
+            root,
+            supervisor: Box::new(supervisor),
+            reservation,
+            attempt,
+        }
+        .retry(ctx, wait)
+        .map_err(|(error, state)| {
+            (
+                error,
+                Box::new(ParkedAbortCustody::Guarded(Box::new(GuardedAbortCustody {
+                    state: *state,
+                }))),
+            )
+        })
+    }
 }
 
 impl<'r> ParkedWorkspaceActivation<'r> {
@@ -688,6 +817,52 @@ impl<'r> ParkedWorkspaceActivation<'r> {
 }
 
 impl<'r> WorkspaceActivation<'r> {
+    /// Give up Env for cleanup without granting publication authority again.
+    pub fn park_for_cleanup(
+        self,
+        ctx: &EnvContext<'r>,
+    ) -> Result<CleanupParkedWorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        if self.committed.is_some() || self.selected || !self.environment.owns_root(ctx.root) {
+            return Err((EnvError::Invalid("workspace cleanup requires an uncommitted activation and its original state root".into()), Box::new(self)));
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => return Err((error, Box::new(self))),
+        };
+        let Self {
+            environment,
+            supervisor,
+            session,
+            reservation,
+            selected,
+            committed,
+            supervisor_id,
+            attempt,
+        } = self;
+        match environment.park_for_cleanup(&reservation, &supervisor, &cleanup) {
+            Ok(environment) => Ok(CleanupParkedWorkspaceActivation {
+                environment,
+                supervisor,
+                root: ctx.root,
+                reservation,
+                attempt,
+            }),
+            Err((error, environment)) => Err((
+                error,
+                Box::new(Self {
+                    environment: *environment,
+                    supervisor,
+                    session,
+                    reservation,
+                    selected,
+                    committed,
+                    supervisor_id,
+                    attempt,
+                }),
+            )),
+        }
+    }
+
     /// Release Env after the one apply and target bind, retaining both exact
     /// owners and the creator evidence. Failure returns guarded custody.
     pub fn park(
@@ -1675,6 +1850,9 @@ mod tests {
             [&reservation],
         ).unwrap(), 1);
         drop(connection);
+        let (_, activation) = activation
+            .park_for_cleanup(&ctx)
+            .expect_err("committed reservation cannot release Env for cleanup");
         let (_, custody) = activation
             .abort_guarded_recoverable(&ctx, Wait::FailFast)
             .expect_err("committed reservation must refuse before settlement");

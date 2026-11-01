@@ -1327,6 +1327,65 @@ impl<'a> Run<'a> {
             Err(error) => Err((error, Box::new(self))),
         }
     }
+
+    /// Release a resumed Env owner solely for integration cleanup.  This
+    /// token carries no resume facts and has an expired workload deadline.
+    pub fn park_workspace_for_cleanup(
+        mut self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+        session: &Run<'_>,
+        cleanup: &CleanupContext,
+    ) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
+        let checked = (|| {
+            cleanup.operation().check("workspace cleanup park")?;
+            let snapshot =
+                reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
+            let binding = snapshot
+                .session
+                .as_ref()
+                .ok_or_else(|| RunError::refused("workspace cleanup session missing"))?;
+            if !session.owns_workspace_session_for_cleanup(self.root, binding)? {
+                return Err(RunError::refused(
+                    "retained workspace session owner does not hold its exact slot",
+                ));
+            }
+            let identity = crate::ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or_else(|| {
+                    RunError::unavailable("workspace activation owner identity unavailable")
+                })?;
+            let recorded: Option<String> = self.store.conn().query_row(
+                "SELECT owner_identity FROM runs WHERE run_id=?1",
+                [self.id.to_string()],
+                |row| row.get(0),
+            )?;
+            let recorded: crate::ident::ProcessIdentity =
+                serde_json::from_str(recorded.as_deref().ok_or_else(|| {
+                    RunError::unavailable("workspace activation recorded identity unavailable")
+                })?)?;
+            if recorded != identity {
+                return Err(RunError::refused(
+                    "workspace activation owner identity changed",
+                ));
+            }
+            cleanup.operation().check("workspace cleanup park")?;
+            let gates = self.guard.park().map_err(RunError::refused)?;
+            Ok((snapshot, identity, gates))
+        })();
+        match checked {
+            Ok((snapshot, identity, gates)) => Ok(ParkedWorkspaceRun {
+                run: self,
+                gates,
+                reservation: reservation.clone(),
+                snapshot,
+                deadline: std::time::Instant::now(),
+                identity,
+                resume_facts: None,
+            }),
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
     pub fn begin(
         cx: &EffectContext,
         root: &'a StateRoot,
