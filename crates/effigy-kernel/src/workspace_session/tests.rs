@@ -6556,9 +6556,6 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
         assert!(fired(), "fault {point:?} must fire");
         assert!(result.is_err(), "fault {point:?} must not report success");
         arm(None);
-        drop(activation_run);
-        drop(session_run);
-
         let reader = read_journal(&cx, &root);
         let generation = 1;
         if committed {
@@ -6605,10 +6602,32 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 "{point:?}: the obligation records exactly what ran"
             );
         }
+        // These are still this test process's exact owners. Settle them as
+        // owners instead of treating dropped handles as proof of process death.
+        if let Some(run) = activation_run.take() {
+            end_run(
+                &cx,
+                run,
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            );
+        }
+        if let Some(run) = session_run.take() {
+            end_run(
+                &cx,
+                run,
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            );
+        }
+        let reader = read_journal(&cx, &root);
         if state == Some("pending") {
-            // Both runs died, so the committed successor has no live owner:
-            // recovery refuses to complete a selection nothing is serving, and
-            // the obligation stays exactly where it was (recoverable, not lost).
+            // Both owners settled, so the committed successor has no live
+            // serving session and cannot complete the pending selection.
             let pending = una_finished(&reader, &environment).expect("unfinished selection");
             let error = selection_recovered(
                 &cx,
@@ -6641,25 +6660,6 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 Some("pending".to_owned()),
                 "{point:?}: the obligation is preserved for a live recovery"
             );
-        }
-        // No replay: settle the exact dead runs, then release an uncommitted
-        // fence. Nothing about a failed activation is retried as a guest effect.
-        for (owner, id) in [
-            (environment.clone(), run_id(231)),
-            (workspace_entry(), run_id(230)),
-        ] {
-            if run::summary(&reader, id).verified().is_some() {
-                run::settle_interrupted(
-                    &cx,
-                    &root,
-                    &owner,
-                    id,
-                    next(),
-                    &cleanup(&cx),
-                    &mut adapter(),
-                )
-                .unwrap_or_else(|error| panic!("recover {id} after {point:?}: {error}"));
-            }
         }
         if !committed {
             // A decision that never reserved leaves no fence to release; one
