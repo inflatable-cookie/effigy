@@ -158,6 +158,17 @@ pub(crate) fn activate(
     host: &ServingHostRequest,
     request: ContainerUpRequest,
 ) -> Result<ServiceOwner<'static>, RunError> {
+    preflight(host, &request)?;
+    Err(RunError::unavailable(PREPARATION_UNAVAILABLE))
+}
+
+/// Runs in the detached process before opening an effects root or admitting
+/// any run. This head cannot return activation authority: bounded Phase-A
+/// preparation remains unavailable even when read-only identity matches.
+pub(crate) fn preflight(
+    host: &ServingHostRequest,
+    request: &ContainerUpRequest,
+) -> Result<(), RunError> {
     let until = request.deadline(host)?;
     validate_identity(host, until)?;
     Err(RunError::unavailable(PREPARATION_UNAVAILABLE))

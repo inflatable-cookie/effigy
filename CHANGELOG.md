@@ -13,6 +13,9 @@ During v0.x, MINOR bumps may include breaking changes.
   only; serialized seals, backend evidence and credentials are rejected.
   Container-mode `up` refuses before preparation while bounded Phase-A custody
   is unavailable, rather than falling through to ordinary reconciliation.
+- Workspace startup refusal preserves primary and cleanup errors. A settlement
+  error retains the stopped serving owner until explicit recovery or an
+  owner-loss transition retries with a fresh cleanup budget.
 
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.

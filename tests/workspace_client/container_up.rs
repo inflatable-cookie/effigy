@@ -2,101 +2,84 @@
 //! container orchestration or qualify any native backend.
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
-use effigy_kernel::ctx::{CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement};
-use effigy_kernel::observe::Observed;
-use effigy_kernel::run::{self, Phase};
 
 #[test]
-fn container_up_empty_budget_refuses_in_detached_supervisor_and_settles() {
-    let fixture =
-        effigy_test_support::Fixture::new("container-up-startup-refusal").expect("fixture");
-    let state = fixture.path().join("state");
-    let project = fixture.path().join("project");
-    std::fs::create_dir_all(&state).expect("state home");
-    std::fs::create_dir_all(&project).expect("project");
-    let digest = effigy_kernel::id::Digest::of(project.to_string_lossy().as_bytes());
-    let checkout: Vec<u8> = digest.0.iter().copied().take(16).collect();
-    let request = serde_json::json!({
-        "schema": "effigy.workspace-serving.v1",
-        "state_home": state,
-        "project_path": project,
-        "checkout": checkout,
-        "environment": "dev",
-        "profile": "default",
-        "activation": {
-            "kind": "ContainerUp",
-            "request": { "environment": "dev", "retention": "persistent", "budget_ms": 0 },
-        },
-    });
-    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("__workspace-serving-fixture")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("front end");
-    child
-        .stdin
-        .take()
-        .expect("stdin")
-        .write_all(request.to_string().as_bytes())
-        .expect("intent");
-    let output = child.wait_with_output().expect("front end exit");
-    assert!(!output.status.success(), "startup was acknowledged");
-    assert!(output.stdout.is_empty(), "no committed announcement");
-    let error = String::from_utf8(output.stderr).expect("diagnostic");
-    assert!(
-        error.contains("workspace activation budget is empty"),
-        "{error}"
-    );
-    let host_run = error
-        .split("supervisor_run=")
-        .nth(1)
-        .and_then(|rest| rest.split(')').next())
-        .expect("host run")
-        .parse()
-        .expect("run identity");
-    let observe = OperationContext::new(
-        Deadline::At(Instant::now() + Duration::from_secs(60)),
-        CancelToken::default(),
-        Limits {
-            capture_tail: 1024,
-            log_rotate: 4096,
-            log_keep: 2,
-            line_max: 512,
-            queue_bytes: 2048,
-            probe_concurrency: 2,
-        },
-        EffectClass::Observe,
-        Placement::Host,
-    )
-    .observe()
-    .expect("observe capability");
-    let location = effigy_kernel::location::CheckoutLocation {
-        root: effigy_core::worktree_scope::checkout_root(&project),
-    };
-    let root =
-        match effigy_kernel::root::StateRoot::checkout_observe_in(&observe, &state, &location) {
-            Observed::Verified(root, _) => root,
-            other => panic!("host journal unavailable: {other:?}"),
-        };
-    let until = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Observed::Verified(reader, _) = effigy_kernel::store::Store::read(&observe, &root) {
-            if let Observed::Verified(summary, _) = run::summary(&reader, host_run) {
-                if summary.phase == Phase::Closed {
-                    assert_eq!(summary.cleanup_complete, Some(true));
-                    break;
-                }
-            }
-        }
-        assert!(Instant::now() < until, "refused supervisor did not settle");
-        std::thread::sleep(Duration::from_millis(20));
+fn container_up_detached_preflight_refuses_before_any_journal_token_or_mount_effect() {
+    for (case, budget, checkout, reason) in [
+        (
+            "empty-budget",
+            0,
+            [1u8; 16],
+            "workspace activation budget is empty",
+        ),
+        ("wrong-checkout", 1000, [2u8; 16], "checkout differs"),
+        (
+            "absent-backend",
+            1000,
+            [1u8; 16],
+            "identity observation unavailable",
+        ),
+    ] {
+        let fixture = effigy_test_support::Fixture::new(case).expect("fixture");
+        let state = fixture.path().join("state");
+        let project = fixture.path().join("project");
+        std::fs::create_dir_all(&state).expect("state home");
+        std::fs::create_dir_all(project.join(".git")).expect("project identity");
+        let token = project.join(".git/effigy-checkout-id");
+        let original_token = "01010101010101010101010101010101";
+        std::fs::write(&token, original_token).expect("preexisting identity");
+        let request = serde_json::json!({
+            "schema": "effigy.workspace-serving.v1", "state_home": state,
+            "project_path": project, "checkout": checkout, "environment": "dev",
+            "profile": "default", "activation": { "kind": "ContainerUp",
+                "request": {"environment":"dev", "retention":"persistent", "budget_ms":budget}},
+        });
+        let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("__workspace-serving-fixture")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("real front end and detached host");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(request.to_string().as_bytes())
+            .expect("intent");
+        let output = child.wait_with_output().expect("front end exit");
+        assert!(!output.status.success(), "{case}: startup acknowledged");
+        assert!(
+            output.stdout.is_empty(),
+            "{case}: no committed announcement"
+        );
+        let error = String::from_utf8(output.stderr).expect("diagnostic");
+        assert!(error.contains(reason), "{case}: {error}");
+        assert!(
+            !error.contains("supervisor_run="),
+            "{case}: a run was admitted: {error}"
+        );
+        assert!(
+            !project.join(".effigy/state/kernel.db").exists(),
+            "{case}: checkout journal was created"
+        );
+        assert!(
+            !state.join(".effigy/state/kernel.db").exists(),
+            "{case}: home journal was created"
+        );
+        assert!(
+            !state.join(".effigy/state/machine.db").exists(),
+            "{case}: machine journal was created"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&token).expect("identity remains"),
+            original_token
+        );
+        assert!(
+            !project.join("prepared").exists(),
+            "{case}: mount source was prepared"
+        );
     }
-    // Refusal occurred before loading a declaration or preparing a backend.
-    assert!(!project.join("effigy.toml").exists());
 }
 
 #[test]
@@ -180,4 +163,97 @@ mounts = ["prepared:/workspace/prepared:ro"]
         !project.join(".effigy").exists(),
         "checkout state was materialized"
     );
+}
+
+#[test]
+fn refused_service_retains_exact_cleanup_custody_until_explicit_stop() {
+    use effigy_kernel::run::Phase;
+    use std::time::{Duration, Instant};
+    let fixture = effigy_test_support::Fixture::new("workspace-refusal-cleanup").expect("fixture");
+    let state = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state).expect("state");
+    std::fs::create_dir_all(&project).expect("project");
+    let digest = effigy_kernel::id::Digest::of(project.to_string_lossy().as_bytes());
+    let checkout: Vec<u8> = digest.0.iter().copied().take(16).collect();
+    let request = serde_json::json!({
+        "schema":"effigy.workspace-serving.v1", "state_home":state,
+        "project_path":project, "checkout":checkout, "environment":"cleanup-proof", "profile":"default",
+        "activation":{"kind":"Disposable", "supervisor_id":"cleanup-proof", "capability":super::CAPABILITY,
+            "tls_budget_ms":1000, "omit_selection_record":true, "fail_refusal_cleanup":true},
+    });
+    let mut probe = effigy::workspace_serving_fixture::start_refused_host_probe(
+        &request.to_string(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_effigy")),
+    )
+    .expect("original detached owner");
+    let host_run = probe.run();
+    let error = probe.await_refusal().expect("refusal with retained pipe");
+    assert!(
+        error.contains("no committed selection"),
+        "primary error lost: {error}"
+    );
+    assert!(
+        error.contains("cleanup failed"),
+        "cleanup error lost: {error}"
+    );
+    assert!(error.contains("exact owner retained"), "{error}");
+    assert!(
+        error.contains("key_held=false serving=false"),
+        "listener/key remained servable: {error}"
+    );
+    let session_run = error
+        .split("session_run=")
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .expect("exact session run")
+        .parse()
+        .expect("session identity");
+    let endpoint = error
+        .split("listener=")
+        .nth(1)
+        .and_then(|value| value.split_whitespace().next())
+        .expect("retained lease endpoint");
+    let address = super::endpoint_of(endpoint);
+    assert!(
+        std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err(),
+        "stopped listener still accepts grants"
+    );
+    let effect = super::effects();
+    let observe = super::observation();
+    let root = super::state_root(&effect, &state, &project);
+    for run in [host_run, session_run] {
+        assert_ne!(
+            super::read_summary(&observe, &root, run)
+                .expect("exact run retained")
+                .phase,
+            Phase::Closed
+        );
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_ne!(
+        super::read_summary(&observe, &root, session_run)
+            .expect("no automatic retry")
+            .phase,
+        Phase::Closed
+    );
+    probe.stop().expect("explicit exact-host stop");
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        let closed = [host_run, session_run].into_iter().all(|run| {
+            super::read_summary(&observe, &root, run).is_some_and(|summary| {
+                summary.phase == Phase::Closed && summary.cleanup_complete == Some(true)
+            })
+        });
+        if closed {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "original owners did not recover cleanup"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err());
+    super::settle_fixture(&fixture);
 }

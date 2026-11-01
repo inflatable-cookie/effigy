@@ -564,3 +564,54 @@ fn read_answer_within(
         }
     }
 }
+
+/// A test front end that keeps its original owning pipe after a startup
+/// refusal. It lets the proof inspect retained cleanup custody and then send
+/// an explicit stop to that exact supervisor, without creating another owner.
+#[derive(Debug)]
+pub struct RefusedHostProbe {
+    host: super::workspace_client::serving_host::ServingHost,
+    effect: effigy_kernel::ctx::EffectContext,
+}
+
+impl RefusedHostProbe {
+    pub fn run(&self) -> effigy_kernel::id::RunId {
+        self.host.run()
+    }
+
+    pub fn await_refusal(&mut self) -> Result<String, String> {
+        match self
+            .host
+            .await_serving(&self.effect, Duration::from_secs(30))
+        {
+            Err(error) => Ok(error.to_string()),
+            Ok(_) => Err("the cleanup refusal unexpectedly announced Serving".into()),
+        }
+    }
+
+    pub fn stop(self) -> Result<(), String> {
+        self.host
+            .stop(&self.effect)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub fn start_refused_host_probe(
+    request_json: &str,
+    executable_path: &std::path::Path,
+) -> Result<RefusedHostProbe, String> {
+    let request: ServingHostRequest = serde_json::from_str(request_json)
+        .map_err(|_| "the cleanup probe request is unreadable".to_owned())?;
+    let effect = task_engine::effect_context(OpenReason::DevServer);
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&request.project_path),
+    };
+    let root = StateRoot::checkout_effects(&effect, &request.state_home, &location)
+        .map_err(|error| error.to_string())?;
+    let executable = effigy_kernel::supervise::Executable::capture(executable_path)
+        .map_err(|error| error.to_string())?;
+    let host = serving_host::start(&effect, &root, &request, &executable)
+        .map_err(|error| error.to_string())?;
+    Ok(RefusedHostProbe { host, effect })
+}

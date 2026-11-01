@@ -474,6 +474,46 @@ where
         supervisor.settle(cleanup, adapter)
     }
 
+    /// Stop service while preserving this exact owner on a settlement error.
+    /// A fresh explicit recovery may retry using the returned custody.
+    pub(crate) fn settle_with_recoverable(
+        mut self,
+        cause: crate::runner::workspace_client::supervisor::RetirementCause,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+        adapter: &mut impl effigy_kernel::run::SettlementAdapter,
+    ) -> Result<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>, (RunError, Box<Self>)>
+    {
+        use crate::runner::workspace_client::supervisor::RetirementCause;
+        self.stop();
+        let workload = match cause {
+            RetirementCause::OwnerLost => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                    signal: None,
+                })
+            }
+            RetirementCause::ListenerFailed => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                    signal: None,
+                })
+            }
+            RetirementCause::Settled | RetirementCause::Stopped | RetirementCause::Down => None,
+        };
+        if let Some(workload) = workload {
+            if let Err(error) = self.supervisor.interrupt(cleanup, workload) {
+                return Err((error, Box::new(self)));
+            }
+        }
+        match self.supervisor.settle_recoverable(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err((error, supervisor)) => {
+                self.supervisor = *supervisor;
+                Err((error, Box::new(self)))
+            }
+        }
+    }
+
     /// Take the session's serving custody. The supervisor must be the adopted
     /// owner of the run the launch belongs to; the kernel refuses anything else
     /// at the first [`SessionLaunch::serve`].
