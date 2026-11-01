@@ -2902,7 +2902,7 @@ plan or a second owner.
 | Doctor, task resolution and status | Use pinned facts for local reads and bounded host Observe for live facts. Observe writes no host state. |
 | Container down, status and logs | Forward to the host engine. Down follows the session-aware holder and child-settlement order in §8.7. |
 | Stop, restart and runs stop | Forward to the exact host owner and run with generation fencing. Stale or unknown identity refuses. |
-| Detach, attach, reconnect, terminal input and resize | Attach to the selected existing session/run, retain client and terminal ownership, and authenticate and fence input and resize. A secondary terminal's loss stops nothing; two-real-PTY proof is effigy#519. |
+| Detach, attach, reconnect, terminal input and resize | Attach to the selected existing session/run; a new owner claim is permitted only after durable acknowledged detach under §8.7. Authenticate and fence input and resize. A secondary terminal's loss stops nothing; two-real-PTY proof is effigy#519. |
 | Runs list and status | Use bounded host Observe. Status names and verifies one checkout-scoped run. |
 
 Shared-lock task admission, pause, gateway/config/install/release over the
@@ -2931,6 +2931,23 @@ not a guest retry: its owning engine must verify applicable session and
 reservation state and obey the same gates, holders and custody. A live or
 unknown session never authorizes a legacy bypass; guest `Unknown` never
 permits resending the indeterminate request or local execution.
+
+**Supervisor under Tom’s Level 1 ruling, 2026-11-01:** reconnect does not
+transfer a live foreground owner. Inline owner EOF cancels its run; detached
+owner EOF without acknowledged detach stops its child. Only a durably
+acknowledged detach leaves that child running. The connection that admitted a
+run is its owner; a secondary never displaces a live owner, and a transferable
+admission ticket is not a client identity.
+
+After durable acknowledged detach, an authenticated client may make a new,
+explicit `Grant` owner claim. The host verifies pinned TLS, the grant book, the
+session and container/boot identities, and the exact session and run fences and
+generations. One atomic durable owner/attachment compare-and-swap decides the
+claim: one contender wins; concurrent others attach as secondaries or refuse.
+Stale or revoked grants refuse. Replay never creates an Owner, and no foreground
+reconnect or retry of an unknown invocation is authorized. New owner-claim
+journal state and the attachment transition are lifecycle slice E work after the
+#512 base, not an existing or qualified implementation.
 
 - The workspace session is a `Detached` run owned by `Task(TaskId)` of the
   environment's workspace entry — the **same logical owner** at every generation,

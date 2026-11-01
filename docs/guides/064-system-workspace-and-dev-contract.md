@@ -143,6 +143,13 @@ progress. The session production path and each
 native backend still require their qualification; a prepared guest artifact
 alone is not that proof.
 
+For the required Level 1 behavior, closing a foreground owner's connection
+cancels its run. A detached child keeps running after its owner leaves only when
+its detach was acknowledged. A later authenticated client may explicitly claim
+ownership of that detached run; it cannot take ownership from a live owner.
+Secondary terminals do not stop the owner when they leave. This reconnect path
+remains lifecycle work and is not yet a qualified capability.
+
 ### Catalog sources in the workspace
 
 Workspace preparation installs the Effigy binary only. It copies no catalog
