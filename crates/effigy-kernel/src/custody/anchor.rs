@@ -3,6 +3,8 @@
 use super::*;
 use crate::ident::{self, ProcessState};
 
+const NO_LIVE_MEMBER: &str = "no live workload member to signal";
+
 pub(super) fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
     platform::generation(anchor).verified().is_some()
         && matches!(ident::process_state(anchor.pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _))
@@ -94,7 +96,7 @@ pub(super) fn signal(
     }
     delivered
         .map(|sent| Observed::Verified(sent, evidence()))
-        .unwrap_or_else(|| Observed::Unknown(unknown("no live workload member to signal")))
+        .unwrap_or_else(|| Observed::Unknown(unknown(NO_LIVE_MEMBER)))
 }
 
 pub(super) fn stop(
@@ -122,7 +124,7 @@ pub(super) fn stop(
             return state;
         }
         if let Err(e) = cx.operation().check("anchor stop") {
-            return Observed::Unknown(unknown(format!("{e:?}")));
+            return Observed::Unknown(unknown(e));
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -147,7 +149,7 @@ pub(super) fn recover(
             return stop(r, Some(anchor), cx);
         }
         if let Err(e) = cx.operation().check("anchored recovery") {
-            return Observed::Unknown(unknown(format!("{e:?}")));
+            return Observed::Unknown(unknown(e));
         }
         let sig = if Instant::now() >= grace || crate::signal::escalated() || escalate() {
             libc::SIGKILL
@@ -161,6 +163,10 @@ pub(super) fn recover(
                     Observed::Verified(..) | Observed::Absent(_)
                 ) {
                     return stop(r, Some(anchor), cx);
+                }
+                if matches!(&reason, crate::observe::UnknownReason::Inconsistent(message) if message == NO_LIVE_MEMBER)
+                {
+                    break;
                 }
                 return Observed::Unknown(reason);
             }

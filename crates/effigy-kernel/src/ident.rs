@@ -662,11 +662,65 @@ mod platform {
     }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
         // SSTOP and SZOMB from the macOS SDK's sys/proc.h.
-        Ok(match bsdinfo(pid)?.pbi_status {
+        let status = match bsdinfo(pid) {
+            Ok(info) => info.pbi_status as i32,
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+                return zombie_state(pid).and_then(|zombie| {
+                    if zombie {
+                        Ok(ProcessState::Zombie)
+                    } else {
+                        Err(error)
+                    }
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match status {
             4 => ProcessState::Stopped,
             5 => ProcessState::Zombie,
             _ => ProcessState::Active,
         })
+    }
+    // KERN_PROC_PID returns kinfo_proc beginning with extern_proc. libproc can
+    // reject zombies with ESRCH even while the BSD process table lists them.
+    fn zombie_state(pid: u32) -> io::Result<bool> {
+        #[repr(C)]
+        struct Prefix {
+            start_or_links: [usize; 2],
+            vmspace: usize,
+            sigacts: usize,
+            flags: libc::c_int,
+            status: libc::c_char,
+            pid: libc::pid_t,
+        }
+        let mut mib = [
+            libc::CTL_KERN,
+            libc::KERN_PROC,
+            libc::KERN_PROC_PID,
+            pid as i32,
+        ];
+        let mut storage = [0usize; 512];
+        let mut size = std::mem::size_of_val(&storage);
+        // SAFETY: storage is aligned and writable; sysctl writes at most size bytes.
+        let result = unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                4,
+                storage.as_mut_ptr().cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if size < std::mem::size_of::<Prefix>() {
+            return Ok(false);
+        }
+        // SAFETY: the kernel returned an extern_proc prefix in aligned storage.
+        let prefix = unsafe { &*storage.as_ptr().cast::<Prefix>() };
+        Ok(prefix.pid == pid as i32 && prefix.status == 5)
     }
     fn bsdinfo(pid: u32) -> io::Result<libc::proc_bsdinfo> {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();

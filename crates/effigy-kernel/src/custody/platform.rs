@@ -471,23 +471,29 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
                 continue;
             }
         }
-        match ident::process_state(pid) {
-            Observed::Verified(ProcessState::Zombie, _) => rows.push(MembershipRow::NotLive(pid)),
-            Observed::Verified(_, _) => match ident::process_identity(pid) {
-                // The generation travels with a live row so evidence is
-                // incarnation-exact rather than a bare number.
-                Observed::Verified(identity, _) => rows.push(MembershipRow::Live(identity)),
-                // Live at the state read, gone at the identity read: it may have
-                // forked into this group first.
-                Observed::Absent(_) => rows.push(MembershipRow::Unproven(pid)),
-                Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
-            },
-            // A listed member may have forked before disappearing at this read.
-            Observed::Absent(_) => rows.push(MembershipRow::Unproven(pid)),
-            Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
-        }
+        rows.push(membership_row(pid, ident::process_state(pid), || {
+            ident::process_identity(pid)
+        })?);
     }
     Ok(rows)
+}
+
+// Keep the two reads distinct: disappearance at either stage is unproven.
+pub(crate) fn membership_row(
+    pid: u32,
+    state: Observed<ProcessState>,
+    identity: impl FnOnce() -> Observed<ProcessIdentity>,
+) -> io::Result<MembershipRow> {
+    match state {
+        Observed::Verified(ProcessState::Zombie, _) => Ok(MembershipRow::NotLive(pid)),
+        Observed::Verified(_, _) => match identity() {
+            Observed::Verified(identity, _) => Ok(MembershipRow::Live(identity)),
+            Observed::Absent(_) => Ok(MembershipRow::Unproven(pid)),
+            Observed::Unknown(r) => Err(io::Error::other(format!("{r}"))),
+        },
+        Observed::Absent(_) => Ok(MembershipRow::Unproven(pid)),
+        Observed::Unknown(r) => Err(io::Error::other(format!("{r}"))),
+    }
 }
 
 /// Verdict of one inventory round, given the incarnations the caller has evidence

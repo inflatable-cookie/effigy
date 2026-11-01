@@ -116,6 +116,34 @@ fn wait(mut yes: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+#[test]
+fn membership_row_keeps_both_vanish_stages_unproven() {
+    use super::platform::{membership_row, MembershipRow};
+    let pid = 42;
+    let absent = || Observed::Absent(AbsenceProof::NoSuchProcess { pid });
+    assert_eq!(
+        membership_row(pid, absent(), || panic!("identity read after absence")).unwrap(),
+        MembershipRow::Unproven(pid)
+    );
+    assert_eq!(
+        membership_row(
+            pid,
+            Observed::Verified(crate::ident::ProcessState::Active, evidence()),
+            || Observed::Absent(AbsenceProof::NoSuchProcess { pid })
+        )
+        .unwrap(),
+        MembershipRow::Unproven(pid)
+    );
+    assert_eq!(
+        membership_row(
+            pid,
+            Observed::Verified(crate::ident::ProcessState::Zombie, evidence()),
+            || panic!("identity read after zombie")
+        )
+        .unwrap(),
+        MembershipRow::NotLive(pid)
+    );
+}
 /// Closure classification keeps an unresolved row out of closure, and exclusion is
 /// incarnation-exact: the accounted generation is skipped, a recycled pid is a
 /// member again, and a vanished row is never absence (effigy#520).
