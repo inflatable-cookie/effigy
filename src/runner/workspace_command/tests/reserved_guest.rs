@@ -94,6 +94,8 @@ impl GuestWorkspace for Guest {
 #[derive(Clone, Copy, Debug)]
 enum Fault {
     None,
+    Revalidate,
+    RevalidateChanged,
     LongObservationBudget,
     ExpiredDeadline,
     /// The gated re-observation sees a replaced target.
@@ -593,6 +595,12 @@ home = "/home/vscode"
                                             vm_boot_id: "ff".repeat(32),
                                             ..reobserved_target.clone()
                                         },
+                                        Fault::RevalidateChanged if gated_reads.get() > 1 => {
+                                            ContainerIdentity {
+                                                vm_boot_id: "ff".repeat(32),
+                                                ..reobserved_target.clone()
+                                            }
+                                        }
                                         // Another valid full id: individually a good
                                         // observation, but not the frozen one.
                                         Fault::GatedIdMismatch => ContainerIdentity {
@@ -686,9 +694,22 @@ home = "/home/vscode"
             Fault::RecoveryDead | Fault::RecoveryUnknown => {
                 recover_fixture(request, observe, shared.clone(), 0, fault)
             }
+            Fault::Revalidate | Fault::RevalidateChanged => {
+                let backend =
+                    effigy_containers::environment::select_backend(&policy.repo_root, &policy);
+                crate::runner::environment::workspace::up(request, &[], |activation| {
+                    let input = observe(activation)?;
+                    let mut bound = super::bind_reserved_guest(activation, input)?;
+                    bound.revalidate(activation, backend.adapter().as_mut())?;
+                    super::publish_bound_reserved_guest(activation, bound)
+                })
+            }
             _ => up_prepared(request, &[], observe),
         };
-        if matches!(fault, Fault::None | Fault::LongObservationBudget) {
+        if matches!(
+            fault,
+            Fault::None | Fault::LongObservationBudget | Fault::Revalidate
+        ) {
             let calls = std::fs::read_to_string(fixture.path().join("docker.calls")).unwrap();
             let applies = calls
                 .lines()
@@ -700,6 +721,14 @@ home = "/home/vscode"
             for file in &policy.compose_files {
                 assert!(applies[0].contains(file.to_str().unwrap()));
             }
+        }
+        if matches!(fault, Fault::RevalidateChanged) {
+            assert!(
+                result.is_err(),
+                "changed target must refuse after the second observation"
+            );
+            assert_eq!(gated_reads.get(), 2);
+            assert_eq!(minted.get(), 0, "no credential minted after mismatch");
         }
         if matches!(
             fault,
@@ -746,6 +775,7 @@ home = "/home/vscode"
         } else if matches!(
             fault,
             Fault::None
+                | Fault::Revalidate
                 | Fault::LongObservationBudget
                 | Fault::Recovery(_)
                 | Fault::RecoveryUnknown
@@ -883,6 +913,7 @@ home = "/home/vscode"
                 Fault::Identity
                     | Fault::UnknownIdentity
                     | Fault::GatedChangedTarget
+                    | Fault::RevalidateChanged
                     | Fault::GatedIdMismatch
                     | Fault::GatedExpiredDeadline
             ) {
@@ -901,6 +932,7 @@ home = "/home/vscode"
                     || !matches!(
                         fault,
                         Fault::GatedChangedTarget
+                            | Fault::RevalidateChanged
                             | Fault::GatedIdMismatch
                             | Fault::GatedExpiredDeadline
                     ),
@@ -911,6 +943,7 @@ home = "/home/vscode"
                     || matches!(
                         fault,
                         Fault::GatedChangedTarget
+                            | Fault::RevalidateChanged
                             | Fault::GatedIdMismatch
                             | Fault::GatedExpiredDeadline
                     ),
@@ -924,6 +957,12 @@ home = "/home/vscode"
 #[test]
 fn workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection() {
     run(Fault::None);
+}
+
+#[test]
+fn workspace_reserved_revalidation_reobserves_and_refuses_changed_target() {
+    run(Fault::Revalidate);
+    run(Fault::RevalidateChanged);
 }
 #[test]
 fn workspace_reserved_owner_refuses_identity_alias_peer_pin_and_publication_without_selector_switch(

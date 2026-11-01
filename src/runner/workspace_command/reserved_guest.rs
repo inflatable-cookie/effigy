@@ -97,7 +97,93 @@ pub(in crate::runner) struct BoundReservedGuest<'a> {
     ticket: effigy_kernel::run::GuestPublicationTicket,
     target: ContainerIdentity,
     binding: BoundPlatform,
+    plan: effigy_kernel::workspace_session::ActivationPlan,
+    creation: effigy_containers::environment::CreationReceipt,
     until: Instant,
+}
+
+impl BoundReservedGuest<'_> {
+    /// Reobserve the retained publication's exact target, platform, session and
+    /// creator inventory after Env is reacquired. Failure retains this input.
+    #[allow(dead_code)] // The parked production owner connects this seam.
+    pub(in crate::runner) fn revalidate(
+        &mut self,
+        activation: &mut WorkspaceActivation<'static>,
+        backend: &mut dyn effigy_containers::environment::EnvironmentBackend,
+    ) -> Result<(), EnvError> {
+        if Instant::now() >= self.until {
+            return Err(unavailable("workspace publication deadline expired"));
+        }
+        if activation.current_plan()? != self.plan || activation.session() != &self.plan.session() {
+            return Err(refused("workspace activation plan or session changed"));
+        }
+        let session = activation.session().clone();
+        if activation
+            .session_run_mut()
+            .session_owner()
+            .map_err(EnvError::Kernel)?
+            .run()
+            != session.run()
+        {
+            return Err(refused("workspace session owner changed"));
+        }
+        let reservation = activation.reservation().clone();
+        if activation
+            .environment_mut()
+            .workspace_bound_target(&reservation)?
+            != self.target
+        {
+            return Err(refused("workspace bound target changed"));
+        }
+        if activation.environment_mut().workspace_creation_receipt()? != self.creation {
+            return Err(refused(
+                "workspace creator receipt changed during integration",
+            ));
+        }
+        if activation
+            .environment_mut()
+            .recheck_creation(&reservation, backend, self.until)?
+            != self.creation
+        {
+            return Err(refused(
+                "workspace creator receipt changed during integration",
+            ));
+        }
+        let (targets, platform) = (self.input.reobserve)(self.until)?;
+        match (
+            &self.input.targets,
+            &targets,
+            &self.input.platform,
+            &platform,
+        ) {
+            (
+                Observed::Verified(original_targets, _),
+                Observed::Verified(current_targets, _),
+                Observed::Verified(original_platform, _),
+                Observed::Verified(current_platform, _),
+            ) if original_targets == current_targets
+                && original_platform == current_platform
+                && current_platform == &self.binding => {}
+            _ => {
+                return Err(refused(
+                    "workspace target or platform changed during integration",
+                ))
+            }
+        }
+        if Instant::now() >= self.until {
+            return Err(unavailable("workspace publication deadline expired"));
+        }
+        if activation
+            .environment_mut()
+            .recheck_creation(&reservation, backend, self.until)?
+            != self.creation
+        {
+            return Err(refused(
+                "workspace creator receipt changed during integration",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(in crate::runner) fn prepare_reserved_guest<'a>(
@@ -184,9 +270,11 @@ pub(in crate::runner) fn bind_reserved_guest<'a>(
         if binding.target != target {
             return Err(refused("image and apply target differ"));
         }
-        Ok::<_, EnvError>((target, binding))
+        let plan = activation.current_plan()?;
+        let creation = activation.environment_mut().workspace_creation_receipt()?;
+        Ok::<_, EnvError>((target, binding, plan, creation))
     })();
-    let (target, binding) = match bound {
+    let (target, binding, plan, creation) = match bound {
         Ok(bound) => bound,
         Err(error) => {
             activation.environment_mut().unknown_workspace_publication(
@@ -201,6 +289,8 @@ pub(in crate::runner) fn bind_reserved_guest<'a>(
         ticket,
         target,
         binding,
+        plan,
+        creation,
         until,
     })
 }
@@ -216,6 +306,8 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         ticket,
         target,
         binding,
+        plan: _,
+        creation: _,
         until,
     } = bound;
     let reservation = activation.reservation().clone();

@@ -1336,6 +1336,13 @@ impl<'r> EnvRun<'r> {
         }
     }
 
+    /// The complete creator receipt already recorded by this exact run.
+    pub fn workspace_creation_receipt(&mut self) -> Result<super::CreationReceipt, EnvError> {
+        self.journalled_creation()?
+            .and_then(|outcome| outcome.receipt().cloned())
+            .ok_or_else(|| EnvError::Invalid("activation has no complete creator receipt".into()))
+    }
+
     /// The one backend stop: journalled under a permit, then published
     /// `stopped` with a fresh holder check in the same transaction.
     pub fn stop_with(
@@ -1499,6 +1506,16 @@ impl<'r> EnvRun<'r> {
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
     ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
         self.workspace_plan_until(reservation, Instant::now() + Duration::from_secs(30))
+    }
+
+    /// Read the target already bound by this exact reserved owner.
+    pub fn workspace_bound_target(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::workspace_session::ContainerIdentity, EnvError> {
+        self.run
+            .workspace_bound_target(reservation)
+            .map_err(EnvError::Kernel)
     }
 
     fn workspace_plan_until(
