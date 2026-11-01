@@ -1753,11 +1753,9 @@ fn a_compose_input_missing_from_the_frozen_closure_refuses_by_name() {
         "checkout/compose.yml".to_string(),
         b"services: {}\n".to_vec(),
     );
-    // The apply passes repo-relative Compose inputs; the closure names them
-    // `checkout/<repo-relative>`.
     let compose_files = vec![
-        render_path.join("compose.yml"),
-        render_path.join(".effigy/runtime/compose/one.generated.compose.yml"),
+        render_path.join("checkout/compose.yml"),
+        render_path.join(generated),
     ];
     let error = super::verified_compose_inputs(
         &frozen,
@@ -1794,10 +1792,7 @@ fn the_apply_compose_input_list_equals_the_frozen_closure() {
     for relative in [checked_in, generated] {
         frozen.insert(relative.to_string(), bytes.to_vec());
     }
-    let compose_files = vec![
-        render_path.join("compose.yml"),
-        render_path.join(".effigy/runtime/compose/one.generated.compose.yml"),
-    ];
+    let compose_files = vec![render_path.join(checked_in), render_path.join(generated)];
     let selected = super::verified_compose_inputs(
         &frozen,
         &compose_files,

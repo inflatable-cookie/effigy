@@ -1238,9 +1238,11 @@ fn verified_compose_inputs(
                 file.display()
             )));
         };
-        // The closure names checkout files `checkout/<repo-relative>`: the render
-        // builder maps them that way, so the same key is the sealed path.
-        let name = format!("checkout/{}", relative.to_string_lossy().replace('\\', "/"));
+        // The admitted Compose inputs already carry the render's own `checkout/`
+        // prefix, which is exactly how the render builder keys them in the
+        // closure, so the render-relative path is the closure key and the sealed
+        // path.
+        let name = relative.to_string_lossy().replace('\\', "/");
         let Some(frozen_bytes) = frozen.get(name.as_str()) else {
             return Err(BoundedReadRefusal::Unavailable(format!(
                 "workspace-compose-input-outside-render-closure: `{name}` is not part of the \
