@@ -155,3 +155,13 @@ mod task_ref_parser_tests;
 pub(crate) fn cleanup_managed_secrets() -> std::io::Result<()> {
     managed_secrets::sweep()
 }
+
+/// Declarative prepared-file fingerprints for the detached-entry fixture.
+/// Never backend evidence or transferable activation custody.
+#[cfg(feature = "workspace-serving-fixture")]
+pub fn workspace_prepared_declaration_fixture(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    selected: &effigy_containers::environment::BackendSelection,
+) -> Result<serde_json::Value, String> {
+    workspace_client::container_up::fixture_prepared_declaration(policy, selected)
+}

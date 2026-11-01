@@ -35,6 +35,39 @@ pub(in crate::runner) fn fixture_delay_final_revalidation(until: Instant) {
     fake_io::delay_final_revalidation(until);
 }
 
+/// Feature-only declarative test input from actual prepared files. This
+/// constructs no seal, authority, backend evidence or owner.
+#[cfg(feature = "workspace-serving-fixture")]
+pub(crate) fn fixture_prepared_declaration(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    selected: &effigy_containers::environment::BackendSelection,
+) -> Result<serde_json::Value, String> {
+    use crate::runner::workspace_command::provisioning::{
+        workspace_path_map, workspace_source_closure,
+    };
+    let workspace =
+        crate::runner::workspace_command::operator_workspace_for_policy(&policy.repo_root, policy)
+            .map_err(|_| "fixture declaration unavailable")?
+            .ok_or("fixture workspace absent")?;
+    let paths = workspace_path_map(&policy.repo_root, &workspace)
+        .map_err(|_| "fixture paths unavailable")?;
+    let sources = workspace_source_closure(&policy.repo_root, &paths)
+        .map_err(|_| "fixture sources unavailable")?;
+    let identity = effigy_kernel::fs::DirFd::open(&policy.repo_root)
+        .map_err(|_| "fixture directory unavailable")?
+        .identity()
+        .map_err(|_| "fixture directory unavailable")?;
+    let declaration = PostPrepDeclaration::capture(policy, selected, identity, &sources.pins)
+        .map_err(|_| "fixture capture unavailable")?;
+    declaration
+        .verify_policy(policy, selected, identity)
+        .map_err(|_| "fixture fingerprints differ")?;
+    declaration
+        .verify_sources(&sources.pins)
+        .map_err(|_| "fixture source fingerprints differ")?;
+    serde_json::to_value(declaration).map_err(|_| "fixture serialization unavailable".into())
+}
+
 /// Refuse the unqualified output capability before any workspace preparation
 /// or reserved admission. Removed only when the reviewed private entrypoints
 /// are wired at both production boundaries; no fixture exemption qualifies it.

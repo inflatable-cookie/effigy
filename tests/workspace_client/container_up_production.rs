@@ -756,3 +756,85 @@ fn actual_cli_refuses_unqualified_private_preparation_before_any_prepare_or_appl
         0
     );
 }
+
+#[test]
+fn actual_detached_entry_refuses_valid_prepared_input_before_admission_or_plan() {
+    use effigy_containers::environment::{BackendKind, BackendReason, BackendSelection};
+    use std::io::Write;
+    use std::process::Stdio;
+    let fixture = BackendFixture::new();
+    let token = effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("ordinary token setup");
+    let policy = effigy_containers::load_container_policy(&fixture.project, Some("web"))
+        .expect("actual in-memory prepared policy");
+    let selected = BackendSelection {
+        kind: BackendKind::DockerEngine,
+        engine: effigy_containers::BackendId::docker_compose(),
+        context: "default".into(),
+        reason: BackendReason::ManifestDriver("docker".into()),
+    };
+    let declaration = effigy::runner::workspace_prepared_declaration_fixture(&policy, &selected)
+        .expect("actual file/source fingerprints");
+    let checkout: Vec<u8> = token
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|bytes| {
+            u8::from_str_radix(std::str::from_utf8(bytes).expect("hex"), 16).expect("token byte")
+        })
+        .collect();
+    fn snapshot(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut files = std::collections::BTreeMap::new();
+        if root.exists() {
+            for entry in std::fs::read_dir(root).expect("snapshot") {
+                let entry = entry.expect("entry");
+                let kind = entry.file_type().expect("type");
+                if kind.is_dir() {
+                    files.extend(snapshot(&entry.path()));
+                } else if kind.is_file() {
+                    files.insert(entry.path(), std::fs::read(entry.path()).expect("file"));
+                }
+            }
+        }
+        files
+    }
+    let before_project = snapshot(&fixture.project);
+    let before_home = snapshot(&fixture.home);
+    let before_calls = fixture.calls();
+    let request = serde_json::json!({"schema":"effigy.workspace-serving.v1","state_home":fixture.home,"project_path":fixture.project,"checkout":checkout,"environment":"web","profile":"default","activation":{"kind":"ContainerUp","request":{"environment":"web","retention":"persistent","budget_ms":60000,"post_prep":declaration}}});
+    let mut command = fixture.command();
+    command
+        .arg("__workspace-serving-fixture")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("real detached front end");
+    child
+        .stdin
+        .take()
+        .expect("request pipe")
+        .write_all(request.to_string().as_bytes())
+        .expect("payload");
+    let output = child.wait_with_output().expect("detached refusal");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty(), "no Serving ack");
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("workspace private preparation output is unavailable"),
+        "{diagnostic}"
+    );
+    assert!(
+        !diagnostic.contains("supervisor_run="),
+        "no host run admitted"
+    );
+    assert_eq!(
+        snapshot(&fixture.project),
+        before_project,
+        "no new token/journal/plan/secret/log files"
+    );
+    assert_eq!(snapshot(&fixture.home), before_home, "no home state files");
+    assert_eq!(
+        fixture.calls(),
+        before_calls,
+        "no engine observation or effect"
+    );
+}

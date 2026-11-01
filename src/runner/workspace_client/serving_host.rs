@@ -487,6 +487,11 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             "the workspace serving payload is unsupported",
         ));
     }
+    if matches!(&request.activation, Activation::ContainerUp { .. }) {
+        if let Err(error) = super::container_up::require_private_preparation_output() {
+            return Err(refuse(&session, error.category(), error.to_string()));
+        }
+    }
     let prepared_container = match &request.activation {
         Activation::ContainerUp { request: input } => {
             match super::container_up::preflight(&request, input) {
