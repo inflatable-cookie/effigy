@@ -2532,6 +2532,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     dispatcher: Dispatcher<A, R, O, I>,
     /// Do not serve another client while an owner's EOF cleanup is uncertain.
     owner_cleanup_unsettled: bool,
+    unsettled_attachment: Option<Attachment>,
     /// Data frames this connection has queued and the client has not yet
     /// acknowledged, plus the request id they name.
     outbound: Outbound,
@@ -2577,6 +2578,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             grants,
             dispatcher,
             owner_cleanup_unsettled: false,
+            unsettled_attachment: None,
             outbound: Outbound::new(),
             attach: None,
             carry: None,
@@ -2714,6 +2716,12 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             state,
             &mut attachment,
         );
+        if self.owner_cleanup_unsettled {
+            if attachment.is_some() {
+                self.unsettled_attachment = attachment.take();
+            }
+            return Err(Refusal::unknown("attachment cleanup is unsettled"));
+        }
         // Every way a connection ends must account for the attachment it opened.
         // A refused or malformed frame used to return before the end-of-stream
         // release, so a second terminal's durable row stayed live and its slot
@@ -2725,7 +2733,19 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // run's own, reopened rather than reallocated.
         if let Some(mut handle) = attachment.take() {
             if outcome.is_err() && handle.client() == Client::Secondary && !handle.released() {
-                let _ = handle.release(cx, root, Release::Eof);
+                if handle.release(cx, root, Release::Eof).is_err() {
+                    self.unsettled_attachment = Some(handle);
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown(
+                        "attachment disconnect cleanup is unsettled",
+                    ));
+                }
+            } else if outcome
+                .as_ref()
+                .is_err_and(|error| error.code != RefusalCode::Unavailable)
+                && handle.client() == Client::Owner
+            {
+                self.unsettled_attachment = Some(handle);
             }
         }
         if state.closed
@@ -2742,6 +2762,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 }
                 self.dispatcher.admitted.remove(&run);
             }
+        } else if outcome.is_err() && !self.dispatcher.admitted.is_empty() {
+            // Invalid input is not owner EOF, but its disconnected owner must
+            // not be silently forgotten or handed to another connection.
+            self.owner_cleanup_unsettled = true;
         }
         outcome
     }
@@ -2777,6 +2801,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     let response =
                         self.answer(cx, observe, root, &grant, &request, attachment, streams);
                     write_frame(transport, &Frame::Response(response))?;
+                    if self.owner_cleanup_unsettled {
+                        return Err(Refusal::unknown("attachment cleanup is unsettled"));
+                    }
                 }
                 Frame::Stream(stream) => {
                     state.streams += 1;
@@ -2808,9 +2835,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // stops the owner's run. A detached handle is already gone.
         state.closed = true;
         if let Some(mut handle) = attachment.take() {
-            handle
-                .release(cx, root, Release::Eof)
-                .map_err(refusal_from)?;
+            if handle.release(cx, root, Release::Eof).is_err() {
+                self.unsettled_attachment = Some(handle);
+                self.owner_cleanup_unsettled = true;
+                return Err(Refusal::unknown(
+                    "attachment disconnect cleanup is unsettled",
+                ));
+            }
             if handle.client() == Client::Owner {
                 self.dispatcher.admitted.remove(&handle.run());
             }
@@ -3126,8 +3157,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         Some(handle) => {
                             let is_owner = handle.client() == Client::Owner;
                             if let Err(error) = handle.release(cx, root, Release::Detach) {
-                                if is_owner && !matches!(error, run::RunError::Refused(_)) {
-                                    self.dispatcher.admitted.remove(&body.run);
+                                if !matches!(error, run::RunError::Refused(_)) {
+                                    self.owner_cleanup_unsettled = true;
+                                    return Err(Refusal::unknown("attachment detach is unsettled"));
                                 }
                                 return Err(refusal_from(error));
                             }
@@ -3145,7 +3177,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                     // The dispatcher returns a typed refusal; uncertain failures
                                     // cannot confer a renewed owner lifetime.
                                     if error.code != RefusalCode::Forbidden {
-                                        self.dispatcher.admitted.remove(&body.run);
+                                        self.owner_cleanup_unsettled = true;
+                                        return Err(Refusal::unknown(
+                                            "attachment detach is unsettled",
+                                        ));
                                     }
                                     return Err(error);
                                 }
