@@ -71,6 +71,7 @@ pub(in crate::runner) mod support;
 pub(super) mod test_support;
 mod volume;
 pub(in crate::runner) mod workspace_artifact_builder;
+pub(in crate::runner) mod workspace_integrations;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
     if output_json {
