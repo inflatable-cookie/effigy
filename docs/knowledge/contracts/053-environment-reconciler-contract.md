@@ -135,7 +135,12 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   v0.15 guarantee. An `Absent` reservation names an unknown desired successor,
   including an authorized non-live predecessor replacement, and binds only this
   run's exact new ID; an `Observed` target must retain its exact ID. #506's gated
-  compatibility check must refuse recreation of a live protected predecessor.
+  compatibility check must refuse recreation of a live protected predecessor. The
+  unmerged integration retains the activation's owned artifact, alias and boxed
+  probe and its one absolute deadline; the gated reobserve is an independent
+  fresh backend read on that same deadline, fenced to the exact ID, never a
+  pass-through of an earlier observation, and it fails closed on unknown, changed
+  or missing evidence (Supervisor ruling, 2026-11-01; 052 §8.11).
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;

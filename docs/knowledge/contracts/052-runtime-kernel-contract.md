@@ -3854,7 +3854,12 @@ Binding still requires a full ID absent before apply, attributed to this exact
 activation run, with matching project/backend. `Observed` retains its exact old-ID
 requirement. A live protected predecessor cannot be recreated; #506's compatibility
 check and gated recheck must permit replacement and establish that no live session
-is attached to that predecessor. This clarifies target evidence without changing
+is attached to that predecessor. The unmerged #506 integration retains the
+activation's own owned artifact, alias and boxed probe and its one absolute
+deadline; its gated reobserve is an independent fresh backend read under that same
+deadline, fenced to the exact ID, never a pass-through of an earlier observation,
+and it fails closed as `Unknown` when the evidence is unknown, changed or missing
+(Supervisor ruling, 2026-11-01). This clarifies target evidence without changing
 #509's kernel fence. No workspace-session publication may bypass its reserved
 `Absent` successor and the remaining staging/serving/commit gates.
 
@@ -3941,7 +3946,10 @@ generation. Retry reads this result without another apply. The publication owner
 rechecks that inventory under the gate and refuses a stale reservation before
 binding; the reserved-input boundary reobserves target/platform and the binding
 adapter rechecks the complete project/image inventory immediately before
-`bind_target`. Only this run's created workspace ID can satisfy an absent target;
+`bind_target`. Each of those rechecks is an independent fresh backend read on the
+activation's one absolute deadline, fenced to the exact full ID; none reuses an
+earlier observation, and unknown, changed or missing evidence refuses as `Unknown`
+(Supervisor ruling, 2026-11-01). Only this run's created workspace ID can satisfy an absent target;
 a caller-supplied creator run ID is never authority. Attached IDs remain attached.
 Missing attribution is Unknown, not proof of no creator. The original activation
 deadline bounds the final observation callback and the pinned backend runs the
