@@ -3495,6 +3495,7 @@ fn retained_output_resumes_at_the_negotiated_cursor() {
         b"lo",
         "the client sees exactly what it has not read"
     );
+    _owner.assert_live();
 }
 
 #[test]
@@ -3588,6 +3589,7 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
             .expect("base64"),
         b"current"
     );
+    _owner.assert_live();
 }
 
 #[test]
@@ -3895,6 +3897,7 @@ fn a_second_terminal_never_types_into_the_owners_writer() {
     wait_until("the owner's third frame", || {
         written(&log) == b"first second third"
     });
+    _owner.assert_live();
 }
 
 #[test]
@@ -3973,6 +3976,7 @@ fn an_attachment_that_did_not_bind_the_writer_never_types_or_resizes() {
     wait_until("the owner's next frame", || {
         written(&log) == b"live and live"
     });
+    _owner.assert_live();
 }
 
 #[test]
@@ -4056,6 +4060,7 @@ fn a_replaced_attachment_is_refused_and_the_bound_one_still_types() {
         )),
         "the replaced terminal was told why its frame did not arrive: {wire:?}"
     );
+    _owner.assert_live();
 }
 
 /// Either a fixed script or a live socket, so one merged-loop owner can admit a
@@ -4130,6 +4135,17 @@ fn live_connection(frames: &[host::Frame]) -> (UnixStream, UnixStream) {
 struct LiveAdmission {
     client: UnixStream,
     server: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LiveAdmission {
+    fn assert_live(&self) {
+        assert!(
+            self.server
+                .as_ref()
+                .is_some_and(|server| !server.is_finished()),
+            "admitting connection must remain live during the proof"
+        );
+    }
 }
 
 impl Drop for LiveAdmission {
@@ -4463,6 +4479,7 @@ fn replacement_input_and_resize_are_refused_through_the_channel_loop() {
         Some(owning.id()),
         "the writer stays bound to the run's owning attachment"
     );
+    _owner.assert_live();
 }
 
 #[test]
@@ -4713,6 +4730,9 @@ fn two_independent_terminals_and_capabilities_never_cross() {
             .any(|frame| matches!(frame, host::Frame::Response(_))),
         "an unauthenticated connection is answered with no response: {written:?}"
     );
+    _first_owner.assert_live();
+    _second_owner.assert_live();
+    _third_owner.assert_live();
 }
 
 #[test]
@@ -4784,6 +4804,7 @@ fn a_run_with_no_terminal_owner_refuses_input_and_attach() {
     ));
     assert_eq!(custody.runs(), 0);
     assert_eq!(log.lock().expect("pty log").retired, 0);
+    _owner.assert_live();
 }
 
 #[test]
@@ -4842,6 +4863,7 @@ fn a_released_bound_attachment_stops_its_queued_work() {
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     assert!(terminal.retired(), "the released row retired the writer");
     assert_eq!(terminal.pending(), 0, "the retired writer drops its queue");
+    _owner.assert_live();
 }
 
 #[test]
@@ -4897,6 +4919,7 @@ fn a_queued_resize_is_fenced_by_the_owners_lifetime() {
         sizes(&log).is_empty(),
         "the retired writer never applies a size"
     );
+    _owner.assert_live();
 }
 
 #[test]
@@ -4958,6 +4981,7 @@ fn a_full_writer_never_starves_the_newest_geometry() {
         !terminal.retired(),
         "a full writer is not a retired terminal"
     );
+    _owner.assert_live();
 }
 
 #[test]
@@ -5001,6 +5025,7 @@ fn a_refused_resize_never_starves_queued_input() {
     assert_eq!(terminal.delivered(), 11);
     assert_eq!(terminal.pending(), 0);
     assert_eq!(terminal.applied(), None);
+    _owner.assert_live();
 }
 
 #[test]
