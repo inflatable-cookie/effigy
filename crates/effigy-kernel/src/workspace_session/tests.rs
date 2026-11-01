@@ -1508,6 +1508,39 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
 }
 
 #[test]
+fn parked_reservation_reacquires_only_before_its_original_deadline() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(231));
+    let run = admit_activation(&cx, &root, &reservation, run_id(232));
+    let parked = run
+        .park_workspace(
+            &reservation,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+        .expect("park");
+    let guarded = parked.reacquire().expect("same reservation reacquires");
+    assert!(crate::gate::Gate::acquire(&cx, &root, &[environment()], Wait::FailFast).is_err());
+    drop(guarded);
+
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(233));
+    let run = admit_activation(&cx, &root, &reservation, run_id(234));
+    let parked = run
+        .park_workspace(
+            &reservation,
+            std::time::Instant::now() + std::time::Duration::from_millis(100),
+        )
+        .expect("park");
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let (_error, _custody) = parked.reacquire().expect_err("expired deadline refuses");
+}
+
+#[test]
 fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};

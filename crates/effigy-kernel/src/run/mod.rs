@@ -401,11 +401,76 @@ pub struct Run<'a> {
 /// deliberately no generic effect access through this type.
 #[derive(Debug)]
 pub struct ParkedWorkspaceRun<'a> {
+    run: Run<'a>,
+    gates: Vec<crate::id::ResourceId>,
+    reservation: crate::workspace_session::WorkspaceActivationReservation,
+    snapshot: crate::workspace_session::ActivationReservationRecord,
+    deadline: std::time::Instant,
+    identity: crate::ident::ProcessIdentity,
+}
+
+/// Gate reacquired and journal fence checked. Backend and publication evidence
+/// still require validation, so this state exposes no generic run effects.
+#[derive(Debug)]
+pub struct ReacquiredWorkspaceRun<'a> {
     _run: Run<'a>,
-    _gates: Vec<crate::id::ResourceId>,
-    _reservation: crate::workspace_session::WorkspaceActivationReservation,
-    _snapshot: crate::workspace_session::ActivationReservationRecord,
-    _deadline: std::time::Instant,
+}
+
+impl<'a> ParkedWorkspaceRun<'a> {
+    /// Reacquire within the original deadline and compare the entire frozen
+    /// reservation. On failure the original parked custody is returned.
+    pub fn reacquire(mut self) -> Result<ReacquiredWorkspaceRun<'a>, (RunError, Box<Self>)> {
+        let checked = (|| {
+            if std::time::Instant::now() >= self.deadline {
+                return Err(RunError::unavailable(
+                    "workspace activation deadline expired",
+                ));
+            }
+            if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity)
+            {
+                return Err(RunError::unavailable(
+                    "workspace activation owner identity changed or unavailable",
+                ));
+            }
+            let guard = Gate::acquire(
+                &self.run.cx,
+                self.run.root,
+                &self.gates,
+                Wait::Until(self.deadline),
+            )?;
+            if std::time::Instant::now() >= self.deadline {
+                return Err(RunError::unavailable(
+                    "workspace activation deadline expired",
+                ));
+            }
+            let current = self.reservation.verify_claimed_run(
+                self.run.store.conn(),
+                self.run.id,
+                &self.run.owner,
+            )?;
+            if current != self.snapshot {
+                return Err(RunError::refused(
+                    "workspace reservation changed while parked",
+                ));
+            }
+            self.run
+                .cx
+                .operation()
+                .check("workspace activation reacquire")?;
+            if std::time::Instant::now() >= self.deadline {
+                return Err(RunError::unavailable(
+                    "workspace activation deadline expired",
+                ));
+            }
+            guard.set_run(&self.run.id);
+            self.run.guard = guard;
+            Ok(())
+        })();
+        match checked {
+            Ok(()) => Ok(ReacquiredWorkspaceRun { _run: self.run }),
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
 }
 
 impl std::fmt::Debug for Run<'_> {
@@ -424,6 +489,10 @@ impl<'a> Run<'a> {
         reservation: &crate::workspace_session::WorkspaceActivationReservation,
         deadline: std::time::Instant,
     ) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
+        let deadline = match self.cx.operation().deadline() {
+            crate::ctx::Deadline::At(original) => deadline.min(original),
+            crate::ctx::Deadline::Open(_) => deadline,
+        };
         let checked = (|| {
             self.can_effect()?;
             if std::time::Instant::now() >= deadline {
@@ -433,16 +502,37 @@ impl<'a> Run<'a> {
             }
             let snapshot =
                 reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
+            let identity = crate::ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or_else(|| {
+                    RunError::unavailable("workspace activation owner identity unavailable")
+                })?;
+            let recorded: Option<String> = self.store.conn().query_row(
+                "SELECT owner_identity FROM runs WHERE run_id=?1",
+                [self.id.to_string()],
+                |row| row.get(0),
+            )?;
+            let recorded: crate::ident::ProcessIdentity =
+                serde_json::from_str(recorded.as_deref().ok_or_else(|| {
+                    RunError::unavailable("workspace activation recorded identity unavailable")
+                })?)?;
+            if recorded != identity {
+                return Err(RunError::refused(
+                    "workspace activation owner identity changed",
+                ));
+            }
             let gates = self.guard.park().map_err(RunError::refused)?;
-            Ok((snapshot, gates))
+            Ok((snapshot, gates, identity))
         })();
         match checked {
-            Ok((snapshot, gates)) => Ok(ParkedWorkspaceRun {
-                _run: self,
-                _gates: gates,
-                _reservation: reservation.clone(),
-                _snapshot: snapshot,
-                _deadline: deadline,
+            Ok((snapshot, gates, identity)) => Ok(ParkedWorkspaceRun {
+                run: self,
+                gates,
+                reservation: reservation.clone(),
+                snapshot,
+                deadline,
+                identity,
             }),
             Err(error) => Err((error, Box::new(self))),
         }
