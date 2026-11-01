@@ -467,6 +467,7 @@ mod tests {
         crate::fault::hook(None);
         let cleanup =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        let cleanup_failed = cleanup.is_err();
         assert!(enabled.is_err());
         assert!(fired, "the backup startup fault must fire: {point:?}");
         assert!(sentinel.is_some());
@@ -513,6 +514,12 @@ mod tests {
             );
             // Fixture teardown only: this is not a production settlement proof.
             drop(owner);
+        }
+        if point == crate::fault::Point::WorkspaceBackupAfterSpawn {
+            assert!(
+                cleanup_failed,
+                "the pre-config child must exercise unresolved cleanup"
+            );
         }
     }
 
