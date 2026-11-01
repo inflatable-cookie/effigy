@@ -31,6 +31,18 @@ launched through a TUI, a plain shell, or a one-shot bootstrap path.
 This contract exists to keep one explicit runtime guarantee across those
 surfaces.
 
+For the Colima nerdctl compose fallback, runtime preflight estimates the
+`nerdctl/mounts` label from effective primary-service mounts in the ordered
+Compose files, including short and long volume syntax, bind-source resolution,
+and JSON escaping. It uses a conservative 3900-byte threshold below the
+4096-byte containerd label value limit. nerdctl owns the label format and
+runtime serialization; this estimate follows its documented v2.3.1
+`mount.Mount` JSON shape and is not a runtime oracle. The guard refuses before
+apply when the estimate exceeds its threshold and reports the largest guest
+mount targets. It does not consolidate mounts, relax workspace isolation or
+make a consumer whose declared mounts exceed the budget runnable. Real Colima
+qualification remains required.
+
 ## Catalog paths in standard commands
 
 For a standard string `run` command, `{repo}` and `{project}` identify the

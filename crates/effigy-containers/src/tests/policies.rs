@@ -1070,7 +1070,14 @@ primary_service = "app"
     )
     .expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    let overlay = root.join("infra/dev/compose.overlay.yml");
+    fs::write(
+        &overlay,
+        "services:\n  app:\n    volumes:\n      - type: bind\n        source: ./replacement-cache\n        target: /workspace-root/acme/some/really/long/path/00/node_modules\n        read_only: true\n",
+    )
+    .expect("overlay");
+    policy.compose_files.push(overlay);
     let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
     unsafe {
         std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
@@ -1086,13 +1093,21 @@ primary_service = "app"
     }
 
     assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(error.to_string().contains("estimated mount payload"));
+    assert!(error.to_string().contains("estimated nerdctl/mounts label size"));
     assert!(error
         .to_string()
-        .contains("trim isolation or workspace mounts"));
+        .contains("reduce optional mounts or workspace isolation mounts"));
     assert!(error
+        .to_string()
+        .contains("Largest contributors (paths omitted)"));
+    assert!(!error
         .to_string()
         .contains("/workspace-root/acme/some/really/long/path"));
+
+    with_test_compose_backend(ComposeBackend::Docker, || {
+        crate::validate_compose_backend_runtime(&root, &policy)
+            .expect("Docker backend must not inherit nerdctl label limit");
+    });
 }
 
 #[test]

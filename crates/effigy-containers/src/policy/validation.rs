@@ -85,15 +85,11 @@ fn validate_compose_backend_mount_budget(
     {
         return Ok(());
     }
-    let Some(estimate) = estimate_primary_service_mount_label_size(
-        policy,
-        &policy.compose_files[0],
-        &policy.primary_service,
-    )?
+    let Some(estimate) = estimate_primary_service_mount_label_size(policy)?
     else {
         return Ok(());
     };
-    if estimate.total_bytes < NERDCTL_MOUNTS_LABEL_BUDGET_BYTES {
+    if nerdctl_mounts_label_fits(estimate.total_bytes) {
         return Ok(());
     }
     let heaviest = estimate
@@ -101,11 +97,11 @@ fn validate_compose_backend_mount_budget(
         .iter()
         .rev()
         .take(6)
-        .map(|entry| format!("{} ({} bytes)", entry.target, entry.raw.len()))
+        .map(|entry| format!("effective mount #{} ({} bytes)", entry.ordinal, entry.bytes))
         .collect::<Vec<_>>()
         .join(", ");
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated mount payload of {} bytes across {} mounts, which exceeds the nerdctl/containerd label budget of {} bytes; trim isolation or workspace mounts. Heaviest targets: {}",
+        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated nerdctl/mounts label size of {} bytes across {} effective mounts, exceeding the conservative {}-byte preflight budget (containerd label limit: 4096 bytes); reduce optional mounts or workspace isolation mounts. Largest contributors (paths omitted): {}",
         policy.name,
         policy.primary_service,
         estimate.total_bytes,
@@ -132,67 +128,256 @@ struct PrimaryServiceMountEstimate {
 
 #[derive(Debug)]
 struct MountBudgetEntry {
-    target: String,
-    raw: String,
+    ordinal: usize,
+    bytes: usize,
 }
 
 fn estimate_primary_service_mount_label_size(
     policy: &EffectiveContainerPolicy,
-    compose_file: &Path,
-    primary_service: &str,
 ) -> Result<Option<PrimaryServiceMountEstimate>, ContainerPolicyError> {
-    let content = policy.read_compose(compose_file)?;
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to parse compose file {} while estimating nerdctl mount budget: {error}",
-            compose_file.display()
-        ))
-    })?;
-    let Some(service) = parsed
-        .get("services")
-        .and_then(serde_yaml::Value::as_mapping)
-        .and_then(|services| services.get(serde_yaml::Value::String(primary_service.to_owned())))
-        .and_then(serde_yaml::Value::as_mapping)
-    else {
+    // Compose applies -f overlays in order and merges service volumes by
+    // container target. Match that identity here so a replaced earlier mount
+    // is not counted as if nerdctl received both entries.
+    let mut effective = std::collections::BTreeMap::<String, EffectiveMount>::new();
+    for compose_file in &policy.compose_files {
+        let content = policy.read_compose(compose_file)?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to parse compose file {} while estimating nerdctl mount budget: {error}",
+                compose_file.display()
+            ))
+        })?;
+        let Some(volumes) = parsed
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+            .and_then(|services| {
+                services.get(serde_yaml::Value::String(policy.primary_service.clone()))
+            })
+            .and_then(serde_yaml::Value::as_mapping)
+            .and_then(|service| {
+                service.get(serde_yaml::Value::String("volumes".to_owned()))
+            })
+            .and_then(serde_yaml::Value::as_sequence)
+        else {
+            continue;
+        };
+        for value in volumes {
+            if let Some(mount) = parse_effective_mount(
+                value,
+                compose_file.parent().unwrap_or(Path::new(".")),
+                &policy.project_name,
+            ) {
+                effective.insert(mount.target.clone(), mount);
+            }
+        }
+    }
+    if effective.is_empty() {
         return Ok(None);
-    };
-    let Some(volumes) = service
-        .get(serde_yaml::Value::String("volumes".to_owned()))
-        .and_then(serde_yaml::Value::as_sequence)
-    else {
-        return Ok(None);
-    };
-    let mut entries = volumes
-        .iter()
-        .filter_map(serde_yaml::Value::as_str)
-        .filter_map(parse_mount_budget_entry)
+    }
+    let mut entries = effective
+        .into_values()
+        .enumerate()
+        .map(|(index, mount)| MountBudgetEntry {
+            ordinal: index + 1,
+            bytes: nerdctl_mount_json_bytes(&mount),
+        })
         .collect::<Vec<_>>();
-    entries.sort_by_key(|entry| entry.raw.len());
-    let total_bytes = entries.iter().map(|entry| entry.raw.len()).sum::<usize>()
-        + entries.len().saturating_sub(1);
+    entries.sort_by_key(|entry| entry.bytes);
+    // nerdctl v2.3.1 stores compact JSON for []mount.Mount under
+    // `nerdctl/mounts`; include the key and the JSON array punctuation.
+    let total_bytes = nerdctl_mounts_label_size(&entries);
     Ok(Some(PrimaryServiceMountEstimate {
         total_bytes,
         entries,
     }))
 }
 
-fn parse_mount_budget_entry(raw: &str) -> Option<MountBudgetEntry> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
+#[derive(Debug)]
+struct EffectiveMount {
+    source: String,
+    target: String,
+    kind: String,
+    read_only: bool,
+}
+
+fn parse_effective_mount(
+    value: &serde_yaml::Value,
+    compose_dir: &Path,
+    project_name: &str,
+) -> Option<EffectiveMount> {
+    let (source, target, kind, read_only) = if let Some(raw) = value.as_str() {
+        let mut parts = raw.splitn(3, ':');
+        let first = parts.next()?.trim();
+        let second = parts.next().map(str::trim);
+        let mode = parts.next().unwrap_or("");
+        let (source, target) = match second {
+            Some(target) => (first, target),
+            None => ("", first),
+        };
+        let kind = if source.starts_with('/')
+            || source.starts_with("./")
+            || source.starts_with("../")
+        {
+            "bind"
+        } else {
+            "volume"
+        };
+        (source, target, kind, mode.split(',').any(|part| part == "ro"))
+    } else {
+        let mapping = value.as_mapping()?;
+        let get = |name: &str| mapping.get(serde_yaml::Value::String(name.to_owned()));
+        let source = get("source")
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("");
+        let target = get("target")?.as_str()?;
+        let kind = get("type")
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("volume");
+        let read_only = get("read_only")
+            .and_then(serde_yaml::Value::as_bool)
+            .unwrap_or(false);
+        (source, target, kind, read_only)
+    };
+    if target.is_empty() {
         return None;
     }
-    let mut parts = trimmed.splitn(3, ':');
-    let source = parts.next()?.trim();
-    let target = parts.next()?.trim();
-    if source.is_empty() || target.is_empty() {
-        return None;
-    }
-    Some(MountBudgetEntry {
+    // Compose/nerdctl materialize named and anonymous volumes as host binds
+    // under containerd's volume store. Reserve the maximum documented source
+    // identity width here; exact VM-local paths are unavailable pre-runtime.
+    let (resolved, resolved_kind) = if kind == "bind" {
+        let path = if source.is_empty() {
+            String::new()
+        } else if Path::new(source).is_absolute() {
+            source.to_owned()
+        } else {
+            compose_dir.join(source).to_string_lossy().into_owned()
+        };
+        (path, "bind")
+    } else {
+        let volume_name = if source.is_empty() {
+            "anonymous".to_owned()
+        } else {
+            format!("{project_name}-{source}")
+        };
+        (
+            format!(
+                "/var/lib/nerdctl/{}/volumes/default/{volume_name}/_data",
+                "0".repeat(64)
+            ),
+            "bind",
+        )
+    };
+    Some(EffectiveMount {
+        source: resolved,
         target: target.to_owned(),
-        raw: trimmed.to_owned(),
+        kind: resolved_kind.to_owned(),
+        read_only,
     })
+}
+
+fn nerdctl_mount_json_bytes(mount: &EffectiveMount) -> usize {
+    // containerd mount.Mount's JSON shape as used by nerdctl v2.3.1. Go's
+    // encoder also escapes HTML-sensitive characters; account for that so
+    // this Rust-side estimate cannot undercount those paths.
+    let options = if mount.read_only {
+        "[\"rbind\",\"rprivate\",\"ro\"]"
+    } else {
+        "[\"rbind\",\"rprivate\",\"rw\"]"
+    };
+    let encoded = format!(
+        "{{\"Type\":{},\"Source\":{},\"Target\":{},\"Options\":{options}}}",
+        go_json_string(&mount.kind),
+        go_json_string(&mount.source),
+        go_json_string(&mount.target),
+    );
+    encoded.len()
+}
+
+fn nerdctl_mounts_label_size(entries: &[MountBudgetEntry]) -> usize {
+    "nerdctl/mounts".len()
+        + 2
+        + entries.iter().map(|entry| entry.bytes).sum::<usize>()
+        + entries.len().saturating_sub(1)
+}
+
+fn nerdctl_mounts_label_fits(size: usize) -> bool {
+    size < NERDCTL_MOUNTS_LABEL_BUDGET_BYTES
+}
+
+fn go_json_string(value: &str) -> String {
+    let json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned());
+    json.replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 fn path_is_within(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mount_json_estimate_counts_nerdctl_key_and_json_escaping() {
+        let mount = EffectiveMount {
+            source: "/workspace/secret<&>\u{2028}".to_owned(),
+            target: "/workspace".to_owned(),
+            kind: "bind".to_owned(),
+            read_only: true,
+        };
+        let bytes = nerdctl_mount_json_bytes(&mount);
+        let expected = format!(
+            "{{\"Type\":\"bind\",\"Source\":{},\"Target\":\"/workspace\",\"Options\":[\"rbind\",\"rprivate\",\"ro\"]}}",
+            go_json_string(&mount.source)
+        );
+        assert_eq!(bytes, expected.len());
+        assert!(go_json_string(&mount.source).contains("\\u003c"));
+        assert!(go_json_string(&mount.source).contains("\\u2028"));
+        assert_eq!(nerdctl_mounts_label_size(&[]), "nerdctl/mounts".len() + 2);
+    }
+
+    #[test]
+    fn short_long_and_anonymous_mounts_resolve_into_backend_shapes() {
+        let dir = Path::new("/long/queue/path/project/compose");
+        let short: serde_yaml::Value = serde_yaml::from_str("'./src:/workspace:ro'").unwrap();
+        let named: serde_yaml::Value = serde_yaml::from_str(
+            "{type: volume, source: cache, target: /root/.cache, read_only: true}",
+        )
+        .unwrap();
+        let anonymous: serde_yaml::Value = serde_yaml::from_str("/tmp").unwrap();
+
+        let short = parse_effective_mount(&short, dir, "example").unwrap();
+        assert_eq!(short.source, "/long/queue/path/project/compose/./src");
+        assert!(short.read_only);
+        let named = parse_effective_mount(&named, dir, "example").unwrap();
+        assert!(named.source.contains("/var/lib/nerdctl/"));
+        assert!(named.source.ends_with("/example-cache/_data"));
+        assert!(named.read_only);
+        let anonymous = parse_effective_mount(&anonymous, dir, "example").unwrap();
+        assert_eq!(anonymous.target, "/tmp");
+        assert!(anonymous.source.contains("/anonymous/_data"));
+    }
+
+    #[test]
+    fn threshold_refuses_at_budget_and_allows_one_byte_below() {
+        let entry = MountBudgetEntry {
+            ordinal: 1,
+            bytes: NERDCTL_MOUNTS_LABEL_BUDGET_BYTES - "nerdctl/mounts".len() - 2,
+        };
+        assert_eq!(nerdctl_mounts_label_size(std::slice::from_ref(&entry)), 3900);
+        assert!(!nerdctl_mounts_label_fits(nerdctl_mounts_label_size(
+            std::slice::from_ref(&entry)
+        )));
+        let below = MountBudgetEntry {
+            bytes: entry.bytes - 1,
+            ..entry
+        };
+        assert!(nerdctl_mounts_label_fits(nerdctl_mounts_label_size(
+            std::slice::from_ref(&below)
+        )));
+    }
 }

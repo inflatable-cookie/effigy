@@ -1242,6 +1242,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
+  label from effective mounts across compose overlays, including long syntax,
+  resolved bind sources and JSON escaping. It refuses above a conservative
+  3900-byte budget before apply; this bounds metadata but does not reduce a
+  consumer's configured mounts or guarantee that workload can run.
 - Keep the workspace alias override and canonical environment identity in frozen
   publication inputs. Enrolment credentials use the reserved environment
   generation independently of the guest context generation.
