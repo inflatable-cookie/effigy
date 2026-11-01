@@ -2174,6 +2174,7 @@ impl WorkspaceActivationReservation {
         if fence.resource != self.record.environment || fence.generation != self.record.generation {
             return Err(ActivationRefusal::WrongGeneration.into());
         }
+        crate::run::check_workspace_fence(conn, fence)?;
         let stored = read_reservation(conn, &self.record.environment, self.record.generation)?
             .ok_or(ActivationRefusal::WrongReservation)?;
         if stored.id != self.record.id {

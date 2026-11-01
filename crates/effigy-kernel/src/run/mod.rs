@@ -93,6 +93,13 @@ pub struct Fence {
     pub resource: ResourceId,
     pub generation: Generation,
 }
+
+pub(crate) fn check_workspace_fence(
+    conn: &rusqlite::Connection,
+    fence: &Fence,
+) -> Result<(), RunError> {
+    journal::check_fence(conn, fence)
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Settlement {
     Release(Value),
