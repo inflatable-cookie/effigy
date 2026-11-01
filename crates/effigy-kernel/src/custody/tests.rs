@@ -645,7 +645,7 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
         Run::begin(&cx, &root, &invocation, options(11), &cleanup, &mut Strict).unwrap();
     let path = home.path().join("app.log");
     let raw = b"\x1b[31mlegacy-owner-secret\n";
-    std::fs::write(&path, raw).unwrap();
+    effigy_test_support::write_private(&path, raw).unwrap();
     assert!(Run::begin(&cx, &root, &invocation, options(12), &cleanup, &mut Strict).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), raw);
     assert!(MergedLog::identity(&path).is_err());
@@ -1058,6 +1058,54 @@ fn operator_trust_refuses_a_group_writable_directory_and_still_accepts_group_rea
     );
     set(0o700);
     assert!(crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_ok());
+}
+
+/// File trust rules are unchanged by the fixture fix: operator trust tolerates a
+/// group-readable legacy log but refuses a group-writable one, and private trust
+/// refuses any group or other bit. A fixture that stands in for kernel state is
+/// written 0600, which is why the Linux umask no longer decides these tests
+/// (effigy#520).
+#[test]
+fn fixture_fix_keeps_file_trust_rules_exact() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = home();
+    let path = home.path().join("legacy.log");
+    let set =
+        |mode: u32| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    effigy_test_support::write_private(&path, b"legacy\n").unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "a private fixture file is 0600 whatever the umask"
+    );
+    let name = crate::fs::FileName::new("legacy.log").unwrap();
+    let open = |trust: crate::fs::Trust| {
+        crate::fs::DirFd::open(home.path())
+            .unwrap()
+            .open_file(&name, libc::O_RDONLY, None, trust)
+    };
+    for (mode, operator_ok, private_ok) in [
+        (0o600, true, true),
+        (0o644, true, false),
+        (0o664, false, false),
+        (0o640, true, false),
+    ] {
+        set(mode);
+        assert_eq!(
+            open(crate::fs::Trust::Operator).is_ok(),
+            operator_ok,
+            "operator trust on mode {mode:o}"
+        );
+        assert_eq!(
+            open(crate::fs::Trust::Private).is_ok(),
+            private_ok,
+            "private trust on mode {mode:o}"
+        );
+    }
+    set(0o664);
+    let refused = open(crate::fs::Trust::Operator).unwrap_err();
+    assert!(refused.is_open_mode(), "{refused:?}");
+    set(0o600);
 }
 
 /// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite

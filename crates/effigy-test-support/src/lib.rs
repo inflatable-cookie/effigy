@@ -101,6 +101,18 @@ fn private_home() -> fs::Permissions {
     fs::Permissions::from_mode(0o700)
 }
 
+/// Write a fixture file that the kernel will open as operator- or
+/// private-trusted state, such as a custody log, receipt or journal.
+///
+/// `std::fs::write` creates `0o666 & !umask`, which is group-writable under a
+/// 0002 umask; the kernel refuses a group- or other-writable operator file (and
+/// any group- or other-accessible private file), so a fixture standing in for
+/// kernel state must be 0600 whatever the process umask is (effigy#520).
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    fs::write(path, bytes)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
 /// A fresh directory for kernel socket fixtures, preferring a short absolute
 /// path and otherwise using the kernel's directory-relative socket support.
 /// For harnesses that need a bare `TempDir` rather than a [`Fixture`].
@@ -344,6 +356,14 @@ mod tests {
         let short = short_tempdir("kf-").expect("short fixture home");
         let fixture = Fixture::new("fx-").expect("fixture home");
         let home = Fixture::short_home("sh-").expect("short fixture home");
+        // A fixture file that stands in for kernel state must be 0600 too.
+        let state = short.path().join("app.log");
+        write_private(&state, b"legacy\n").expect("private fixture file");
+        assert_eq!(
+            fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "write_private must create a 0600 file under umask 0002"
+        );
         for (label, path) in [
             ("short_tempdir", short.path()),
             ("Fixture::new", fixture.path()),
