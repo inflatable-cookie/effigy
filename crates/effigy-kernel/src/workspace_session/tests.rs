@@ -1735,6 +1735,15 @@ fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
         .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
         .unwrap();
     parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .expect("a reconciled retry records the same step again");
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .expect("a completed step can be retried before publication");
+    parked
         .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
         .unwrap();
     assert_eq!(
