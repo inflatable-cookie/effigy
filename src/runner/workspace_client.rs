@@ -1491,7 +1491,17 @@ pub(crate) fn dispatch_in(
                     .verify(&mut ObservedGuest(published.observation.clone()), &live)
                     .map_err(context_refusal_error)?;
                 return noninteractive_stream::forward(
-                    published, guest, opener, verified, live, &relative, selector, args, wants_json,
+                    published,
+                    guest,
+                    opener,
+                    noninteractive_stream::ForwardedTask {
+                        verified,
+                        live,
+                        cwd: &relative,
+                        selector,
+                        args,
+                    },
+                    wants_json,
                 );
             }
             let body = RequestBody::Invoke(InvocationBody {

@@ -630,6 +630,20 @@ fn replayable(error: &ChannelError) -> bool {
     )
 }
 
+/// One forwarded task, as the guest dispatch resolved it.
+///
+/// `verified` and `live` are the facts `dispatch_in` verified from the published
+/// context and this process's own run, so the forwarder never re-derives them.
+pub(crate) struct ForwardedTask<'a> {
+    pub(crate) verified: VerifiedWorkspaceContext,
+    pub(crate) live: LiveGuestRun,
+    /// The checkout-relative working directory the host resolves inside its own
+    /// checkout.
+    pub(crate) cwd: &'a str,
+    pub(crate) selector: Selector,
+    pub(crate) args: Vec<String>,
+}
+
 /// Forward one non-interactive command and drive it to its terminal outcome.
 ///
 /// The returned string is the command's own summary for the CLI entrypoint; its
@@ -638,13 +652,16 @@ pub(crate) fn forward(
     published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     opener: &mut dyn ChannelOpener,
-    verified: VerifiedWorkspaceContext,
-    live: LiveGuestRun,
-    cwd: &str,
-    selector: Selector,
-    args: Vec<String>,
+    task: ForwardedTask<'_>,
     wants_json: bool,
 ) -> Result<String, RunnerError> {
+    let ForwardedTask {
+        verified,
+        live,
+        cwd,
+        selector,
+        args,
+    } = task;
     let connections = GuestConnections {
         opener,
         verified,
