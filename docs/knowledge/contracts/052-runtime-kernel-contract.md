@@ -3275,6 +3275,15 @@ proposals in this section and its appendices describe that later scope, not
 Level 1 delivery or current production readiness. This ruling does not
 change ordinary host commands or the detached workspace session supervisor.
 
+**Staged production cut (Tom, 2026-11-01).** Workspace-mode container up
+currently refuses by name before workspace preparation or apply; private
+Compose and production Discard remain refused. The retained reserved-guest
+publication, target revalidation, activation-deadline and guest-write crash
+tests require private apply and are not evidence of those behaviors while it
+is refused. Their acceptance is deferred to effigy#533 and effigy#531 before
+production enablement. Native full-session qualification remains a release
+gate; the cut does not alter ordinary Compose or hybrid behavior.
+
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
 guest for selection. `SessionLaunch::qualify_guest` issues a launch-local
