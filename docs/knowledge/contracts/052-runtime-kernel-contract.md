@@ -4798,13 +4798,62 @@ connection while each frame stays its own stream's: an acknowledgement releases
 that stream's frames that sit between other streams' frames, so an interleaved
 stream's consumption is never blocked by another stream's order. A host with no
 terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
-delivery it did not make. The kernel has no per-run terminal input/resize
-writer, and no host front end owns a session terminal yet (the transport, the
-guest client and the runner integration are separate tasks), so channel-owned
-delivery stops at the `Terminal` contract: the production runner terminal writer
-and the serving-loop binding are a separately owned follow-up, and nothing here
-claims production terminal delivery.
+delivery it did not make.
 `test:kernel:workspace-channel` owns these proofs.
+
+The runner supplies the owner that contract was written for (effigy#485,
+`workspace_client::terminal`). The kernel has no per-run terminal input/resize
+writer, so `WorkspaceTerminal` holds one admitted run's writer, newest geometry
+and retirement behind an injected `TerminalWriter` — the child's bounded,
+non-blocking write, its resize handle and its one close — and `TerminalCustody`
+is the session-bound `Streams` the merged #507 serving owner serves its
+connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
+`ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
+handoff its caller opens entries through. Opening a terminal resumes the run's
+owning handle, so a run this session did not admit has no owner to write for and
+is refused. Only that owning attachment binds the writer, for its whole life: a
+second terminal — the first one to attach included — never claims it, a re-attach
+never displaces it, and the kernel's own replacement of a second terminal cannot
+put one in its place. Because the attachment allowed to queue work and the row
+the pump re-reads before every effect are therefore one attachment, a released
+owning row stops queued work as well as new frames, and nothing is ever queued on
+a second terminal's authority. The connection fences the live attachment it was
+handed, and the
+owner's writer runs on its own pump: the pump re-reads the resumed owning row
+with `Attachment::attached_observed` immediately before every writer effect —
+each partial write, each resize, and each idle tick — so a stale, released,
+replaced or foreign attachment, a second terminal, and a run this session owns
+no terminal for refuse with zero bytes and zero resize, and no effect can land
+against a row that was released between turns or between two chunks of one
+frame. The two kinds of effect alternate while both have work, so neither can
+starve the other: a writer that stays full (a child that stopped reading) never
+holds back the newest geometry, and a resize handle that stays full never holds
+back queued input. Resize remains latest-wins, so the alternation costs at most
+one turn and never a backlog. Intermediate geometries may coalesce: delivery
+is an ordered subsequence of requested sizes ending at the final requested size,
+never an older size after a newer one. Proofs synchronize delivery with an explicit
+handle gate rather than requiring every intermediate size to land.
+Input is bounded at two frames and then refuses rather than growing a
+queue; the pump drains what a slow child refused on its own cadence, so
+backpressured input completes even when the connection is live and idle and never
+needs the client to type again; resize keeps one size and never replays an older
+one; a second terminal's detach releases only its own row and never stops the
+owning run; and the owning client's end of stream retires the writer exactly
+once, again without waiting for connection traffic or for the run's closure. A
+reconnect resumes the retained log at the negotiated cursor or reports the
+rotated range as a `gap`, with no second replay store. `effigy#485` proves those
+behaviours with production-shaped fake writers through the real `Server::serve`
+loop and the merged serving loop, owned by `test:workspace:publication:c`, for
+**input and resize** on both paths: a released owning row stopping the work it had
+queued (a resize is sent on the same live connection and is never applied), and a
+repeated attach whose replacement the kernel opens being refused with zero bytes
+and zero resize while the same frame through the bound owning attachment is
+delivered — the reversible failing safety assertion in both directions; the
+crossing terminal; the owner-EOF retirement with no further traffic; the idle
+drain; the write/resize alternation that keeps a full writer from starving
+geometry; and the rotated-prefix gap. The container-up caller that opens one entry per admitted run
+is effigy#452, and the live child-PTY writer with its two-real-PTY process proof
+is effigy#519: nothing above claims a production terminal binding.
 
 ## Appendix B: NON-NORMATIVE post-v0.15 sequence candidates
 

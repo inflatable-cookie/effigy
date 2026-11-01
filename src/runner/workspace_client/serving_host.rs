@@ -564,6 +564,12 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     session.event(event);
 
     let owner_lost = || watch.as_ref().map(|watch| watch.lost()).unwrap_or(false);
+    // The session's terminal custody: one terminal owner and retained reader per
+    // admitted run. #452's container-up caller opens an entry for each run it
+    // admits; until then every terminal frame refuses rather than dropping
+    // input, and the loop already serves the exact value it will hand over
+    // (effigy#485).
+    let mut terminals = service.terminal_custody(&observe);
     // Every way out of the loop retires the custody, so no path can leave the
     // session's listener, key or run behind: a control failure is a listener
     // failure for this purpose, not an early return.
@@ -584,10 +590,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             Some(_) => break RetirementCause::Stopped,
             None => {}
         }
-        match serve_turn(
-            &mut service,
-            &mut effigy_kernel::workspace_channel::NoStreams,
-        ) {
+        match serve_turn(&mut service, &mut terminals) {
             Ok(true) => {}
             Ok(false) => std::thread::sleep(TURN),
             Err(error) if error.is_terminal() => break RetirementCause::ListenerFailed,
