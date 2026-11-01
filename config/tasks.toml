@@ -2011,3 +2011,6 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "test:workspace:publication:c:source" = { visibility = "internal", run = [{ task = "test:workspace:publication:c" }, { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy-cli --lib -E 'test(workspace_activation::tests::) | test(workspace_host_alias_render_) | test(guest_probe_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
 
 "test:workspace:publication:c:acceptance" = { visibility = "internal", description = "C producer/identity proof plus the kernel session crash, concurrency and retry families.", run = [{ task = "test:workspace:publication:c:source" }, { task = "test:kernel:workspace-session" }, { task = "test:workspace:channel:session-fault-model" }] }
+
+"check:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-containers -p effigy-kernel --all-targets", timeout_ms = 1800000 }] }
+"lint:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-containers -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 1800000 }] }

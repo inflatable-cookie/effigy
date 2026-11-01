@@ -83,6 +83,9 @@ use crate::runner::workspace_command::provisioning::{
 };
 use crate::runner::workspace_transport::qualification::{Backend, ChannelAliasPlan};
 
+#[path = "creator_evidence.rs"]
+mod creator_evidence;
+
 type EnvError = effigy_containers::environment::EnvError;
 
 /// The fixed evidence label every derived value in this module carries. It names
@@ -524,30 +527,6 @@ fn environment_record_bounded(
     }
 }
 
-/// The one owner fact a fresh workspace target needs and no owner provides.
-///
-/// The kernel's fresh-target check accepts a candidate whose `created_by` names
-/// this run, so that value must be a verified creation fact: which run, on which
-/// backend, created this exact full container id. The engine adapters record none
-/// (their apply effect names the engine, context and project; Compose's labels
-/// name the project and service), and neither a creation timestamp inside this
-/// activation's window nor the absence of a container before the apply proves
-/// *who* created it. A competing Compose actor creates the same project, service
-/// and labels, so attributing it to this run would satisfy the kernel on the
-/// builder's word.
-pub(in crate::runner) const MISSING_TARGET_CREATION_OWNER: &str =
-    "an engine creation receipt naming the activation run and the exact full container id \
-     (`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`)";
-
-/// A fresh workspace target cannot be published until that owner exists.
-fn fresh_target_refusal() -> EnvError {
-    refused(format!(
-        "workspace has no verified creation identity for a fresh target, so this activation \
-         cannot publish it; the missing owner signature is {MISSING_TARGET_CREATION_OWNER}. \
-         Re-run once the environment's container exists so the decision observes it"
-    ))
-}
-
 /// What a caller must hand the pre-decision plan.
 pub(in crate::runner) struct ReservedPlanRequest<'a> {
     /// The policy this activation was loaded from. [`plan`] derives the rendered
@@ -683,10 +662,12 @@ impl ReservedPublicationPlan {
             ArtifactEvidence::Unselected { .. } => {}
         }
         match &target {
-            TargetEvidence::Absent { .. } => {
-                // Refuse before the decision is frozen rather than let a fresh
-                // target reach the kernel's `created_by` check unattributed.
-                return Err(fresh_target_refusal());
+            TargetEvidence::Absent { project, backend } => {
+                if project != &self.policy.project_name || backend != &self.backend_label {
+                    return Err(refused(
+                        "workspace successor evidence names another project or backend",
+                    ));
+                }
             }
             TargetEvidence::Observed(identity) => {
                 if identity.backend != self.backend_label {
@@ -1043,6 +1024,7 @@ pub(in crate::runner) struct ReservedDecisionFacts {
     inputs: PublishInputs,
     reservation_generation: u64,
     created_by: RunId,
+    creation: Option<creator_evidence::WorkspaceCreatorEvidence>,
 }
 
 impl ReservedDecisionFacts {
@@ -1050,6 +1032,7 @@ impl ReservedDecisionFacts {
     /// decision.
     pub(in crate::runner) fn of(
         activation: &mut effigy_containers::environment::WorkspaceActivation<'static>,
+        ctx: &effigy_containers::environment::EnvContext<'static>,
     ) -> Result<Self, EnvError> {
         let inputs = activation
             .reservation()
@@ -1058,10 +1041,15 @@ impl ReservedDecisionFacts {
             .ok_or_else(|| refused("workspace activation has no frozen publication inputs"))?;
         let reservation_generation = activation.reservation().generation().get();
         let created_by = activation.environment_mut().id();
+        let creation = Some(creator_evidence::WorkspaceCreatorEvidence::new(
+            ctx,
+            activation.reservation().environment().clone(),
+        ));
         Ok(Self {
             inputs,
             reservation_generation,
             created_by,
+            creation,
         })
     }
 }
@@ -1206,9 +1194,9 @@ pub(in crate::runner) fn observe<'a>(
         inputs,
         reservation_generation,
         created_by,
+        creation,
     } = facts;
     let reservation_generation = *reservation_generation;
-    let _ = created_by;
     // The decision must be this plan's decision: another plan's frozen
     // materialisation, selection or inputs would publish bytes the decision
     // never compared.
@@ -1273,11 +1261,25 @@ pub(in crate::runner) fn observe<'a>(
             }
             None
         }
-        TargetEvidence::Absent { .. } => {
-            // No owner proves which run created this container, so a fresh target
-            // is never attributed to this activation — even when the decision
-            // somehow froze one.
-            return Err(fresh_target_refusal());
+        TargetEvidence::Absent { project, backend } => {
+            let receipt = creation.as_ref().ok_or_else(|| {
+                refused("workspace successor has no journal-bound creation receipt")
+            })?;
+            if project != &policy.project_name || backend != &plan.backend_label {
+                return Err(refused(
+                    "workspace successor evidence names another project or backend",
+                ));
+            }
+            let observed_creator = verified(
+                receipt.created_by(project, &target.container_id, deadline),
+                "workspace successor creator",
+            )?;
+            if observed_creator != *created_by {
+                return Err(refused(
+                    "workspace successor was not created by this activation",
+                ));
+            }
+            Some(*created_by)
         }
     };
     deadline.remaining()?;

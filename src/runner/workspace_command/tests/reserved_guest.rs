@@ -496,7 +496,6 @@ home = "/home/vscode"
         };
         let gated_reads = std::rc::Rc::new(Cell::new(0));
         let gated_reads_for_closure = gated_reads.clone();
-        let probe_for_input: Box<dyn super::WorkspaceGuestProbe> = Box::new(probe.clone());
         let probe_identity = probe.identity.clone();
         let probe_guest = probe.guest.clone();
         let probe_probed = probe.context_probed.clone();

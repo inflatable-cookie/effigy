@@ -3259,6 +3259,13 @@ before the one apply publishes it, and the preflight must not put it there: the 
 owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
 acquire `Gate(Env)` — which the gated recheck cannot do — publish desired state, and
 run on a fixed budget rather than the publication's one deadline. The kernel owner is
+The frozen closure owns every Compose input, including
+`checkout/.effigy/runtime/compose/one.generated.compose.yml` under the render
+root. The preflight checks the exact apply file list against the closure and
+refuses missing or differing bytes before hashing; generated files have no
+second seal or publication authority (Supervisor under Tom's standing delegation,
+2026-11-01; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+
 `Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight`: it
 verifies the frozen closure into one private `staging/preflight-<token>/<digest>`
 tree (`O_EXCL`, 0600, kernel closure verifier) inside the deadline, takes no gate
@@ -3280,12 +3287,17 @@ after the apply, in the same process, on the admitted activation: it re-verifies
 the exact primary binding, takes the **image platform** (OS, architecture,
 variant) from the backend's own `runtime image inspect` of the image that
 container runs and the loader family from the image root the guest reports,
-requires the guest's diagnostic machine type to agree with the image, refuses a
-**fresh** target outright because no owner proves which run created a container
-(so the kernel's `created_by` fresh-target check is never satisfied on the
-builder's word; the missing signature is
-`EnvironmentBackend::created_by(project, container_id) -> Observed<RunId>`, and a
-re-observed target is exact identity matching that needs no attribution), selects the
+requires the guest's diagnostic machine type to agree with the image. An unknown
+successor reserves `TargetEvidence::Absent`; observation attributes its exact full
+ID only through the merged creator owner's journal lookup, scoped to the
+reservation environment and equal to the admitted activation's run. The lookup
+runs as a bounded read under the same absolute deadline; unknown, absent,
+ambiguous or another run's evidence refuses. Re-observed targets require exact
+identity equality and carry no creator attribution. The final gated binding
+still rechecks the journal receipt and live inventory through the reconciler;
+this builder grants no fence or gate authority. `ReservedDecisionFacts::of`
+receives the activation and its `EnvContext`, preserving the journal's owning
+root without opening a second credential authority. The builder selects the
 pinned artifact family from the *image* platform, authenticates it against its
 producer receipt under the same deadline, and refuses a target the frozen
 decision did not name. Execution is claimed only for native execution: an image

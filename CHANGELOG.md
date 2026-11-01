@@ -6,6 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+- Build reserved workspace successor attribution from the activation's exact-ID
+  creation journal with the same publication deadline.
+
 ### Security
 
 - Host-process children use custody-owned output pipes instead of inheriting

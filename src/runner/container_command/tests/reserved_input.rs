@@ -471,6 +471,7 @@ fn decision(inputs: PublishInputs) -> ReservedDecisionFacts {
         inputs,
         reservation_generation: 7,
         created_by: RunId::new(1_760_000_000_000, [1; 10]).expect("run id"),
+        creation: None,
     }
 }
 
@@ -585,7 +586,7 @@ fn colima_preserves_the_admitted_profile_and_renders_the_observed_gateway() {
         "{rendered}"
     );
     // A re-observed target that names this backend is a decision this plan can
-    // freeze; a fresh target is refused (below), and a foreign backend refuses.
+    // freeze; an unknown successor reserves Absent for later receipt binding.
     assert!(planned
         .publish_inputs(
             ArtifactEvidence::Unselected {
@@ -606,7 +607,7 @@ fn colima_preserves_the_admitted_profile_and_renders_the_observed_gateway() {
                 backend: planned.backend_label().to_owned(),
             },
         )
-        .is_err());
+        .is_ok());
     assert!(planned
         .publish_inputs(
             ArtifactEvidence::Unselected {
@@ -1881,7 +1882,7 @@ fn an_expired_budget_reads_no_environment_record() {
 }
 
 #[test]
-fn a_fresh_target_is_refused_for_the_missing_creation_owner() {
+fn a_successor_reservation_keeps_absent_until_the_apply_receipt() {
     let observation = observation_checkout("fresh-refused");
     let artifact = produced_artifact(&observation.root, host_family());
     let mut backend = FakeBackend::colima();
@@ -1889,10 +1890,9 @@ fn a_fresh_target_is_refused_for_the_missing_creation_owner() {
     let policy = rendered_policy(&observation.root);
     let plan = planned_in_home(&observation, &policy, &mut backend);
 
-    // No owner proves which run created a container, so a fresh target is never
-    // given a `created_by` on the builder's word: the decision is refused before
-    // it is frozen.
-    let error = plan
+    // Reserve the successor before its identity is known. Observation still
+    // requires the creation owner's exact-ID journal evidence.
+    let inputs = plan
         .publish_inputs(
             ArtifactEvidence::Unselected {
                 image_reference: "example:one".into(),
@@ -1903,14 +1903,9 @@ fn a_fresh_target_is_refused_for_the_missing_creation_owner() {
                 backend: plan.backend_label().to_owned(),
             },
         )
-        .expect_err("a fresh target has no verified creation identity")
-        .to_string();
+        .expect("successor reservation");
 
-    assert!(error.contains("no verified creation identity"), "{error}");
-    assert!(
-        error.contains("EnvironmentBackend::created_by"),
-        "the refusal names the missing owner signature: {error}"
-    );
+    assert!(matches!(inputs.target, TargetEvidence::Absent { .. }));
 }
 
 #[test]
@@ -1923,8 +1918,7 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
     let plan = planned_in_home(&observation, &policy, &mut backend);
     let rendered = plan.rendered_policy();
     let probe = probe_factory();
-    // Only a hand-built decision can still say `Absent`: the observation must not
-    // attribute it either.
+    // An Absent reservation alone grants no attribution authority.
     let (selection, inputs_digest) = plan.frozen_digests();
     let facts = decision(PublishInputs {
         artifact: ArtifactEvidence::Unselected {
@@ -1954,5 +1948,8 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
     .expect_err("a frozen fresh decision is still unattributable")
     .to_string();
 
-    assert!(error.contains("no verified creation identity"), "{error}");
+    assert!(
+        error.contains("no journal-bound creation receipt"),
+        "{error}"
+    );
 }

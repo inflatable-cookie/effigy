@@ -1591,11 +1591,16 @@ impl super::PredecessorBackend for FixturePredecessor {
     }
     fn config_hashes(
         &mut self,
-        _: &Path,
-        _: &effigy_containers::EffectiveContainerPolicy,
-        _: std::time::Instant,
+        root: &Path,
+        policy: &effigy_containers::EffectiveContainerPolicy,
+        deadline: std::time::Instant,
     ) -> Result<std::collections::BTreeMap<String, String>, RunnerError> {
-        Ok(self.hashes.clone())
+        let hashes = super::compose_service_config_hashes(root, policy, deadline)?;
+        assert_eq!(
+            hashes, self.hashes,
+            "production Compose hashes the private frozen inputs"
+        );
+        Ok(hashes)
     }
 }
 
@@ -1629,7 +1634,13 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
         .expect("sealed");
         let project = policy.project_name.clone();
         let id = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
-        let config_hash = "0123456789abcdef0123456789abcdef";
+        let hashes = super::compose_service_config_hashes(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .expect("real Compose hashes the unpublished private closure");
+        let config_hash = hashes.get("app").expect("app hash").as_str();
         let checkout_path = checkout
             .canonicalize()
             .unwrap_or_else(|_| checkout.clone())
