@@ -682,7 +682,10 @@ fn pre_attach_eof_fault_retains_exact_owner_handle() {
         assert_eq!(error.code, RefusalCode::Unknown);
         assert!(fault::fired());
         fault::arm(None);
-        let retained = host.unsettled_attachment.as_ref().map(Attachment::run);
+        let retained = host
+            .unsettled_attachment
+            .as_ref()
+            .map(|handle| (handle.run(), handle.fence().clone()));
         let fresh = cleanup(&cx)
             .operation()
             .effects()
@@ -700,12 +703,21 @@ fn pre_attach_eof_fault_retains_exact_owner_handle() {
                 |row| row.get(0),
             )
             .unwrap();
+        let request = reader
+            .conn()
+            .query_row(
+                "SELECT action FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|encoded| serde_json::from_str::<crate::run::Request>(&encoded).ok());
         drop(reader);
         for run in host.dispatcher.admission.runs.drain(..) {
             run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
         }
         assert_eq!(
-            retained,
+            retained.as_ref().map(|(run, _)| *run),
             Some(live),
             "the exact failed-release owner must remain held"
         );
@@ -714,6 +726,14 @@ fn pre_attach_eof_fault_retains_exact_owner_handle() {
             "same owner cleanup should recover while the run is live"
         );
         assert_eq!(requests, 1, "retry must leave exactly one stop");
+        assert!(
+            request.is_some_and(|request| request.run == live
+                && retained
+                    .as_ref()
+                    .is_some_and(|(_, fence)| &request.expected == fence)
+                && matches!(request.action, crate::run::RequestAction::Stop)),
+            "stop must name the exact run and fence"
+        );
     }
 }
 
@@ -923,6 +943,160 @@ fn admitted_run<'a>(
     )
     .expect("admitted");
     (run, accepted.run)
+}
+
+#[test]
+fn concurrent_recorded_admission_does_not_grant_the_loser_owner() {
+    use std::sync::{mpsc, Arc, Barrier};
+    struct RaceResolver {
+        barrier: Arc<Barrier>,
+        wait: Option<mpsc::Receiver<()>>,
+    }
+    impl super::Resolver for RaceResolver {
+        fn resolve(
+            &mut self,
+            _: &EffectContext,
+            _: &InvocationBody,
+        ) -> Result<ResolvedInvocation, Refusal> {
+            self.barrier.wait();
+            if let Some(wait) = self.wait.take() {
+                wait.recv_timeout(Duration::from_secs(10))
+                    .map_err(|_| Refusal::unknown("race timed out"))?;
+            }
+            Ok(invocation(task("workspace-channel").resource()))
+        }
+    }
+    struct RaceAdmission<'a> {
+        root: &'a StateRoot,
+        winner: Option<mpsc::Sender<()>>,
+        done: Option<mpsc::Receiver<()>>,
+        run: Option<Run<'a>>,
+    }
+    impl Admission for RaceAdmission<'_> {
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            let Some(winner) = self.winner.take() else {
+                return Err(Refusal::unknown("loser attempted admission"));
+            };
+            let run = Run::begin_admitted(
+                cx,
+                self.root,
+                resolved,
+                BeginOpts {
+                    id: ticket.run(),
+                    wait: Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next_argv(),
+                    custody: None,
+                },
+                &cleanup(cx),
+                &mut NoEffects,
+                ticket.clone(),
+            )
+            .map_err(refusal_from)?;
+            self.run = Some(run);
+            winner
+                .send(())
+                .map_err(|_| Refusal::unknown("race receiver closed"))?;
+            self.done
+                .take()
+                .expect("winner owns completion receiver")
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|_| Refusal::unknown("race timed out"))?;
+            Ok(())
+        }
+    }
+    let (fixture, _, _, session) = journal("effigy-channel-recorded-race");
+    let path = fixture.path().to_path_buf();
+    let barrier = Arc::new(Barrier::new(2));
+    let (admitted_tx, admitted_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let (winner, loser) = std::thread::scope(|scope| {
+        let winner_path = path.clone();
+        let winner_barrier = Arc::clone(&barrier);
+        let winner = scope.spawn(move || {
+            let cx = effects(Placement::Host);
+            let root = StateRoot::effects(&cx, &winner_path).unwrap();
+            let mut dispatcher = Dispatcher::new(
+                RaceAdmission {
+                    root: &root,
+                    winner: Some(admitted_tx),
+                    done: Some(done_rx),
+                    run: None,
+                },
+                RaceResolver {
+                    barrier: winner_barrier,
+                    wait: None,
+                },
+                Observer::default(),
+                Ids::new(&[178]),
+            );
+            let reply = dispatcher.invoke(
+                &cx,
+                &observe_context(),
+                &root,
+                session,
+                RequestId::new([7; 16]),
+                Digest::of(b"same race"),
+                &invocation_body("build"),
+            );
+            let owns = dispatcher
+                .admitted
+                .contains(&RunId::new(7, [178; 10]).unwrap());
+            if let Some(run) = dispatcher.admission.run.take() {
+                run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+            }
+            (reply, owns)
+        });
+        let loser = scope.spawn(move || {
+            let cx = effects(Placement::Host);
+            let root = StateRoot::effects(&cx, &path).unwrap();
+            let mut dispatcher = Dispatcher::new(
+                RaceAdmission {
+                    root: &root,
+                    winner: None,
+                    done: None,
+                    run: None,
+                },
+                RaceResolver {
+                    barrier,
+                    wait: Some(admitted_rx),
+                },
+                Observer::default(),
+                Ids::new(&[179]),
+            );
+            let reply = dispatcher.invoke(
+                &cx,
+                &observe_context(),
+                &root,
+                session,
+                RequestId::new([7; 16]),
+                Digest::of(b"same race"),
+                &invocation_body("build"),
+            );
+            let owns = dispatcher
+                .admitted
+                .contains(&RunId::new(7, [178; 10]).unwrap());
+            let _ = done_tx.send(());
+            (reply, owns)
+        });
+        (winner.join().unwrap(), loser.join().unwrap())
+    });
+    let expected = RunId::new(7, [178; 10]).unwrap();
+    assert!(matches!(winner.0, Ok(AdmissionReply::Accepted(ref value)) if value.run == expected));
+    assert!(
+        winner.1,
+        "fresh admission grants ownership to its own dispatcher"
+    );
+    assert!(matches!(loser.0, Ok(AdmissionReply::Accepted(ref value)) if value.run == expected));
+    assert!(
+        !loser.1,
+        "a recorded admission must not grant ownership to the loser"
+    );
 }
 
 /// One connection's captured output, as the attachment's owner would publish it.
