@@ -3,13 +3,13 @@
 use super::*;
 use crate::closure::ClosurePin;
 use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
-use crate::supervise::memory::{MemoryGuard, MemoryPurpose};
+use crate::supervise::memory::{MemoryGuard, MemoryPurpose, PartialMemoryGuard};
 
 #[derive(Debug)]
 pub(super) struct CheckoutCustody {
     lease: CheckoutFenceGuard,
     backup: Option<MemoryGuard>,
-    partial_backup: Option<Box<MemoryGuard>>,
+    partial_backup: Option<Box<PartialMemoryGuard>>,
     token: String,
 }
 impl Run<'_> {
@@ -166,7 +166,6 @@ impl Run<'_> {
             .as_ref()?
             .partial_backup
             .as_ref()?
-            .identity
-            .clone()
+            .identity()
     }
 }

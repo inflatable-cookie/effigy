@@ -21,6 +21,22 @@ pub(crate) struct MemoryGuard {
     close_deadline: Option<Instant>,
     closure: Option<ClosurePin>,
 }
+
+/// Owns a helper whose startup did not complete. Deliberately exposes no
+/// process-registration operation; only bounded cleanup is available.
+#[derive(Debug)]
+pub(crate) struct PartialMemoryGuard(MemoryGuard);
+
+impl PartialMemoryGuard {
+    pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
+        self.0.close(cx)
+    }
+
+    #[cfg(all(test, feature = "fault-injection"))]
+    pub(crate) fn identity(&self) -> Option<ProcessIdentity> {
+        self.0.identity.clone()
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -66,7 +82,7 @@ impl MemoryGuard {
         run: RunId,
         fence: Fence,
         purpose: MemoryPurpose,
-    ) -> Result<Self, (RunError, Option<Box<Self>>)> {
+    ) -> Result<Self, (RunError, Option<Box<PartialMemoryGuard>>)> {
         let (mut child, closure, config) = (|| -> Result<_, RunError> {
             // Memory custody never pins or copies an image into runtime state, and
             // never refuses over one: a rebuilt or missing binary beside a
@@ -173,7 +189,7 @@ impl MemoryGuard {
         })();
         match started {
             Ok(()) => Ok(guard),
-            Err(error) => Err((error, Some(Box::new(guard)))),
+            Err(error) => Err((error, Some(Box::new(PartialMemoryGuard(guard))))),
         }
     }
 
