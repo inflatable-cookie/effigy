@@ -135,4 +135,70 @@ mod tests {
         fixture.close().unwrap();
         assert!(!path.exists(), "the fixture must be removed");
     }
+
+    #[test]
+    fn worker_local_root_and_run_survive_a_caught_command_unwind() {
+        use crate::gate::GateError;
+        use crate::id::{CheckoutId, CheckoutKind, ResourceId};
+        use crate::run::tests::{cleanup, context, inv, opts, Fake};
+        use crate::run::{Run, RunError};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().to_owned();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            let cx = context();
+            let root = crate::root::StateRoot::effects(&cx, &worker_path).unwrap();
+            let owner = ResourceId::environment(
+                CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+                "caught-unwind",
+            )
+            .unwrap();
+            let invocation = inv(owner);
+            let mut run = Run::begin(
+                &cx,
+                &root,
+                &invocation,
+                opts(1),
+                &cleanup(&cx),
+                &mut Fake::new(&worker_path),
+            )
+            .unwrap();
+            let released = Arc::new(AtomicBool::new(false));
+            let action = released.clone();
+            run.on_settle(move || action.store(true, Ordering::Release));
+            let original_id = run.id();
+            let original_fence = run.fence().clone();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _borrowed_owner = &mut run;
+                panic!("fixture command failure");
+            }));
+            assert!(caught.is_err());
+            assert_eq!(run.id(), original_id);
+            assert_eq!(run.fence(), &original_fence);
+            assert!(!released.load(Ordering::Acquire));
+            let competitor = Run::begin(
+                &cx,
+                &root,
+                &invocation,
+                opts(2),
+                &cleanup(&cx),
+                &mut Fake::new(&worker_path),
+            );
+            assert!(matches!(
+                competitor,
+                Err(RunError::Gate(GateError::Busy { .. }))
+            ));
+            assert!(!released.load(Ordering::Acquire));
+            drop(run);
+            assert!(released.load(Ordering::Acquire));
+        });
+        worker.join().unwrap();
+        fixture.close().unwrap();
+        assert!(!path.exists());
+    }
 }
