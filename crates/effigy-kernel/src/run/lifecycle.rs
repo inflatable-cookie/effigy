@@ -93,17 +93,29 @@ impl Run<'_> {
         lease: SentinelLease,
         plan: &LifecyclePlan,
     ) -> Result<(), RunError> {
-        self.can_effect()?;
         if self.sentinel.is_some() {
             return Err(RunError::broken("sentinel already registered"));
         }
-        if !self.holds_owner_gate()? {
-            return Err(RunError::broken("registration needs owner gate"));
-        }
-        let identity = ident::process_identity(std::process::id())
-            .verified()
-            .cloned()
-            .ok_or_else(|| RunError::unavailable("owner identity unavailable"))?;
+        let identity = (|| {
+            self.can_effect()?;
+            if !self.holds_owner_gate()? {
+                return Err(RunError::broken("registration needs owner gate"));
+            }
+            ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or_else(|| RunError::unavailable("owner identity unavailable"))
+        })();
+        let identity = match identity {
+            Ok(identity) => identity,
+            Err(error) => {
+                // The helper already started. Retain it for cleanup even when
+                // the original operation can no longer register it.
+                self.poisoned = true;
+                self.sentinel = Some(lease);
+                return Err(error);
+            }
+        };
         if let Some(startup) = self.machine_startup.as_mut() {
             startup.lifecycle = Some((identity, lease.identity.clone(), plan.placement));
             self.sentinel = Some(lease);
@@ -214,6 +226,70 @@ mod tests {
     };
     use std::time::{Duration, Instant};
 
+    fn reap_test_child(identity: &ProcessIdentity) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let mut status = 0;
+            // SAFETY: this is the exact helper child spawned by the test.
+            let waited = unsafe { libc::waitpid(identity.pid as i32, &mut status, libc::WNOHANG) };
+            if waited != 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                // SAFETY: only the exact unreaped child spawned by this test.
+                unsafe {
+                    libc::kill(identity.pid as i32, libc::SIGKILL);
+                    libc::waitpid(identity.pid as i32, &mut status, 0);
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn cancelled_registration_keeps_the_exact_sentinel_for_cleanup() {
+        let home = effigy_test_support::short_tempdir("lc-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "cancelled-sentinel-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let lease =
+            crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next())
+                .unwrap();
+        let identity = lease.identity.clone();
+        cx.operation()
+            .cancel_token()
+            .cancel(crate::ctx::StopCause::Requested);
+        let result = run.register_lifecycle(lease, &plan);
+        let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        reap_test_child(&identity);
+        assert!(result.is_err());
+        assert_eq!(
+            retained,
+            Some(identity),
+            "cancelled registration must retain its exact lease"
+        );
+        assert!(cleanup.is_ok(), "fresh cleanup must settle the exact owner");
+    }
+
     #[test]
     fn failed_registration_and_close_keep_the_exact_sentinel_lease() {
         let home = effigy_test_support::short_tempdir("ls-").unwrap();
@@ -269,24 +345,7 @@ mod tests {
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
         // The failing-first implementation can lose the Child handle. Reap
         // only this test's exact recorded child before making assertions.
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let mut status = 0;
-            // SAFETY: this is the exact helper child spawned above.
-            let waited = unsafe { libc::waitpid(identity.pid as i32, &mut status, libc::WNOHANG) };
-            if waited != 0 {
-                break;
-            }
-            if Instant::now() >= deadline {
-                // SAFETY: only the exact unreaped child spawned by this test.
-                unsafe {
-                    libc::kill(identity.pid as i32, libc::SIGKILL);
-                    libc::waitpid(identity.pid as i32, &mut status, 0);
-                }
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        reap_test_child(&identity);
         assert!(result.is_err());
         assert_eq!(before_count.load(Ordering::SeqCst), 1);
         assert_eq!(close_count.load(Ordering::SeqCst), 1);

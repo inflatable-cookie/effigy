@@ -2753,6 +2753,9 @@ impl Run<'_> {
         plan: &crate::supervise::LifecyclePlan,
     ) -> Result<(), RunError> {
         self.can_effect()?;
+        if self.sentinel.is_some() {
+            return Err(RunError::broken("sentinel already registered"));
+        }
         let lease = crate::supervise::spawn_sentinel(self, self.root, plan, &self.next)?;
         self.register_lifecycle(lease, plan)
     }
