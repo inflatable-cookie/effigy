@@ -5333,13 +5333,7 @@ fn level_one_host_unknown_fences_all_intent_clones_but_known_answers_allow_safe_
         let cloned = intent.clone();
         let second = client.send(&cloned);
         if unknown {
-            assert!(matches!(
-                first,
-                Err(ChannelError::Refused {
-                    code: "unknown",
-                    ..
-                })
-            ));
+            assert!(matches!(first, Err(ChannelError::Unknown { .. })));
             assert!(matches!(second, Err(ChannelError::Unknown { .. })));
             assert_eq!(
                 written.lock().unwrap().len(),
@@ -5536,4 +5530,174 @@ fn level_one_concurrent_intent_clone_refuses_before_a_second_transport_write() {
         Err(ChannelError::Unknown { .. })
     ));
     assert_eq!(written.lock().unwrap().len(), before);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LevelOnePostwriteReply {
+    Malformed,
+    Oversized,
+    Mismatched,
+    Unexpected,
+    HostUnknown,
+    UnreadableAttach,
+}
+
+fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
+    let body = if matches!(reply, LevelOnePostwriteReply::UnreadableAttach) {
+        RequestBody::Attach(AttachBody {
+            run: session_run(),
+            streams: vec![StreamKind::Stdout],
+            cursor: None,
+            cursors: None,
+        })
+    } else {
+        RequestBody::Invoke(InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: vec![],
+            output: ChannelOutputMode::Text,
+        })
+    };
+    let intent = Intent::new(body);
+    let (client_side, host_side) = connection_pair();
+    // Unlike a preloaded reply, this peer cannot answer until it has decoded
+    // the actual request. Every refusal below therefore follows delivery.
+    let peer = std::thread::spawn(move || -> Result<RequestId, String> {
+        let mut transport = PeerTransport::new(host_side);
+        let hello = read_frame(&mut transport).map_err(|error| format!("{error:?}"))?;
+        if !matches!(hello, Frame::Hello(_)) {
+            return Err("expected hello".into());
+        }
+        host::write_frame(
+            &mut transport,
+            &Frame::HelloOk(host::HelloOk {
+                capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        if !matches!(
+            read_frame(&mut transport).map_err(|error| format!("{error:?}"))?,
+            Frame::Authenticate(_)
+        ) {
+            return Err("expected authentication".into());
+        }
+        let Frame::Request(request) =
+            read_frame(&mut transport).map_err(|error| format!("{error:?}"))?
+        else {
+            return Err("expected request".into());
+        };
+        let response = match reply {
+            LevelOnePostwriteReply::Malformed => {
+                let bytes = b"not-json-private-reply";
+                transport
+                    .write_all(&(bytes.len() as u32).to_be_bytes())
+                    .map_err(|error| error.to_string())?;
+                transport
+                    .write_all(bytes)
+                    .map_err(|error| error.to_string())?;
+                return Ok(request.id);
+            }
+            LevelOnePostwriteReply::Oversized => {
+                transport
+                    .write_all(&((host::MAX_FRAME_BYTES + 1) as u32).to_be_bytes())
+                    .map_err(|error| error.to_string())?;
+                return Ok(request.id);
+            }
+            LevelOnePostwriteReply::Mismatched => {
+                let mut foreign = *request.id.bytes();
+                foreign[0] ^= 1;
+                Frame::Response(host::Response {
+                    id: RequestId::new(foreign),
+                    outcome: host::ResponseOutcome::Observed(
+                        serde_json::json!({"private-reply":true}),
+                    ),
+                })
+            }
+            LevelOnePostwriteReply::Unexpected => Frame::HelloOk(host::HelloOk {
+                capabilities: vec![],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+            LevelOnePostwriteReply::HostUnknown => Frame::Response(host::Response {
+                id: request.id,
+                outcome: host::ResponseOutcome::Refused(host::Refusal::unknown(
+                    "the host cannot establish this outcome",
+                )),
+            }),
+            LevelOnePostwriteReply::UnreadableAttach => Frame::Response(host::Response {
+                id: request.id,
+                outcome: host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+            }),
+        };
+        host::write_frame(&mut transport, &response).map_err(|error| error.to_string())?;
+        Ok(request.id)
+    });
+    let outcome = (|| {
+        let mut client =
+            WorkspaceClient::connect(PeerTransport::new(client_side), verified(), live_run())?;
+        client.authenticate(GuestAuth::Capability(capability()))?;
+        client.send(&intent)
+    })();
+    let received = peer
+        .join()
+        .expect("peer reaped")
+        .expect("peer received and answered request");
+    assert_eq!(received, intent.id());
+    let error = outcome.expect_err("invalid post-delivery answer");
+    assert!(
+        matches!(&error, ChannelError::Unknown { .. }),
+        "{reply:?} was reported as {error:?} after host delivery"
+    );
+    let message = error.into_runner().to_string();
+    assert!(
+        message.contains("unknown")
+            && message.contains("independent host CLI")
+            && message.contains("do not submit it as a new request"),
+        "{message}"
+    );
+    assert!(!message.contains("private-reply"));
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut reconnect = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    reconnect
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        reconnect.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "post-delivery Unknown clone resent"
+    );
+}
+
+#[test]
+fn level_one_postwrite_malformed_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Malformed);
+}
+#[test]
+fn level_one_postwrite_oversized_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Oversized);
+}
+#[test]
+fn level_one_postwrite_mismatched_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Mismatched);
+}
+#[test]
+fn level_one_postwrite_unexpected_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Unexpected);
+}
+#[test]
+fn level_one_postwrite_host_unknown_reports_no_resend_guidance() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::HostUnknown);
+}
+#[test]
+fn level_one_postwrite_unreadable_attach_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::UnreadableAttach);
 }

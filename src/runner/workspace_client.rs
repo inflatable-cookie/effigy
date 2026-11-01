@@ -602,13 +602,13 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     }
 }
 
-/// Why a guest never reached its host.
+/// Why a guest did not obtain a definitive successful host outcome.
 #[derive(Debug)]
 pub(crate) enum ChannelError {
-    /// The host refused before it recorded any effect for this request. The
-    /// code is lane A's stable refusal code (§8.11).
+    /// A refusal established before delivery or from a definitive host response.
+    /// The code is lane A's stable refusal code (§8.11).
     Refused { code: &'static str, message: String },
-    /// The connection failed or ended before the host answered. Whether the
+    /// The outcome cannot be established after possible delivery. Whether the
     /// host acted is `Unknown` and is never guessed. It authorizes no resend.
     Unknown { message: String },
     /// The client would not form or send this request at all.
@@ -1151,7 +1151,17 @@ impl<T: Transport> WorkspaceClient<T> {
                 "this request's delivery is indeterminate; inspect its outcome or open a fresh safe attachment",
             ));
         }
-        let outcome = self.exchange_authenticated(intent, &mut delivery);
+        // A malformed or unrelated reply cannot establish the outcome of a
+        // delivered request. Only prewrite failures and definitive responses
+        // may retain their ordinary refusal/local classification.
+        let outcome = match self.exchange_authenticated(intent, &mut delivery) {
+            Err(ChannelError::Refused { message, .. } | ChannelError::Local(message))
+                if *delivery == IntentDelivery::Indeterminate =>
+            {
+                Err(ChannelError::unknown(message))
+            }
+            outcome => outcome,
+        };
         if outcome.is_ok() {
             self.keep_capability();
         }
