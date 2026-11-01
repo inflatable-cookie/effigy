@@ -22,9 +22,10 @@
 //! Compose group behind a file has closed, so removal waits for a durable binding
 //! between each file and its invocation.
 //!
-//! Failures never leave a secret behind on this path: a value is written only
-//! after the lock and the name agree, and any failure after that removes the
-//! file before returning.
+//! A value is written only after the lock and the name agree. A failure after
+//! that tries to remove the file before returning. A removal that is refused,
+//! for example because its quarantine name is occupied, leaves the file named
+//! and reports the cleanup state as unknown, never as removed.
 
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
@@ -204,8 +205,8 @@ pub struct InterpolationFile {
     directory: OwnedFd,
     name: String,
     stat: FileStat,
-    /// Holds the shared lock for the file's lifetime. A sweep takes the
-    /// exclusive lock only when no invocation holds this one.
+    /// Holds the shared lock for the file's lifetime, so another cooperating
+    /// writer sees the name as taken. No sweep removes a file on the lock alone.
     _lock: Flock<File>,
     removed: bool,
 }
@@ -286,7 +287,8 @@ impl InterpolationFile {
             return Err(error.into());
         }
         let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
-            // A sweep holds the exclusive lock: it is removing this name.
+            // Another party holds this name's exclusive lock, so the name is
+            // taken: discard our own unfilled file and let the caller retry.
             discard(directory, name, &stat)?;
             return Ok(None);
         };
