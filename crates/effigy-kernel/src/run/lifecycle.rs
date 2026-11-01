@@ -323,6 +323,7 @@ mod tests {
     fn sentinel_start_failure_keeps_workspace_custody_unsettled() {
         for point in [
             crate::fault::Point::WorkspaceSentinelAfterSpawn,
+            crate::fault::Point::WorkspaceSentinelPartialConfig,
             crate::fault::Point::WorkspaceSentinelAfterConfig,
             crate::fault::Point::WorkspaceSentinelAfterAck,
         ] {

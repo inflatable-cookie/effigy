@@ -555,7 +555,7 @@ pub(crate) fn spawn_workspace_sentinel(
             .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
         nonblocking(writer.as_raw_fd())?;
         let op = cx.child(Duration::from_secs(30));
-        write_frame_with(writer, &config, op.operation())?;
+        write_workspace_frame(writer, &config, op.operation())?;
         crate::fault_point!(WorkspaceSentinelAfterConfig)?;
         nonblocking(ready.as_raw_fd())?;
         let mut ack = [0u8];
@@ -616,6 +616,28 @@ fn write_frame_with(
     let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
     frame.extend(bytes);
     write_all_with(writer, &frame, op)
+}
+
+fn write_workspace_frame(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    op: &OperationContext,
+) -> Result<(), RunError> {
+    let bytes = serde_json::to_vec(value)?;
+    if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
+        return Err(RunError::broken("workspace sentinel frame too large"));
+    }
+    let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
+    frame.extend(bytes);
+    #[cfg(all(test, feature = "fault-injection"))]
+    {
+        write_all_with(writer, &frame[..1], op)?;
+        crate::fault_point!(WorkspaceSentinelPartialConfig)?;
+        write_all_with(writer, &frame[1..], op)?;
+    }
+    #[cfg(not(all(test, feature = "fault-injection")))]
+    write_all_with(writer, &frame, op)?;
+    Ok(())
 }
 /// A bounded write to a nonblocking helper pipe.
 fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
