@@ -5167,7 +5167,7 @@ fn level_one_dispatch_never_reopens_after_unknown_or_uses_guest_fallback() {
 }
 
 #[test]
-fn level_one_hidden_user_request_refuses_but_trusted_producer_probe_bypasses_channel() {
+fn level_one_hidden_dispatch_refuses_while_limited_probe_entry_keeps_existing_bypass() {
     struct ReadForbidden;
     impl GuestReader for ReadForbidden {
         fn read_file(&mut self, _: &str) -> Result<Option<Vec<u8>>, RunnerError> {
@@ -5182,7 +5182,7 @@ fn level_one_hidden_user_request_refuses_but_trusted_producer_probe_bypasses_cha
         guest_command(&probe, Path::new("/private-producer"))
             .unwrap()
             .is_none(),
-        "trusted producer probe must retain its ordinary guest dispatch"
+        "the limited probe entry must retain its existing bypass"
     );
     let context = workspace_document(Some(session_run()), None);
     let mut checkout = FakeCheckout::default();
@@ -5218,4 +5218,34 @@ fn level_one_qa_status_and_stop_route_to_read_and_existing_control() {
     assert!(
         matches!(classify(&parsed(&["tasks", "qa-group", "stop", "run"])), GuestOperation::Invoke { selector: Selector::Operation(op), .. } if op == "tasks:qa-group:stop")
     );
+}
+
+#[test]
+fn level_one_old_strict_peer_refusal_names_unsupported_feature_before_authentication() {
+    let response = host::encode_frame(&host::Frame::Refuse(host::Refusal::invalid(
+        "unknown hello field",
+    )))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (response.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(response)
+        .collect();
+    let written = transport.written.clone();
+    let error = WorkspaceClient::connect(transport, verified(), live_run()).unwrap_err();
+    assert!(
+        matches!(error, ChannelError::Refused { code: "forbidden", message } if message.contains("observe_query_v1"))
+    );
+    let bytes = written.lock().unwrap();
+    let length = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+    assert_eq!(
+        bytes.len(),
+        length + 4,
+        "unsupported negotiation wrote more than hello"
+    );
+    assert!(matches!(
+        host::decode_frame(&bytes[4..]).unwrap(),
+        host::Frame::Hello(_)
+    ));
 }

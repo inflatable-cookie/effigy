@@ -1028,7 +1028,14 @@ impl<T: Transport> WorkspaceClient<T> {
                 ok.capabilities
                     .contains(&channel::ChannelCapability::ObserveQueryV1)
             }
-            Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
+            Frame::Refuse(refusal) => {
+                if refusal.code == channel::RefusalCode::InvalidRequest {
+                    return Err(ChannelError::from_refusal(channel::Refusal::forbidden(
+                        "the workspace peer refused observe_query_v1 capability negotiation; use an independent host CLI",
+                    )));
+                }
+                return Err(ChannelError::from_refusal(refusal));
+            }
             _ => {
                 return Err(ChannelError::local(
                     "the workspace host did not answer the protocol negotiation",
