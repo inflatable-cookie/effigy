@@ -77,6 +77,15 @@ fn digest() -> Digest {
 fn other_digest() -> Digest {
     Digest::of(b"effigy.workspace.test.invoke.v2")
 }
+fn reserve(
+    cx: &EffectContext,
+    root: &StateRoot,
+    key: AdmissionKey,
+    digest: Digest,
+    run: RunId,
+) -> Result<Reservation, RunError> {
+    reserve_resolved(cx, root, key, digest, run, &inv(owner()))
+}
 /// A second task owner, so a run outside the workspace channel can begin while
 /// the admitted run still holds its own owner gate.
 fn foreign_owner() -> ResourceId {
@@ -322,18 +331,46 @@ fn resolved_admission_migrates_legacy_rows_without_rebinding_them() {
     );
     drop(reader);
     let mut fake = Fake::new(fixture.path());
-    let mut run = Run::begin_admitted(
+    for invocation in [inv(owner()), inv(foreign_owner())] {
+        let error = Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation,
+            begin_opts(id(93)),
+            &cleanup(&cx),
+            &mut fake,
+            legacy.clone(),
+        )
+        .expect_err("a pre-upgrade ticket cannot admit");
+        assert!(error
+            .to_string()
+            .contains("ticket predates digest binding; re-run up or down"));
+        assert_eq!(
+            state_of(&cx, &root, legacy_key).as_deref(),
+            Some("reserved")
+        );
+        assert_eq!(runs(&cx, &root), 0);
+    }
+    let session_owner = TaskId::new(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+        "",
+        Surface::Published,
+        "session-200",
+        None,
+    )
+    .unwrap()
+    .resource();
+    let outcome = crate::run::settle_interrupted(
         &cx,
         &root,
-        &inv(foreign_owner()),
-        begin_opts(id(93)),
+        &session_owner,
+        id(200),
+        next(),
         &cleanup(&cx),
         &mut fake,
-        legacy,
     )
-    .expect("a migrated legacy ticket remains explicitly unbound");
-    run.finish(WorkloadOutcome::Succeeded).unwrap();
-    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    .expect("ordinary session cleanup remains available");
+    assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
 }
 
 #[test]

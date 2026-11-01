@@ -1206,7 +1206,7 @@ pub(in crate::runner) fn request_run_stop(
     }
 }
 
-fn invocation(
+pub(super) fn invocation(
     task: &TaskId,
     owner: ResourceId,
     argv: Vec<OsString>,

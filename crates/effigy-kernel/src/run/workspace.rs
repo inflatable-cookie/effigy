@@ -223,16 +223,6 @@ impl AdmissionTicket {
 /// (§8.11). The reservation is durable and idempotent: one caller gets
 /// `Fresh`, every other caller — concurrent, later or after a restart — gets
 /// what is already recorded for the key.
-pub fn reserve(
-    cx: &EffectContext,
-    root: &StateRoot,
-    key: AdmissionKey,
-    digest: Digest,
-    run: RunId,
-) -> Result<Reservation, RunError> {
-    reserve_inner(cx, root, key, digest, run, None)
-}
-
 /// Reserve the canonical request and its already-resolved invocation together.
 pub fn reserve_resolved(
     cx: &EffectContext,
@@ -473,10 +463,12 @@ pub(super) fn bind(
         params![ticket.key.session.run.to_string(), ticket.key.session.generation.get() as i64, ticket.key.request.to_string()],
         |row| row.get(0),
     )?;
-    if recorded
-        .as_deref()
-        .is_some_and(|digest| digest != inv.digest().0.as_slice())
-    {
+    let Some(recorded) = recorded else {
+        return Err(RunError::refused(
+            "workspace ticket predates digest binding; re-run up or down",
+        ));
+    };
+    if recorded.as_slice() != inv.digest().0.as_slice() {
         return Err(RunError::refused(
             "workspace resolved invocation differs from its reservation",
         ));

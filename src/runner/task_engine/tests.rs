@@ -1053,7 +1053,16 @@ fn reserve_ticket(
     let cx = kernel::effects();
     let state = kernel::effects_root(root).expect("effects root");
     let run = RunId::new(1_760_000_000_000, [marker; 10]).expect("run id");
-    effigy_kernel::run::reserve(
+    let target = TaskTarget::for_catalog(root, "build", &catalog(root, "", "", 0));
+    let checkout = super::checkout::mint(root).expect("checkout");
+    let resolved = super::run::invocation(
+        &target.task_id(checkout).unwrap(),
+        target.owner(checkout).unwrap(),
+        vec!["build".into()],
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
+    effigy_kernel::run::reserve_resolved(
         &cx,
         state,
         AdmissionKey {
@@ -1062,6 +1071,7 @@ fn reserve_ticket(
         },
         Digest::of(digest),
         run,
+        &resolved,
     )
     .expect("the host records this request")
 }
