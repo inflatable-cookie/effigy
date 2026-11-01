@@ -13,6 +13,7 @@ const QA_GROUP: &str =
     "workspace Level 2 unsupported: QA group operation; invoke the host CLI independently";
 const DOCTOR_MUTATION: &str =
     "workspace Level 2 unsupported: doctor mutation; invoke the host CLI independently";
+const CHECKOUT_OVERRIDE: &str = "workspace command does not accept a checkout override";
 const INTERNAL: &str = "hidden internal entry points are refused in a container-mode guest";
 const RUN_LOGS: &str = "workspace Level 2 unsupported: run logs; invoke the host CLI independently";
 const GATEWAY: &str = "workspace Level 2 unsupported: gateway; invoke the host CLI independently";
@@ -30,20 +31,22 @@ const UNKNOWN_TASK: &str = "workspace task policy unknown; no operation admitted
 /// producer entries are refused before they can reach the host.
 pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
     match cmd {
-        Command::Version
-        | Command::Task(_)
-        | Command::Workspace(_)
-        | Command::Help(_)
-        | Command::HelpGroup(_) => None,
+        Command::Version | Command::Task(_) | Command::Help(_) | Command::HelpGroup(_) => None,
+        Command::Workspace(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
+        Command::Workspace(_) => None,
+        Command::Tasks(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
         Command::Tasks(args) => match &args.qa {
-            None | Some(TasksQaCommand::GroupRun { .. }) => None,
-            Some(
-                TasksQaCommand::GroupsList { .. }
+            None
+            | Some(
+                TasksQaCommand::GroupRun { .. }
                 | TasksQaCommand::GroupStatus { .. }
-                | TasksQaCommand::GroupLogs { .. }
                 | TasksQaCommand::GroupStop { .. },
-            ) => Some(QA_GROUP),
+            ) => None,
+            Some(TasksQaCommand::GroupsList { .. } | TasksQaCommand::GroupLogs { .. }) => {
+                Some(QA_GROUP)
+            }
         },
+        Command::Doctor(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
         Command::Doctor(args) if args.fix || args.refresh => Some(DOCTOR_MUTATION),
         Command::Doctor(_) => None,
         Command::InternalScriptRun(_)
@@ -51,6 +54,7 @@ pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
         | Command::InternalGatewayIdentity(_)
         | Command::InternalGuestProbe(_)
         | Command::InternalContainerLeaseReaper(_) => Some(INTERNAL),
+        Command::Container(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
         Command::Container(args) => match args.subcommand {
             ContainerSubcommand::Down { .. }
             | ContainerSubcommand::Status { .. }
@@ -58,6 +62,7 @@ pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
             | ContainerSubcommand::Restart { .. } => None,
             _ => Some(CONTAINER),
         },
+        Command::Runs(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
         Command::Runs(args) => match args.action {
             RunsAction::List { .. } | RunsAction::Status { .. } | RunsAction::Stop { .. } => None,
             RunsAction::Logs { .. } => Some(RUN_LOGS),
