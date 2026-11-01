@@ -336,6 +336,157 @@ mod tests {
         }
     }
 
+    #[test]
+    fn partial_sentinel_close_retains_owner_on_fault_and_reaps_exact_child() {
+        let home = effigy_test_support::short_tempdir("sr-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "partial-sentinel-close").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner.clone()),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let helper_log = home.path().join("sentinel.jsonl");
+        crate::fault::set_helper_log(Some(helper_log.clone()));
+        crate::fault::arm_point(
+            crate::fault::Point::WorkspaceSentinelAfterSpawn,
+            crate::fault::Fault::Enospc,
+        );
+        let start = run.enable_workspace_custody(&plan);
+        crate::fault::arm(None);
+        crate::fault::set_helper_log(None);
+        let run_id = run.id();
+        let child_id = run.partial_sentinel.as_ref().map(|child| child.child_id());
+        crate::fault::arm_point(
+            crate::fault::Point::WorkspaceSentinelCloseWait,
+            crate::fault::Fault::Enospc,
+        );
+        let first = run.close_partial_workspace_sentinel(&super::super::tests::cleanup(&cx));
+        let fired = crate::fault::fired();
+        crate::fault::arm(None);
+        let after_fault = run.partial_sentinel.as_ref().map(|child| child.child_id());
+        let retry = run.close_partial_workspace_sentinel(&super::super::tests::cleanup(&cx));
+        let exact_run_guard = run.guard.covers(&owner);
+        let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
+        let settlement =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        let retained = settlement.as_ref().err().and_then(|(_, owner)| {
+            owner
+                .partial_sentinel
+                .as_ref()
+                .map(|child| (owner.id(), child.child_id()))
+        });
+        let log = std::fs::read_to_string(helper_log).unwrap();
+        let identities: Vec<ProcessIdentity> = log
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        if retry.is_err() {
+            for child in &identities {
+                reap_test_child(child);
+            }
+        }
+        drop(settlement); // Fixture teardown only; not a settlement receipt.
+        assert!(start.is_err() && first.is_err() && fired);
+        assert_eq!(identities.len(), 1);
+        assert_eq!(child_id, Some(identities[0].pid));
+        assert_eq!(after_fault, child_id);
+        let status = retry.expect("the exact pre-config child should be reaped");
+        assert!(
+            !status.success(),
+            "a pre-config failure is not a clean exit"
+        );
+        assert_eq!(retained, Some((run_id, identities[0].pid)));
+        assert!(
+            exact_run_guard,
+            "the same run must retain the environment gate"
+        );
+        assert!(matches!(
+            gate,
+            Observed::Verified(crate::gate::GateState::Held(_), _)
+        ));
+    }
+
+    #[test]
+    fn configured_partial_sentinel_close_preserves_unknown_custody() {
+        let home = effigy_test_support::short_tempdir("su-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "configured-partial-close").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner.clone()),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let helper_log = home.path().join("sentinel.jsonl");
+        crate::fault::set_helper_log(Some(helper_log.clone()));
+        crate::fault::arm_point(
+            crate::fault::Point::WorkspaceSentinelAfterConfig,
+            crate::fault::Fault::Enospc,
+        );
+        let start = run.enable_workspace_custody(&plan);
+        crate::fault::arm(None);
+        crate::fault::set_helper_log(None);
+        let before = run.partial_sentinel.as_ref().map(|child| child.child_id());
+        let input_before = run
+            .partial_sentinel
+            .as_ref()
+            .is_some_and(|child| child.input_open());
+        let close = run.close_partial_workspace_sentinel(&super::super::tests::cleanup(&cx));
+        let after = run.partial_sentinel.as_ref().map(|child| child.child_id());
+        let input_after = run
+            .partial_sentinel
+            .as_ref()
+            .is_some_and(|child| child.input_open());
+        let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
+        let settlement =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        let log = std::fs::read_to_string(helper_log).unwrap();
+        let identities: Vec<ProcessIdentity> = log
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        for child in &identities {
+            reap_test_child(child);
+        }
+        drop(settlement); // Fixture teardown only.
+        assert!(start.is_err() && close.is_err());
+        assert_eq!(identities.len(), 1);
+        assert_eq!(before, Some(identities[0].pid));
+        assert_eq!(after, before);
+        assert!(
+            input_before && input_after,
+            "ambiguous configuration must keep the input pipe"
+        );
+        assert!(matches!(
+            gate,
+            Observed::Verified(crate::gate::GateState::Held(_), _)
+        ));
+    }
+
     fn check_workspace_sentinel_interruption(deadline: bool) {
         let home = effigy_test_support::short_tempdir("sc-").unwrap();
         let cx = super::super::tests::context();

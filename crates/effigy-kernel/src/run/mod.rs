@@ -2749,6 +2749,22 @@ impl Run<'_> {
 }
 
 impl Run<'_> {
+    #[allow(dead_code)]
+    pub(crate) fn close_partial_workspace_sentinel(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<std::process::ExitStatus, RunError> {
+        self.require_environment_gate()?;
+        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        let partial = self
+            .partial_sentinel
+            .as_mut()
+            .ok_or_else(|| RunError::unavailable("workspace partial sentinel unavailable"))?;
+        partial
+            .close_and_reap(cleanup)
+            .map_err(|_| RunError::unavailable("workspace sentinel cleanup remains unsettled"))
+    }
+
     /// Workspace-only startup scaffold; failed helpers remain on this Run.
     /// It does not qualify helper capabilities or permit Discard.
     #[allow(dead_code)]

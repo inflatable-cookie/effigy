@@ -127,11 +127,40 @@ pub(crate) struct PartialSentinel {
     writer: Option<ChildStdin>,
     ready: Option<std::process::ChildStdout>,
     log: std::fs::File,
+    configuration_started: bool,
+}
+impl PartialSentinel {
+    /// Close the exact child's owner pipe and observe its exit. This receipt
+    /// does not establish that any environment effects have settled.
+    pub(crate) fn close_and_reap(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<std::process::ExitStatus, RunError> {
+        if self.configuration_started {
+            return Err(RunError::unavailable(
+                "workspace sentinel configuration remains unsettled",
+            ));
+        }
+        cleanup.operation().check("partial sentinel close")?;
+        self.writer.take();
+        self.child.stdin.take();
+        crate::fault_point!(WorkspaceSentinelCloseWait)?;
+        loop {
+            cleanup.operation().check("partial sentinel reap")?;
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 }
 #[cfg(all(test, feature = "fault-injection"))]
 impl PartialSentinel {
     pub(crate) fn child_id(&self) -> u32 {
         self.child.id()
+    }
+    pub(crate) fn input_open(&self) -> bool {
+        self.writer.is_some() || self.child.stdin.is_some()
     }
 }
 impl SentinelLease {
@@ -535,6 +564,7 @@ pub(crate) fn spawn_workspace_sentinel(
                 writer: None,
                 ready: None,
                 log,
+                configuration_started: false,
             },
         ))
     };
@@ -545,6 +575,9 @@ pub(crate) fn spawn_workspace_sentinel(
         crate::fault_point!(WorkspaceSentinelAfterSpawn)?;
         partial.writer = partial.child.stdin.take();
         partial.ready = partial.child.stdout.take();
+        // A partial write is indistinguishable from a complete frame consumed
+        // by the child. Never close it as a known pre-configuration child.
+        partial.configuration_started = true;
         let writer = partial
             .writer
             .as_mut()

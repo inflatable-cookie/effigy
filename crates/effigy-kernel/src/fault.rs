@@ -72,6 +72,7 @@ points! {
     WorkspaceSentinelPartialConfig,
     WorkspaceSentinelAfterConfig,
     WorkspaceSentinelAfterAck,
+    WorkspaceSentinelCloseWait,
     WorkspaceBackupAfterSpawn,
     WorkspaceBackupAfterConfig,
     WorkspaceBackupAfterAck,
