@@ -31,6 +31,54 @@ fn id() -> RunId {
 }
 
 #[test]
+fn unknown_process_without_receipt_is_not_settled_as_released() {
+    let effect = Effect {
+        sequence: 1,
+        spec: EffectSpec {
+            target: Fence {
+                resource: inv().spec().owner.clone(),
+                generation: Generation::new(1),
+            },
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: EffectState::Unknown,
+        receipt: None,
+        reason: Some("partial fork ownership unavailable".into()),
+    };
+    let cleanup = cx().operation().cleanup(Duration::from_secs(5)).unwrap();
+    let (state, reason) = settle_effect(&effect, None, &cleanup, || false);
+    assert!(!state.terminal(), "unknown custody must remain unresolved");
+    assert!(reason.is_some(), "unresolved custody needs a reason");
+}
+
+#[test]
+fn receiptless_process_residue_stays_unsettled_on_retry() {
+    let effect = Effect {
+        sequence: 1,
+        spec: EffectSpec {
+            target: Fence {
+                resource: inv().spec().owner.clone(),
+                generation: Generation::new(1),
+            },
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: EffectState::Residue,
+        receipt: None,
+        reason: Some("unknown process custody has no receipt".into()),
+    };
+    let cleanup = cx().operation().cleanup(Duration::from_secs(5)).unwrap();
+    let (state, reason) = settle_effect(&effect, None, &cleanup, || false);
+    assert!(!state.terminal(), "retry must preserve unresolved custody");
+    assert!(reason.is_some(), "unresolved custody needs a reason");
+}
+
+#[test]
 fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
     let record = ProcessRecord {
         process: ProcessReceipt {

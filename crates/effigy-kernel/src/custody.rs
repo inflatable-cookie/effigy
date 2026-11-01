@@ -1750,6 +1750,12 @@ pub(crate) fn settle_effect(
         .map(|v| serde_json::from_value::<StoredProcessRecord>(v.clone()))
     {
         Some(Ok(r)) => r.into_record(),
+        None if matches!(effect.state, EffectState::Unknown | EffectState::Residue) => {
+            return (
+                EffectState::Residue,
+                Some("unknown process custody has no receipt".into()),
+            );
+        }
         None => return (EffectState::Released, None), // no receipt: barrier never released
         _ => return (EffectState::Residue, Some("invalid custody receipt".into())),
     };
