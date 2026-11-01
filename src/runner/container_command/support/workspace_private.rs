@@ -137,7 +137,7 @@ pub(in crate::runner) fn negotiate_private_bound<'a, 'r>(
 
 impl PrivateBounded<'_, '_> {
     pub(in crate::runner) fn run_compose_discard(
-        &mut self,
+        self,
         _inputs: &mut WorkspaceComposeInputOwner,
     ) -> Result<(), PrivateApplyFailure> {
         Err(unavailable_apply(PrivateApplyStage::Apply))
