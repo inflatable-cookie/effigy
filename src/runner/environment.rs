@@ -163,34 +163,65 @@ pub(in crate::runner) fn record_until(
     EnvRecord::read(&cx, &root, &env.resource)
 }
 
-/// The exact backend this environment will apply with, as an observation.
-///
-/// The selection precedence is [`backend`]'s: an explicit backend for this
-/// invocation, then the record's, then the policy's own source. What changes is
-/// the failure mode: an unreadable state root, an unreadable recorded backend or
-/// an unknown recorded engine stays `Unknown` instead of collapsing into the
-/// policy default, so a caller that must prove the selected backend refuses
-/// rather than publishing under a backend nobody observed.
-pub(in crate::runner) fn observed_backend(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    until: Instant,
-) -> Observed<BackendSelection> {
-    let recorded = match record_until(policy, until) {
-        Observed::Verified(record, _) => match record.backend {
-            Some(Observed::Verified(recorded, _)) => Some(recorded),
-            Some(Observed::Absent(proof)) => return Observed::Absent(proof),
-            Some(Observed::Unknown(reason)) => return Observed::Unknown(reason),
-            None => None,
-        },
-        Observed::Absent(_) => None,
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    };
-    Observed::Verified(
-        engine::effective_backend(repo_root, policy, recorded.as_ref()),
-        effigy_kernel::observe::Evidence::new("environment backend selection".into(), None)
-            .expect("fixed evidence"),
-    )
+/// A checkout and environment established before a deadline-bound observer starts.
+/// Its read methods do not allocate a checkout token or open an effects root.
+#[derive(Clone)]
+pub(in crate::runner) struct PreparedEnvironmentObservation {
+    root: effigy_kernel::root::StateRoot,
+    env: EnvRef,
+    checkout: PathBuf,
+}
+
+impl PreparedEnvironmentObservation {
+    pub(in crate::runner) fn prepare(
+        policy: &EffectiveContainerPolicy,
+    ) -> Result<Self, RunnerError> {
+        let env = env_ref(policy)?;
+        let root = root(&policy.repo_root)?.clone();
+        Ok(Self {
+            root,
+            env,
+            checkout: policy.repo_root.clone(),
+        })
+    }
+
+    pub(in crate::runner) fn record(&self, until: Instant) -> Observed<EnvRecord> {
+        let remaining = until.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "environment record".into(),
+            });
+        }
+        let cx = super::task_engine::observe_context(remaining);
+        EnvRecord::read(&cx, &self.root, &self.env.resource)
+    }
+
+    pub(in crate::runner) fn backend(
+        &self,
+        policy: &EffectiveContainerPolicy,
+        until: Instant,
+    ) -> Observed<BackendSelection> {
+        if policy.repo_root != self.checkout || policy.name != self.env.name {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "prepared environment does not match policy".into(),
+            ));
+        }
+        let recorded = match self.record(until) {
+            Observed::Verified(record, _) => match record.backend {
+                Some(Observed::Verified(recorded, _)) => Some(recorded),
+                Some(Observed::Absent(proof)) => return Observed::Absent(proof),
+                Some(Observed::Unknown(reason)) => return Observed::Unknown(reason),
+                None => None,
+            },
+            Observed::Absent(_) => None,
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        };
+        Observed::Verified(
+            engine::effective_backend(&policy.repo_root, policy, recorded.as_ref()),
+            effigy_kernel::observe::Evidence::new("environment backend selection".into(), None)
+                .expect("fixed evidence"),
+        )
+    }
 }
 
 /// The exact backend: the record's, unless this invocation names one.

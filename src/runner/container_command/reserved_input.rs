@@ -227,8 +227,19 @@ pub(in crate::runner) trait ReservedBackendObservation {
 /// The production observation: the environment record's backend selection, the
 /// Compose engine's own binding, the guest's `/proc` and loader facts, the
 /// backend's image inspect, and the host's produced artifact.
-#[derive(Debug, Default)]
-pub(in crate::runner) struct ContainerBackendObservation;
+pub(in crate::runner) struct ContainerBackendObservation {
+    prepared: crate::runner::environment::PreparedEnvironmentObservation,
+}
+
+impl ContainerBackendObservation {
+    pub(in crate::runner) fn prepare(
+        policy: &EffectiveContainerPolicy,
+    ) -> Result<Self, RunnerError> {
+        Ok(Self {
+            prepared: crate::runner::environment::PreparedEnvironmentObservation::prepare(policy)?,
+        })
+    }
+}
 
 impl ReservedBackendObservation for ContainerBackendObservation {
     fn selection(
@@ -236,11 +247,9 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         policy: &EffectiveContainerPolicy,
         deadline: PublicationDeadline,
     ) -> Observed<BackendSelection> {
-        // The record's own answer, with an unreadable record or recorded backend
-        // kept `Unknown` instead of collapsing into the policy default. Reading it
-        // establishes (and may write) the checkout token and reads the store, so
-        // it runs on the publication's bounded worker.
-        observed_backend_bounded(policy, deadline)
+        // Keep unreadable records and recorded backends `Unknown`. The prepared
+        // checkout and root were established before the bounded reader starts.
+        observed_backend_bounded(&self.prepared, policy, deadline)
     }
 
     fn addressing(
@@ -358,7 +367,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
         );
         match bound {
             Ok(container) => {
-                let selected = observed_backend_bounded(policy, deadline);
+                let selected = observed_backend_bounded(&self.prepared, policy, deadline);
                 // The whole selection, not just its engine: two Colima profiles
                 // or two Docker contexts share an engine while naming different
                 // backends, so only the full value fences the planned profile.
@@ -480,46 +489,21 @@ pub(in crate::runner) type ReservedProbeFactory<'a> =
 
 /// The admitted backend selection, read on the publication's bounded worker.
 ///
-/// Reading it establishes the checkout's identity token (a write) and resolves the
-/// environment, then reads the record, so a stalled filesystem cannot hold the
-/// publication past its deadline.
+/// The prepared handle pins the checkout and environment before this worker
+/// starts, so a late worker cannot allocate an identity or open an effects root.
 pub(in crate::runner) fn observed_backend_bounded(
+    prepared: &crate::runner::environment::PreparedEnvironmentObservation,
     policy: &EffectiveContainerPolicy,
     deadline: PublicationDeadline,
 ) -> Observed<BackendSelection> {
     let owned = policy.clone();
+    let prepared = prepared.clone();
     match bounded_publication_read("workspace-backend-record", deadline.at(), move || {
-        Ok(crate::runner::environment::observed_backend(
-            owned.repo_root.as_path(),
-            &owned,
-            deadline.at(),
-        ))
+        Ok(prepared.backend(&owned, deadline.at()))
     }) {
         Ok(observed) => observed,
         Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
             phase: "workspace backend record".into(),
-        }),
-        Err(BoundedReadRefusal::Unavailable(reason)) => {
-            Observed::Unknown(UnknownReason::Inconsistent(reason))
-        }
-    }
-}
-
-/// The environment record, read on the publication's bounded worker.
-fn environment_record_bounded(
-    policy: &EffectiveContainerPolicy,
-    deadline: PublicationDeadline,
-) -> Observed<effigy_containers::environment::EnvRecord> {
-    let owned = policy.clone();
-    match bounded_publication_read("workspace-environment-record", deadline.at(), move || {
-        Ok(crate::runner::environment::record_until(
-            &owned,
-            deadline.at(),
-        ))
-    }) {
-        Ok(observed) => observed,
-        Err(BoundedReadRefusal::TimedOut) => Observed::Unknown(UnknownReason::TimedOut {
-            phase: "workspace environment record".into(),
         }),
         Err(BoundedReadRefusal::Unavailable(reason)) => {
             Observed::Unknown(UnknownReason::Inconsistent(reason))
@@ -741,12 +725,15 @@ pub(in crate::runner) fn plan(
     // interrupted once started, so the whole local sequence runs on one bounded
     // worker and the publication reports it unknown at its deadline instead of
     // blocking past the one budget it declared.
+    // Identity allocation must complete before the abandonable read worker.
+    let environment = crate::runner::environment::env_ref(policy).map_err(io)?;
+    deadline.remaining()?;
     let local = match bounded_publication_read("workspace-plan-local", deadline.at(), {
         let policy = policy.clone();
         let workspace = workspace.clone();
         let alias = alias.clone();
         let selected = selected.clone();
-        move || plan_local(&policy, &workspace, &alias, &selected)
+        move || plan_local(&policy, &workspace, &alias, &selected, &environment)
     }) {
         Ok(local) => local,
         Err(BoundedReadRefusal::TimedOut) => {
@@ -918,6 +905,7 @@ fn plan_local(
     workspace: &OperatorWorkspace,
     alias: &ChannelAliasPlan,
     selected: &BackendSelection,
+    environment: &effigy_containers::environment::EnvRef,
 ) -> Result<PlannedLocal, RunnerError> {
     // The apply must be handed the policy that carries this alias; the alias
     // render is in-memory and creates no container and no network.
@@ -935,7 +923,7 @@ fn plan_local(
         })?;
     let paths = workspace_path_map(rendered.repo_root.as_path(), workspace)?;
     let closure = workspace_source_closure(rendered.repo_root.as_path(), &paths)?;
-    let guest = environment_materialisation(&rendered, selected, paths, &closure)?;
+    let guest = environment_materialisation(&rendered, selected, paths, &closure, environment)?;
     let backend_label = selected.engine.as_str().to_owned();
     let canonical = |value: &serde_json::Value| {
         serde_json::to_vec(value).map_err(|error| {
@@ -983,20 +971,14 @@ fn environment_materialisation(
     selected: &BackendSelection,
     paths: WorkspacePathMap,
     closure: &WorkspaceSourceClosure,
+    environment: &effigy_containers::environment::EnvRef,
 ) -> Result<GuestContextInputs, RunnerError> {
     let guest = GuestContextInputs {
         version: effigy_core::build_info::active_version(),
         protocol: CHANNEL_PROTOCOL_VERSION,
         host_user: host_user(),
-        checkout_id: crate::runner::task_engine::checkout::mint(policy.repo_root.as_path())?
-            .text()
-            .to_owned(),
-        // The kernel compares the canonical resource name, not a display label
-        // such as `env:web`. Resolve it through the same environment owner.
-        environment_resource: crate::runner::environment::env_ref(policy)?
-            .resource
-            .name()
-            .to_string(),
+        checkout_id: environment.checkout.text().to_owned(),
+        environment_resource: environment.resource.name().to_string(),
         profile: selected.context.clone(),
         runtime: None,
         vm_type: None,

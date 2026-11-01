@@ -1818,12 +1818,24 @@ impl WorkspaceActivationReservation {
                     "workspace decision observer could not start: {error}"
                 ))
             })?;
-        let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
-        let publishing = receiver.recv_timeout(remaining).map_err(|error| {
-            RunError::unavailable(format!(
-                "workspace decision observation unavailable: {error}"
-            ))
-        })??;
+        let publishing = loop {
+            bounded
+                .operation()
+                .check("workspace decision observation")?;
+            let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(RunError::unavailable("workspace decision deadline expired"));
+            }
+            match receiver.recv_timeout(remaining.min(std::time::Duration::from_millis(25))) {
+                Ok(result) => break result?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RunError::unavailable(
+                        "workspace decision observer exited without a result",
+                    ));
+                }
+            }
+        };
         if std::time::Instant::now() >= effective_deadline {
             return Err(RunError::unavailable("workspace decision deadline expired"));
         }

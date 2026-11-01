@@ -7794,3 +7794,115 @@ fn gated_decision_refuses_changed_unknown_and_expired_observations_without_reser
         },
     );
 }
+
+#[test]
+fn cancelled_decision_releases_gate_while_observer_is_stalled() {
+    let cancel = CancelToken::default();
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(10)),
+        cancel.clone(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        crate::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("effects");
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker_cx = cx.clone();
+    let worker_root = root.clone();
+    let worker_env = env.clone();
+    let worker = std::thread::spawn(move || {
+        let result = WorkspaceActivationReservation::decide_observing(
+            &worker_cx,
+            &worker_root,
+            &worker_env,
+            Wait::FailFast,
+            Instant::now() + Duration::from_secs(5),
+            move |_| {
+                started_tx.send(()).expect("observer started");
+                let _ = release_rx.recv();
+                Ok(decision_inputs(1))
+            },
+        );
+        done_tx.send(result.is_err()).expect("decision result");
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("observer starts");
+    cancel.cancel(StopCause::Signal(2));
+    let prompt = done_rx.recv_timeout(Duration::from_millis(700));
+    let fresh = context();
+    let competing = if prompt.is_ok() {
+        Some(crate::gate::Gate::acquire(
+            &fresh,
+            &root,
+            std::slice::from_ref(&env),
+            Wait::FailFast,
+        ))
+    } else {
+        None
+    };
+    let _ = release_tx.send(());
+    worker.join().expect("decision joined");
+    assert!(prompt.expect("cancelled decision must return promptly"));
+    competing
+        .expect("decision returned")
+        .expect("gate is free while observer remains stalled");
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn decision_after_commit_fault_recovers_the_exact_reservation() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let inputs = decision_inputs(81);
+    let result = crate::fault_injection::with_hook(
+        |name| {
+            if name == "ActivationDecisionAfter" {
+                Err(std::io::Error::other("fault"))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            WorkspaceActivationReservation::decide(
+                &cx,
+                &root,
+                &environment,
+                &inputs,
+                Wait::FailFast,
+            )
+        },
+    );
+    assert!(result.is_err());
+    let reader = read_journal(&cx, &root);
+    let recovered = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("committed reservation remains recoverable");
+    let replay = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("retry")
+    {
+        ActivationDecision::Activate(reservation) => reservation,
+        _ => panic!("unpublished selection cannot attach"),
+    };
+    assert_eq!(replay.id(), recovered.id());
+    assert_eq!(replay.generation(), recovered.generation());
+    replay
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("cancel exact reservation");
+}

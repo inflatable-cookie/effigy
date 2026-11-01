@@ -454,6 +454,58 @@ mod tests {
     }
 
     #[test]
+    fn competing_stage_refusal_never_cancels_another_staged_session() {
+        use effigy_kernel::observe::Observed;
+        use effigy_kernel::workspace_session::ActivationReservationState;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("context");
+        let env = env("workspace");
+        let reservation = match WorkspaceActivationReservation::decide(
+            &ctx.cx,
+            &state,
+            &env.resource,
+            &inputs(),
+            Wait::FailFast,
+        )
+        .expect("decision")
+        {
+            ActivationDecision::Activate(reservation) => reservation,
+            _ => panic!("fresh activation"),
+        };
+        reservation
+            .stage_session_binding(&ctx.cx, &state, &invocation().spec().owner, options(40).id)
+            .expect("first stages");
+        assert!(WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(41),
+            "second"
+        )
+        .is_err());
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("journal unavailable")
+        };
+        let Observed::Verified(Some(observed), _) =
+            WorkspaceActivationReservation::recover(&reader, &env.resource)
+        else {
+            panic!("reservation missing")
+        };
+        assert_eq!(
+            observed.state(),
+            ActivationReservationState::Reserved,
+            "other staged session retains its reservation"
+        );
+        reservation
+            .cancel(&ctx.cx, &state, Wait::FailFast)
+            .expect("fixture cleanup");
+    }
+
+    #[test]
     fn reserved_owner_admits_task_before_env_and_refuses_concurrent_or_unselected_success() {
         let fixture = home();
         let state = root(fixture.path());

@@ -1365,11 +1365,9 @@ fn the_production_selection_observation_reads_an_absent_record_as_a_policy_choic
     let policy = rendered_policy(&root);
     // No environment record exists yet: the policy's own source is the verified
     // selection, and it is an observation rather than a `None` collapse.
-    let observed = crate::runner::environment::observed_backend(
-        &root,
-        &policy,
-        Instant::now() + Duration::from_secs(10),
-    );
+    let prepared = crate::runner::environment::PreparedEnvironmentObservation::prepare(&policy)
+        .expect("prepare checkout identity");
+    let observed = prepared.backend(&policy, Instant::now() + Duration::from_secs(10));
     let Observed::Verified(selected, _) = observed else {
         panic!("a policy selection is a verified observation, not a default");
     };
@@ -1844,7 +1842,7 @@ fn a_stalled_colima_profile_refuses_at_the_deadline() {
         "COLIMA_HOME",
         Some(colima_home.display().to_string()),
     )]);
-    let mut observation = ContainerBackendObservation;
+    let mut observation = ContainerBackendObservation::prepare(&policy).expect("prepared identity");
 
     let started = Instant::now();
     let observed = observation.addressing(
@@ -1961,3 +1959,47 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
 
 #[path = "reserved_creator_binding.rs"]
 mod creator_binding;
+
+#[test]
+fn a_timed_out_backend_observer_never_creates_a_checkout_token_late() {
+    let (_fixture, root, home) = checkout("late-observer");
+    let policy = rendered_policy(&root);
+    let prepared = effigy_containers::with_test_effigy_home(&home, || {
+        crate::runner::environment::PreparedEnvironmentObservation::prepare(&policy)
+            .expect("establish checkout identity")
+    });
+    let token = root
+        .join(".git")
+        .join(effigy_core::worktree_scope::SCOPE_FILE);
+    if token.exists() {
+        std::fs::remove_file(&token).expect("remove fixture token");
+    }
+    assert!(!token.exists());
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    effigy_containers::with_test_effigy_home(&home, || {
+        let result = bounded_publication_read(
+            "late-backend",
+            Instant::now() + Duration::from_millis(100),
+            move || {
+                let _ = release_rx.recv();
+                let _ = observed_backend_bounded(
+                    &prepared,
+                    &policy,
+                    PublicationDeadline::new(Instant::now() + Duration::from_secs(5)),
+                );
+                let _ = done_tx.send(());
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(BoundedReadRefusal::TimedOut)));
+        release_tx.send(()).expect("release observer");
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("observer finished");
+        assert!(
+            !token.exists(),
+            "an abandoned reader must never mint a checkout identity"
+        );
+    });
+}
