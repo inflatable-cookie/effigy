@@ -35,6 +35,9 @@ pub(crate) mod anchor;
 // receipt protocol and its exact-owner checks have been independently reviewed.
 #[allow(dead_code)]
 mod birth_hash;
+// Observation scaffold only; it does not qualify a helper or enable Discard.
+#[allow(dead_code)]
+mod image_identity;
 pub(crate) mod memory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
