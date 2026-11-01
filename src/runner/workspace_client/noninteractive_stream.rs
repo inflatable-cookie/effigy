@@ -551,7 +551,7 @@ fn drive(
                     "the workspace host admitted this command at a {} placement; a \
                  forwarded command runs on the host and this client will not adopt another \
                  placement",
-                placement_label(placement)
+                    placement_label(placement)
                 )))
             }
             // The intent's own run had already closed and its outcome is the answer,
@@ -565,10 +565,10 @@ fn drive(
             )),
             other => {
                 return Err(RunnerError::task_invocation(format!(
-                "the workspace host answered an admission with {}; whether it admitted is \
+                    "the workspace host answered an admission with {}; whether it admitted is \
                  unknown",
-                outcome_label(&other)
-            )))
+                    outcome_label(&other)
+                )))
             }
         };
 
