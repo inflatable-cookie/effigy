@@ -2049,6 +2049,53 @@ fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, m
     write_container_fixture_with_task(root, health_check, mount, false);
 }
 
+fn write_null_dns_mount_fixture(root: &std::path::Path, mount_count: usize) {
+    let catalog = root.join("infra/dev/catalog/null-dns-mounts");
+    fs::create_dir_all(&catalog).expect("mkdir synthetic catalog");
+    fs::write(
+        catalog.join("service.toml"),
+        "[service]\nname = \"null-dns-mounts\"\ndescription = \"Synthetic mount-budget fixture\"\n",
+    )
+    .expect("write synthetic service metadata");
+
+    let source = format!("/{}", "s".repeat(61));
+    let volumes = (0..mount_count)
+        .map(|index| {
+            let target = format!("/{}{index:02}", "d".repeat(25));
+            format!(
+                "      - type: bind\n        source: {source}\n        target: {target}\n        read_only: {}\n",
+                index + 1 == mount_count
+            )
+        })
+        .collect::<String>();
+    fs::write(
+        catalog.join("compose.fragment.yml"),
+        format!(
+            "services:\n  '{{{{ service_name }}}}':\n    image: example.invalid/synthetic\n    network_mode: none\n    volumes:\n{volumes}"
+        ),
+    )
+    .expect("write synthetic service fragment");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "null-dns-mounts"
+"#,
+    )
+    .expect("write null-DNS fixture manifest");
+}
+
 fn write_generated_container_volume_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
     // The `db` service uses `elasticsearch` (not `mariadb`) because
@@ -3632,6 +3679,99 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     assert!(
         compose_up.contains(" up -d"),
         "the fallback starts the environment detached: {compose_up}"
+    );
+}
+
+#[test]
+fn cli_container_up_null_dns_overlay_reaches_fake_colima_and_keeps_budget_refusal() {
+    let run = |fixture_name: &str, mount_count: usize| {
+        let private = effigy_test_support::Fixture::workspace(fixture_name)
+            .expect("exclusive fake runtime fixture");
+        let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+        fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+        write_null_dns_mount_fixture(&root, mount_count);
+        let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+        let docker_args = root.join("docker-args.log");
+        let colima_args = root.join("colima-args.log");
+        let private_home = private_home(&root);
+        let path = format!(
+            "{}:{}",
+            bin_dir.display(),
+            std::env::var("PATH").expect("PATH")
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("container")
+            .arg("up")
+            .arg("--repo")
+            .arg(&root)
+            .arg("--detach")
+            .arg("--json")
+            .env("NO_COLOR", "1")
+            .env("HOME", &private_home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", private_home.join(".effigy"))
+            .env("PATH", path)
+            .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+            .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+            .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+            .env(
+                "EFFIGY_TEST_SERVICE_STATE_FILE",
+                root.join("service-running"),
+            )
+            .output()
+            .expect("run effigy");
+        let colima_invocations = fs::read_to_string(&colima_args).unwrap_or_default();
+        let reached_null_overlay = compose_inputs(&colima_invocations).iter().any(|path| {
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok())
+                .is_some_and(|document| document["services"]["app"].is_null())
+        });
+        (output, colima_invocations, reached_null_overlay)
+    };
+
+    let (under_budget, under_log, null_overlay_reached) = run("effigy-null-dns-under-budget-", 21);
+    assert!(
+        under_budget.status.success(),
+        "under-budget null overlay was refused: {under_budget:?}"
+    );
+    let compose_up_calls = under_log
+        .lines()
+        .filter(|line| {
+            line.contains("nerdctl --profile dev -- compose ") && line.contains(" up -d")
+        })
+        .count();
+    assert_eq!(
+        compose_up_calls, 1,
+        "fake Colima compose up must be reached once"
+    );
+    assert!(
+        null_overlay_reached,
+        "the fake backend must receive the generated null DNS overlay"
+    );
+
+    let (over_budget, over_log, _) = run("effigy-null-dns-over-budget-", 30);
+    assert!(
+        !over_budget.status.success(),
+        "over-budget fixture must refuse"
+    );
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&over_budget.stdout),
+        String::from_utf8_lossy(&over_budget.stderr)
+    );
+    assert!(
+        diagnostic.contains("estimated nerdctl/mounts label size"),
+        "over-budget refusal should name its budget reason: {diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("exceeding the conservative 3900-byte preflight budget"),
+        "over-budget refusal should state the configured limit: {diagnostic}"
+    );
+    assert!(
+        !over_log.lines().any(|line| {
+            line.contains("nerdctl --profile dev -- compose ") && line.contains(" up -d")
+        }),
+        "over-budget refusal must happen before fake Colima compose up: {over_log}"
     );
 }
 
