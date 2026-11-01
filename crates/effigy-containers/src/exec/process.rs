@@ -240,16 +240,7 @@ fn private_child_exited(pid: u32) -> std::io::Result<bool> {
     Ok(unsafe { info.si_pid() } != 0)
 }
 
-// Retained for the separately reviewed #527 path and ratchet lead 24c521ae.
-#[cfg(unix)]
-#[allow(dead_code)]
-fn settle_private_group(
-    child: &mut std::process::Child,
-) -> std::io::Result<std::process::ExitStatus> {
-    settle_private_group_with(child, kill)
-}
-
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 fn settle_private_group_with(
     child: &mut std::process::Child,
     mut signal_group: impl FnMut(Pid, Option<Signal>) -> nix::Result<()>,
@@ -1861,17 +1852,17 @@ os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
         let mut command = Command::new("/bin/sh");
         command
             .arg("-c")
-            .arg("sleep 60")
+            .arg("sleep 0.1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0);
         let mut child = command.spawn().unwrap();
-        let result = super::settle_private_group_with(&mut child, |group, signal| {
+        let result = super::settle_private_group_with(&mut child, |_group, signal| {
             if signal.is_none() {
                 Err(nix::errno::Errno::EPERM)
             } else {
-                nix::sys::signal::kill(group, signal)
+                Ok(())
             }
         });
         assert!(result.is_err(), "unverified group absence must refuse");

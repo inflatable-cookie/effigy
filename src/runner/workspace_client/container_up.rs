@@ -316,5 +316,5 @@ pub(crate) fn preflight(
 }
 
 #[cfg(test)]
-#[path = "container_up_tests.rs"]
+#[path = "container_up/tests/container_up.rs"]
 mod tests;

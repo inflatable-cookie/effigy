@@ -110,5 +110,5 @@ pub(super) fn validate(
 }
 
 #[cfg(test)]
-#[path = "supervisor_preflight_tests.rs"]
+#[path = "tests/supervisor_preflight.rs"]
 mod tests;

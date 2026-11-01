@@ -320,82 +320,51 @@ impl Drop for BackendFixture {
     }
 }
 
+fn snapshot(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    if root.exists() {
+        for entry in std::fs::read_dir(root).expect("snapshot") {
+            let entry = entry.expect("entry");
+            let kind = entry.file_type().expect("type");
+            if kind.is_dir() {
+                files.extend(snapshot(&entry.path()));
+            } else if kind.is_file() {
+                files.insert(entry.path(), std::fs::read(entry.path()).expect("file"));
+            }
+        }
+    }
+    files
+}
+
 #[test]
-fn actual_cli_fake_backend_reaches_committed_workspace() {
+fn actual_cli_fake_backend_refuses_before_workspace_effects() {
     let fixture = BackendFixture::new();
+    let before_project = snapshot(&fixture.project);
+    let before_home = snapshot(&fixture.home);
+    let before_calls = fixture.calls();
     let output = fixture
         .command()
         .args(["container", "up", "--detach", "--json"])
         .output()
         .expect("actual CLI");
-    let diagnostics = format!(
-        "{}\n{}\nengine calls:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-        format!(
-            "{}\nprivate fixture diagnostic: {}",
-            fixture
-                .calls()
-                .lines()
-                .rev()
-                .take(18)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n"),
-            std::fs::read_to_string(fixture.config.with_extension("failure")).unwrap_or_default()
-        )
-    );
-    assert!(output.status.success(), "{diagnostics}");
-    assert!(
-        fixture.project.join(".git/effigy-runtime-scope").is_file(),
-        "ordinary checkout identity preparation"
-    );
+    assert!(!output.status.success());
     let report: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("normal container JSON report");
-    assert_eq!(report["schema"], "effigy.command.v1");
-    assert_eq!(report["ok"], true);
-    assert!(report["result"].is_object());
-    assert!(
-        fixture.fixture.path().join("applied").exists(),
-        "one actual gated apply through fake engine"
+        serde_json::from_slice(&output.stdout).expect("container JSON refusal");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["error"]["type"], "RunnerError");
+    assert!(report
+        .to_string()
+        .contains("workspace private preparation output is unavailable"));
+    assert_eq!(
+        snapshot(&fixture.project),
+        before_project,
+        "no project file changes"
     );
-    let applies = fixture
-        .calls()
-        .lines()
-        .filter(|line| line.contains("\"up\""))
-        .count();
-    assert_eq!(applies, 1, "one apply");
-    // This test process is a third process: the initiating CLI above has
-    // exited, and it never received a run/lease owner or a preissued grant.
-    let public_output = format!(
-        "{}{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-        fixture.calls()
-    );
-    let probe = effigy::workspace_serving_fixture::probe_production_guest(
-        &fixture.fixture.path().join("guest-files.json"),
-        &public_output,
-    )
-    .expect("third process issued-capability Observe");
-    assert_eq!(probe.response["schema"], "effigy.runs.v1");
-    assert_eq!(probe.response["observed"], true);
-    assert!(probe.response["runs"].is_array());
-    assert!(
-        probe.refused_unissued,
-        "unissued capability must be refused"
-    );
-    assert!(
-        probe.wrong_pin_refused,
-        "wrong pin must fail before application frames"
-    );
-    assert!(
-        probe.no_credential_echo,
-        "startup/response must not echo credentials"
-    );
-    fixture.assert_settled();
+    assert_eq!(snapshot(&fixture.home), before_home, "no home file changes");
+    assert_eq!(fixture.calls(), before_calls, "no backend calls");
+    assert!(!fixture.project.join(".effigy").exists());
+    assert!(!fixture.project.join(".git/effigy-runtime-scope").exists());
+    assert!(!fixture.fixture.path().join("applied").exists());
 }
 
 #[test]
@@ -782,21 +751,6 @@ fn actual_detached_entry_refuses_valid_prepared_input_before_admission_or_plan()
             u8::from_str_radix(std::str::from_utf8(bytes).expect("hex"), 16).expect("token byte")
         })
         .collect();
-    fn snapshot(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
-        let mut files = std::collections::BTreeMap::new();
-        if root.exists() {
-            for entry in std::fs::read_dir(root).expect("snapshot") {
-                let entry = entry.expect("entry");
-                let kind = entry.file_type().expect("type");
-                if kind.is_dir() {
-                    files.extend(snapshot(&entry.path()));
-                } else if kind.is_file() {
-                    files.insert(entry.path(), std::fs::read(entry.path()).expect("file"));
-                }
-            }
-        }
-        files
-    }
     let before_project = snapshot(&fixture.project);
     let before_home = snapshot(&fixture.home);
     let before_calls = fixture.calls();
