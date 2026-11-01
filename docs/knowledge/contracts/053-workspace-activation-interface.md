@@ -46,10 +46,11 @@ pub struct WorkspaceResumeFacts {
     pub session: SessionBinding,
     pub selection: Digest,
     pub target: ContainerIdentity,
+    pub platform: BoundPlatform,
     pub creator_receipt: serde_json::Value,
     pub created_ids: Vec<String>,
 }
-ReacquiredWorkspaceRun::view(&self) -> WorkspaceResumeView<'_>;
+ReacquiredWorkspaceRun::view(&self) -> Result<WorkspaceResumeView<'_>, RunError>;
 ReacquiredWorkspaceRun::resume(
     self,
     observed: Observed<WorkspaceResumeFacts>,
@@ -96,7 +97,8 @@ pub(in crate::runner) fn unwind_workspace_integrations(
 
 `WorkspaceIntegrationOutcome` is B-owned and retains the routes/listeners needed
 for reverse unwind; it never contains secret values. C supplies the policy and
-A's parked owner adapter. These signatures are proposed, not yet compiled. B
+A's parked owner adapter, plus the bounded effect and cleanup adapter B needs.
+These signatures are proposed, not yet compiled. B
 runs readiness, permissions, secrets, routes and host integrations while Env is
 free and before publication. Ordinary effects are idempotent/reconcilable, not
 authenticated receipts; prove crash/rerun convergence, identical runtime files

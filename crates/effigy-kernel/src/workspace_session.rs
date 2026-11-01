@@ -3182,9 +3182,16 @@ pub(crate) fn refuse_bound_reservation_recovery(
     if owner.kind() != ResourceKind::Env {
         return Ok(());
     }
-    if recoverable_reservation(conn, owner)?.is_some_and(|record| {
+    if let Some(record) = recoverable_reservation(conn, owner)?.filter(|record| {
         record.state == ActivationReservationState::Reserved && record.environment_run.is_some()
     }) {
+        if let Some(session) = record.session.as_ref() {
+            if run::workspace_integrations_unsettled(conn, session, record.id)? {
+                return Err(RunError::refused(
+                    "integration effects unsettled; re-run up",
+                ));
+            }
+        }
         return Err(RunError::refused(
             "this environment is reserved by a workspace activation; reservation remains recoverable",
         ));

@@ -599,39 +599,230 @@ pub struct EnvRun<'r> {
     step: Step,
 }
 
-/// The exact environment run and its progress state while Env is free.
-/// No generic environment effects are exposed through this state.
+/// The exact environment run and its progress state while Env is free or
+/// while its reacquired gate is awaiting validated evidence.
 #[derive(Debug)]
 pub struct ParkedEnvRun<'r> {
-    _run: effigy_kernel::run::ParkedWorkspaceRun<'r>,
-    _cx: EffectContext,
-    _root: &'r StateRoot,
-    _env: EnvRef,
-    _cleanup_budget: Duration,
-    _began: EnvRecord,
-    _published: bool,
-    _failed: bool,
-    _transitioned: bool,
-    _progress: ProgressSource,
-    _step: Step,
-    _receipt: super::CreationReceipt,
-    _target: effigy_kernel::workspace_session::ContainerIdentity,
-    _plan: effigy_kernel::workspace_session::ActivationPlan,
+    gate: ParkedEnvGate<'r>,
+    parts: ParkedEnvParts<'r>,
+}
+
+#[derive(Debug)]
+enum ParkedEnvGate<'r> {
+    Parked(Box<effigy_kernel::run::ParkedWorkspaceRun<'r>>),
+    Guarded(Box<effigy_kernel::run::ReacquiredWorkspaceRun<'r>>),
+}
+
+#[derive(Debug)]
+struct ParkedEnvParts<'r> {
+    cx: EffectContext,
+    root: &'r StateRoot,
+    env: EnvRef,
+    cleanup_budget: Duration,
+    began: EnvRecord,
+    published: bool,
+    failed: bool,
+    transitioned: bool,
+    progress: ProgressSource,
+    step: Step,
+    receipt: super::CreationReceipt,
+    target: effigy_kernel::workspace_session::ContainerIdentity,
+    plan: effigy_kernel::workspace_session::ActivationPlan,
 }
 
 impl<'r> ParkedEnvRun<'r> {
+    pub(super) fn repark(self) -> Result<Self, (EnvError, Box<Self>)> {
+        let Self { gate, parts } = self;
+        match gate {
+            ParkedEnvGate::Parked(run) => Ok(Self {
+                gate: ParkedEnvGate::Parked(run),
+                parts,
+            }),
+            ParkedEnvGate::Guarded(run) => match run.repark() {
+                Ok(run) => Ok(Self {
+                    gate: ParkedEnvGate::Parked(Box::new(run)),
+                    parts,
+                }),
+                Err((error, run)) => Err((
+                    EnvError::Kernel(error),
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(run),
+                        parts,
+                    }),
+                )),
+            },
+        }
+    }
+
+    pub(super) fn integration_snapshot(
+        &self,
+        session: &Run<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        let cleanup = cleanup(&self.parts.cx, self.parts.cleanup_budget)?;
+        let cx = cleanup.operation().effects().map_err(|error| {
+            EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+        })?;
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => run
+                .integration_snapshot(session, &cx)
+                .map_err(EnvError::Kernel),
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
+    pub(super) fn record_integration_step(
+        &self,
+        session: &mut Run<'_>,
+        cx: &EffectContext,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+        state: effigy_kernel::run::WorkspaceIntegrationState,
+    ) -> Result<(), EnvError> {
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => run
+                .record_integration_step(session, cx, step, state)
+                .map_err(EnvError::Kernel),
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
     pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
-        std::ptr::eq(self._root, root)
+        std::ptr::eq(self.parts.root, root)
     }
 
     pub(super) fn settle(
         self,
         cleanup: &CleanupContext,
     ) -> Result<CleanupOutcome, (EnvError, effigy_kernel::run::WorkspaceCleanupCustody<'r>)> {
-        self._run
-            .settle(cleanup, &mut EnvSettlement)
-            .map(|outcome| outcome.cleanup())
-            .map_err(|(error, custody)| (EnvError::Kernel(error), custody))
+        use effigy_kernel::run::WorkspaceCleanupCustody;
+        match self.gate {
+            ParkedEnvGate::Parked(run) => run.settle(cleanup, &mut EnvSettlement),
+            ParkedEnvGate::Guarded(run) => run
+                .settle(cleanup, &mut EnvSettlement)
+                .map_err(|(error, custody)| (error, WorkspaceCleanupCustody::Guarded(custody))),
+        }
+        .map(|outcome| outcome.cleanup())
+        .map_err(|(error, custody)| (EnvError::Kernel(error), custody))
+    }
+
+    pub(super) fn reacquire(
+        self,
+        session: &Run<'_>,
+        backend: &mut dyn super::EnvironmentBackend,
+        observe: impl FnOnce(
+            &effigy_kernel::run::WorkspaceResumeView<'_>,
+            Instant,
+            &mut dyn super::EnvironmentBackend,
+        ) -> Observed<effigy_kernel::run::WorkspaceResumeFacts>,
+    ) -> Result<EnvRun<'r>, (EnvError, Box<Self>)> {
+        let Self { gate, parts } = self;
+        let guarded = match gate {
+            ParkedEnvGate::Parked(run) => match run.reacquire() {
+                Ok(guarded) => Box::new(guarded),
+                Err((error, parked)) => {
+                    return Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self {
+                            gate: ParkedEnvGate::Parked(parked),
+                            parts,
+                        }),
+                    ))
+                }
+            },
+            ParkedEnvGate::Guarded(guarded) => guarded,
+        };
+        let observation = (|| -> Result<_, EnvError> {
+            let view = guarded.view().map_err(EnvError::Kernel)?;
+            let facts = view.facts();
+            let mut ids = parts
+                .receipt
+                .created_ids()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            ids.sort();
+            if facts.target != parts.target
+                || facts.session != *parts.plan.binding()
+                || parts.plan.environment_run() != Some(facts.environment_run)
+                || facts.reservation != parts.plan.reservation_id()
+                || facts.environment != *parts.plan.environment()
+                || facts.environment_generation != parts.plan.environment_generation()
+                || facts.created_ids != ids
+            {
+                return Err(EnvError::Invalid(
+                    "parked workspace evidence differs from its owner snapshot".into(),
+                ));
+            }
+            // Decode the entire v5 record through #510's owner, then compare
+            // the reconstructed receipt with the one retained before parking.
+            let stored = super::creation::decode_stored(&facts.creator_receipt)
+                .map_err(EnvError::Invalid)?;
+            let decoded = super::creation::outcome(
+                &parts.env.resource,
+                facts.environment_run,
+                stored.record().clone(),
+            );
+            if decoded.receipt() != Some(&parts.receipt) {
+                return Err(EnvError::Invalid(
+                    "workspace creator receipt changed while parked".into(),
+                ));
+            }
+            parts
+                .receipt
+                .reobserve(backend, view.deadline())
+                .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+            let observed = observe(&view, view.deadline(), backend);
+            parts
+                .receipt
+                .reobserve(backend, view.deadline())
+                .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+            Ok(observed)
+        })();
+        let observed = match observation {
+            Ok(observed) => observed,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(guarded),
+                        parts,
+                    }),
+                ))
+            }
+        };
+        let run = match guarded.resume(session, observed) {
+            Ok(run) => run,
+            Err((error, guarded)) => {
+                return Err((
+                    EnvError::Kernel(error),
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(guarded),
+                        parts,
+                    }),
+                ))
+            }
+        };
+        Ok(EnvRun {
+            run,
+            cx: parts.cx,
+            root: parts.root,
+            env: parts.env,
+            cleanup_budget: parts.cleanup_budget,
+            began: parts.began,
+            published: parts.published,
+            failed: parts.failed,
+            transitioned: parts.transitioned,
+            progress: parts.progress,
+            step: parts.step,
+        })
     }
 }
 
@@ -698,20 +889,22 @@ impl<'r> EnvRun<'r> {
         } = self;
         match run.park_workspace(reservation, deadline) {
             Ok(run) => Ok(ParkedEnvRun {
-                _run: run,
-                _cx: cx,
-                _root: root,
-                _env: env,
-                _cleanup_budget: cleanup_budget,
-                _began: began,
-                _published: published,
-                _failed: failed,
-                _transitioned: transitioned,
-                _progress: progress,
-                _step: step,
-                _receipt: receipt,
-                _target: target,
-                _plan: plan,
+                gate: ParkedEnvGate::Parked(Box::new(run)),
+                parts: ParkedEnvParts {
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                    receipt,
+                    target,
+                    plan,
+                },
             }),
             Err((error, run)) => Err((
                 EnvError::Kernel(error),

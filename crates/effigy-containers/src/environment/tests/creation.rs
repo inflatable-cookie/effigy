@@ -804,10 +804,193 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
     }
 }
 
+fn parked_activation_fixture<'a>(
+    ctx: &EnvContext<'a>,
+    stack: &EnvRef,
+) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
+    use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
+    use effigy_kernel::workspace_session::{
+        BoundPlatform, ContainerIdentity, GuestObject, ImagePlatform, LoaderFamily, TargetCandidate,
+    };
+    let reservation = fresh_reservation(ctx, stack);
+    let inputs = reservation.inputs().unwrap().clone();
+    let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
+    let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task,
+        route: Route::Task,
+        argv: vec![],
+        cwd: String::new(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        gates: vec![],
+        attachments: vec![],
+        class: effigy_kernel::ctx::EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .unwrap();
+    let options = effigy_kernel::run::BeginOpts {
+        id: effigy_kernel::id::RunId::new(1_760_000_000_000, [73; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        custody: None,
+        next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+            .unwrap(),
+    };
+    let super::super::WorkspaceBegin::Activate(mut activation) =
+        super::super::WorkspaceActivation::begin(
+            ctx,
+            stack,
+            &inputs,
+            &invocation,
+            options,
+            "fixture-supervisor",
+        )
+        .unwrap()
+    else {
+        panic!("fresh activation")
+    };
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    activation
+        .environment_mut()
+        .create_with(&mut fake, &selection(), request(&render), || Ok(()))
+        .unwrap();
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    let candidate = verified(vec![TargetCandidate {
+        identity: ContainerIdentity {
+            container_id: id('a'),
+            vm_boot_id: "boot".into(),
+            backend: "fixture".into(),
+        },
+        project: PROJECT.into(),
+        created_by: None,
+    }]);
+    let reservation = activation.reservation().clone();
+    activation
+        .environment_mut()
+        .bind_target_observing(
+            &reservation,
+            candidate,
+            &mut fake,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+    let target = ContainerIdentity {
+        container_id: id('a'),
+        vm_boot_id: "boot".into(),
+        backend: "fixture".into(),
+    };
+    let platform = ImagePlatform {
+        os: "linux".into(),
+        architecture: "amd64".into(),
+        variant: String::new(),
+        loader: LoaderFamily::Gnu,
+    };
+    let digest = effigy_kernel::id::Digest::of(b"fixture artifact");
+    activation
+        .environment_mut()
+        .bind_platform(
+            &reservation,
+            verified(BoundPlatform {
+                target,
+                platform: platform.clone(),
+                artifact_platform: platform,
+                artifact: GuestObject {
+                    path: format!("/run/effigy/objects/bin/{digest}"),
+                    digest,
+                },
+                artifact_version: "0.15.0".into(),
+                execution_available: true,
+            }),
+        )
+        .unwrap();
+    let parked = activation
+        .park(Instant::now() + Duration::from_secs(60))
+        .expect("complete activation parks");
+    (parked, fake)
+}
+
+#[test]
+fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
+    use effigy_kernel::ctx::StopCause;
+    use effigy_kernel::run::{
+        WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step,
+    };
+    for expired in [true, false] {
+        for attempted in [false, true] {
+            let fixture = home();
+            let state = root(fixture.path());
+            let base = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let ctx = base.bounded_until(deadline).unwrap();
+            let fresh_ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let stack = env("stack");
+            let (mut parked, _fake) = parked_activation_fixture(&ctx, &stack);
+            if attempted {
+                parked
+                    .record_integration_step(&ctx, Step::Routes, State::Attempted)
+                    .unwrap();
+            }
+            if expired {
+                while Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            } else {
+                ctx.cx
+                    .operation()
+                    .cancel_token()
+                    .cancel(StopCause::Requested);
+            }
+            let error = parked
+                .record_integration_step(&fresh_ctx, Step::Secrets, State::Attempted)
+                .unwrap_err();
+            assert!(error.to_string().contains(if expired {
+                "deadline expired"
+            } else {
+                "cancelled"
+            }));
+            if attempted {
+                let error = parked
+                    .record_integration_step(&fresh_ctx, Step::Routes, State::Completed)
+                    .unwrap_err();
+                assert!(error.to_string().contains(if expired {
+                    "deadline expired"
+                } else {
+                    "cancelled"
+                }));
+            }
+            let snapshot = parked
+                .integration_snapshot()
+                .expect("cleanup snapshot uses fresh authority");
+            assert_eq!(snapshot.contains_key(&Step::Routes), attempted);
+            if attempted {
+                let (error, custody) = parked
+                    .abort(&ctx, Wait::FailFast)
+                    .expect_err("attempted effect remains recoverable");
+                assert!(error
+                    .to_string()
+                    .contains("integration effects unsettled; re-run up"));
+                let super::super::ParkedAbortCustody::Activation(mut owner) = *custody else {
+                    panic!("retain both exact owners")
+                };
+                owner
+                    .record_integration_step(&ctx, Step::Routes, State::Cleared)
+                    .unwrap();
+                parked = *owner;
+            }
+            parked
+                .abort(&ctx, Wait::FailFast)
+                .expect("fresh cleanup settles and cancels exact reservation");
+        }
+    }
+}
+
 #[test]
 fn activation_parks_the_real_claimed_run_after_target_binding() {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
-    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
     use effigy_test_support::process::FixtureCommandExt;
     use std::collections::BTreeMap;
     use std::io::Write;
@@ -1029,76 +1212,8 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     let state = root(std::path::Path::new(&child_home));
     let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
     let stack = env("stack");
-    let reservation = fresh_reservation(&ctx, &stack);
-    let inputs = reservation.inputs().unwrap().clone();
-    let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
-    let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
-        owner: task.resource(),
-        task,
-        route: Route::Task,
-        argv: vec![],
-        cwd: String::new(),
-        target: ExecutionTarget::Host,
-        env: BTreeMap::new(),
-        gates: vec![],
-        attachments: vec![],
-        class: effigy_kernel::ctx::EffectClass::Mutate,
-        placement: effigy_kernel::ctx::Placement::Host,
-        provenance: BTreeMap::new(),
-    })
-    .unwrap();
-    let options = effigy_kernel::run::BeginOpts {
-        id: effigy_kernel::id::RunId::new(1_760_000_000_000, [73; 10]).unwrap(),
-        wait: Wait::FailFast,
-        acknowledge: vec![],
-        custody: None,
-        next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
-            .unwrap(),
-    };
-    let super::super::WorkspaceBegin::Activate(mut activation) =
-        super::super::WorkspaceActivation::begin(
-            &ctx,
-            &stack,
-            &inputs,
-            &invocation,
-            options,
-            "fixture-supervisor",
-        )
-        .unwrap()
-    else {
-        panic!("fresh activation")
-    };
-    let render = render(&[PRIMARY]);
-    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
-    activation
-        .environment_mut()
-        .create_with(&mut fake, &selection(), request(&render), || Ok(()))
-        .unwrap();
-    fake.inventories
-        .push_back(verified(vec![row(PRIMARY, 'a')]));
-    let candidate = verified(vec![TargetCandidate {
-        identity: ContainerIdentity {
-            container_id: id('a'),
-            vm_boot_id: "boot".into(),
-            backend: "fixture".into(),
-        },
-        project: PROJECT.into(),
-        created_by: None,
-    }]);
-    let reservation = activation.reservation().clone();
-    activation
-        .environment_mut()
-        .bind_target_observing(
-            &reservation,
-            candidate,
-            &mut fake,
-            Instant::now() + Duration::from_secs(5),
-        )
-        .unwrap();
-    let session = activation.session().clone();
-    let parked = activation
-        .park(Instant::now() + Duration::from_secs(60))
-        .expect("complete activation parks");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
     assert_eq!(parked.session(), &session);
     let foreign_fixture = home();
     let foreign_root = root(foreign_fixture.path());
@@ -1124,9 +1239,95 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     .unwrap();
     let mut input = String::new();
     let _ = std::io::stdin().read_line(&mut input);
+    let original_context = fake.selection.context.clone();
+    fake.selection.context = "foreign-context".into();
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("wrong backend must refuse before observation")
+        })
+        .expect_err("wrong backend retains custody");
+    assert!(error.to_string().contains("backend differs"));
+    fake.selection.context = original_context;
+    let mut parked = parked
+        .repark_for_cleanup()
+        .expect("release Env for integration cleanup");
+    let step = effigy_kernel::run::WorkspaceIntegrationStep::Routes;
     parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Attempted,
+        )
+        .unwrap();
+    assert_eq!(
+        parked.integration_snapshot().unwrap().get(&step),
+        Some(&effigy_kernel::run::WorkspaceIntegrationState::Attempted)
+    );
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("unsettled step must refuse before observation")
+        })
+        .expect_err("attempted integration cannot resume activation");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let (error, custody) = parked
         .abort(&ctx, Wait::FailFast)
-        .expect("parked owners settle and cancel");
+        .expect_err("unsettled integrations retain both owners");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let super::super::ParkedAbortCustody::Activation(mut parked) = *custody else {
+        panic!("integration cleanup retains activation custody")
+    };
+    parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Cleared,
+        )
+        .unwrap();
+    assert!(parked.integration_snapshot().unwrap().is_empty());
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'b')]));
+    let (error, parked) = parked
+        .reacquire(&mut fake, |view, _, _| {
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect_err("changed inventory after observation retains custody");
+    assert!(error
+        .to_string()
+        .contains("project inventory changed after apply"));
+    for _ in 0..4 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            Observed::Unknown(UnknownReason::Injected)
+        })
+        .expect_err("unknown reobservation retains custody");
+    assert!(error.to_string().contains("observation is unknown"));
+    assert!(effigy_kernel::gate::Gate::acquire(
+        &ctx.cx,
+        &state,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast
+    )
+    .is_err());
+    let activation = parked
+        .reacquire(&mut fake, |view, _, _| {
+            // Structural fixture only: production builds fresh target/platform
+            // observations rather than treating the expected view as evidence.
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect("guarded owner resumes after fixture reobservation");
+    assert_eq!(activation.session(), &session);
+    activation
+        .abort(&ctx, Wait::FailFast)
+        .expect("resumed owners settle and cancel");
     std::fs::write(
         std::path::Path::new(&child_home).join("settled-ready"),
         b"ready",
