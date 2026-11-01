@@ -331,8 +331,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_sentinel_cancellation_after_spawn_retains_partial() {
+    fn check_workspace_sentinel_interruption(deadline: bool) {
         let home = effigy_test_support::short_tempdir("sc-").unwrap();
         let cx = super::super::tests::context();
         let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -356,9 +355,22 @@ mod tests {
         let helper_log = home.path().join("sentinel.jsonl");
         crate::fault::set_helper_log(Some(helper_log.clone()));
         let cancel = cx.operation().cancel_token().clone();
+        let until = Instant::now() + Duration::from_secs(2);
+        if deadline {
+            run.cx = run.cx.child_until(until);
+        }
+        let reached = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&reached);
         crate::fault::hook(Some(Box::new(move |point| {
             if point == crate::fault::Point::WorkspaceSentinelAfterSpawn {
-                cancel.cancel(crate::ctx::StopCause::Requested);
+                observed.fetch_add(1, Ordering::SeqCst);
+                if deadline {
+                    while Instant::now() < until {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                } else {
+                    cancel.cancel(crate::ctx::StopCause::Requested);
+                }
             }
         })));
         let result = run.enable_workspace_custody(&plan);
@@ -379,13 +391,30 @@ mod tests {
             reap_test_child(child);
         }
         drop(cleanup); // Exact-child fixture teardown only.
-        assert!(result.is_err());
+        assert_eq!(reached.load(Ordering::SeqCst), 1);
+        let error = result.expect_err("interrupted startup must refuse");
+        if deadline {
+            assert!(
+                error.to_string().contains("TimedOut"),
+                "deadline must cause refusal: {error}"
+            );
+        }
         assert_eq!(logged.len(), 1);
         assert_eq!(
             retained,
             Some(logged[0].pid),
-            "cancellation must retain the started child"
+            "interruption must retain the started child"
         );
+    }
+
+    #[test]
+    fn workspace_sentinel_cancellation_after_spawn_retains_partial() {
+        check_workspace_sentinel_interruption(false);
+    }
+
+    #[test]
+    fn workspace_sentinel_deadline_after_spawn_retains_partial() {
+        check_workspace_sentinel_interruption(true);
     }
 
     #[test]
