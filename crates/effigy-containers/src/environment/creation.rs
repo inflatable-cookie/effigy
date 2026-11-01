@@ -145,6 +145,11 @@ impl CreationReceipt {
         backend: &mut dyn EnvironmentBackend,
         deadline: std::time::Instant,
     ) -> Result<(), CreationRefusal> {
+        if std::time::Instant::now() >= deadline {
+            return Err(CreationRefusal::Unknown(
+                "target recheck deadline expired".into(),
+            ));
+        }
         if backend.selection().engine.as_str() != self.engine
             || backend.selection().context != self.context
         {

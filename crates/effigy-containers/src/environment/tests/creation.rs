@@ -611,6 +611,14 @@ fn journalled_generation_and_recheck_refuse_replaced_or_retagged_rows() {
     assert!(receipt
         .reobserve(&mut fake, Instant::now() + Duration::from_secs(1))
         .is_ok());
+    let reads_before_expiry = fake.reads;
+    assert!(receipt
+        .reobserve(&mut fake, Instant::now() - Duration::from_millis(1))
+        .is_err());
+    assert_eq!(
+        fake.reads, reads_before_expiry,
+        "expired rechecks do no backend I/O"
+    );
     fake.inventories
         .push_back(verified(vec![row(PRIMARY, 'b')]));
     assert!(receipt
