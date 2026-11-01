@@ -901,6 +901,81 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
                     .to_string()
                     .contains("reserved by a workspace activation")
             });
+        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("reservation reader unavailable: {other:?}"),
+        };
+        let original =
+            match effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(
+                &reader,
+                &stack.resource,
+            ) {
+                Observed::Verified(Some(reservation), _) => reservation,
+                other => panic!("reservation unavailable: {other:?}"),
+            };
+        let original_plan = original
+            .plan(&reader)
+            .verified()
+            .cloned()
+            .flatten()
+            .unwrap();
+        let inputs = original.inputs().unwrap().clone();
+        drop(reader);
+        let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
+        let contender = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+            owner: task.resource(),
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![],
+            attachments: vec![],
+            class: effigy_kernel::ctx::EffectClass::Mutate,
+            placement: effigy_kernel::ctx::Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let options = effigy_kernel::run::BeginOpts {
+            id: effigy_kernel::id::RunId::new(1_760_000_000_000, [75; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            custody: None,
+            next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+                .unwrap(),
+        };
+        let workspace_refused = super::super::WorkspaceActivation::begin(
+            &ctx,
+            &stack,
+            &inputs,
+            &contender,
+            options,
+            "competing-supervisor",
+        )
+        .err()
+        .is_some_and(|error| {
+            error
+                .to_string()
+                .contains("competing attempt or untagged reservation")
+        });
+        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("reservation reader unavailable after competitor: {other:?}"),
+        };
+        let survivor =
+            match effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(
+                &reader,
+                &stack.resource,
+            ) {
+                Observed::Verified(Some(reservation), _) => reservation,
+                other => panic!("reservation missing after competitor: {other:?}"),
+            };
+        let preserved = survivor.id() == original.id()
+            && survivor.state()
+                == effigy_kernel::workspace_session::ActivationReservationState::Reserved
+            && survivor.plan(&reader).verified().cloned().flatten() == Some(original_plan);
+        drop(reader);
         if ready {
             child
                 .stdin
@@ -935,6 +1010,14 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
         assert!(gate_free, "parked activation released Env");
         assert!(refused, "ordinary competing admission refuses");
         assert!(alias_refused, "alias competing admission refuses");
+        assert!(
+            workspace_refused,
+            "competing workspace staging refuses by name"
+        );
+        assert!(
+            preserved,
+            "the competing attempt cannot cancel or replace the original session"
+        );
         assert!(settled_live, "same child remains alive after settlement");
         assert!(
             cancelled,
