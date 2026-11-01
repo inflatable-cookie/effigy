@@ -18,8 +18,12 @@
 //! A sweep, run before each creation, removes crash residue only when it can
 //! prove the file idle: a `compose-` file whose exclusive lock it can take has
 //! no live holder. Legacy `<16 hex>.env` files from earlier development builds
-//! carry no lock, so they are removed only once older than [`LEGACY_GRACE`].
-//! Residue from a crash stays on disk until the next invocation sweeps it.
+//! carry no lock and cannot be proven idle, so they are never removed; the sweep
+//! counts them in a one-time notice instead.
+//!
+//! Failures never leave a secret behind on this path: a value is written only
+//! after the lock and the name agree, and any failure after that removes the
+//! file before returning.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -28,7 +32,6 @@ use std::io::{self, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, renameat, AtFlags, Flock, FlockArg, OFlag};
@@ -50,9 +53,13 @@ const FILE_SUFFIX: &str = ".env";
 const QUARANTINE_PREFIX: &str = ".rm-";
 /// `<16 hex>.env`: the content-named files earlier development builds wrote.
 const LEGACY_DIGITS: usize = 16;
-/// A legacy file younger than this may belong to an old-format invocation that
-/// is still running, so it is kept. A legacy file older than this is removed.
-const LEGACY_GRACE: Duration = Duration::from_secs(60 * 60);
+/// Printed once per process when legacy files are left in place.
+static DEFERRED_NOTICE: std::sync::Once = std::sync::Once::new();
+#[cfg(test)]
+thread_local! {
+    /// Test seam: the next body write fails once, to prove cleanup on that path.
+    static FAIL_NEXT_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 /// Fresh names tried before an invocation gives up.
 const CREATE_ATTEMPTS: usize = 8;
 /// Random bytes behind one name: 32 hex digits.
@@ -229,41 +236,79 @@ impl InterpolationFile {
                 Err(Errno::EEXIST) => continue,
                 Err(error) => return Err(error.into()),
             };
-            let file = File::from(fd);
-            let stat = fstat(&file).map_err(io::Error::from)?;
-            if !owned_file(&stat) {
-                discard(&directory, &name, &stat);
-                return Err(invalid(
-                    "a Compose interpolation file was not created as an owned single-link file"
-                        .into(),
-                ));
+            if let Some(file) =
+                Self::fill(&directory, &directory_path, &name, File::from(fd), body)?
+            {
+                return Ok(file);
             }
-            fchmod(&file, Mode::from_bits_truncate(0o600)).map_err(io::Error::from)?;
-            let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
-                // A sweep holds the exclusive lock: it is removing this name.
-                discard(&directory, &name, &stat);
-                continue;
-            };
-            if !is_entry(&directory, &name, &stat) {
-                discard(&directory, &name, &stat);
-                continue;
-            }
-            // The body is written only once the lock and the name agree.
-            locked.write_all(body.as_bytes())?;
-            locked.sync_all()?;
-            return Ok(Self {
-                path: directory_path.join(&name),
-                directory,
-                name,
-                stat,
-                _lock: locked,
-                removed: false,
-            });
         }
         Err(invalid(
             "could not create a unique Compose interpolation file".into(),
         ))
     }
+
+    /// Lock and fill a file this invocation just created. Nothing secret is
+    /// written until the shared lock is held and the name still names this
+    /// inode, so a failure before that point leaves no value behind. `Ok(None)`
+    /// means another party took the name and the caller creates a fresh one.
+    /// Once the body is being written, every failure removes the file.
+    fn fill(
+        directory: &OwnedFd,
+        path: &Path,
+        name: &str,
+        file: File,
+        body: &str,
+    ) -> io::Result<Option<Self>> {
+        let stat = fstat(&file).map_err(io::Error::from)?;
+        if !owned_file(&stat) {
+            discard(directory, name, &stat);
+            return Err(invalid(
+                "a Compose interpolation file was not created as an owned single-link file".into(),
+            ));
+        }
+        let owned = match directory.try_clone() {
+            Ok(owned) => owned,
+            Err(error) => {
+                discard(directory, name, &stat);
+                return Err(error);
+            }
+        };
+        if let Err(error) = fchmod(&file, Mode::from_bits_truncate(0o600)) {
+            discard(directory, name, &stat);
+            return Err(error.into());
+        }
+        let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
+            // A sweep holds the exclusive lock: it is removing this name.
+            discard(directory, name, &stat);
+            return Ok(None);
+        };
+        if !is_entry(directory, name, &stat) {
+            discard(directory, name, &stat);
+            return Ok(None);
+        }
+        // From here the value may reach the file: every failure removes it.
+        if let Err(error) = write_body(&mut locked, body).and_then(|()| locked.sync_all()) {
+            discard(directory, name, &stat);
+            return Err(error);
+        }
+        Ok(Some(Self {
+            path: path.join(name),
+            directory: owned,
+            name: name.to_owned(),
+            stat,
+            _lock: locked,
+            removed: false,
+        }))
+    }
+}
+
+/// The one write of a value into a locked interpolation file.
+fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_WRITE.with(|armed| armed.replace(false)) {
+        return Err(io::Error::other("injected write failure"));
+    }
+    file.write_all(body.as_bytes())
 }
 
 impl Drop for InterpolationFile {
@@ -346,25 +391,31 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
     Ok(directory)
 }
 
-/// Remove stale files this layout owns. Only names this layout creates are
-/// candidates, and each candidate is reached through the verified directory
-/// descriptor. A `compose-` or quarantine file is stale when its exclusive lock
-/// is free: a live invocation holds the shared lock for the file's lifetime. A
-/// legacy file carries no lock, so it is stale only once older than
-/// [`LEGACY_GRACE`]. Anything else is left in place. A sweep that cannot read
+/// Remove crash residue this layout owns. Only names this layout creates are
+/// candidates, and each is reached through the verified directory descriptor. A
+/// `compose-` or quarantine file is removed only when its exclusive lock is free:
+/// a live invocation holds the shared lock for the file's lifetime. A legacy
+/// `<16 hex>.env` file carries no lock and no proof of idleness, so it is never
+/// removed; its names are counted in a one-time notice. A sweep that cannot read
 /// the directory removes nothing.
 fn sweep(directory: &OwnedFd, path: &Path) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
     };
     let mut removed = 0_usize;
+    let mut deferred = 0_usize;
     for entry in entries.flatten() {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Some(kind) = Candidate::of(&name) else {
-            continue;
-        };
+        match Candidate::of(&name) {
+            Some(Candidate::Locked) => {}
+            Some(Candidate::Legacy) => {
+                deferred += 1;
+                continue;
+            }
+            None => continue,
+        }
         let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
         let Ok(fd) = openat(directory, name.as_str(), flags, Mode::empty()) else {
             continue;
@@ -376,12 +427,9 @@ fn sweep(directory: &OwnedFd, path: &Path) {
         if !owned_file(&stat) {
             continue;
         }
-        let Ok(exclusive) = Flock::lock(file, FlockArg::LockExclusiveNonblock) else {
+        let Ok(_exclusive) = Flock::lock(file, FlockArg::LockExclusiveNonblock) else {
             continue;
         };
-        if kind == Candidate::Legacy && !older_than(&exclusive, LEGACY_GRACE) {
-            continue;
-        }
         if is_entry(directory, &name, &stat) && remove_owned(directory, &name, &stat).is_ok() {
             removed += 1;
         }
@@ -392,6 +440,14 @@ fn sweep(directory: &OwnedFd, path: &Path) {
             path.display()
         );
     }
+    if deferred > 0 {
+        DEFERRED_NOTICE.call_once(|| {
+            eprintln!(
+                "effigy: {deferred} legacy Compose interpolation file(s) in {} predate per-invocation files and cannot be proven idle; they are left in place",
+                path.display()
+            );
+        });
+    }
 }
 
 /// The kinds of name a sweep may consider.
@@ -399,7 +455,7 @@ fn sweep(directory: &OwnedFd, path: &Path) {
 enum Candidate {
     /// A per-invocation file or a quarantine name: protected by its lock.
     Locked,
-    /// A content-named file from an earlier build: protected by its age.
+    /// A content-named file from an earlier build: never removed.
     Legacy,
 }
 
@@ -429,14 +485,6 @@ fn is_hex_name(name: &str, prefix: &str, digits: usize, suffix: &str) -> bool {
         })
 }
 
-fn older_than(file: &File, age: Duration) -> bool {
-    file.metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .is_some_and(|elapsed| elapsed >= age)
-}
-
 /// Remove the entry `name` only if it still names the inode described by
 /// `expected`. The entry is first moved to a fresh quarantine name, so the
 /// unlink never follows a check: if the moved inode is not `expected`, it is
@@ -445,6 +493,7 @@ fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Res
     let quarantine = format!("{QUARANTINE_PREFIX}{}", random_hex(RANDOM_BYTES)?);
     match renameat(directory, name, directory, quarantine.as_str()) {
         Ok(()) => {}
+        // Nothing remains at the name, so there is nothing left to remove.
         Err(Errno::ENOENT) => return Ok(()),
         Err(error) => return Err(error.into()),
     }
@@ -474,7 +523,11 @@ fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Res
                 )),
             }
         }
-        Err(Errno::ENOENT) => Ok(()),
+        // The moved entry vanished before it could be checked or unlinked, so
+        // whatever it was, its removal is not confirmed.
+        Err(Errno::ENOENT) => Err(invalid(
+            "a Compose interpolation file vanished during removal; its state is unknown".into(),
+        )),
         Err(error) => Err(error.into()),
     }
 }
@@ -514,6 +567,7 @@ fn random_hex(bytes: usize) -> io::Result<String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, SystemTime};
 
     fn args(paths: &[&str]) -> Vec<OsString> {
         ["nerdctl", "--profile", "effigy", "--", "compose"]
@@ -690,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_file_is_swept_only_after_the_grace_window() {
+    fn a_legacy_file_is_never_removed_however_old() {
         let home = tempfile::tempdir().expect("home");
         fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
         fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
@@ -706,17 +760,49 @@ mod tests {
             .write(true)
             .open(&old)
             .expect("open")
-            .set_modified(SystemTime::now() - LEGACY_GRACE - Duration::from_secs(60))
+            .set_modified(SystemTime::now() - Duration::from_secs(2 * 365 * 24 * 60 * 60))
             .expect("age");
         let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
-        assert!(!old.exists(), "an aged legacy artifact is swept");
         assert!(
-            recent.exists(),
-            "a young legacy file may belong to a running old process"
+            old.exists(),
+            "age alone never proves a lockless legacy file idle"
         );
+        assert!(recent.exists(), "a legacy file is never removed");
         assert!(
             other.exists(),
             "a name outside the legacy pattern is never touched"
+        );
+    }
+
+    #[test]
+    fn a_hardlinked_compose_file_is_never_swept() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "1".repeat(32));
+        let shared = compose_dir(home.path()).join(&name);
+        let target = outside.path().join("victim.env");
+        fs::write(&target, "KEEP=me\n").expect("target");
+        fs::hard_link(&target, &shared).expect("hardlink");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            shared.exists(),
+            "a hard-linked compose file is not single-link and is kept"
+        );
+        assert_eq!(fs::read_to_string(&target).expect("target"), "KEEP=me\n");
+    }
+
+    #[test]
+    fn a_failed_write_removes_the_partial_file() {
+        let home = tempfile::tempdir().expect("home");
+        FAIL_NEXT_WRITE.with(|armed| armed.set(true));
+        let result = invoke(home.path(), &args(&["up"]), &secret("partial-secret"));
+        assert!(result.is_err(), "the injected write failure is reported");
+        assert!(
+            entries(home.path()).is_empty(),
+            "a file that may hold a value is removed before the error returns"
         );
     }
 
@@ -733,12 +819,6 @@ mod tests {
         fs::hard_link(&target, &hardlink).expect("hardlink");
         let symlink = compose_dir(home.path()).join("bbbbbbbbbbbbbbbb.env");
         std::os::unix::fs::symlink(&target, &symlink).expect("symlink");
-        File::options()
-            .write(true)
-            .open(&hardlink)
-            .expect("open")
-            .set_modified(SystemTime::now() - LEGACY_GRACE - Duration::from_secs(60))
-            .expect("age");
         let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
         assert!(
             hardlink.exists(),

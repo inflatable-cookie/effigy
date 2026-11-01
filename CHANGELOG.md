@@ -14,14 +14,13 @@ During v0.x, MINOR bumps may include breaking changes.
   child is reaped. The v0.15 development line reused content-named
   `$EFFIGY_HOME/compose-env/<digest>.env` files that carried explicit
   environment values, possibly secrets, and never pruned them; that exposure
-  was introduced and fixed in this development line. The first invocation
-  sweeps legacy `<16 hex>.env` files it can verify as this user's regular,
-  single-link files older than one hour, and prints one line when it removes
-  any. A crash can leave a file until the next invocation sweeps it, and a
-  legacy file from a still-running pre-fix process past that hour is not
-  provably idle; it is the documented limitation. Development builds may have
-  left such artifacts: after upgrading, check `$EFFIGY_HOME/compose-env/`.
-  This does not mean no durable secret copies exist.
+  was introduced and fixed in this development line. Legacy `<16 hex>.env`
+  files are not removed automatically: they carry no lock, so no invocation can
+  prove they are idle. The first invocation reports how many it left. Development
+  builds may have left such artifacts. Once no pre-fix build is running, delete
+  `$EFFIGY_HOME/compose-env/<16 hex>.env` by hand. A crash can leave a
+  `compose-` file until the next invocation sweeps it. This does not mean no
+  durable secret copies exist.
 
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.

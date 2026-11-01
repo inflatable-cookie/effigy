@@ -311,12 +311,14 @@ Effigy ownership:
   and a name that another inode took is restored without overwrite and reported
   as unknown
 - before each creation a sweep removes only `compose-` files whose exclusive
-  lock it can take (no live holder) and legacy `<16 hex>.env` files from earlier
-  development builds older than one hour; it never follows a symlink or removes
-  a hard-linked, non-regular, foreign-owned or unrecognised name, and it prints
-  one non-secret line when it removes files. A crash leaves its file until the
-  next invocation's sweep; a legacy file from an old-format process that
-  outlives the one-hour grace is the documented limitation
+  lock it can take (no live holder) and never follows a symlink or removes a
+  hard-linked, non-regular, foreign-owned or unrecognised name. A legacy
+  `<16 hex>.env` file from an earlier development build carries no lock and
+  cannot be proven idle, so it is never removed, whatever its age; the sweep
+  reports how many such names it left, once per process. Removing legacy files
+  is an operator decision, not something the sweep does
+- a crash leaves its `compose-` file until the next invocation's sweep; it does
+  not claim that every secret copy is erased
 - a value both readers can take literally stays unquoted, and anything
   else is double quoted with `\`, `"`, newlines and `$` escaped so Compose
   substitutes it literally and the container's copy keeps its value; a

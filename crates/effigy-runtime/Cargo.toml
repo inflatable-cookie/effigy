@@ -26,6 +26,8 @@ signal-hook = "0.4"
 
 [dev-dependencies]
 effigy-test-support = { path = "../effigy-test-support" }
+# The workspace-route proof pins the Effigy home through the test seam.
+effigy-containers = { path = "../effigy-containers", features = ["test-support"] }
 tempfile = "3"
 
 [lints]
