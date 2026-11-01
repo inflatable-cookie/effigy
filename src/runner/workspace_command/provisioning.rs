@@ -1245,6 +1245,17 @@ pub(in crate::runner) enum BoundedReadRefusal {
     Unavailable(String),
 }
 
+impl std::fmt::Display for BoundedReadRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimedOut => {
+                formatter.write_str("the publication deadline expired during the read")
+            }
+            Self::Unavailable(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
 /// Run one read-only publication step on its own worker and stop waiting at the
 /// absolute deadline.
 ///

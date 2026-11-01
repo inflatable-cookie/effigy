@@ -1213,7 +1213,7 @@ pub(in crate::runner) fn seal_render_for_preflight(
             deadline,
             move || {
                 verified_compose_inputs(&frozen, &compose_files, &render_path, &read_root)
-                    .map_err(|error| RunnerError::task_invocation(format!("{error:?}")))
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
             },
         )?;
     live("after sealing the render")?;

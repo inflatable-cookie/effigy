@@ -782,6 +782,19 @@ fn workspace_host_alias_render_is_pure_frozen_idempotent_and_refuses_conflicts()
                 .compose_files
                 .iter()
                 .all(|file| file.starts_with(&render.path)));
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&render.closure.files()["inputs/environment.json"])
+                    .expect("frozen Compose inventory");
+            let names: Vec<String> = serde_json::from_value(metadata["compose_files"].clone())
+                .expect("ordered input list");
+            assert_eq!(
+                next.compose_files,
+                names
+                    .iter()
+                    .map(|name| render.path.join(name))
+                    .collect::<Vec<_>>(),
+                "the alias append and the sealed publisher must agree on every argv input"
+            );
             let override_path = next.compose_files.last().expect("override");
             let document: serde_yaml::Value =
                 serde_yaml::from_str(&next.read_compose(override_path).expect("in-memory closure"))

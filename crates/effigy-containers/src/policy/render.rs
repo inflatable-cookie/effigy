@@ -153,6 +153,33 @@ impl EffectiveContainerPolicy {
         if files.insert(name.into(), bytes).is_some() {
             return Err(error("workspace alias render path is already occupied"));
         }
+        // The publisher compares its exact ordered argv inputs with this
+        // inventory. Adding the alias file must freeze that same list in the
+        // closure, rather than leave the original render's inventory behind.
+        let mut compose_names = self
+            .compose_files
+            .iter()
+            .map(|file| {
+                file.strip_prefix(&render.path)
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                    .map_err(error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        compose_names.push(name.to_owned());
+        let mut metadata: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(
+            files
+                .get("inputs/environment.json")
+                .ok_or_else(|| error("workspace alias render has no Compose input inventory"))?,
+        )
+        .map_err(error)?;
+        metadata.insert(
+            "compose_files".into(),
+            serde_json::to_value(compose_names).map_err(error)?,
+        );
+        files.insert(
+            "inputs/environment.json".into(),
+            serde_json::to_vec(&metadata).map_err(error)?,
+        );
         let closure = Closure::new(files).map_err(error)?;
         let path = publication::object_directory(&self.repo_root)?.join(closure.digest());
         let mut next = self.clone();

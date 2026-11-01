@@ -205,6 +205,7 @@ struct FakeBackend {
     /// while one is in flight.
     takes: Option<Duration>,
     reads: Rc<Cell<usize>>,
+    guest: Option<Rc<std::cell::RefCell<crate::runner::workspace_client::guest_fake::FakeGuest>>>,
 }
 
 impl FakeBackend {
@@ -225,6 +226,7 @@ impl FakeBackend {
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
             takes: None,
             reads: Rc::new(Cell::new(0)),
+            guest: None,
         }
     }
 
@@ -337,6 +339,9 @@ impl ReservedBackendObservation for FakeBackend {
         _: &ContainerIdentity,
         _: PublicationDeadline,
     ) -> Result<Box<dyn GuestWorkspace + 'a>, EnvError> {
+        if let Some(guest) = &self.guest {
+            return Ok(crate::runner::workspace_command::provisioning::reserved_guest::tests::creator_guest(guest.clone()));
+        }
         Ok(Box::new(NoGuest))
     }
 }
@@ -1953,3 +1958,6 @@ fn a_frozen_fresh_decision_is_refused_at_observation_too() {
         "{error}"
     );
 }
+
+#[path = "reserved_creator_binding.rs"]
+mod creator_binding;

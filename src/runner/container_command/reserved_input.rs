@@ -991,9 +991,12 @@ fn environment_materialisation(
         checkout_id: crate::runner::task_engine::checkout::mint(policy.repo_root.as_path())?
             .text()
             .to_owned(),
-        // The environment resource an activation publishes, spelled the one way
-        // the record and the context both spell it.
-        environment_resource: format!("env:{}", policy.name),
+        // The kernel compares the canonical resource name, not a display label
+        // such as `env:web`. Resolve it through the same environment owner.
+        environment_resource: crate::runner::environment::env_ref(policy)?
+            .resource
+            .name()
+            .to_string(),
         profile: selected.context.clone(),
         runtime: None,
         vm_type: None,
@@ -1141,14 +1144,14 @@ impl<'a> PreparedReservedPublication<'a> {
             probe,
             context,
             snapshots,
-            credential: Box::new(move |session, generation| {
+            credential: Box::new(move |session, _context_generation| {
                 if session.environment_generation().get() != reservation_generation {
                     return Err(refused(
                         "workspace session names another environment generation",
                     ));
                 }
                 Ok(WorkspaceEnrolmentCredential::new(
-                    generation.to_string(),
+                    reservation_generation.to_string(),
                     container_id.clone(),
                     secret.expose(),
                 ))

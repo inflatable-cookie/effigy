@@ -1183,6 +1183,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Keep the workspace alias override and canonical environment identity in frozen
+  publication inputs. Enrolment credentials use the reserved environment
+  generation independently of the guest context generation.
+- Render sealed Compose read refusals as human-readable messages.
+
 - An interactive `effigy test` run that the operator stops can no longer report
   a terminated suite as passed or as a failed check. The supervised session
   records how each attempt ended — its own result, or a stop the session

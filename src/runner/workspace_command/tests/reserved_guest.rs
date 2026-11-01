@@ -1232,3 +1232,30 @@ fn workspace_reserved_expired_publication_deadline_refuses_without_guest_io() {
 fn workspace_reserved_callback_keeps_the_original_activation_deadline() {
     run(Fault::LongObservationBudget);
 }
+
+// Shared external-I/O doubles for the creator producer/consumer integration.
+pub(in crate::runner) fn creator_guest(shared: Rc<RefCell<FakeGuest>>) -> Box<dyn GuestWorkspace> {
+    Box::new(Guest(
+        shared,
+        None,
+        Rc::new(Cell::new(0)),
+        Rc::new(Cell::new(false)),
+    ))
+}
+
+pub(in crate::runner) fn creator_probe(
+    identity: WorkspaceContainerIdentity,
+    guest: Rc<RefCell<FakeGuest>>,
+) -> Box<dyn WorkspaceGuestProbe> {
+    Box::new(Probe {
+        identity: GuestSelfObservation {
+            container_id: identity.container_id,
+            vm_boot_id: identity.vm_boot_id,
+            platform: identity.platform,
+            libc: identity.libc,
+        },
+        fault: Fault::None,
+        guest,
+        context_probed: Rc::new(Cell::new(false)),
+    })
+}

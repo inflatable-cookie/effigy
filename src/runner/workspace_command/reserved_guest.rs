@@ -527,7 +527,7 @@ impl WorkspaceSelectionIo for OwnedSelectionIo<'_> {
 
 #[cfg(test)]
 #[path = "tests/reserved_guest.rs"]
-mod tests;
+pub(in crate::runner) mod tests;
 
 /// Re-open I/O for the obligation's exact target; this carries no authority to
 /// switch without the owner's live Run/launch and an acquired Env guard.
