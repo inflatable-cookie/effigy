@@ -233,6 +233,41 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **A workspace session owns its terminals' input, resize and retained
+  output.** `workspace_client::terminal` implements the kernel's `Terminal` and
+  `Streams` seams for the merged #507 serving owner: `WorkspaceTerminal` holds
+  one admitted run's writer, newest geometry and retirement behind an injected
+  `TerminalWriter` (the child's writer, resize handle and close), and
+  `TerminalCustody` serves one `RetainedStreams<WorkspaceTerminal>` per admitted
+  run for a session. Input and resize re-read the run's owning attachment with
+  `Attachment::attached_observed` immediately before every effect. Only the
+  run's owning attachment binds the writer, for its whole life: a second
+  terminal (the first one to attach included), a re-attach and the kernel's
+  replacement of a second terminal never claim or displace it, nothing is queued
+  on a second terminal's authority, and a released owning row stops the work it
+  had queued as well as new frames, with zero bytes and zero resize. Each
+  owner drives its writer from its own pump, which re-reads the run's resumed
+  owning row immediately before every writer effect — each partial write, each
+  resize — and on every idle tick. Writes and resizes alternate while both have
+  work, so a full writer (a child that stopped reading) never starves the newest
+  geometry and a stuck resize handle never starves queued input.
+  A stale, released, replaced or foreign attachment, a second terminal, or a run
+  this session owns no terminal for therefore refuses with zero bytes and zero
+  resize, and no effect lands against a row released between turns. Input is
+  bounded (two frames, then a refusal) instead of queued without limit; the pump
+  drains what a slow child refused on its own cadence, so backpressured input
+  completes while the connection is live and idle; resize keeps only the newest
+  size, so a burst cannot become a backlog; a second terminal's detach never
+  stops the owning run; the owning client's end of stream retires the writer
+  exactly once, without waiting for further traffic; and a reconnect resumes the
+  retained log at its negotiated cursor or reports the rotated range as a `gap`. The
+  writer is a production-shaped fake in this slice: #452's container-up caller
+  opens one entry per admitted run and #519 binds the live child PTY with its
+  two-real-PTY process proof. `workspace_client::serving_host` serves the
+  session's terminal custody through the merged #507 loop, and
+  `ServingOwner::terminal_custody` / `ServiceOwner::terminal_custody` are the
+  typed handoff those callers use.
+
 - Project container inventories refuse incomplete, duplicate or replaced full-ID
   inspect answers. Docker and Colima adapters also expose inventory and image
   inspection under one caller deadline; expired reads launch no engine process.
@@ -1176,6 +1211,20 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- The detached workspace-serving proof and its fixture no longer depend on a
+  loaded host's timing, gate luck or cleanup order. A caller's startup budget
+  bounds the whole startup — the state root, the launch and the supervisor's
+  admission, not only the announcement wait — so a caller that asks for 1s is
+  answered by the deadline it named rather than after an inner step. A front end
+  that loses its handoff names the supervisor run it lost, so the proof waits for
+  that run to settle and for its recorded processes to leave instead of sleeping
+  and hoping. Two contender cases use two checkouts, because the kernel's serving
+  gate is keyed by the checkout a launch serves and a live owner would otherwise
+  answer for the other case. Fixture cleanup waits for kernel helpers in every
+  journal the fixture owns — a fixture whose checkout is a child directory records
+  its runs there — so a supervisor that is still leaving can no longer race the
+  directory removal into `Directory not empty`.
 
 - An interactive `effigy test` run that the operator stops can no longer report
   a terminated suite as passed or as a failed check. The supervised session

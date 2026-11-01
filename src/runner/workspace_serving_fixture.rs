@@ -36,33 +36,77 @@ pub fn initiate_abandoning(request_json: &str) -> Result<String, String> {
 /// The same launch, but with the caller's own startup budget, reported so a
 /// proof can show which deadline actually bounded the wait.
 pub fn initiate_with_budget(request_json: &str, budget_ms: u64) -> Result<String, String> {
-    let started = std::time::Instant::now();
-    match initiate_with_budget_parts(request_json, budget_ms) {
-        Ok(result) => Ok(result),
-        Err(error) => Err(format!(
-            "deadline={}ms: {error}",
-            started.elapsed().as_millis()
-        )),
-    }
+    initiate_with_budget_parts(request_json, budget_ms)
 }
 
 fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<String, String> {
+    let budget = Duration::from_millis(budget_ms);
+    let spent = std::time::Instant::now();
     let request: ServingHostRequest =
         serde_json::from_str(request_json).map_err(|error| format!("the request: {error}"))?;
-    let cx = task_engine::effect_context(OpenReason::DevServer);
+    // The caller's budget bounds the WHOLE startup, not only the announcement
+    // wait: the state root, the launch and the supervisor's admission are all
+    // the caller's wait, so a host that cannot be serving within it is a
+    // startup that ran out of the caller's deadline.
+    let cx = task_engine::effect_context(OpenReason::DevServer).child(budget);
     let location = effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(&request.project_path),
     };
     let root = StateRoot::checkout_effects(&cx, &request.state_home, &location)
         .map_err(|error| format!("the state root: {error}"))?;
     let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
-    let mut host = serving_host::start(&cx, &root, &request, &executable)
-        .map_err(|error| format!("the launch: {error}"))?;
-    let published = host
-        .await_serving(&cx, Duration::from_millis(budget_ms))
-        .map_err(|error| format!("the startup result: {error}"))?;
+    let mut host = serving_host::start(&cx, &root, &request, &executable).map_err(|error| {
+        startup_failure(
+            spent,
+            spent.elapsed(),
+            Duration::ZERO,
+            budget,
+            format!("the launch: {error}"),
+        )
+    })?;
+    // The launch is process startup; the wait for the announcement is the part
+    // the caller's budget is allowed to bound. They are reported separately so a
+    // proof can assert the mechanism without asserting how fast a process starts.
+    let launch = spent.elapsed();
+    let remaining = budget.saturating_sub(launch);
+    let waiting = std::time::Instant::now();
+    let published = host.await_serving(&cx, remaining).map_err(|error| {
+        startup_failure(
+            spent,
+            launch,
+            waiting.elapsed(),
+            budget,
+            format!("the startup result: {error}"),
+        )
+    })?;
     serde_json::to_string(&serde_json::json!({ "published": published }))
         .map_err(|error| format!("the result: {error}"))
+}
+
+/// One startup failure under the caller's own budget. When the budget is what
+/// ended the startup, the report says the caller's deadline expired before the
+/// host announced its session, whatever stage the launch had reached: that is
+/// the caller's answer, and it names the deadline rather than an inner step.
+fn startup_failure(
+    spent: std::time::Instant,
+    launch: Duration,
+    wait: Duration,
+    budget: Duration,
+    detail: String,
+) -> String {
+    let message = if spent.elapsed() >= budget {
+        "the workspace serving host did not announce its session in time".to_owned()
+    } else {
+        detail
+    };
+    // `wait` is what the caller's budget bounded, `launch` is process startup and
+    // `deadline` is the whole attempt, so a caller can tell them apart.
+    format!(
+        "wait={}ms launch={}ms deadline={}ms: {message}",
+        wait.as_millis(),
+        launch.as_millis(),
+        spent.elapsed().as_millis()
+    )
 }
 
 /// The same launch, but the front end crashes *before* it reads any startup
@@ -80,7 +124,10 @@ pub fn initiate_and_drop_before_result(request_json: &str) -> Result<String, Str
     let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
     let host = serving_host::start(&cx, &root, &request, &executable)
         .map_err(|error| format!("the launch: {error}"))?;
-    // No awaiting, no detach: the owner goes away with the handoff in flight.
+    // Name the supervisor run before the handoff is lost. The claim is still
+    // nothing: no session was read, so stdout stays empty. The owner goes away
+    // with the handoff in flight.
+    eprintln!("supervisor_run={}", host.run());
     drop(host);
     std::process::abort();
 }

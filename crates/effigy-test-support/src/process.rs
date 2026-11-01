@@ -16,8 +16,30 @@ const POLL: Duration = Duration::from_millis(10);
 const OUTPUT_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Observe kernel-owned writers before removing a private fixture HOME.
+///
+/// A fixture's kernel journal is not always at its own root: a fixture that
+/// makes its checkout a child directory records the runs and their helpers in
+/// that checkout's journal, so waiting only at the root would remove the tree
+/// while a recorded supervisor is still writing into it. Every journal this
+/// fixture can own is waited for, by the process identities the runs recorded:
+/// nothing is guessed, signalled or pattern-matched.
 pub fn close_root(owner: &Path) -> io::Result<()> {
-    wait_kernel_helpers(owner)
+    wait_kernel_helpers(owner)?;
+    let children = match std::fs::read_dir(owner) {
+        Ok(children) => children,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for child in children {
+        let child = child?;
+        // `file_type` never follows a link: a fixture's own directory is the
+        // only thing whose journal is waited for here.
+        if !child.file_type()?.is_dir() {
+            continue;
+        }
+        wait_kernel_helpers(&child.path())?;
+    }
+    Ok(())
 }
 
 pub trait FixtureCommandExt {
