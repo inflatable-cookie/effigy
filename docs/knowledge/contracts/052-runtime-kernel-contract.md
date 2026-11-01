@@ -4776,8 +4776,8 @@ after that durable detach only the authenticated winner of the fenced claim in
 §8.7 may hold a new owner handle. A connection that
 ends on a refused or malformed frame releases its own secondary row with it, so
 a rejected frame can neither exhaust the run's secondary slots nor orphan one,
-while an owning client's lifetime is still released only by its own end of
-stream: malformed traffic records no owner stop. Captured output is
+while the owning attachment is released by its own acknowledged detach or
+its own end of stream; malformed traffic records no owner stop. Captured output is
 published through a pump bounded by the acknowledgement window, so a control
 request is answered while data is backpressured; the connection's lifetime is
 its session's, and a closed connection whose frames were malformed releases no
@@ -4854,9 +4854,11 @@ owning handle, so a run this session did not admit has no owner to write for and
 is refused. Only the current owning attachment binds the writer for that
 attachment's lifetime. A second terminal — the first one to attach included —
 never claims it, and no re-attach displaces a live owner. After durable
-acknowledged detach, the fenced owner claim in §8.7 atomically retires the old
-writer binding and installs the winning owner attachment; replacing a secondary
-never creates an owner or puts it in the writer's place. Because the attachment allowed to queue work and the row
+acknowledged detach, the required fenced owner claim in §8.7 must atomically
+retire the old writer binding and install the winning owner attachment. That
+rebind is future lifecycle slice E work, not an implemented or proven #485
+behavior. Replacing a secondary never creates an owner or puts it in the
+writer's place. Because the attachment allowed to queue work and the row
 the pump re-reads before every effect are therefore one attachment, a released
 owning row stops queued work as well as new frames, and nothing is ever queued on
 a second terminal's authority. The connection fences the live attachment it was
@@ -4883,8 +4885,9 @@ one; a second terminal's detach releases only its own row and never stops the
 owning run; and the owning client's end of stream retires the writer exactly
 once, again without waiting for connection traffic or for the run's closure. A
 reconnect resumes the retained log at the negotiated cursor or reports the
-rotated range as a `gap`, with no second replay store. `effigy#485` proves those
-behaviours with production-shaped fake writers through the real `Server::serve`
+rotated range as a `gap`, with no second replay store. `effigy#485` proves the
+existing pre-claim behaviours described here, excluding the future post-detach
+writer rebind, with production-shaped fake writers through the real `Server::serve`
 loop and the merged serving loop, owned by `test:workspace:publication:c`, for
 **input and resize** on both paths: a released owning row stopping the work it had
 queued (a resize is sent on the same live connection and is never applied), and a
