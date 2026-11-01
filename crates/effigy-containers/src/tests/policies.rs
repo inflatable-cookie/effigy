@@ -22,6 +22,40 @@ fn setup_workspace_app_path_bundle(root: &std::path::Path) {
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
 }
 
+fn policy_with_runtime_dns_overlay(
+    name: &str,
+    compose_yaml: &str,
+) -> (
+    std::path::PathBuf,
+    crate::policy::model::EffectiveContainerPolicy,
+) {
+    let root = temp_repo(name);
+    let compose_file = root.join("infra/dev/docker-compose.yml");
+    fs::create_dir_all(compose_file.parent().expect("compose parent")).expect("mkdir compose dir");
+    fs::write(&compose_file, compose_yaml).expect("write synthetic Compose input");
+
+    let mut policy = crate::policy::model::test_policy(&root);
+    let mut compose_files = vec![compose_file];
+    let mut draft = crate::policy::render::Draft::default();
+    crate::runtime::dns::materialize_runtime_dns_override(
+        &root,
+        &policy.name,
+        &policy.profile,
+        &crate::runtime::dns::RuntimeDnsOverrideRoutes::default(),
+        &mut compose_files,
+        &mut draft,
+    )
+    .expect("render runtime DNS override");
+
+    let overlay = compose_files.last().expect("generated DNS override");
+    let rendered_overlay = draft.read(overlay).expect("read generated DNS override");
+    fs::create_dir_all(overlay.parent().expect("DNS override parent"))
+        .expect("mkdir DNS override dir");
+    fs::write(overlay, rendered_overlay).expect("materialize generated DNS override in fixture");
+    policy.compose_files = compose_files;
+    (root, policy)
+}
+
 /// One selection: the container a manifest resolves for a requested name, or
 /// the reason it refuses to guess.
 #[test]
@@ -1113,6 +1147,91 @@ primary_service = "app"
         crate::validate_compose_backend_runtime(&root, &policy)
             .expect("Docker backend must not inherit nerdctl label limit");
     });
+}
+
+#[test]
+fn validate_compose_backend_runtime_accepts_rendered_null_dns_service_overlay() {
+    let _lock = crate::test_env_lock();
+
+    let validate = |name: &str, mount_count: usize| {
+        // Match the measured 21-entry synthetic shape for the passing case;
+        // the larger fixture proves the same generated overlay still reaches
+        // the mount-budget refusal instead of being mistaken for bad input.
+        let source = format!("/{}", "s".repeat(61));
+        let volumes = (0..mount_count)
+            .map(|index| {
+                let target = format!("/{}{index:02}", "d".repeat(25));
+                format!(
+                    "      - type: bind\n        source: {source}\n        target: {target}\n        read_only: {}\n",
+                    index + 1 == mount_count
+                )
+            })
+            .collect::<String>();
+        let compose = format!(
+            "services:\n  app:\n    image: example.invalid/synthetic\n    network_mode: none\n    volumes:\n{volumes}"
+        );
+        let (root, policy) = policy_with_runtime_dns_overlay(name, &compose);
+        let dns_overlay = policy
+            .compose_files
+            .last()
+            .expect("generated runtime DNS override");
+        let rendered_overlay = policy
+            .read_compose(dns_overlay)
+            .expect("read generated runtime DNS override");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&rendered_overlay).expect("generated overlay is valid YAML");
+        assert!(
+            parsed["services"]["app"].is_null(),
+            "network_mode without applicable DNS or route fields emits a null service: {rendered_overlay}"
+        );
+
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        }
+        let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            crate::validate_compose_backend_runtime(&root, &policy)
+        });
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        }
+        result
+    };
+
+    validate("colima-null-dns-under-budget", 21)
+        .expect("a supported under-budget mount set must pass preflight");
+    let over_budget = validate("colima-null-dns-over-budget", 30)
+        .expect_err("an over-budget mount set must still refuse before apply");
+    assert!(over_budget
+        .to_string()
+        .contains("estimated nerdctl/mounts label size"));
+
+    // A null generated service is an empty mapping, but malformed non-null
+    // service values remain fail-closed for the Colima fallback.
+    let (root, policy) = policy_with_runtime_dns_overlay(
+        "colima-nonmapping-primary-service",
+        "services:\n  app: 42\n",
+    );
+    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+    unsafe {
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+    }
+    let malformed = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        crate::validate_compose_backend_runtime(&root, &policy)
+            .expect_err("a scalar primary service must still refuse")
+    });
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+        },
+        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+    }
+    assert!(malformed
+        .to_string()
+        .contains("primary service definition is not a mapping"));
 }
 
 #[test]

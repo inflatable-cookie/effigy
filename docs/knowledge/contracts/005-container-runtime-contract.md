@@ -55,6 +55,12 @@ consolidate mounts, relax workspace isolation or make a consumer whose declared
 mounts exceed the budget runnable. Real Colima and consumer qualification
 remain required.
 
+The runtime DNS renderer can emit a null primary-service value when a
+`network_mode` service has no DNS or route additions. Preflight treats that
+empty value as an empty service mapping and continues through the other Compose
+inputs; scalar, sequence and other non-mapping primary-service definitions
+remain unmodelled and refuse.
+
 ## Catalog paths in standard commands
 
 For a standard string `run` command, `{repo}` and `{project}` identify the

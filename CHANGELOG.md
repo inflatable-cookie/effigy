@@ -1254,7 +1254,9 @@ During v0.x, MINOR bumps may include breaking changes.
   inspect image metadata for implicit `VOLUME` entries and the measured reserve
   is not a universal runtime bound. Docker backends keep their existing
   behavior; this guard does not consolidate mounts or make a consumer whose
-  declared mounts exceed the budget runnable.
+  declared mounts exceed the budget runnable. An empty/null service entry in a
+  runtime DNS overlay is treated as an empty mapping; other non-mapping
+  primary-service definitions still refuse.
 - Keep the workspace alias override and canonical environment identity in frozen
   publication inputs. Enrolment credentials use the reserved environment
   generation independently of the guest context generation.

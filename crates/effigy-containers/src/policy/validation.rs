@@ -202,6 +202,13 @@ fn estimate_primary_service_mount_label_size(
         else {
             continue;
         };
+        // Runtime DNS overlays emit a service header even when a
+        // `network_mode` service has no DNS or route additions. YAML parses
+        // that empty mapping as null; Compose treats it as an empty service
+        // definition, so it contributes no mount fields to this estimate.
+        if service_value.is_null() {
+            continue;
+        }
         let Some(service) = service_value.as_mapping() else {
             return Err(mount_budget_refusal(
                 policy,
