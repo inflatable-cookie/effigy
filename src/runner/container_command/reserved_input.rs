@@ -948,6 +948,29 @@ fn observe_decision_target_with_binding(
     Ok((target, retained))
 }
 
+/// Reobserve the target and its artifact using the same frozen plan. The
+/// caller must hold the decision Env gate throughout this operation.
+pub(in crate::runner) fn observe_decision_inputs(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+    preflight: &effigy_containers::environment::CreationPreflight,
+    root: &effigy_kernel::root::StateRoot,
+    environment: &effigy_containers::environment::EnvRef,
+    observe: &effigy_kernel::ctx::ObserveContext,
+) -> Result<PublishInputs, EnvError> {
+    let (target, binding) = observe_decision_target_with_binding(plan, observation)?;
+    let artifact = observe_decision_artifact(
+        plan,
+        preflight,
+        &target,
+        binding.as_ref(),
+        root,
+        environment,
+        observe,
+    )?;
+    plan.publish_inputs(artifact, target)
+}
+
 /// Resolve artifact evidence from the frozen preflight or the committed
 /// publication. The caller holds the decision gate through this read.
 pub(in crate::runner) fn observe_decision_artifact(

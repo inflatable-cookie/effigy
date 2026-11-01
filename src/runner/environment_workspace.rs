@@ -88,6 +88,50 @@ pub(in crate::runner) struct WorkspaceUpRequest<'a> {
     pub(in crate::runner) supervisor_id: &'a str,
 }
 
+/// Planned activation does not have decision inputs until its gated observation.
+#[derive(Debug)]
+pub(in crate::runner) struct PlannedWorkspaceUpRequest<'a> {
+    pub(in crate::runner) policy: &'a EffectiveContainerPolicy,
+    pub(in crate::runner) retention: Retention,
+    pub(in crate::runner) invocation: &'a ResolvedInvocation,
+    pub(in crate::runner) options: BeginOpts,
+    pub(in crate::runner) supervisor_id: &'a str,
+}
+
+struct ActivationRequest<'a> {
+    policy: &'a EffectiveContainerPolicy,
+    retention: Retention,
+    inputs: Option<&'a PublishInputs>,
+    invocation: &'a ResolvedInvocation,
+    options: BeginOpts,
+    supervisor_id: &'a str,
+}
+
+impl<'a> From<WorkspaceUpRequest<'a>> for ActivationRequest<'a> {
+    fn from(request: WorkspaceUpRequest<'a>) -> Self {
+        Self {
+            policy: request.policy,
+            retention: request.retention,
+            inputs: Some(request.inputs),
+            invocation: request.invocation,
+            options: request.options,
+            supervisor_id: request.supervisor_id,
+        }
+    }
+}
+impl<'a> From<PlannedWorkspaceUpRequest<'a>> for ActivationRequest<'a> {
+    fn from(request: PlannedWorkspaceUpRequest<'a>) -> Self {
+        Self {
+            policy: request.policy,
+            retention: request.retention,
+            inputs: None,
+            invocation: request.invocation,
+            options: request.options,
+            supervisor_id: request.supervisor_id,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::runner) enum WorkspaceUpError {
     Preparation(crate::runner::error::RunnerError),
@@ -113,7 +157,7 @@ pub(in crate::runner) fn up<'a>(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up_impl(request, compose_env, None, publish)
+    up_impl(request.into(), compose_env, None, publish)
 }
 
 /// The exact owner inputs used by the planned production path.
@@ -129,7 +173,7 @@ pub(in crate::runner) struct PlannedWorkspaceUp<'a> {
 }
 
 fn up_impl<'a>(
-    request: WorkspaceUpRequest<'_>,
+    request: ActivationRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
     planned: Option<PlannedWorkspaceUp<'_>>,
     publish: impl FnOnce(
@@ -267,7 +311,11 @@ fn up_impl<'a>(
             WorkspaceActivation::begin(
                 &ctx,
                 &env,
-                request.inputs,
+                request.inputs.ok_or_else(|| {
+                    owner_error(EnvError::Invalid(
+                        "ordinary workspace has no decision inputs".into(),
+                    ))
+                })?,
                 request.invocation,
                 request.options,
                 request.supervisor_id,
@@ -432,7 +480,7 @@ pub(in crate::runner) fn up_prepared<'a>(
 
 /// Run prepared publication with a retained plan and gated observations.
 pub(in crate::runner) fn up_prepared_planned<'a>(
-    request: WorkspaceUpRequest<'_>,
+    request: PlannedWorkspaceUpRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
     planned: PlannedWorkspaceUp<'_>,
     observe: impl FnOnce(
@@ -442,7 +490,7 @@ pub(in crate::runner) fn up_prepared_planned<'a>(
         EnvError,
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up_impl(request, compose_env, Some(planned), |activation| {
+    up_impl(request.into(), compose_env, Some(planned), |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,
