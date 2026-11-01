@@ -67,7 +67,11 @@ are implemented in the kernel, with macOS/Linux qualification selectors. The
 matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement)
-are not yet armed; architecture 032 records the limit. The managed-run
+are not yet armed; architecture 032 records the limit. Every helper frame names
+the handshake protocol version it speaks, which is 3 since effigy#529; an older
+or newer helper binary refuses the mismatched frame by name and exits before it
+runs anything, so a mixed-version helper pair never exchanges a frame it cannot
+interpret. The managed-run
 supervisor is armed at every kernel crossing (`test:supervisor:faults`). That
 proof traces one immutable crossing list, assigns each entry once across six
 owned fixture workers, and reaps every worker before aggregation; per-run
@@ -277,11 +281,17 @@ group anchor. The existing spawn barrier still applies. The guard uses the
 existing sentinel entry point in a memory-only mode, with a private pipe; no
 control socket, log file or journal. Only that guard may inherit the owner's
 gate description; workloads never do. Each later spawn repeats the receipt/ack
-barrier before go. A free flock, not dead-looking diagnostic bytes, proves
-there is no holder. A held lock with a dead/unverifiable named owner remains
-held; the guard may refresh its own identity in the diagnostic body without
-creating durable authority. No stale-file unlink or PID-only reclaim exists. Owner and guard retain the group and
-unreaped-child/verified-anchor evidence through descendant and stream closure,
+barrier before go. Before a frame is written, the owner re-proves the retained
+backup's own exact incarnation (boot, start and a live state); a backup that has
+exited or been replaced gets no receipt, and the refusal names the retained
+guard rather than reporting a broken pipe. The guard's acknowledgement names
+the exact receipt request it answers, so a late answer to an earlier frame is
+refused and can never answer the frame just written (effigy#529). A free
+flock, not dead-looking diagnostic bytes, proves there is no holder. A held
+lock with a dead/unverifiable named owner remains held; the guard may refresh
+its own identity in the diagnostic body without creating durable authority. No
+stale-file unlink or PID-only reclaim exists. Owner and guard retain the group
+and unreaped-child/verified-anchor evidence through descendant and stream closure,
 even after leader exit. Normal settle closes the in-memory effects before
 unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
 group within the cleanup budget, using the same positive evidence as the
@@ -1126,6 +1136,15 @@ re-execs the run's binary as `__kernel-anchor`, then acknowledges its pid. Its
 environment contains only the custody nonce. The parent records the full
 `{pid, start, boot}` identity in the optional `anchor` field alongside the existing receipt. Old receipts
 omit that field and deserialize unchanged; imports infer no anchor.
+Before that receipt is written, and again immediately before the workload `go`
+byte, the parent positively qualifies the anchor it recorded: its kernel
+generation, its readable custody nonce, its membership of the recorded group
+and its start order against the leader must all verify. A failed or unknown
+qualification writes no receipt, sends no backup frame and opens no barrier;
+the blocked child is reaped pre-exec, so the refusal is a pre-exec refusal and
+never a not-yet-started claim about a running workload (effigy#529). This is
+the same evidence settlement and recovery already require, moved to the point
+where a receipt is created rather than only where it is settled.
 
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.
@@ -3283,6 +3302,19 @@ tests require private apply and are not evidence of those behaviors while it
 is refused. Their acceptance is deferred to effigy#533 and effigy#531 before
 production enablement. Native full-session qualification remains a release
 gate; the cut does not alter ordinary Compose or hybrid behavior.
+
+**Staged helper-hardening cut (effigy#529).** The reviewed S1–S5 helper
+hardening landed in parts. None of it enables workspace private output, and
+`Discard` stays refused. The status of each item is recorded here so a later
+reader does not infer an absent gate from silence:
+
+| Item | Status at this cut | Detail |
+| --- | --- | --- |
+| S1 bounded resident, pre-reserved partial-fork owner | deferred | It belongs to the owned-root/worker integration (effigy#533). `Run::mark_workspace_partial_fork` remains the unwired scaffold: a marker committed without pre-reserved custody cannot be cleared on a refused fork without inventing a non-occurrence proof, so wiring it ahead of the resident owner would create unresolved residue rather than protection. |
+| S2 supervisor image observation and refusal | not enabled | `supervise/image_identity.rs` is still an unwired observation scaffold. Requiring a helper image identity would refuse script and foreign helpers, and the accepted accidental-skew model plus K1 keep memory custody from refusing over a replaced binary beside a live run. The evidence a workspace helper would need before private output stays a later cut's obligation. |
+| S3 sentinel identity and explicit environment, including recovery | present in landed source, not extended here | Identity re-proof is `SentinelLease::verify_retained`, retained partial leases, and the detached supervisor's recorded identities; the child environment is explicit (`helper()` clears it and a detached launch passes exactly its own environment). Recovery after owner loss is the sentinel settle path. This cut adds no new sentinel image or environment rule. |
+| S4 backup identity/reuse before Register, actual ACK, anchor verification before GO | landed | `MemoryGuard::register` re-proves the retained backup's exact incarnation before any frame; its acknowledgement names the frame's reserved request number; and process custody qualifies the recorded anchor and leader before the receipt and again before the `go` byte. |
+| S5 real mixed-binary and process-death controls | partial | A helper frame from another protocol version refuses by name, and real-process controls stop the recorded anchor and backup to prove the refusals. A genuine old-binary pair, Linux and native packets, and owner-death recovery for the resident owner are still outstanding. |
 
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
