@@ -209,6 +209,41 @@ mod tests {
     }
 
     #[test]
+    fn current_process_image_hash_matches_an_independent_stream() {
+        let actual = self_hash(&context(Duration::from_secs(15))).unwrap();
+        #[cfg(target_os = "linux")]
+        let path = std::path::PathBuf::from("/proc/self/exe");
+        #[cfg(not(target_os = "linux"))]
+        let path = std::env::current_exe().unwrap();
+        let mut file = std::fs::File::open(path).unwrap();
+        let mut expected = Sha256::new();
+        let mut bytes = [0u8; 8192];
+        loop {
+            let count = file.read(&mut bytes).unwrap();
+            if count == 0 {
+                break;
+            }
+            expected.update(&bytes[..count]);
+        }
+        assert_eq!(actual, Digest(expected.finalize().into()));
+    }
+
+    #[test]
+    fn read_failure_permanently_consumes_the_worker_slot() {
+        let cache = Arc::new(Cache::new());
+        assert!(cache
+            .get(&context(Duration::from_secs(2)), || Err(io::Error::other(
+                "unreadable"
+            )))
+            .is_err());
+        assert!(cache
+            .get(&context(Duration::from_secs(2)), || panic!(
+                "failure was reused"
+            ))
+            .is_err());
+    }
+
+    #[test]
     fn a_stalled_state_lock_refuses_within_the_deadline() {
         let cache = Arc::new(Cache::new());
         let lock = cache.state.lock().unwrap();
@@ -255,7 +290,7 @@ mod tests {
     fn concurrent_caller_and_cancelled_attempt_cannot_reuse_worker() {
         let cache = Arc::new(Cache::new());
         let cancel = CancelToken::default();
-        let mut cx = context(Duration::from_secs(2));
+        let mut cx = context(Duration::from_secs(30));
         cx = OperationContext::new(
             cx.deadline(),
             cancel.clone(),
@@ -265,24 +300,31 @@ mod tests {
         );
         let (started, ready) = std::sync::mpsc::channel();
         let (release, blocked) = std::sync::mpsc::channel();
+        let (returned, result) = std::sync::mpsc::channel();
         let worker_cache = Arc::clone(&cache);
         let caller = std::thread::spawn(move || {
-            worker_cache.get(&cx, move || {
+            let outcome = worker_cache.get(&cx, move || {
                 let _ = started.send(());
                 let _ = blocked.recv();
                 Ok(Digest::of(b"late"))
-            })
+            });
+            let _ = returned.send(outcome);
         });
         let reached = ready.recv_timeout(Duration::from_secs(1)).is_ok();
         let competing = cache.get(&context(Duration::from_secs(1)), || {
             panic!("competing caller started a second worker")
         });
         cancel.cancel(StopCause::Requested);
-        let outcome = caller.join();
+        let outcome = result.recv_timeout(Duration::from_secs(2));
         let _ = release.send(());
+        let joined = caller.join();
         assert!(reached);
         assert!(competing.is_err());
-        assert!(outcome.unwrap().is_err());
+        assert!(outcome
+            .expect("cancelled caller did not return promptly")
+            .is_err());
+        assert_eq!(cancel.cause(), Some(&StopCause::Requested));
+        assert!(joined.is_ok());
         assert!(cache
             .get(&context(Duration::from_secs(1)), || {
                 panic!("cancelled attempt started another worker")
