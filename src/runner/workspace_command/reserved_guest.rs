@@ -43,7 +43,7 @@ type CredentialFactory<'a> =
     Box<dyn FnOnce(&SessionRef, u64) -> Result<WorkspaceEnrolmentCredential, EnvError> + 'a>;
 
 type TargetObservation = (Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>);
-type TargetObserver<'a> = Box<dyn FnOnce(Instant) -> Result<TargetObservation, EnvError> + 'a>;
+type TargetObserver<'a> = Box<dyn FnMut(Instant) -> Result<TargetObservation, EnvError> + 'a>;
 
 /// The producer's input. Everything here is owned: the artifact path, the
 /// observed alias plan and the injected probe. The probe is boxed rather than
@@ -90,10 +90,29 @@ fn evidence() -> Evidence {
     Evidence::new("exact reserved guest publication".into(), None).expect("fixed evidence")
 }
 
+/// Owns the original frozen input and publication ticket between binding and
+/// publication. It is never rebuilt from a later observation.
+pub(in crate::runner) struct BoundReservedGuest<'a> {
+    input: ReservedGuestInput<'a>,
+    ticket: effigy_kernel::run::GuestPublicationTicket,
+    target: ContainerIdentity,
+    binding: BoundPlatform,
+    until: Instant,
+}
+
 pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,
-    mut input: ReservedGuestInput<'a>,
+    input: ReservedGuestInput<'a>,
 ) -> Result<WorkspacePublication<'a>, EnvError> {
+    let bound = bind_reserved_guest(activation, input)?;
+    publish_bound_reserved_guest(activation, bound)
+}
+
+/// Bind the exact target and platform under Env and retain the publication ticket.
+pub(in crate::runner) fn bind_reserved_guest<'a>(
+    activation: &mut WorkspaceActivation<'static>,
+    mut input: ReservedGuestInput<'a>,
+) -> Result<BoundReservedGuest<'a>, EnvError> {
     // The caller's absolute deadline, not a fresh budget measured from now, and
     // still clamped by the activation's own observation custody so this call can
     // never outlive it.
@@ -134,7 +153,7 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
     let ticket = activation
         .environment_mut()
         .intend_workspace_publication(&ctx_plan)?;
-    let result = (|| {
+    let bound = (|| {
         remaining()?;
         let (gated_targets, gated_platform) = (input.reobserve)(until)?;
         match (
@@ -165,6 +184,48 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
         if binding.target != target {
             return Err(refused("image and apply target differ"));
         }
+        Ok::<_, EnvError>((target, binding))
+    })();
+    let (target, binding) = match bound {
+        Ok(bound) => bound,
+        Err(error) => {
+            activation.environment_mut().unknown_workspace_publication(
+                &ticket,
+                UnknownReason::Inconsistent(error.to_string()),
+            )?;
+            return Err(error);
+        }
+    };
+    Ok(BoundReservedGuest {
+        input,
+        ticket,
+        target,
+        binding,
+        until,
+    })
+}
+
+/// Finish publication from the same frozen input and ticket after the owner
+/// has reacquired and revalidated its reservation.
+pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
+    activation: &mut WorkspaceActivation<'static>,
+    bound: BoundReservedGuest<'a>,
+) -> Result<WorkspacePublication<'a>, EnvError> {
+    let BoundReservedGuest {
+        mut input,
+        ticket,
+        target,
+        binding,
+        until,
+    } = bound;
+    let reservation = activation.reservation().clone();
+    let remaining = || {
+        until
+            .checked_duration_since(Instant::now())
+            .filter(|budget| !budget.is_zero())
+            .ok_or_else(|| unavailable("workspace publication deadline expired"))
+    };
+    let result = (|| {
         let object = staging::stage_binary(
             activation.environment_mut(),
             &reservation,

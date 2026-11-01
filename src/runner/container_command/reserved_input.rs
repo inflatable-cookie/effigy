@@ -643,7 +643,7 @@ fn verify_pinned_primary(
 /// therefore injects the read, receives the same one absolute deadline, and the
 /// producer compares it against the frozen decision.
 pub(in crate::runner) type ReservedReobserver<'a> = Box<
-    dyn FnOnce(
+    dyn FnMut(
             std::time::Instant,
         )
             -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError>
