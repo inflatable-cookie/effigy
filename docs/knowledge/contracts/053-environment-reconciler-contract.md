@@ -427,7 +427,8 @@ a projection, never authority (effigy#458).
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
 - The production workspace activation caller, remaining Level 1 command and
-  Observe coverage beyond `runs:list` and `runs:status`, and native backend
+  Observe coverage beyond `runs:list`, including run-specific `runs:status`,
+  and native backend
   qualification (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
   v0.15. The session run and channel are implemented as kernel and runner
   seams; those seams do not qualify the production caller or a backend.

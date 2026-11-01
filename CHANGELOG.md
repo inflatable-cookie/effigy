@@ -726,8 +726,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - **Workspace-client host-channel coverage is staged for v0.15.** The required
   design serves static reads (`effigy tasks`, the pinned identity and the
-  pinned sources) are answered locally from the immutable context generation and
-  without opening a connection or writing. Level 1 requires typed channel requests
+  pinned sources) locally from the immutable context generation, without
+  opening a connection or writing. Level 1 requires typed channel requests
   that the host re-resolves, gates and journals; unsupported guest commands must
   refuse by name. Neither path may fall back to guest state or a guest engine.
   Guest `effigy skill run --stdio passthrough` must refuse because it would run
