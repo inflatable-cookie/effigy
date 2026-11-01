@@ -345,5 +345,33 @@ fn actual_cli_fake_backend_reaches_committed_workspace() {
         .filter(|line| line.contains("\"up\""))
         .count();
     assert_eq!(applies, 1, "one apply");
+    // This test process is a third process: the initiating CLI above has
+    // exited, and it never received a run/lease owner or a preissued grant.
+    let public_output = format!(
+        "{}{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        fixture.calls()
+    );
+    let probe = effigy::workspace_serving_fixture::probe_production_guest(
+        &fixture.fixture.path().join("guest-files.json"),
+        &public_output,
+    )
+    .expect("third process issued-capability Observe");
+    assert_eq!(probe.response["schema"], "effigy.runs.v1");
+    assert_eq!(probe.response["observed"], true);
+    assert!(probe.response["runs"].is_array());
+    assert!(
+        probe.refused_unissued,
+        "unissued capability must be refused"
+    );
+    assert!(
+        probe.wrong_pin_refused,
+        "wrong pin must fail before application frames"
+    );
+    assert!(
+        probe.no_credential_echo,
+        "startup/response must not echo credentials"
+    );
     fixture.assert_settled();
 }
