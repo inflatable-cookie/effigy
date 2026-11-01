@@ -477,11 +477,15 @@ runtime recovery or migration proof is claimed by this amendment.
 
 The Supervisor's 2026-11-01 Level 1 ruling in 052 §8.7 requires lifecycle E to
 introduce a v2 owner-claim journal boundary, including read-only v1 observation,
-a named adjacent 0600 pre-migration backup, atomic idempotent migration, explicit
-old-writer refusal and tested backup restoration for supported rollback. Detached
-acknowledgement, client-claim and release-cause tombstones must remain durable
-through the specified settlement or retention boundary; missing legacy evidence
-is Unknown. The migration, data-loss review and backup/restore review remain
+a verified, transactionally consistent adjacent 0600 SQLite backup including
+committed WAL state, atomic idempotent migration, explicit old-writer refusal and
+tested backup restoration for supported rollback. A crash before commit leaves
+valid v1; after commit it leaves valid v2 and the verified v1 backup. Detached
+acknowledgement, client-claim and release-cause tombstones cannot expire while
+any related owner, claim or operation is live, unresolved or Unknown; only then
+may the N-day policy apply. Missing legacy evidence is Unknown. Rollback requires
+quiescence and identity/ownership checks, and refuses potential post-backup data
+loss or orphaned resources absent explicit operator-authorized recovery. The migration, data-loss review and backup/restore review remain
 future work and do not qualify the current workspace activation caller.
 
 ## 12. Gateway diagnostic disposition before v0.15 freeze

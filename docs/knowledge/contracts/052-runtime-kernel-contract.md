@@ -2961,17 +2961,25 @@ additions elsewhere in this contract are not authority for old binaries to
 write a v2 owner-claim journal. A v1 writer encountering v2 must refuse with
 named upgrade, down or reset guidance; it must not ignore claim fields. The v2
 reader may Observe v1 without migrating or writing. Before the first effectful
-use of v1, create a named adjacent mode-0600 backup and migrate atomically and
-idempotently; an interrupted migration leaves the v1 journal intact.
+use of v1, create and verify a named adjacent mode-0600 SQLite backup that is
+transactionally consistent and includes all committed state, including WAL
+contents. Only then migrate atomically and idempotently. A crash before the
+migration commit leaves a valid v1 journal; a crash after it leaves a valid v2
+journal and the verified v1 backup.
 
 The v2 journal must retain the minimal exact release cause, client claim and
 acknowledgement tombstones, atomically with attachment release and any EOF Stop.
-Compaction preserves those tombstones until settlement or the defined N-day
-retention threshold. Legacy or compacted-away NULL evidence is `Unknown`, not
-detach acknowledgement or permission to claim. Unsafe downgrade refuses.
-Supported rollback restores the pre-migration backup with the previous binary;
-backup, crash interruption, repeat migration, restore and rollback require
-explicit tests and independent data-loss and backup/restore review. This is
+Compaction must not expire them while any related owner, claim or operation is
+live, unresolved or `Unknown`; only after that safety condition holds may the
+defined N-day retention policy apply. Legacy or compacted-away NULL evidence is
+`Unknown`, not detach acknowledgement or permission to claim. Unsafe downgrade
+refuses. Supported rollback restores the pre-migration backup with the previous
+binary only after establishing quiescence, identity and ownership and detecting
+changes since the backup. Potential loss of later journal state or orphaned
+resources refuses absent an explicit operator-authorized recovery; the backup
+does not undo later effects. Backup, crash interruption, repeat migration,
+restore and rollback require explicit tests and independent data-loss and
+backup/restore review. This is
 future lifecycle slice E design, not a shipped schema or migration proof.
 
 - The workspace session is a `Detached` run owned by `Task(TaskId)` of the
