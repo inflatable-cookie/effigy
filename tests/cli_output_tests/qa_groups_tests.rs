@@ -896,18 +896,20 @@ run = "exit 130"
 /// cancelled. Only a stop the run records makes a suite a cancellation.
 #[test]
 fn a_builtin_test_suite_failure_stays_failed_in_every_durable_view() {
-    let root = temp_execution_workspace("qa-groups-builtin-test-own-status");
-    write_manifest(
-        &root,
-        r#"
+    for code in [130, 143] {
+        let root = temp_execution_workspace("qa-groups-builtin-test-own-status");
+        write_manifest(
+            &root,
+            &format!(
+                r#"
 [qa.groups.cancels]
 lifecycle = "maintained"
 purpose = "A builtin test run that is not cancelled"
 scope_policy = "advisory"
 proof_limits = ["none"]
 members = [
-  { id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["nothing"] },
-  { id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] },
+  {{ id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["nothing"] }},
+  {{ id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] }},
 ]
 
 [tasks.ok]
@@ -917,39 +919,85 @@ run = "echo member-ok"
 run = '"$QA_TEST_BIN" test'
 
 [test.suites.interrupted]
-run = "kill -INT $$"
-"#,
-    );
+run = "exit {code}"
+"#
+            ),
+        );
 
-    let run_dir = run_group_and_capture_with_env(
-        root.as_path(),
-        &["tasks", "qa-group", "run", "cancels"],
-        &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
-    );
-    let record: Value = read_run_record(&run_dir);
-    assert_eq!(record["outcome"], "failed");
-    assert_eq!(record["members"][0]["state"], "failed");
-    assert_eq!(record["members"][0]["exit_code"], 1);
-    assert_eq!(record["members"][1]["state"], "not_started");
+        let run_dir = run_group_and_capture_with_env(
+            root.as_path(),
+            &["tasks", "qa-group", "run", "cancels"],
+            &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
+        );
+        let record: Value = read_run_record(&run_dir);
+        assert_eq!(record["outcome"], "failed");
+        assert_eq!(record["members"][0]["state"], "failed");
+        assert_eq!(record["members"][0]["exit_code"], 1);
+        assert_eq!(record["members"][1]["state"], "not_started");
 
-    // The member log keeps the running suite's own status, never a
-    // cancellation the run never recorded.
-    let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
-    assert!(
-        log.contains("exit=130"),
-        "the member log keeps the suite's own status: {log}"
-    );
-    assert!(
-        !log.contains("cancelled"),
-        "an ordinary suite status is not a cancellation: {log}"
-    );
+        // The member log keeps the running suite's own status, never a
+        // cancellation the run never recorded.
+        let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
+        assert!(
+            log.contains(&format!("exit={code}")),
+            "the member log keeps the suite's own status: {log}"
+        );
+        assert!(
+            !log.contains("cancelled"),
+            "an ordinary suite status is not a cancellation: {log}"
+        );
 
-    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
-    let view = read_kernel_run_view(root.as_path(), &run_id);
-    assert_eq!(
-        view["state"], "failed",
-        "the run closeout agrees with the failed member: {view}"
-    );
+        let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+        let view = read_kernel_run_view(root.as_path(), &run_id);
+        assert_eq!(
+            view["state"], "failed",
+            "the run closeout agrees with the failed member: {view}"
+        );
+    }
+}
+
+/// The suite sends a real interrupt to its invoking builtin, which must stop
+/// its waiting child and publish the same cancellation through every view.
+#[test]
+fn a_stopped_builtin_reaches_the_group_ledger_and_run_view() {
+    for json in [false, true] {
+        let root = temp_execution_workspace("qa-groups-stopped-builtin");
+        let flags = if json { "--json" } else { "" };
+        write_manifest(
+            &root,
+            &format!(
+                r#"
+[qa.groups.stopped]
+lifecycle = "maintained"
+purpose = "Actual builtin cancellation"
+scope_policy = "advisory"
+proof_limits = ["Private fixture only"]
+members = [{{ id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["Private fixture"] }}]
+[tasks.suitecheck]
+run = 'echo $$ > builtin-pid; exec "$QA_TEST_BIN" {flags} test'
+[test.suites.waiting]
+run = 'kill -INT "$(cat builtin-pid)"; exec sleep 60'
+"#
+            ),
+        );
+        let run_dir = run_group_and_capture_with_env(
+            &root,
+            &["tasks", "qa-group", "run", "stopped"],
+            &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
+        );
+        let record = read_run_record(&run_dir);
+        assert_eq!(record["outcome"], "cancelled", "{record}");
+        assert_eq!(record["members"][0]["state"], "cancelled");
+        assert_eq!(record["members"][0]["exit_code"], 130);
+        let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
+        assert!(log.contains("cancelled"), "{log}");
+        if json {
+            assert!(log.contains("\"success\": false"), "{log}");
+            assert!(log.contains("\"outcome\": \"cancelled\""), "{log}");
+        }
+        let view = read_kernel_run_view(&root, record["run_id"].as_str().expect("run id"));
+        assert_eq!(view["state"], "cancelled", "{view}");
+    }
 }
 
 /// Run the group through the compiled binary, tolerate its failing exit, and

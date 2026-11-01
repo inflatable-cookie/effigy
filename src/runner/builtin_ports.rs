@@ -112,7 +112,18 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
         )
         .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         let stopped = exit.stopped;
-        self.attempt = Some(exit.workload);
+        self.attempt = Some(
+            if !stopped
+                && matches!(
+                    exit.workload,
+                    effigy_kernel::outcome::WorkloadOutcome::Cancelled { .. }
+                )
+            {
+                effigy_kernel::outcome::WorkloadOutcome::Failed { code: exit.code }
+            } else {
+                exit.workload
+            },
+        );
         Ok(effigy_builtin::HostSuiteOutcome {
             code: Some(exit.code),
             stopped,
@@ -337,6 +348,43 @@ pub(in crate::runner) fn runner_to_builtin(error: RunnerError) -> BuiltinError {
 #[cfg(test)]
 mod tests {
     use effigy_builtin::BuiltinRuntimePorts;
+
+    #[test]
+    fn suites_own_interrupted_exit_codes_close_the_child_as_failed() {
+        use crate::runner::task_engine::{lookup_checkout, Lookup, TaskRun};
+        use effigy_builtin::HostSuiteCustody;
+        use effigy_kernel::outcome::WorkloadOutcome;
+        for code in [130, 143] {
+            let fixture = tempfile::tempdir().expect("private checkout");
+            let parent = TaskRun::standalone_custody(fixture.path(), "test").expect("durable run");
+            let child = parent.step(0, "suite").expect("child run");
+            let id = child.id();
+            {
+                let mut custody = Box::new(super::SuiteCustody {
+                    run: Some(child),
+                    label: "suite".into(),
+                    attempt: None,
+                });
+                let outcome = custody
+                    .run(
+                        &format!("exit {code}"),
+                        fixture.path(),
+                        &Default::default(),
+                        true,
+                    )
+                    .expect("suite exit");
+                assert!(!outcome.stopped);
+                assert_eq!(outcome.code, Some(code));
+                custody.settle(&outcome);
+            }
+            assert!(parent.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+            let Lookup::Found(suite) = lookup_checkout(fixture.path(), id) else {
+                panic!("the suite child must have a durable record");
+            };
+            assert_eq!(suite.view.state, "failed");
+            assert_eq!(suite.view.exit_code, Some(code));
+        }
+    }
 
     #[test]
     fn host_scratch_env_follows_the_runs_scratch_scope() {

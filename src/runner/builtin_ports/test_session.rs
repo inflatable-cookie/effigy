@@ -257,16 +257,13 @@ impl State<'_, '_> {
         }
     }
     fn stop_one(&mut self, name: &str) -> Result<(), ProcessManagerError> {
-        self.stop_with(name, &task_engine::cleanup_context(CLEANUP), &[])
+        self.stop_with(name, &task_engine::cleanup_context(CLEANUP))
     }
-    /// Stop one attempt. `forwarded` names signals this session already sent
-    /// to the group, so an exit their delivery caused is attributed to the
-    /// stop rather than to the suite's own result.
+    /// Preserve an already-completed attempt before delivering any stop signal.
     fn stop_with(
         &mut self,
         name: &str,
         cleanup: &effigy_kernel::ctx::CleanupContext,
-        forwarded: &[i32],
     ) -> Result<(), ProcessManagerError> {
         let entry =
             self.entries
@@ -275,6 +272,16 @@ impl State<'_, '_> {
                     process: name.into(),
                 })?;
         if let Some(process) = entry.process.as_mut() {
+            if entry.exit.is_none() {
+                if let Observed::Verified(exit, _) = process.poll() {
+                    entry.exit = Some(EntryExit::Reported(
+                        match self.run.complete(process, exit) {
+                            Ok(()) => format!("exit={}", exit.code),
+                            Err(error) => format!("unrecorded exit: {error}"),
+                        },
+                    ));
+                }
+            }
             let report = process.stop(cleanup);
             if report
                 .signals
@@ -288,14 +295,18 @@ impl State<'_, '_> {
                 // convention `128 + signal`. Only such an exit is this stop's
                 // doing; any other exit status is the suite's own result, so a
                 // completed failure is never relabelled as a cancellation.
-                let mut delivered = forwarded.to_vec();
-                delivered.extend(report.signals.iter().map(|sent| sent.signal));
+
                 entry.exit = Some(match report.leader {
                     Observed::Verified(exit, _) => match self.run.complete(process, exit) {
                         Ok(()) if exit.code == 0 => {
                             EntryExit::Reported(format!("exit={}", exit.code))
                         }
-                        Ok(()) if delivered.iter().any(|signal| exit.code == 128 + signal) => {
+                        Ok(())
+                            if report
+                                .signals
+                                .iter()
+                                .any(|sent| exit.code == 128 + sent.signal) =>
+                        {
                             EntryExit::Stopped
                         }
                         Ok(()) => EntryExit::Reported(format!("exit={}", exit.code)),
@@ -335,16 +346,10 @@ impl State<'_, '_> {
     fn stop_all(&mut self) {
         self.cancelled = true;
         self.pending.clear();
-        // Deliver TERM to every owned group before waiting for any one.
-        for entry in self.entries.values_mut() {
-            if let Some(process) = entry.process.as_mut() {
-                let _ = process.forward(libc::SIGTERM);
-            }
-        }
         let names = self.entries.keys().cloned().collect::<Vec<_>>();
         let cleanup = task_engine::cleanup_context(CLEANUP);
         for name in names {
-            if let Err(error) = self.stop_with(&name, &cleanup, &[libc::SIGTERM]) {
+            if let Err(error) = self.stop_with(&name, &cleanup) {
                 self.entries.get_mut(&name).expect("known suite").exit =
                     Some(EntryExit::Reported(error.to_string()));
             }
@@ -627,14 +632,18 @@ mod tests {
             )
             .expect("source");
             // The custody source starts one suite per pump turn.
+            let mut finished = false;
             for expected in ["finished", "stopped"] {
                 wait(source.as_ref(), |event| {
+                    finished |= event.kind == ProcessEventKind::Exit && event.process == "finished";
                     event.kind == ProcessEventKind::Started && event.process == expected
                 });
             }
-            wait(source.as_ref(), |event| {
-                event.kind == ProcessEventKind::Exit && event.process == "finished"
-            });
+            if !finished {
+                wait(source.as_ref(), |event| {
+                    event.kind == ProcessEventKind::Exit && event.process == "finished"
+                });
+            }
             source.cancel_startup();
             assert_eq!(
                 source.entry_states(),
@@ -672,7 +681,7 @@ mod tests {
                 vec![named_spec(
                     fixture.path(),
                     "failed",
-                    "touch failed.done; exit 7",
+                    "touch failed.done; exit 143",
                 )],
             )
             .expect("source");
@@ -688,19 +697,19 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::thread::sleep(Duration::from_millis(250));
-            source.terminate_process("failed").expect("verified stop");
+            source.cancel_startup();
             assert_eq!(
                 source.entry_states(),
                 vec![(
                     "failed".into(),
                     SessionEntryState::Failed {
-                        detail: "exit=7".into()
+                        detail: "exit=143".into()
                     }
                 )],
                 "a completed failure is not a cancellation"
             );
         }
-        assert!(run.close(WorkloadOutcome::Failed { code: 7 }).is_empty());
+        assert!(run.close(WorkloadOutcome::Failed { code: 143 }).is_empty());
     }
 
     /// A stop before the session started an attempt leaves it never started,
