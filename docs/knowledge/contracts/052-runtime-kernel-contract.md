@@ -67,7 +67,11 @@ are implemented in the kernel, with macOS/Linux qualification selectors. The
 matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
 Fault points inside helper processes (sentinel settle, guard acknowledgement)
-are not yet armed; architecture 032 records the limit. The managed-run
+are not yet armed; architecture 032 records the limit. Every helper frame names
+the handshake protocol version it speaks, which is 3 since effigy#529; an older
+or newer helper binary refuses the mismatched frame by name and exits before it
+runs anything, so a mixed-version helper pair never exchanges a frame it cannot
+interpret. The managed-run
 supervisor is armed at every kernel crossing (`test:supervisor:faults`). That
 proof traces one immutable crossing list, assigns each entry once across six
 owned fixture workers, and reaps every worker before aggregation; per-run
@@ -277,11 +281,17 @@ group anchor. The existing spawn barrier still applies. The guard uses the
 existing sentinel entry point in a memory-only mode, with a private pipe; no
 control socket, log file or journal. Only that guard may inherit the owner's
 gate description; workloads never do. Each later spawn repeats the receipt/ack
-barrier before go. A free flock, not dead-looking diagnostic bytes, proves
-there is no holder. A held lock with a dead/unverifiable named owner remains
-held; the guard may refresh its own identity in the diagnostic body without
-creating durable authority. No stale-file unlink or PID-only reclaim exists. Owner and guard retain the group and
-unreaped-child/verified-anchor evidence through descendant and stream closure,
+barrier before go. Before a frame is written, the owner re-proves the retained
+backup's own exact incarnation (boot, start and a live state); a backup that has
+exited or been replaced gets no receipt, and the refusal names the retained
+guard rather than reporting a broken pipe. The guard's acknowledgement names
+the exact receipt request it answers, so a late answer to an earlier frame is
+refused and can never answer the frame just written (effigy#529). A free
+flock, not dead-looking diagnostic bytes, proves there is no holder. A held
+lock with a dead/unverifiable named owner remains held; the guard may refresh
+its own identity in the diagnostic body without creating durable authority. No
+stale-file unlink or PID-only reclaim exists. Owner and guard retain the group
+and unreaped-child/verified-anchor evidence through descendant and stream closure,
 even after leader exit. Normal settle closes the in-memory effects before
 unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
 group within the cleanup budget, using the same positive evidence as the
@@ -1126,6 +1136,15 @@ re-execs the run's binary as `__kernel-anchor`, then acknowledges its pid. Its
 environment contains only the custody nonce. The parent records the full
 `{pid, start, boot}` identity in the optional `anchor` field alongside the existing receipt. Old receipts
 omit that field and deserialize unchanged; imports infer no anchor.
+Before that receipt is written, and again immediately before the workload `go`
+byte, the parent positively qualifies the anchor it recorded: its kernel
+generation, its readable custody nonce, its membership of the recorded group
+and its start order against the leader must all verify. A failed or unknown
+qualification writes no receipt, sends no backup frame and opens no barrier;
+the blocked child is reaped pre-exec, so the refusal is a pre-exec refusal and
+never a not-yet-started claim about a running workload (effigy#529). This is
+the same evidence settlement and recovery already require, moved to the point
+where a receipt is created rather than only where it is settled.
 
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.

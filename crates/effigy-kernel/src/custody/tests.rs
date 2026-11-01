@@ -1580,6 +1580,133 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
 }
 
 /// The verifier's cells (effigy#476): only the recorded generation, the
+/// A workload that records that it reached its first instruction, so a refusal
+/// before `go` is observable as an absent file rather than an exit code.
+fn anchored_spawn_spec(home: &Path) -> ProcessSpec {
+    ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!(
+                "printf ran > '{}'; exec /bin/sleep 30",
+                home.join("ran").display()
+            )
+            .into(),
+        ],
+        cwd: home.into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(30)),
+        terminal: Terminal::None,
+        label: "anchor gate".into(),
+    }
+}
+
+/// Reads the exact anchor incarnation this spawn recorded in the test-only
+/// helper log and stops it. Only the recorded pid is signalled.
+fn stop_recorded_anchor(log: &Path) -> crate::ident::ProcessIdentity {
+    let text = std::fs::read_to_string(log).expect("helper log");
+    let raw = text
+        .lines()
+        .find_map(|line| line.strip_prefix("anchor "))
+        .expect("the spawn recorded its anchor");
+    let identity: crate::ident::ProcessIdentity =
+        serde_json::from_str(raw).expect("anchor identity");
+    // SAFETY: the exact pid this process recorded as its own anchor child.
+    assert_eq!(unsafe { libc::kill(identity.pid as i32, libc::SIGKILL) }, 0);
+    wait(|| {
+        !matches!(
+            crate::ident::process_state(identity.pid),
+            Observed::Verified(
+                crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    });
+    identity
+}
+
+#[test]
+fn anchor_lost_before_receipt_refuses_without_recording_one() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let log = home.path().join("helpers.jsonl");
+    crate::fault::set_helper_log(Some(log.clone()));
+    let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = Arc::clone(&killed);
+    let hook_log = log.clone();
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point != crate::fault::Point::AnchorSpawn {
+            return;
+        }
+        stop_recorded_anchor(&hook_log);
+        observed.store(true, std::sync::atomic::Ordering::SeqCst);
+    })));
+    let result = Custody::spawn(&mut run, anchored_spawn_spec(home.path()), &cx);
+    crate::fault::hook(None);
+    crate::fault::set_helper_log(None);
+    assert!(killed.load(std::sync::atomic::Ordering::SeqCst));
+    let error = result.expect_err("an unproven anchor must refuse the spawn");
+    assert!(error.to_string().contains("anchor"), "{error}");
+    let effects = run.effects().unwrap();
+    let custody: Vec<&Effect> = effects
+        .iter()
+        .filter(|effect| effect.spec.kind == KIND)
+        .collect();
+    assert_eq!(custody.len(), 1, "{custody:?}");
+    assert_eq!(custody[0].state, EffectState::Intended);
+    assert!(
+        custody[0].receipt.is_none(),
+        "an unproven anchor must not be recorded as a receipt"
+    );
+    assert!(
+        !home.path().join("ran").exists(),
+        "a refused spawn must never reach exec"
+    );
+    let cleanup = run.settle(
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    );
+    assert!(cleanup.is_ok(), "refusal cleanup: {cleanup:?}");
+}
+
+#[test]
+fn anchor_lost_after_receipt_refuses_before_go() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let log = home.path().join("helpers.jsonl");
+    crate::fault::set_helper_log(Some(log.clone()));
+    let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = Arc::clone(&killed);
+    let hook_log = log.clone();
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point != crate::fault::Point::AnchorRecord {
+            return;
+        }
+        stop_recorded_anchor(&hook_log);
+        observed.store(true, std::sync::atomic::Ordering::SeqCst);
+    })));
+    let result = Custody::spawn(&mut run, anchored_spawn_spec(home.path()), &cx);
+    crate::fault::hook(None);
+    crate::fault::set_helper_log(None);
+    assert!(killed.load(std::sync::atomic::Ordering::SeqCst));
+    let error = result.expect_err("an anchor lost after the receipt must refuse before go");
+    assert!(error.to_string().contains("anchor"), "{error}");
+    assert!(
+        !home.path().join("ran").exists(),
+        "the barrier must not open for an unproven anchor"
+    );
+    let cleanup = run.settle(
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    );
+    assert!(cleanup.is_ok(), "refusal cleanup: {cleanup:?}");
+}
+
 /// recorded group membership and the readable nonce prove an anchor. A changed
 /// generation (a reused pid), a changed group, a changed nonce and an exited or
 /// reaped anchor all refuse, and a refusal never signals the recorded process.
