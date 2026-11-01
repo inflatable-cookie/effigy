@@ -3220,10 +3220,11 @@ identity or staged before pinned qualification. Recovery re-reads the exact
 Pending obligation under an actual Env guard; unknown target/listener evidence
 switches nothing, while a settled failed successor can be abandoned without
 restoring its predecessor. Its typed source boundary supplies no default locator
-or successful publication fallback. The workspace-client owner installs the
-serialized CLI/serving consumer after this producer, moving the already-adopted
-supervisor, exact session/listener and original Arc effect/observe contexts and
-root together; it owns final serving E2E and durable custody close. Legacy local
+or successful publication fallback. The merged CLI/serving consumer in
+`workspace_client/supervisor.rs` takes the already-adopted supervisor, exact
+session/listener and original Arc effect/observe contexts and root together.
+`ServingHandoff` and `ServiceOwner` retain and settle that custody; the production
+activation caller and final serving E2E remain outstanding. Legacy local
 preparation remains separate from that reserved authority path. Native Colima,
 Docker Desktop and Linux Docker identity/reachability qualification is still
 required at the candidate gate.
@@ -3236,7 +3237,8 @@ the host-bound container, boot, platform and libc before publishing. No source i
 required backend cannot supply these facts, report the missing capability and smallest contract decision; do not fabricate an
 identity or invent a fallback.
 
-**Qualified TLS locator — #483 (A).** Proposed context and guest transport seams:
+**Qualified TLS locator — #483 (A).** Historical context and guest transport
+signature sketch; the merged adapter and its paths are described below:
 
 ```rust
 // src/runner/workspace_client/context.rs — #482
@@ -3326,8 +3328,10 @@ unqualified transport means zero Hello, authentication, enrolment and credential
 is never recreated under an old locator; the next activation uses a new session, generation, endpoint and pin. Superseded live
 sessions keep their own listener and holders until their own settlement.
 
-Proposed #483 host handoff: `BackendSelection` names the backend/profile; `ContainerIdentity` the host-bound container/boot.
-Modules own the following types:
+Historical #483 host handoff sketch: `BackendSelection` names the backend/profile;
+`ContainerIdentity` the host-bound container/boot. These proposed signatures are
+not a current module inventory; the merged `workspace_transport` adapter is
+specified above:
 
 ```rust
 // crates/effigy-containers/src/workspace_channel.rs
@@ -3402,7 +3406,7 @@ returns the actual acknowledged session identity; the host cannot fill it into a
 and writes active(E), session mapping and Borrow. Generic publication cannot bypass an uncommitted reservation. E and S are
 separate resources' generations; never derive either from the other.
 
-Proposed `effigy.workspace-context.v2` publishes `session: {run_id, generation}` from `ActivationPlan::session()`, qualified
+The implemented `effigy.workspace-context.v2` publishes `session: {run_id, generation}` from `ActivationPlan::session()`, qualified
 locator, immutable context/artifact identity and generation-bound credential selection. It replaces bare `session_run_id`;
 incompatible schemas refuse with re-prepare guidance. Absent/incomplete session or locator permits local reads only, host
 `unavailable`. Never overwrite immutable objects or retarget a live predecessor's selected bytes.
@@ -3493,9 +3497,12 @@ session, not a latch: `SessionLaunch::serve`/`serving`/`liveness` take the sessi
 settled session has no callable locator, and the session's gate stays with its run so settlement releases it for the successor. The launch
 registers itself with the run: settlement (or an un-settled drop) closes the listener and wipes the key, so custody never outlives the session. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
 `Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
-or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
-host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
-is what they call.
+or unsettled successor refuses `successor_running` rather than being revoked around.
+The typed container activation wrapper in `environment/reconcile.rs` and runner
+producer/recovery driver in `environment_workspace.rs` are implemented and call
+this kernel seam. `up_prepared` feeds `prepare_reserved_guest`, and
+`recover_selection` re-reads the Pending obligation under Env before completing
+selection. Their production activation caller remains outstanding.
 
 Order: journal intent → stage/verify immutable objects → return/store `SelectionReceipt` → `commit_selection` → switch →
 acknowledge. The typed wrapper journals before guest I/O, validates/stores the immutable complete receipt (changed retries refuse)
@@ -3539,9 +3546,14 @@ refuse merely because session and target are live when the listener is establish
 stays Pending and refuses). Session-owned listener/key custody is implemented in `workspace_session/serving.rs`:
 `SessionLaunch` holds the `ServingKey` and a bound `ChannelListener` for the session's durable lifetime, `ChannelBound` (the only
 value naming a locator) is produced only by `SessionLaunch::publish` from a bound, qualified listener, `ServingLease` is the
-endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake liveness check. Transport, the server key's
-generation and TLS verification remain #483; ownership transfer over a real supervisor pipe remains #452's glue. Appendix B adds
-no normative requirements or implementation claims to this compact seam.
+endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake
+liveness check. The merged `workspace_transport` adapter implements transport,
+server-key generation and TLS verification: `qualification::prepare_channel`
+binds its listener/key through `SessionTlsListener::bind` and transfers them to
+`SessionLaunch`. The merged `workspace_client/supervisor.rs` owns the serving
+handoff and retirement seam; production activation and native end-to-end
+qualification remain outstanding. Appendix B adds no normative requirements or
+implementation claims to this compact seam.
 
 **Glue and proofs.** #452 owns `src/runner/workspace_client.rs` integration only: read context → observe guest → verify
 context/artifact/session → open qualified TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity and
@@ -3561,13 +3573,14 @@ Reconnect reads current → observes/verifies → opens/checks pin → Hello/hel
 id/digest. A changed session/context returns `StaleContext` without replay; invalid identity/pin refuses before auth. An
 indeterminate outcome returns `Unknown`; no reconnect outcome admits anew.
 
-#482 owns identity, context and publication in `workspace_client/{identity,context}.rs`,
-`workspace_command/provisioning.rs`, kernel `workspace_session.rs` and
-`run/attachments.rs`, with container `environment/reconcile.rs` for typed handoff.
-#483 owns guest `transport.rs`, host `workspace_command/channel.rs`, container
-`workspace_channel.rs` and kernel `workspace_channel.rs` for pin-before-Hello.
-Serialize edits to shared kernel/session, provisioning and reconcile files;
-#452 consumes these seams after their independent code review and targeted proofs.
+The merged identity/context/publication implementation is in
+`workspace_client/{identity,context_v2}.rs`, `workspace_command/provisioning.rs`,
+`environment_workspace.rs`, kernel `workspace_session.rs` and `run/attachments.rs`,
+with container `environment/reconcile.rs` for typed activation. The merged TLS
+adapter is `workspace_transport/`; the kernel wire protocol is
+`workspace_channel.rs`. `workspace_client.rs`, `workspace_client/serving.rs` and
+`workspace_client/supervisor.rs` consume those seams. Their existence does not
+supply the missing production activation caller or qualify a native backend.
 
 Code-first tasks must prove crash families around staging/receipt/commit/selection (including kill just after commit, partial
 switch, third-value refusal and lost acknowledgement), concurrent attach-or-activate, the fresh Linux bootstrap, independent
@@ -3641,7 +3654,8 @@ itself, the pinned TLS adapter is the transport, and the strict v2 document
 publishes `session { run_id, generation }`. What a merged head still does not
 give a guest is a *production* activation: no production caller of
 `up_prepared` publishes a qualified locator, the host dispatcher is constructed
-only by fixtures, and no native backend identity/dial/invoke qualification is
+through the merged serving seam but has no production activation caller, and
+no native backend identity/dial/invoke qualification is
 recorded. A guest therefore keeps its local reads and reports host authority
 unavailable, naming the missing fact, rather than falling back to guest state or
 guest execution.
@@ -3654,8 +3668,9 @@ generation, capability, unqualified channel) before any effect, the host's real
 admission record, a repeated intent answered from that record, and a secondary
 terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
 and lane B's `test:kernel:workspace` own the wire and session halves. The
-transport, the guest container observation and the published session
-generation remain their own tasks.
+transport, independent guest observation and v2 session generation are merged
+and bound as described above. These source/fixture proofs do not establish the
+missing production activation or native backend qualification.
 
 **Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
 consumes what a prepared channel was waiting for. `ServingOwner` holds the
