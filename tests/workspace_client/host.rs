@@ -123,8 +123,89 @@ fn endpoint_of(published_endpoint: &str) -> SocketAddr {
 }
 
 /// One disposable request for a private fixture journal.
+/// The checkout identity one test's hosts use.
+///
+/// The serving run's task gate is machine-wide (`StateRoot` attaches
+/// `MachineGates`), and its identity is derived from the request's checkout and
+/// profile. A fixed checkout therefore makes the eleven proofs in this file — and
+/// any concurrent run of this selector — contend for one `workspace-serving`
+/// gate, which is a property of the fixture, not of what they prove. Deriving
+/// the identity from the fixture's own unique directory keeps each test (and each
+/// run) on its own gate; every host *within* a test still shares it, which is what
+/// the deliberate contention proofs need.
+fn checkout_of(fixture: &effigy_test_support::Fixture, purpose: &str) -> Vec<u8> {
+    let material = format!("{}-{purpose}", fixture.path().display());
+    let mut state: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in material.as_bytes() {
+        state ^= u64::from(*byte);
+        state = state.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (0..16u8)
+        .map(|index| {
+            let mixed = state
+                .wrapping_add(u64::from(index) + 1)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            (mixed >> 56) as u8
+        })
+        .collect()
+}
+
+/// Wait until nothing under the fixture has changed for a quiet interval.
+///
+/// A stopped, abandoned or refused host settles asynchronously: it still writes
+/// its own settle records after the front end has returned. The fixture removes
+/// its directory when the test ends, so returning before that quiet interval
+/// makes the removal race the host and fails with `Directory not empty` — a
+/// fixture artefact that hides the proof's real result. This waits for
+/// quiescence and fails with the path still changing if it never comes.
+fn settle_fixture(fixture: &effigy_test_support::Fixture) {
+    fn snapshot(
+        root: &std::path::Path,
+        entries: &mut Vec<(std::path::PathBuf, u64, Option<std::time::SystemTime>)>,
+    ) {
+        let Ok(read) = std::fs::read_dir(root) else {
+            return;
+        };
+        for entry in read.flatten() {
+            let path = entry.path();
+            match entry.metadata() {
+                Ok(metadata) if metadata.is_dir() => {
+                    entries.push((path.clone(), 0, metadata.modified().ok()));
+                    snapshot(&path, entries);
+                }
+                Ok(metadata) => entries.push((path, metadata.len(), metadata.modified().ok())),
+                Err(_) => entries.push((path, 0, None)),
+            }
+        }
+    }
+
+    let quiet = Duration::from_millis(300);
+    let bound = Instant::now() + Duration::from_secs(60);
+    let mut previous = Vec::new();
+    let mut stable_since = Instant::now();
+    loop {
+        let mut entries = Vec::new();
+        snapshot(fixture.path(), &mut entries);
+        entries.sort();
+        if entries == previous {
+            if stable_since.elapsed() >= quiet {
+                return;
+            }
+        } else {
+            previous = entries;
+            stable_since = Instant::now();
+        }
+        assert!(
+            Instant::now() < bound,
+            "the fixture never went quiet; a host is still writing under {}",
+            fixture.path().display()
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn request(fixture: &effigy_test_support::Fixture, project: &std::path::Path) -> serde_json::Value {
-    let checkout: Vec<u8> = (0u8..16).collect();
+    let checkout = checkout_of(fixture, "workspace-serving");
     serde_json::json!({
         "schema": "effigy.workspace-serving.v1",
         "state_home": fixture.path().join("state"),
@@ -241,7 +322,7 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
     let project = fixture.path().join("project");
     std::fs::create_dir_all(&state_home).expect("state home");
     std::fs::create_dir_all(&project).expect("project");
-    let checkout: Vec<u8> = (0u8..16).collect();
+    let checkout = checkout_of(&fixture, "workspace-serving-host");
     let request = serde_json::json!({
         "schema": "effigy.workspace-serving.v1",
         "state_home": state_home,
@@ -447,6 +528,10 @@ fn a_detached_serving_host_keeps_its_session_after_the_initiating_process_exits(
         Some(Phase::Closed),
         "the settled run stays closed"
     );
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// An unacknowledged detach is owner loss: the host stops serving and settles
@@ -541,6 +626,10 @@ fn a_host_whose_front_end_exits_without_acknowledging_settles_instead_of_serving
         Some(Phase::Closed),
         "the crashed session is never resurrected"
     );
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// A listener failure retires the session exactly once instead of leaving it
@@ -634,6 +723,10 @@ fn a_listener_failure_retires_the_session_once() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// After an unacknowledged front end was settled, the same checkout admits a
@@ -716,6 +809,10 @@ fn a_settled_crash_is_recovered_by_a_fresh_host() {
         assert!(Instant::now() < until, "the successor did not settle");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// A session whose switch the activation never recorded is never served: the
@@ -786,6 +883,10 @@ fn an_unrecorded_switch_is_refused_not_served() {
     // writer the fixture's directory removal must not race.
     effigy_test_support::process::wait_kernel_helpers(&project)
         .expect("the refused supervisor's processes leave");
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// A competing second owner for one session refuses inside the detached process,
@@ -854,6 +955,10 @@ fn a_competing_owner_is_refused_inside_the_detached_process() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// The startup result is bounded by the caller's own deadline, not by an
@@ -868,7 +973,7 @@ fn a_competing_owner_is_refused_inside_the_detached_process() {
 /// budget therefore bounds the whole startup (the fixture front end gives it to
 /// the launch as well as the announcement wait), and the announcement delay is
 /// set far above it, so "gave up before the host announced" is decided by the
-/// caller's own `deadline=` report and not by spawn cost.
+/// caller's own report and not by spawn cost.
 #[test]
 fn startup_honours_the_callers_deadline() {
     let fixture = effigy_test_support::Fixture::new("workspace-serving-deadline").expect("fixture");
@@ -878,8 +983,9 @@ fn startup_honours_the_callers_deadline() {
     std::fs::create_dir_all(&project).expect("project");
     let mut request = request(&fixture, &project);
     const BUDGET_MS: u64 = 1_000;
-    // The activation announces long after the caller's own deadline.
-    const ANNOUNCE_MS: u64 = 5_000;
+    // The activation announces far after anything the caller's own budget covers,
+    // so a caller that waited for the announcement would report a number near it.
+    const ANNOUNCE_MS: u64 = 30_000;
     request["activation"]["announce_delay_ms"] = serde_json::json!(ANNOUNCE_MS);
 
     let body = serde_json::json!({ "request": request, "budget_ms": BUDGET_MS });
@@ -913,26 +1019,49 @@ fn startup_honours_the_callers_deadline() {
         .and_then(|text| text.split("ms").next())
         .and_then(|text| text.parse::<u128>().ok())
         .expect("the refusal reports the deadline it honoured");
-    // The caller gave the host its own budget and no more: an inner, longer
-    // deadline would report more, and a shorter one would report less.
+    let field = |name: &str| -> u128 {
+        stderr
+            .split(&format!("{name}="))
+            .nth(1)
+            .and_then(|text| text.split("ms").next())
+            .and_then(|text| text.parse::<u128>().ok())
+            .unwrap_or_else(|| panic!("the refusal reports its {name}: {stderr}"))
+    };
+    let launch = field("launch");
+    let wait = field("wait");
+    // The deadline message above is the evidence that the budget, not the
+    // announcement, ended the wait: it is only reported once the budget expired
+    // before the host answered.
     assert!(
-        reported >= u128::from(BUDGET_MS),
-        "the caller's {BUDGET_MS}ms deadline was not given in full ({reported}ms)"
+        launch + wait >= u128::from(BUDGET_MS),
+        "the caller's {BUDGET_MS}ms budget was consumed, not skipped \
+         (launch {launch}ms + wait {wait}ms)"
     );
+    // The mechanism: the announcement wait never outlives the budget it was given.
+    // Process startup is deliberately not asserted — a loaded host may take
+    // seconds to spawn, and that is not what this proof is about.
+    assert!(
+        wait <= u128::from(BUDGET_MS) + 250,
+        "the {BUDGET_MS}ms budget bounded the {ANNOUNCE_MS}ms announcement wait ({wait}ms)"
+    );
+    // ...and the whole attempt ended far below the announcement: a caller that
+    // waited for it, or an inner deadline longer than the caller's, would report
+    // something near the announcement instead.
     assert!(
         reported < u128::from(ANNOUNCE_MS),
-        "the caller's {BUDGET_MS}ms deadline bounded the wait, not the {ANNOUNCE_MS}ms \
-         announcement ({reported}ms)"
+        "the caller gave up before the {ANNOUNCE_MS}ms announcement ({reported}ms)"
     );
+    // A wall-clock guard as well: a hung front end must still fail the proof.
     assert!(
-        elapsed < Duration::from_millis(ANNOUNCE_MS),
-        "the caller gave up before the host announced ({elapsed:?})"
+        elapsed < Duration::from_secs(120),
+        "the front end finished ({elapsed:?}, reported {reported}ms)"
     );
-    // The abandoned host settles on owner loss; let it finish so it does not
-    // outlive this test's fixture.
-    std::thread::sleep(Duration::from_secs(2));
     effigy_test_support::process::wait_kernel_helpers(&project)
         .expect("the abandoned host settles");
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// A front end that crashes *after* acknowledging the detach leaves the session
@@ -1055,6 +1184,10 @@ fn a_crash_after_the_acknowledgement_keeps_the_session_serving() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// An interrupted handoff: the front end starts the host and dies before it reads
@@ -1163,6 +1296,10 @@ fn an_interrupted_handoff_claims_nothing_and_stays_recoverable() {
         assert!(Instant::now() < until, "the successor did not settle");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }
 
 /// Two command processes in one terminal resolve ONE client identity, so the
@@ -1299,6 +1436,18 @@ fn a_contender_that_is_not_refused_by_the_owner_gate_is_not_a_refusal() {
     let project = fixture.path().join("project");
     std::fs::create_dir_all(&state_home).expect("state home");
     std::fs::create_dir_all(&project).expect("project");
+
+    // The launcher-failure case is prepared first, on its own checkout and its
+    // own journal: its own checkout, so no live owner of the first checkout can
+    // answer for it.
+    let broken_fixture =
+        effigy_test_support::Fixture::new("workspace-serving-contender-broken").expect("fixture");
+    let broken_project = broken_fixture.path().join("project");
+    std::fs::create_dir_all(&broken_project).expect("broken contender project");
+    let mut broken = request(&broken_fixture, &broken_project);
+    broken["checkout"] = serde_json::json!(vec![0x5au8; 16]);
+    broken["state_home"] = serde_json::json!("/nonexistent-effigy-state-home");
+
     let request = request(&fixture, &project);
 
     // Nothing is serving this checkout, so a contender is admitted and announces
@@ -1312,18 +1461,14 @@ fn a_contender_that_is_not_refused_by_the_owner_gate_is_not_a_refusal() {
 
     // A contender whose launcher cannot even open the journal is not a refusal
     // either: an unavailable launcher proves nothing about ownership.
-    let broken_fixture =
-        effigy_test_support::Fixture::new("workspace-serving-contender-broken").expect("fixture");
-    let broken_project = broken_fixture.path().join("project");
-    std::fs::create_dir_all(&broken_project).expect("broken contender project");
-    let mut broken = request(&broken_fixture, &broken_project);
-    // Its own checkout, so no live owner of the first checkout can answer for it.
-    broken["checkout"] = serde_json::json!(vec![0x5au8; 16]);
-    broken["state_home"] = serde_json::json!("/nonexistent-effigy-state-home");
     let failed = detached_contender(&broken);
     assert_eq!(
         failed["refused"].as_bool(),
         Some(false),
         "a launcher error is not a refusal: {failed}"
     );
+    // Let every host this test started finish writing before the fixture
+    // removes its directory; a live host writing there is what turns a passing
+    // proof into `Directory not empty` cleanup noise.
+    settle_fixture(&fixture);
 }

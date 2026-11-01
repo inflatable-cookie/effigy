@@ -36,14 +36,7 @@ pub fn initiate_abandoning(request_json: &str) -> Result<String, String> {
 /// The same launch, but with the caller's own startup budget, reported so a
 /// proof can show which deadline actually bounded the wait.
 pub fn initiate_with_budget(request_json: &str, budget_ms: u64) -> Result<String, String> {
-    let started = std::time::Instant::now();
-    match initiate_with_budget_parts(request_json, budget_ms) {
-        Ok(result) => Ok(result),
-        Err(error) => Err(format!(
-            "deadline={}ms: {error}",
-            started.elapsed().as_millis()
-        )),
-    }
+    initiate_with_budget_parts(request_json, budget_ms)
 }
 
 fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<String, String> {
@@ -63,11 +56,28 @@ fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<Stri
         .map_err(|error| format!("the state root: {error}"))?;
     let executable = task_engine::startup_executable().map_err(|error| error.to_string())?;
     let mut host = serving_host::start(&cx, &root, &request, &executable).map_err(|error| {
-        startup_failure(spent, budget, format!("the launch: {error}"))
+        startup_failure(
+            spent,
+            spent.elapsed(),
+            Duration::ZERO,
+            budget,
+            format!("the launch: {error}"),
+        )
     })?;
-    let remaining = budget.saturating_sub(spent.elapsed());
+    // The launch is process startup; the wait for the announcement is the part
+    // the caller's budget is allowed to bound. They are reported separately so a
+    // proof can assert the mechanism without asserting how fast a process starts.
+    let launch = spent.elapsed();
+    let remaining = budget.saturating_sub(launch);
+    let waiting = std::time::Instant::now();
     let published = host.await_serving(&cx, remaining).map_err(|error| {
-        startup_failure(spent, budget, format!("the startup result: {error}"))
+        startup_failure(
+            spent,
+            launch,
+            waiting.elapsed(),
+            budget,
+            format!("the startup result: {error}"),
+        )
     })?;
     serde_json::to_string(&serde_json::json!({ "published": published }))
         .map_err(|error| format!("the result: {error}"))
@@ -77,12 +87,26 @@ fn initiate_with_budget_parts(request_json: &str, budget_ms: u64) -> Result<Stri
 /// ended the startup, the report says the caller's deadline expired before the
 /// host announced its session, whatever stage the launch had reached: that is
 /// the caller's answer, and it names the deadline rather than an inner step.
-fn startup_failure(spent: std::time::Instant, budget: Duration, detail: String) -> String {
-    if spent.elapsed() >= budget {
+fn startup_failure(
+    spent: std::time::Instant,
+    launch: Duration,
+    wait: Duration,
+    budget: Duration,
+    detail: String,
+) -> String {
+    let message = if spent.elapsed() >= budget {
         "the workspace serving host did not announce its session in time".to_owned()
     } else {
         detail
-    }
+    };
+    // `wait` is what the caller's budget bounded, `launch` is process startup and
+    // `deadline` is the whole attempt, so a caller can tell them apart.
+    format!(
+        "wait={}ms launch={}ms deadline={}ms: {message}",
+        wait.as_millis(),
+        launch.as_millis(),
+        spent.elapsed().as_millis()
+    )
 }
 
 /// The same launch, but the front end crashes *before* it reads any startup

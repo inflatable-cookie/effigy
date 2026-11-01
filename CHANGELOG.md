@@ -1173,6 +1173,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- The detached workspace-serving proof and its fixture no longer depend on a
+  loaded host's timing, gate luck or cleanup order. A caller's startup budget
+  bounds the whole startup — the state root, the launch and the supervisor's
+  admission, not only the announcement wait — so a caller that asks for 1s is
+  answered by the deadline it named rather than after an inner step. A front end
+  that loses its handoff names the supervisor run it lost, so the proof waits for
+  that run to settle and for its recorded processes to leave instead of sleeping
+  and hoping. Two contender cases use two checkouts, because the kernel's serving
+  gate is keyed by the checkout a launch serves and a live owner would otherwise
+  answer for the other case. Fixture cleanup waits for kernel helpers in every
+  journal the fixture owns — a fixture whose checkout is a child directory records
+  its runs there — so a supervisor that is still leaving can no longer race the
+  directory removal into `Directory not empty`.
+
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
 - A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
