@@ -1346,6 +1346,7 @@ impl<'a> Run<'a> {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -1364,7 +1365,7 @@ impl<'a> Run<'a> {
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
         Self::begin_under(
-            cx, root, inv, opts, cleanup, adapter, None, None, None, None,
+            cx, root, inv, opts, cleanup, adapter, None, None, None, None, None,
         )
     }
 
@@ -1397,6 +1398,7 @@ impl<'a> Run<'a> {
             None,
             None,
             Some(ticket),
+            None,
             None,
         )
     }
@@ -1433,7 +1435,49 @@ impl<'a> Run<'a> {
             None,
             None,
             Some(claim),
+            None,
         )
+    }
+
+    /// Preserve an already-admitted workspace Env owner when subsequent setup
+    /// fails. A failure before an owner is constructed returns no run.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_claimed_recoverable(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
+        adapter: &mut impl SettlementAdapter,
+        claim: crate::workspace_session::ActivationClaim,
+    ) -> Result<Self, (RunError, Option<Box<GuardedWorkspaceCleanup<'a>>>)> {
+        if !matches!(
+            claim,
+            crate::workspace_session::ActivationClaim::Environment(_)
+        ) || opts.custody.is_some()
+        {
+            return Err((RunError::refused("recoverable claimed admission requires an environment activation without a sentinel"), None));
+        }
+        let mut retained = None;
+        Self::begin_under(
+            cx,
+            root,
+            inv,
+            opts,
+            cleanup,
+            adapter,
+            None,
+            None,
+            None,
+            Some(claim),
+            Some(&mut retained),
+        )
+        .map_err(|error| {
+            (
+                error,
+                retained.map(|run| Box::new(GuardedWorkspaceCleanup { run: *run })),
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1448,6 +1492,7 @@ impl<'a> Run<'a> {
         planned: Option<EffectSpec>,
         admission: Option<AdmissionTicket>,
         claim: Option<crate::workspace_session::ActivationClaim>,
+        mut retained: Option<&mut Option<Box<Self>>>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if root.is_machine()
@@ -1671,7 +1716,10 @@ impl<'a> Run<'a> {
             Some(generation) => generation,
             None => store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?,
         };
-        crate::fault_point!(BeginAdmitted)?;
+        let admitted_fault = (|| {
+            crate::fault_point!(BeginAdmitted)?;
+            Ok::<(), RunError>(())
+        })();
         guard.set_run(&opts.id); // Diagnostics never affect outcome (K10).
         let mut run = Self {
             root,
@@ -1694,9 +1742,20 @@ impl<'a> Run<'a> {
             processes: Default::default(),
             session_launch: Default::default(),
         };
+        if let Err(error) = admitted_fault {
+            if let Some(retained) = retained.as_mut() {
+                **retained = Some(Box::new(run));
+            }
+            return Err(error);
+        }
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
-                run.protect_checkout(checkout, opts.wait)?;
+                if let Err(error) = run.protect_checkout(checkout, opts.wait) {
+                    if let Some(retained) = retained.as_mut() {
+                        **retained = Some(Box::new(run));
+                    }
+                    return Err(error);
+                }
             }
         }
         if let Some(plan) = opts.custody {
