@@ -3574,24 +3574,20 @@ fn input_is_bounded_and_refuses_past_its_bound() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
-    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // A writer that takes four bytes and then reports a full buffer, as a child
     // that is not reading its terminal does.
-    custody
-        .open(
-            &cx,
-            run,
-            vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
-        )
-        .expect("the run's terminal opens");
+    let mut custody = OpenAfterAdmission {
+        custody: TerminalCustody::new(terminal_session(), observe.clone(), root.clone()),
+        effect: cx.clone(),
+        writer: Some(Box::new(FakePty::new(log.clone()).bounded(4, 4))),
+    };
 
     let attach = RequestId::new([2; 16]);
     let burst = vec![7u8; host::MAX_STREAM_PAYLOAD];
     let frames = {
         let mut frames = terminal_hello(capability());
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, &burst));
         frames.push(typed(attach, 1, &burst));
@@ -3604,7 +3600,10 @@ fn input_is_bounded_and_refuses_past_its_bound() {
     wait_until("the writer to take the four bytes it accepts", || {
         written(&log).len() == 4
     });
-    let terminal = custody.terminal_mut(run).expect("the run's terminal");
+    let terminal = custody
+        .custody
+        .terminal_mut(run)
+        .expect("the run's terminal");
     let pending = terminal.pending();
     let refused = terminal.refused();
 
@@ -3647,22 +3646,18 @@ fn backpressured_input_drains_while_the_connection_is_idle() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
-    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // Four bytes in, then a full terminal buffer.
-    custody
-        .open(
-            &cx,
-            run,
-            vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone()).bounded(4, 4)),
-        )
-        .expect("the run's terminal opens");
+    let mut custody = OpenAfterAdmission {
+        custody: TerminalCustody::new(terminal_session(), observe.clone(), root.clone()),
+        effect: cx.clone(),
+        writer: Some(Box::new(FakePty::new(log.clone()).bounded(4, 4))),
+    };
 
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, b"typed input"));
         frames
@@ -3678,7 +3673,11 @@ fn backpressured_input_drains_while_the_connection_is_idle() {
             .expect("the connection's frames");
         client.flush().expect("the connection's frames");
     }
+    host_side
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner read");
     std::thread::scope(|scope| {
+        let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
@@ -3700,6 +3699,9 @@ fn backpressured_input_drains_while_the_connection_is_idle() {
             written(&log) == b"typed input"
         });
         // Only now does the client go away.
+        client
+            .shutdown(std::net::Shutdown::Write)
+            .expect("owner EOF");
         drop(client);
         serving
             .join()
@@ -3718,26 +3720,22 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
-    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     // The resize handle is closed for the whole burst, as a terminal whose
     // resize path is momentarily unavailable is. Attempt counts cannot change
     // the result: while the handle is closed the owner holds at most one size,
     // and the newest one is the only size that can ever be applied.
     log.lock().expect("pty log").resize_open = false;
-    custody
-        .open(
-            &cx,
-            run,
-            vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(log.clone())),
-        )
-        .expect("the run's terminal opens");
+    let mut custody = OpenAfterAdmission {
+        custody: TerminalCustody::new(terminal_session(), observe.clone(), root.clone()),
+        effect: cx.clone(),
+        writer: Some(Box::new(FakePty::new(log.clone()))),
+    };
 
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(sized(attach, 0, 24, 80));
         frames.push(sized(attach, 1, 50, 120));
@@ -3748,7 +3746,11 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
     // is alive too: the burst, the closed handle and the reopened handle are one
     // terminal's whole life, not a race against the owner's end of stream.
     let (client, host_side) = live_connection(&frames);
+    host_side
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner read");
     std::thread::scope(|scope| {
+        let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
@@ -3776,6 +3778,9 @@ fn a_burst_of_sizes_keeps_only_the_newest_geometry() {
             vec![size(60, 140)],
             "exactly the newest size reached the writer"
         );
+        client
+            .shutdown(std::net::Shutdown::Write)
+            .expect("owner EOF");
         drop(client);
         serving
             .join()
