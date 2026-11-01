@@ -103,6 +103,10 @@ pub(in crate::runner) struct BoundReservedGuest<'a> {
 }
 
 impl BoundReservedGuest<'_> {
+    pub(in crate::runner) fn target(&self) -> &ContainerIdentity {
+        &self.target
+    }
+
     /// The parked facade consumes fresh target/platform observations, never
     /// expected kernel facts. The callback retained with this input performs
     /// the actual backend/guest reads again on the original absolute deadline.

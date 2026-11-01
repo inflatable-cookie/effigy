@@ -13,7 +13,7 @@ use crate::runner::container_command::workspace_integrations::{
     WorkspaceIntegrationOutcome, WorkspaceIntegrationStep as Step,
 };
 
-pub(super) const DEFAULT_INTEGRATION_BUDGET: std::time::Duration =
+pub(in crate::runner) const DEFAULT_INTEGRATION_BUDGET: std::time::Duration =
     std::time::Duration::from_secs(10 * 60);
 
 /// Effect implementations keep the exact route/listener/secret policy handles.
@@ -25,7 +25,7 @@ pub(in crate::runner) trait IntegrationEffects {
 }
 
 #[derive(Debug)]
-pub(super) enum AdapterFailure {
+pub(in crate::runner) enum AdapterFailure {
     IntegrationBudget,
     ReservationDeadline,
     Journal,
@@ -42,22 +42,24 @@ impl std::fmt::Display for AdapterFailure {
     }
 }
 
-pub(super) struct IntegrationAdapter<'a, E> {
-    pub(super) owner: &'a mut ParkedWorkspaceActivation<'static>,
-    pub(super) context: &'a EnvContext<'static>,
-    pub(super) effects: E,
-    pub(super) integration_until: Instant,
-    pub(super) reservation_until: Instant,
+pub(in crate::runner) struct IntegrationAdapter<'a, E> {
+    pub(in crate::runner) owner: &'a mut ParkedWorkspaceActivation<'static>,
+    pub(in crate::runner) context: &'a EnvContext<'static>,
+    pub(in crate::runner) effects: E,
+    pub(in crate::runner) integration_until: Instant,
+    pub(in crate::runner) reservation_until: Instant,
 }
 
 impl<E: IntegrationEffects> IntegrationAdapter<'_, E> {
-    pub(super) fn restore_outcome(&self) -> Result<WorkspaceIntegrationOutcome, RunError> {
+    pub(in crate::runner) fn restore_outcome(
+        &self,
+    ) -> Result<WorkspaceIntegrationOutcome, RunError> {
         let snapshot = self.owner.integration_snapshot().map_err(|_| unsettled())?;
         let attempted = snapshot.keys().copied().map(from_journal).collect();
         WorkspaceIntegrationOutcome::from_attempted(attempted).map_err(|_| unsettled())
     }
 
-    pub(super) fn run(
+    pub(in crate::runner) fn run(
         &mut self,
         outcome: &mut WorkspaceIntegrationOutcome,
     ) -> Result<(), RunError> {
@@ -72,7 +74,7 @@ impl<E: IntegrationEffects> IntegrationAdapter<'_, E> {
         }
     }
 
-    pub(super) fn unwind(
+    pub(in crate::runner) fn unwind(
         &mut self,
         outcome: &mut WorkspaceIntegrationOutcome,
         cleanup_until: Instant,
@@ -83,7 +85,7 @@ impl<E: IntegrationEffects> IntegrationAdapter<'_, E> {
 
     /// A's resume can reject attempts but cannot infer mandatory policy steps.
     /// Require every step in this frozen v0.15 plan, even for a no-op effect.
-    pub(super) fn require_phase_b(&self) -> Result<(), RunError> {
+    pub(in crate::runner) fn require_phase_b(&self) -> Result<(), RunError> {
         require_phase_b(
             &self.owner.integration_snapshot().map_err(|_| unsettled())?,
             self.reservation_until,
@@ -197,6 +199,15 @@ fn budget_exhausted() -> RunError {
 }
 fn unsettled() -> RunError {
     RunError::unavailable("integration effects unsettled; re-run up")
+}
+
+impl<E: IntegrationEffects + ?Sized> IntegrationEffects for &mut E {
+    fn reconcile(&mut self, step: Step, deadline: Instant) -> Result<(), RunError> {
+        (**self).reconcile(step, deadline)
+    }
+    fn unwind(&mut self, step: Step, deadline: Instant) -> Result<(), RunError> {
+        (**self).unwind(step, deadline)
+    }
 }
 
 #[cfg(test)]

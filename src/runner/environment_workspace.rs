@@ -4,8 +4,12 @@
 //! string/default-locator or generic-publication fallback here.
 #![allow(dead_code)] // The workspace-client owner installs the serialized consuming caller.
 
+#[path = "environment_workspace/integrated.rs"]
+pub(in crate::runner) mod integrated;
 #[path = "environment_workspace/phase_a.rs"]
 pub(in crate::runner) mod phase_a;
+#[path = "environment_workspace/phase_b.rs"]
+pub(in crate::runner) mod phase_b;
 
 use effigy_containers::environment::{
     BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
