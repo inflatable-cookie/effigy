@@ -98,6 +98,10 @@ pub(crate) fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) ->
 }
 /// Closed means no live member; an unreaped leader/zombie supplies no workload
 /// and is reaped only by its owner. A vanished group has an ESRCH proof.
+/// Owner closure: the caller holds the leader unreaped and drives the kill, so a
+/// member it has already stopped and reaped is absence, not churn. The conservative
+/// churn rule belongs to the anchor's own retirement (`supervise::anchor`), where
+/// nobody holds the members and a vanished row could have forked a child.
 pub(crate) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure> {
     if let Observed::Absent(_) = group_exists(pgid) {
         return gone(pgid);
@@ -105,6 +109,8 @@ pub(crate) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure>
     // An unreaped macOS zombie can leave killpg(0) returning EPERM. A successful
     // group inventory is independent positive evidence of no live members; it
     // permits reaping our pinned leader without signalling an unknown target.
+    // A row that vanished or moved inside the round is *not* such evidence: it
+    // may have forked a member this inventory cannot see (effigy#520).
     match live_pids(pgid) {
         Ok(pids) if pids.iter().all(|pid| Some(*pid) == exclude) => {
             Observed::Verified(Closure, evidence())
@@ -427,11 +433,29 @@ pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: successful syscall returned a fresh owned fd.
     Ok(unsafe { OwnedFd::from_raw_fd(raw as i32) })
 }
-/// Every live (non-zombie) pid the kernel's own table places in `pgid`. The
-/// anchor's self-retirement reads this same inventory, so it stays the one
-/// definition of group membership.
-pub(crate) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
-    let mut live = Vec::new();
+/// How one listed candidate resolved in a group inventory round.
+///
+/// The distinction that matters for closure is between a member that is
+/// positively not running (a zombie cannot fork) and a row that vanished or left
+/// the group inside the round: that row may have forked a member this inventory
+/// cannot see, so the round proves nothing. Best effort, never a proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MembershipRow {
+    /// Positively observed live in this group, with its kernel generation.
+    Live(ProcessIdentity),
+    /// Positively observed as a zombie in this group: it cannot fork, so it is
+    /// never live and needs no generation.
+    NotLive(u32),
+    /// Listed, then gone or no longer in this group before its evidence read.
+    Churn(u32),
+}
+
+/// One inventory of the group, keeping each row's outcome.
+///
+/// A failed identity read is an error (fail closed) rather than a row: an
+/// unreadable member is never treated as absent.
+pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
+    let mut rows = Vec::new();
     for pid in group_pids(pgid)? {
         #[cfg(target_os = "linux")]
         {
@@ -440,21 +464,50 @@ pub(crate) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
             if group < 0 {
                 let e = io::Error::last_os_error();
                 if e.raw_os_error() == Some(libc::ESRCH) {
+                    // Gone before we could ask whether it was ours. Linux lists
+                    // every pid, so this is usually an unrelated short-lived
+                    // process; treating it as churn would make closure
+                    // unprovable on a busy host. A *confirmed* member that then
+                    // vanishes is still churn below.
                     continue;
                 }
                 return Err(e);
             }
             if group as u32 != pgid {
+                // Not in our group now. Linux lists every pid, so this is the
+                // ordinary case for the rest of the host; a member that left
+                // earlier cannot fork into the group afterwards.
                 continue;
             }
         }
         match ident::process_state(pid) {
-            Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_) => {}
-            Observed::Verified(_, _) => live.push(pid),
+            Observed::Verified(ProcessState::Zombie, _) => rows.push(MembershipRow::NotLive(pid)),
+            Observed::Verified(_, _) => match ident::process_identity(pid) {
+                // The generation travels with a live row so exclusion is
+                // incarnation-exact rather than a bare number.
+                Observed::Verified(identity, _) => rows.push(MembershipRow::Live(identity)),
+                Observed::Absent(_) => rows.push(MembershipRow::Churn(pid)),
+                Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
+            },
+            Observed::Absent(_) => rows.push(MembershipRow::Churn(pid)),
             Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
         }
     }
-    Ok(live)
+    Ok(rows)
+}
+
+/// Every live (non-zombie) pid the kernel's own table places in `pgid`. The
+/// anchor's observations and owner stop read this same inventory, so it stays
+/// the one definition of group membership. Callers that must not treat a
+/// vanished row as absence use [`group_membership`] directly.
+pub(crate) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
+    Ok(group_membership(pgid)?
+        .into_iter()
+        .filter_map(|row| match row {
+            MembershipRow::Live(identity) => Some(identity.pid),
+            MembershipRow::NotLive(_) | MembershipRow::Churn(_) => None,
+        })
+        .collect())
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn group_pids(_pgid: u32) -> io::Result<Vec<u32>> {

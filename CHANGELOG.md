@@ -711,6 +711,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Group closure and anchor retirement are honest about their limits.** An anchor
+  retires only when one inventory round positively accounts for every in-group row
+  (a zombie cannot fork) and positively observes the anchor itself; a row that
+  vanished or left the group mid-round, a failed read, or an inventory without the
+  anchor's own row keeps it alive and reports `unproven group closure`. Group
+  closure observed through an inventory follows the same rule and is never claimed
+  from a round that saw churn. Group signals keep their authority rules unchanged:
+  a verified anchor (member by member), a leader whose live identity is verified
+  immediately before the signal, or an owner that holds its unreaped child; on
+  macOS and Linux before 6.9 the numeric check-to-signal window remains and is
+  documented rather than papered over, so Effigy makes no absolute
+  no-recycled-PGID guarantee there (leads `0453e055`, `b013f65a`).
+
 - Clarify workspace artifact source selection, the separate dev and workspace
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.

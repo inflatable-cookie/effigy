@@ -116,6 +116,144 @@ fn wait(mut yes: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+/// Group authority comes only from a leader whose live generation matches the
+/// receipt: an absent, unreadable or mismatched leader never yields a group
+/// signal, and no signal reaches a process that is not in the recorded group
+/// (effigy#520). Deterministic: the process table is the injected fake.
+#[test]
+fn recovery_never_group_signals_without_a_verified_live_leader() {
+    #[derive(Debug)]
+    struct Table {
+        leader: Observed<ProcessIdentity>,
+        members: Vec<Member>,
+        signals: Vec<SignalDelivered>,
+    }
+    impl ProcessTable for Table {
+        fn leader(&mut self, _: &ProcessReceipt) -> Observed<ProcessIdentity> {
+            self.leader.clone()
+        }
+        fn members(&mut self, _: u32) -> Observed<Vec<Member>> {
+            Observed::Verified(self.members.clone(), evidence())
+        }
+        fn present(&mut self, _: &ProcessIdentity) -> Observed<bool> {
+            Observed::Verified(true, evidence())
+        }
+        fn signal_leader(&mut self, r: &ProcessReceipt, s: i32) -> Observed<SignalDelivered> {
+            let sent = SignalDelivered {
+                pid: r.pgid,
+                group: true,
+                signal: s,
+            };
+            self.signals.push(sent.clone());
+            self.members.clear();
+            // The signal retired the leader: the next observation sees it gone,
+            // so the loop reaches closure instead of signalling again.
+            self.leader = Observed::Absent(AbsenceProof::NoSuchProcess {
+                pid: r.identity.pid,
+            });
+            Observed::Verified(sent, evidence())
+        }
+        fn signal_member(
+            &mut self,
+            m: &Member,
+            _: &ProcessReceipt,
+            s: i32,
+        ) -> Observed<SignalDelivered> {
+            let sent = SignalDelivered {
+                pid: m.identity.pid,
+                group: false,
+                signal: s,
+            };
+            self.signals.push(sent.clone());
+            Observed::Verified(sent, evidence())
+        }
+    }
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    // A process outside the group whose pid sits where a recycled number would.
+    let unrelated = identity.pid + 1;
+    let receipt = ProcessReceipt {
+        pgid: identity.pid,
+        identity: identity.clone(),
+        nonce: "run:effect".into(),
+        grace_millis: 0,
+    };
+    let member = Member {
+        identity: {
+            let mut other = identity.clone();
+            other.pid += 2;
+            other
+        },
+        nonce: Observed::Verified("run:effect".into(), evidence()),
+    };
+    // Each case runs against the injected table; the table records every signal,
+    // so "no foreign signal" is an assertion about the record, not a hope.
+    let run = |label: &str, leader: Observed<ProcessIdentity>| {
+        // A fresh bounded cleanup per case: one spent budget must never stand in
+        // for an observation in the next case.
+        let cleanup = cx().operation().cleanup(Duration::from_millis(80)).unwrap();
+        let mut table = Table {
+            leader,
+            members: vec![member.clone()],
+            signals: Vec::new(),
+        };
+        let result = platform::recover_with(&mut table, &receipt, &cleanup, &mut || false);
+        let group_signals: Vec<_> = table.signals.iter().filter(|s| s.group).collect();
+        assert!(
+            table.signals.iter().all(|signal| signal.pid != unrelated),
+            "{label}: a process outside the group was signalled: {:?}",
+            table.signals
+        );
+        (result, group_signals.len())
+    };
+
+    // Leader absent, no anchor: no group signal, and closure is never claimed.
+    let (result, group_signals) = run(
+        "leader absent",
+        Observed::Absent(AbsenceProof::NoSuchProcess { pid: identity.pid }),
+    );
+    assert_eq!(group_signals, 0, "leader absent: {result:?}");
+    assert!(
+        !matches!(result, Observed::Verified(..)),
+        "leader absent: closure must not be claimed without leader evidence"
+    );
+
+    // Leader unreadable: no group signal, fail closed.
+    let (result, group_signals) = run(
+        "leader unreadable",
+        Observed::Unknown(unknown("process table unreadable")),
+    );
+    assert_eq!(group_signals, 0, "leader unreadable: {result:?}");
+    assert!(matches!(result, Observed::Unknown(_)), "{result:?}");
+
+    // Leader replaced by another generation: no group signal.
+    let replaced = {
+        let mut other = identity.clone();
+        other.pid += 3;
+        Observed::Verified(other, evidence())
+    };
+    let (result, group_signals) = run("leader replaced", replaced);
+    assert_eq!(group_signals, 0, "leader replaced: {result:?}");
+    assert!(
+        !matches!(result, Observed::Verified(..)),
+        "leader replaced: closure must not be claimed"
+    );
+
+    // Leader live with the recorded generation: group authority, one member
+    // inventory retires the group and closure is reported.
+    let (result, group_signals) = run(
+        "leader verified",
+        Observed::Verified(identity.clone(), evidence()),
+    );
+    assert!(group_signals >= 1, "leader verified: {result:?}");
+    assert!(
+        matches!(result, Observed::Verified(..) | Observed::Absent(_)),
+        "leader verified: {result:?}"
+    );
+}
+
 #[test]
 fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
     #[derive(Debug)]

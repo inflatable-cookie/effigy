@@ -676,3 +676,81 @@ fn canonical_supervisor_stop_is_bounded_with_an_inherited_pipe_holder() {
     };
     assert!(read.truncated && read.bytes.is_empty());
 }
+
+/// The anchor's retirement round is conservative, and it tracks members across
+/// rounds so only a row that was *seen live* and then vanished can be the fork
+/// race. A listing that merely reports an unreadable or already-reaped pid is not
+/// churn, and the anchor's own row must be positively observed (effigy#520).
+#[test]
+fn anchor_closure_round_refuses_churn_and_needs_its_own_positive_row() {
+    use crate::custody::platform::MembershipRow as Row;
+    use std::collections::BTreeSet;
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    let me = identity.pid;
+    let mut seen = BTreeSet::new();
+    let member = identity.clone();
+    let member_pid = member.pid + 1;
+
+    // A round that lists an unreadable row nobody has seen live is not churn: the
+    // OS can list a pid whose identity read fails without it being a member.
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(member.clone()), Row::Churn(member_pid)],
+            me,
+            &mut seen
+        ),
+        anchor::ClosureRound::Empty,
+        "an unseen unreadable row is not a vanished member"
+    );
+    // An empty inventory without the anchor's own row is never closure.
+    assert_eq!(
+        anchor::closure_round(&[], me, &mut seen),
+        anchor::ClosureRound::Unknown
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::Churn(me)], me, &mut seen),
+        anchor::ClosureRound::Unknown,
+        "the anchor's own row must be positively observed"
+    );
+    // See the member live, then have it vanish inside the next round: the fork
+    // race is detectable because the previous round observed it as a member.
+    let other = {
+        let mut other = member.clone();
+        other.pid = member_pid;
+        other
+    };
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(member.clone()), Row::Live(other.clone())],
+            me,
+            &mut seen
+        ),
+        anchor::ClosureRound::Live
+    );
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(member.clone()), Row::Churn(member_pid)],
+            me,
+            &mut seen
+        ),
+        anchor::ClosureRound::Churn,
+        "a member that was live and is now gone leaves the fork race open"
+    );
+    // Once nothing carries that pid any more, the next round is closure.
+    assert_eq!(
+        anchor::closure_round(&[Row::Live(member.clone())], me, &mut seen),
+        anchor::ClosureRound::Empty
+    );
+    // A zombie member cannot fork and is never churn.
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(member), Row::NotLive(member_pid)],
+            me,
+            &mut seen
+        ),
+        anchor::ClosureRound::Empty
+    );
+}

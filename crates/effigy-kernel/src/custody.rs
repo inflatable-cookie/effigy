@@ -44,6 +44,13 @@ pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// showing in argv or outliving the read. The child owns the copy; the parent
 /// keeps its own descriptor and closes it when the spawn returns.
 pub const HANDOFF_FD: i32 = 11;
+
+/// Reported when a group's closure cannot be positively established: an
+/// inventory row vanished or moved inside the round, so a member forked and
+/// orphaned in that window cannot be excluded. The anchor stays alive as the
+/// group's evidence and the group is never signalled on a guess. This is a best
+/// effort observation, not a proof (effigy#520; contract 052).
+pub const UNPROVEN_GROUP_CLOSURE: &str = "unproven group closure";
 #[derive(Clone)]
 pub struct SecretValue(Vec<u8>);
 impl std::fmt::Debug for SecretValue {
