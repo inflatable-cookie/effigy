@@ -442,8 +442,8 @@ pub(crate) enum MembershipRow {
     Live(ProcessIdentity),
     /// Positively not running: the kernel reports it as a zombie, which cannot fork.
     NotLive(u32),
-    /// Live at its state read, then unreadable at its identity read: it left
-    /// inside the round and may have forked a member this inventory cannot see.
+    /// Listed in the group but unreadable at its state or identity read: it may
+    /// have left inside the round after forking a member this inventory cannot see.
     /// Ambiguous, never absence.
     Unproven(u32),
 }
@@ -482,11 +482,8 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
                 Observed::Absent(_) => rows.push(MembershipRow::Unproven(pid)),
                 Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
             },
-            // The kernel lists this pid in our group but no task can be read for
-            // it: it is a zombie, or a process already in exit (macOS reports no
-            // task for either). It had no task before we read it, so it cannot
-            // have forked during this round: positively not live.
-            Observed::Absent(_) => rows.push(MembershipRow::NotLive(pid)),
+            // A listed member may have forked before disappearing at this read.
+            Observed::Absent(_) => rows.push(MembershipRow::Unproven(pid)),
             Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
         }
     }
