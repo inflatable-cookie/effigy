@@ -3,6 +3,154 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
+/// Workspace preparation never forwards a step's raw error. Steps with known
+/// direct-output sinks remain refused until they have a private adapter.
+#[derive(Debug, Clone, Copy)]
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) enum WorkspacePreparationStep {
+    Validation,
+    Mounts,
+    Policy,
+    SecretResolution,
+    Runtime,
+    SharedServices,
+}
+
+impl WorkspacePreparationStep {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Validation => "validation",
+            Self::Mounts => "mounts",
+            Self::Policy => "policy",
+            Self::SecretResolution => "secret-resolution",
+            Self::Runtime => "runtime",
+            Self::SharedServices => "shared-services",
+        }
+    }
+}
+
+fn private_prepare_failure(step: &str, status: &str) -> RunnerError {
+    RunnerError::task_invocation(format!("workspace preparation unavailable: code=private-output-unavailable step={step} status={status}"))
+}
+
+/// The one error boundary; only concrete audited operations below may enter it.
+fn workspace_prepare_step<T, E>(
+    step: WorkspacePreparationStep,
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, RunnerError> {
+    match step {
+        WorkspacePreparationStep::Validation | WorkspacePreparationStep::Mounts => {
+            operation().map_err(|_| private_prepare_failure(step.name(), "failed"))
+        }
+        _ => Err(private_prepare_failure(step.name(), "unsupported")),
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_validation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    workspace_prepare_step(
+        WorkspacePreparationStep::Validation,
+        || -> Result<(), RunnerError> {
+            effigy_containers::validate_container_policy(repo_root, policy)?;
+            crate::runner::host_process::validate_host_process_preflight(repo_root, policy)?;
+            effigy_containers::validate_compose_backend_runtime(repo_root, policy)?;
+            Ok(())
+        },
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_mounts(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    workspace_prepare_step(WorkspacePreparationStep::Mounts, || {
+        effigy_containers::policy::mounts::prepare_container_mount_sources(policy)
+    })
+}
+
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_unavailable(
+    step: WorkspacePreparationStep,
+) -> Result<(), RunnerError> {
+    match step {
+        WorkspacePreparationStep::Validation | WorkspacePreparationStep::Mounts => {
+            Err(private_prepare_failure(step.name(), "invalid-step"))
+        }
+        _ => workspace_prepare_step(step, || -> Result<(), ()> {
+            unreachable!("unavailable step cannot execute")
+        }),
+    }
+}
+
+/// Source preparation is a no-op only when the nearest manifest has no source
+/// declarations at all. Configured acquisition remains named unavailable:
+/// its existing progress callback can print backend-controlled diagnostics.
+#[allow(
+    dead_code,
+    reason = "workspace lifecycle adopts this reviewed seam separately"
+)]
+pub(in crate::runner) fn workspace_prepare_sources(repo_root: &Path) -> Result<(), RunnerError> {
+    let mut found = None;
+    for root in repo_root.ancestors() {
+        let path = root.join("effigy.toml");
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {
+                found = Some(path);
+                break;
+            }
+            Ok(_) => return Err(private_prepare_failure("sources", "unsupported")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(private_prepare_failure("sources", "failed")),
+        }
+    }
+    let Some(path) = found else {
+        return Ok(());
+    };
+    let overlay = path
+        .parent()
+        .unwrap_or(repo_root)
+        .join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+    match std::fs::symlink_metadata(overlay) {
+        Ok(_) => return Err(private_prepare_failure("sources", "unsupported")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(private_prepare_failure("sources", "failed")),
+    }
+    let text =
+        std::fs::read_to_string(path).map_err(|_| private_prepare_failure("sources", "failed"))?;
+    let raw: toml::Value =
+        toml::from_str(&text).map_err(|_| private_prepare_failure("sources", "failed"))?;
+    if raw.get("manifest").is_some() {
+        return Err(private_prepare_failure("sources", "unsupported"));
+    }
+    let manifest: effigy_manifest::TaskManifest =
+        toml::from_str(&text).map_err(|_| private_prepare_failure("sources", "failed"))?;
+    if manifest.bundle.is_some()
+        || !manifest.sources.is_empty()
+        || manifest
+            .catalog
+            .as_ref()
+            .is_some_and(|catalog| !catalog.sources.is_empty())
+    {
+        return Err(private_prepare_failure("sources", "unsupported"));
+    }
+    Ok(())
+}
+
 use effigy_catalog::volumes::{
     remove_volume_command, DockerCommand, VolumeClassification, VolumeIdentity,
 };
@@ -1585,6 +1733,92 @@ mod tests {
     use effigy_ui::steps::ProgressSource;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn workspace_preparation_adapter_refuses_direct_output_sinks_and_hides_errors() {
+        use super::{workspace_prepare_step, WorkspacePreparationStep as Step};
+        for step in [
+            Step::Policy,
+            Step::SecretResolution,
+            Step::Runtime,
+            Step::SharedServices,
+        ] {
+            let mut called = false;
+            let error = workspace_prepare_step(step, || -> Result<(), String> {
+                called = true;
+                Err("private-secret-value".into())
+            })
+            .unwrap_err();
+            assert!(
+                !called,
+                "unsupported step must refuse before its direct output"
+            );
+            for rendered in [error.to_string(), format!("{error:?}")] {
+                assert!(!rendered.contains("private-secret-value"));
+                assert!(rendered.contains("code=private-output-unavailable"));
+                assert!(rendered.contains("status=unsupported"));
+            }
+        }
+        for step in [Step::Validation, Step::Mounts] {
+            let error = workspace_prepare_step(step, || -> Result<(), String> {
+                Err("private-secret-value".into())
+            })
+            .unwrap_err();
+            for rendered in [error.to_string(), format!("{error:?}")] {
+                assert!(!rendered.contains("private-secret-value"));
+                assert!(rendered.contains("status=failed"));
+            }
+            assert_eq!(
+                workspace_prepare_step(step, || -> Result<u8, ()> { Ok(7) }).unwrap(),
+                7
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_source_preparation_only_skips_proven_empty_sources() {
+        let fixture = tempfile::tempdir().unwrap();
+        let manifest = fixture.path().join("effigy.toml");
+        std::fs::write(&manifest, "[tasks]\nbuild = 'echo ok'\n").unwrap();
+        super::workspace_prepare_sources(fixture.path()).unwrap();
+        let overlay = fixture
+            .path()
+            .join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+        std::fs::write(&overlay, "[sources.secret]\n").unwrap();
+        assert!(super::workspace_prepare_sources(fixture.path())
+            .unwrap_err()
+            .to_string()
+            .contains("step=sources status=unsupported"));
+        std::fs::remove_file(overlay).unwrap();
+        std::fs::write(&manifest, "[manifest]\ninclude = ['other.toml']\n").unwrap();
+        assert!(super::workspace_prepare_sources(fixture.path())
+            .unwrap_err()
+            .to_string()
+            .contains("step=sources status=unsupported"));
+        std::fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = 'path', dir = 'private-secret-value' }\n",
+        )
+        .unwrap();
+        let error = super::workspace_prepare_sources(fixture.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("step=sources status=unsupported"));
+        assert!(!error.to_string().contains("private-secret-value"));
+        std::fs::write(&manifest, "invalid = [ private-secret-value").unwrap();
+        let error = super::workspace_prepare_sources(fixture.path()).unwrap_err();
+        assert!(error.to_string().contains("step=sources status=failed"));
+        assert!(!format!("{error:?}").contains("private-secret-value"));
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(&manifest).unwrap();
+            std::os::unix::fs::symlink("missing-local-manifest", &manifest).unwrap();
+            assert!(super::workspace_prepare_sources(fixture.path())
+                .unwrap_err()
+                .to_string()
+                .contains("step=sources status=unsupported"));
+        }
+    }
 
     #[test]
     fn shared_compose_receives_its_immutable_generation_root() {
