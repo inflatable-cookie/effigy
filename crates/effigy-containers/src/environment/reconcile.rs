@@ -631,6 +631,66 @@ struct ParkedEnvParts<'r> {
 }
 
 impl<'r> ParkedEnvRun<'r> {
+    pub(super) fn repark(self) -> Result<Self, (EnvError, Box<Self>)> {
+        let Self { gate, parts } = self;
+        match gate {
+            ParkedEnvGate::Parked(run) => Ok(Self {
+                gate: ParkedEnvGate::Parked(run),
+                parts,
+            }),
+            ParkedEnvGate::Guarded(run) => match run.repark() {
+                Ok(run) => Ok(Self {
+                    gate: ParkedEnvGate::Parked(Box::new(run)),
+                    parts,
+                }),
+                Err((error, run)) => Err((
+                    EnvError::Kernel(error),
+                    Box::new(Self {
+                        gate: ParkedEnvGate::Guarded(run),
+                        parts,
+                    }),
+                )),
+            },
+        }
+    }
+
+    pub(super) fn integration_snapshot(
+        &self,
+        session: &Run<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => {
+                run.integration_snapshot(session).map_err(EnvError::Kernel)
+            }
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
+    pub(super) fn record_integration_step(
+        &self,
+        session: &mut Run<'_>,
+        cx: &EffectContext,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+        state: effigy_kernel::run::WorkspaceIntegrationState,
+    ) -> Result<(), EnvError> {
+        match &self.gate {
+            ParkedEnvGate::Parked(run) => run
+                .record_integration_step(session, cx, step, state)
+                .map_err(EnvError::Kernel),
+            ParkedEnvGate::Guarded(_) => Err(EnvError::Invalid(
+                "workspace integration requires Env to be free".into(),
+            )),
+        }
+    }
+
     pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
         std::ptr::eq(self.parts.root, root)
     }

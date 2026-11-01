@@ -84,6 +84,57 @@ impl<'r> ParkedWorkspaceActivation<'r> {
         &self.session
     }
 
+    /// Release a reacquired Env gate before running integration cleanup.
+    pub fn repark_for_cleanup(mut self) -> Result<Self, (EnvError, Box<Self>)> {
+        match self._environment.repark() {
+            Ok(environment) => {
+                self._environment = environment;
+                Ok(self)
+            }
+            Err((error, environment)) => {
+                self._environment = *environment;
+                Err((error, Box::new(self)))
+            }
+        }
+    }
+
+    pub fn integration_snapshot(
+        &self,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        self._environment.integration_snapshot(&self._supervisor)
+    }
+
+    /// Record only step names and status; never store secret values.
+    pub fn record_integration_step(
+        &mut self,
+        ctx: &EnvContext<'_>,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+        state: effigy_kernel::run::WorkspaceIntegrationState,
+    ) -> Result<(), EnvError> {
+        if !self._environment.owns_root(ctx.root) {
+            return Err(EnvError::Invalid(
+                "workspace integration uses a different state root".into(),
+            ));
+        }
+        if state == effigy_kernel::run::WorkspaceIntegrationState::Cleared {
+            let cleanup = ctx.cleanup()?;
+            let cx = cleanup.operation().effects().map_err(|error| {
+                EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+            })?;
+            self._environment
+                .record_integration_step(&mut self._supervisor, &cx, step, state)
+        } else {
+            self._environment
+                .record_integration_step(&mut self._supervisor, &ctx.cx, step, state)
+        }
+    }
+
     /// Reacquire Env and require an actual fresh observation against the
     /// retained journal, session and creator facts before exposing effects.
     /// Failure returns this exact owner, parked or guarded, for retry/cleanup.
@@ -98,6 +149,20 @@ impl<'r> ParkedWorkspaceActivation<'r> {
             effigy_kernel::run::WorkspaceResumeFacts,
         >,
     ) -> Result<WorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        let parked = self.repark_for_cleanup()?;
+        match parked.integration_snapshot() {
+            Ok(steps)
+                if steps.values().all(|state| {
+                    *state == effigy_kernel::run::WorkspaceIntegrationState::Completed
+                }) => {}
+            Ok(_) => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(parked),
+                ));
+            }
+            Err(error) => return Err((error, Box::new(parked))),
+        }
         let Self {
             _environment,
             _supervisor,
@@ -105,7 +170,7 @@ impl<'r> ParkedWorkspaceActivation<'r> {
             _reservation,
             _supervisor_id,
             _attempt,
-        } = self;
+        } = parked;
         match _environment.reacquire(&_supervisor, backend, observe) {
             Ok(environment) => Ok(WorkspaceActivation {
                 environment,
@@ -145,12 +210,33 @@ impl<'r> ParkedWorkspaceActivation<'r> {
                 Box::new(ParkedAbortCustody::Activation(Box::new(self))),
             ));
         }
+        let self_ = match self.repark_for_cleanup() {
+            Ok(parked) => parked,
+            Err((error, parked)) => {
+                return Err((error, Box::new(ParkedAbortCustody::Activation(parked))))
+            }
+        };
+        let self_ = match self_.integration_snapshot() {
+            Ok(steps) if steps.is_empty() => self_,
+            Ok(_) => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(ParkedAbortCustody::Activation(Box::new(self_))),
+                ))
+            }
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::Activation(Box::new(self_))),
+                ))
+            }
+        };
         let cleanup = match ctx.cleanup() {
             Ok(cleanup) => cleanup,
             Err(error) => {
                 return Err((
                     error,
-                    Box::new(ParkedAbortCustody::Activation(Box::new(self))),
+                    Box::new(ParkedAbortCustody::Activation(Box::new(self_))),
                 ))
             }
         };
@@ -161,7 +247,7 @@ impl<'r> ParkedWorkspaceActivation<'r> {
             _reservation,
             _supervisor_id: _,
             _attempt,
-        } = self;
+        } = self_;
         match _environment.settle(&cleanup) {
             Err((error, environment)) => {
                 return Err((

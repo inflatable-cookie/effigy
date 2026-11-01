@@ -1164,6 +1164,46 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
         .expect_err("wrong backend retains custody");
     assert!(error.to_string().contains("backend differs"));
     fake.selection.context = original_context;
+    let mut parked = parked
+        .repark_for_cleanup()
+        .expect("release Env for integration cleanup");
+    let step = effigy_kernel::run::WorkspaceIntegrationStep::Routes;
+    parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Attempted,
+        )
+        .unwrap();
+    assert_eq!(
+        parked.integration_snapshot().unwrap().get(&step),
+        Some(&effigy_kernel::run::WorkspaceIntegrationState::Attempted)
+    );
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("unsettled step must refuse before observation")
+        })
+        .expect_err("attempted integration cannot resume activation");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let (error, custody) = parked
+        .abort(&ctx, Wait::FailFast)
+        .expect_err("unsettled integrations retain both owners");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let super::super::ParkedAbortCustody::Activation(mut parked) = *custody else {
+        panic!("integration cleanup retains activation custody")
+    };
+    parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Cleared,
+        )
+        .unwrap();
+    assert!(parked.integration_snapshot().unwrap().is_empty());
     for _ in 0..4 {
         fake.inventories
             .push_back(verified(vec![row(PRIMARY, 'a')]));

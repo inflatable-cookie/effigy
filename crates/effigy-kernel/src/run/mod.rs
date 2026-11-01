@@ -417,6 +417,36 @@ pub struct ParkedWorkspaceRun<'a> {
     resume_facts: Option<WorkspaceResumeFacts>,
 }
 
+/// Re-runnable integration work recorded by the retained session owner.
+/// These records track custody and recovery, not authenticated effect receipts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIntegrationStep {
+    Readiness,
+    Permissions,
+    Secrets,
+    Routes,
+    HostIntegrations,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIntegrationState {
+    Attempted,
+    Completed,
+    Cleared,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceIntegrationRecord {
+    reservation: crate::workspace_session::ActivationReservationId,
+    step: WorkspaceIntegrationStep,
+    state: WorkspaceIntegrationState,
+}
+
+const WORKSPACE_INTEGRATION_KIND: &str = "kernel:workspace-integration-step";
+
 /// Exact journal facts the adapter must reobserve before resuming publication.
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorkspaceResumeFacts {
@@ -464,6 +494,18 @@ pub struct ReacquiredWorkspaceRun<'a> {
 }
 
 impl<'a> ReacquiredWorkspaceRun<'a> {
+    /// Release only Env again before gate-free cleanup. A failed release keeps
+    /// the same guarded owner so no cleanup custody is lost.
+    pub fn repark(mut self) -> Result<ParkedWorkspaceRun<'a>, (RunError, Box<Self>)> {
+        match self.owner.run.guard.park() {
+            Ok(gates) => {
+                self.owner.gates = gates;
+                Ok(self.owner)
+            }
+            Err(reason) => Err((RunError::refused(reason), Box::new(self))),
+        }
+    }
+
     /// A failed revalidation can settle under a separate cleanup budget
     /// without exposing normal Env effect authority.
     pub fn settle(
@@ -599,6 +641,164 @@ impl<'a> GuardedWorkspaceCleanup<'a> {
 }
 
 impl<'a> ParkedWorkspaceRun<'a> {
+    fn verify_integration_owner(
+        &self,
+        session: &Run<'_>,
+        conn: &rusqlite::Connection,
+    ) -> Result<(), RunError> {
+        if self.run.guard.covers(&self.run.owner.resource) {
+            return Err(RunError::refused(
+                "workspace integration requires Env to be free",
+            ));
+        }
+        if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity) {
+            return Err(RunError::unavailable(
+                "workspace activation owner identity changed or unavailable",
+            ));
+        }
+        let binding = self
+            .snapshot
+            .session
+            .as_ref()
+            .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
+        if !session.owns_workspace_session(self.run.root, binding)? {
+            return Err(RunError::refused(
+                "retained workspace session owner does not hold its exact slot",
+            ));
+        }
+        journal::check_run_fence(conn, session.id, &session.owner)?;
+        let current = self
+            .reservation
+            .verify_claimed_run(conn, self.run.id, &self.run.owner)?;
+        if current != self.snapshot {
+            return Err(RunError::refused(
+                "workspace reservation changed while parked",
+            ));
+        }
+        Ok(())
+    }
+
+    fn integration_snapshot_on(
+        &self,
+        session: &Run<'_>,
+        conn: &rusqlite::Connection,
+    ) -> Result<
+        std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>,
+        RunError,
+    > {
+        self.verify_integration_owner(session, conn)?;
+        let mut steps = std::collections::BTreeMap::new();
+        for effect in journal::effects(conn, session.id)? {
+            if effect.spec.kind != WORKSPACE_INTEGRATION_KIND {
+                continue;
+            }
+            if effect.state != EffectState::Applied
+                || effect.spec.target != session.owner
+                || effect.spec.settlement != Settlement::Retain
+                || effect.spec.required
+            {
+                return Err(RunError::broken(
+                    "workspace integration journal is inconsistent",
+                ));
+            }
+            let record: WorkspaceIntegrationRecord = serde_json::from_value(effect.spec.payload)?;
+            if record.reservation != self.reservation.id() {
+                return Err(RunError::refused(
+                    "workspace integration journal belongs to another reservation",
+                ));
+            }
+            match record.state {
+                WorkspaceIntegrationState::Attempted => {
+                    steps.insert(record.step, record.state);
+                }
+                WorkspaceIntegrationState::Completed if steps.contains_key(&record.step) => {
+                    steps.insert(record.step, record.state);
+                }
+                WorkspaceIntegrationState::Cleared if steps.contains_key(&record.step) => {
+                    steps.remove(&record.step);
+                }
+                _ => {
+                    return Err(RunError::broken(
+                        "workspace integration journal transition is inconsistent",
+                    ))
+                }
+            }
+        }
+        Ok(steps)
+    }
+
+    /// Read attempted and completed effects while retaining the exact owners.
+    pub fn integration_snapshot(
+        &self,
+        session: &Run<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>,
+        RunError,
+    > {
+        self.integration_snapshot_on(session, session.store.conn())
+    }
+
+    /// Atomically append a bounded, non-secret integration custody record.
+    /// Clearing uses the caller's fresh cleanup context and may follow expiry.
+    pub fn record_integration_step(
+        &self,
+        session: &mut Run<'_>,
+        cx: &EffectContext,
+        step: WorkspaceIntegrationStep,
+        state: WorkspaceIntegrationState,
+    ) -> Result<(), RunError> {
+        if state != WorkspaceIntegrationState::Cleared && std::time::Instant::now() >= self.deadline
+        {
+            return Err(RunError::unavailable(
+                "workspace activation deadline expired",
+            ));
+        }
+        self.verify_integration_owner(session, session.store.conn())?;
+        let owner = session.owner.clone();
+        let run_id = session.id;
+        let snapshot = self.integration_snapshot(session)?;
+        if state != WorkspaceIntegrationState::Attempted && !snapshot.contains_key(&step) {
+            return Err(RunError::refused(
+                "workspace integration step was not attempted",
+            ));
+        }
+        let spec = EffectSpec {
+            target: owner.clone(),
+            kind: WORKSPACE_INTEGRATION_KIND.into(),
+            payload: serde_json::to_value(WorkspaceIntegrationRecord {
+                reservation: self.reservation.id(),
+                step,
+                state,
+            })?,
+            settlement: Settlement::Retain,
+            required: false,
+        };
+        session
+            .store
+            .transaction_within(cx, BusyWait::Context, |txn| {
+                journal::check_run_fence(txn.conn(), run_id, &owner)?;
+                let current = self.reservation.verify_claimed_run(
+                    txn.conn(),
+                    self.run.id,
+                    &self.run.owner,
+                )?;
+                if current != self.snapshot {
+                    return Err(RunError::refused(
+                        "workspace reservation changed while parked",
+                    ));
+                }
+                if state != WorkspaceIntegrationState::Cleared
+                    && std::time::Instant::now() >= self.deadline
+                {
+                    return Err(RunError::unavailable(
+                        "workspace activation deadline expired",
+                    ));
+                }
+                let sequence = journal::insert_effect(txn, run_id, &spec)?;
+                journal::write_effect(txn, run_id, sequence, EffectState::Applied, None, None)
+            })
+    }
+
     fn verify_session(&self) -> Result<(), RunError> {
         let session = self
             .snapshot
