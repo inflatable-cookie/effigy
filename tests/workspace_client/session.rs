@@ -570,6 +570,64 @@ fn failed_accepted_write_stops_the_newly_admitted_owner() {
     assert!(result.is_err(), "accepted response write must fail");
     assert_eq!(stops, 1, "lost response left admitted owner running");
 }
+
+#[test]
+fn malformed_connection_retains_owner_without_forging_eof_stop() {
+    for attach in [false, true] {
+        let host = Host::new();
+        let (owner, session) = host.session();
+        let ledger = Rc::new(RefCell::new(Ledger::default()));
+        let runs = Rc::new(RefCell::new(vec![]));
+        expect_admission(&ledger);
+        let mut server = server(
+            &host,
+            session.session(),
+            ledger.clone(),
+            runs.clone(),
+            session_operations(),
+        );
+        let frames = if attach {
+            attached(session.session())
+        } else {
+            let mut frames = authenticated(session.session());
+            frames.push(Frame::Request(request(
+                session.session(),
+                1,
+                RequestBody::Invoke(body()),
+            )));
+            frames
+        };
+        let mut pipe = Pipe::new(&frames);
+        pipe.raw(b"{malformed");
+        let result = server.serve(
+            &mut pipe,
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        );
+        let stops = host.stops(id(10));
+        let retry = server.serve(
+            &mut Pipe::new(&authenticated(session.session())),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        );
+        settle(&host, &runs);
+        owner
+            .settle(&cleanup(&host.cx), &mut NoEffects)
+            .expect("session cleanup");
+        ledger.borrow().done();
+        host.assert_foreign();
+        assert!(result.is_err(), "malformed frame must close the connection");
+        assert_eq!(stops, 0, "malformed traffic cannot forge owner EOF");
+        assert_eq!(
+            retry.expect_err("unsettled owner fences service").code,
+            RefusalCode::Unknown
+        );
+    }
+}
 fn input() -> StreamFrame {
     StreamFrame {
         id: RequestId::new([2; 16]),
