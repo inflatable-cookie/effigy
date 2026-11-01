@@ -219,6 +219,28 @@ mounts = ["./prepared:/workspace/prepared:ro"]
     }
 }
 
+fn assert_no_durable_error_bytes(root: &std::path::Path) {
+    let secret = b"adversarial-secret-backend-diagnostic";
+    if !root.exists() {
+        return;
+    }
+    let metadata = std::fs::symlink_metadata(root).expect("private fixture metadata");
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(root).expect("private fixture state") {
+            assert_no_durable_error_bytes(&entry.expect("entry").path());
+        }
+    } else if metadata.is_file() {
+        let bytes = std::fs::read(root).expect("durable fixture bytes");
+        assert!(
+            !bytes.windows(secret.len()).any(|window| window == secret),
+            "secret-bearing error reached durable state"
+        );
+    }
+}
+
 impl Drop for BackendFixture {
     fn drop(&mut self) {
         // Only processes recorded in this private fixture's own journal are
@@ -596,6 +618,8 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
             )),
         "Unknown mutations must retain their journal markers"
     );
+    assert_no_durable_error_bytes(&fixture.project.join(".effigy"));
+    assert_no_durable_error_bytes(&fixture.home);
     let cx = super::super::effects();
     let observe = super::super::observation();
     let root = super::super::state_root(&cx, &fixture.home, &fixture.project);
@@ -676,6 +700,8 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
                 .all(|s| !s.contains("adversarial-secret-backend-diagnostic")),
             "{case}: durable error leak"
         );
+        assert_no_durable_error_bytes(&fixture.project.join(".effigy"));
+        assert_no_durable_error_bytes(&fixture.home);
         let classifications = std::fs::read_to_string(fixture.config.with_extension("failure"))
             .expect("fixed stage log");
         assert!(

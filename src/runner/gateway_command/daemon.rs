@@ -102,12 +102,32 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
 fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        OpenOptions::new()
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let refuse = || std::io::Error::other("gateway log ownership or type is unsafe");
+        let parent = path.parent().ok_or_else(refuse)?;
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(parent)?;
+        if directory.metadata()?.uid() != nix::unistd::geteuid().as_raw() {
+            return Err(refuse());
+        }
+        directory.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+        let file = OpenOptions::new()
             .create(true)
             .append(true)
             .mode(0o600)
-            .open(path)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != nix::unistd::geteuid().as_raw()
+        {
+            return Err(refuse());
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        Ok(file)
     }
     #[cfg(not(unix))]
     {
@@ -985,6 +1005,47 @@ mod pid_domain_tests {
         assert_eq!(
             server::probe_gateway_process(pid),
             server::GatewayProcessProbe::ConfirmedAbsent
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod log_permission_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    #[test]
+    fn gateway_raw_log_reopens_with_private_permissions_and_refuses_aliases() {
+        let fixture = effigy_test_support::Fixture::new("gateway-log-private").expect("fixture");
+        let directory = fixture.path().join("gateway");
+        std::fs::create_dir(&directory).expect("directory");
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755))
+            .expect("old directory mode");
+        let path = directory.join("gateway.stderr.log");
+        std::fs::write(&path, b"legacy output").expect("old log");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("old log mode");
+        drop(create_gateway_log(path.clone()).expect("private reopen"));
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&path).expect("log").permissions().mode() & 0o777,
+            0o600
+        );
+        let alias = directory.join("gateway.stdout.log");
+        symlink(&path, &alias).expect("symlink control");
+        assert!(create_gateway_log(alias).is_err());
+        let alias = directory.join("hardlink.log");
+        std::fs::hard_link(&path, &alias).expect("hardlink control");
+        assert!(create_gateway_log(alias).is_err());
+        assert_eq!(
+            std::fs::read(&path).expect("original log"),
+            b"legacy output"
         );
     }
 }
