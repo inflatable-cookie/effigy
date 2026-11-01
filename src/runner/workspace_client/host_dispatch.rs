@@ -55,6 +55,31 @@ impl std::fmt::Debug for HostDispatch {
     }
 }
 
+/// Resolve the same profile identity the managed planner will use.
+pub(in crate::runner) fn workspace_task_target(
+    root: &std::path::Path,
+    task_name: &str,
+    runtime_args: &effigy_tasks::TaskRuntimeArgs,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> Result<crate::runner::task_engine::TaskTarget, crate::runner::error::RunnerError> {
+    let target = crate::runner::task_engine::TaskTarget::for_selection(root, task_name, selection);
+    if selection.task.mode.as_deref() != Some("tui") {
+        return Ok(target);
+    }
+    let invocation = effigy_managed::parse_managed_invocation(runtime_args)?;
+    if !matches!(
+        invocation.action,
+        effigy_managed::ManagedInvocation::Run { .. }
+    ) {
+        return Ok(target);
+    }
+    Ok(
+        target.with_profile(effigy_managed::profiles::requested_profile_name(
+            &invocation.runtime_args,
+        )),
+    )
+}
+
 impl HostDispatch {
     pub(crate) fn new(host_checkout: PathBuf, root: StateRoot) -> Self {
         Self {
@@ -169,11 +194,13 @@ impl channel::Resolver for HostDispatch {
                 "this selector routes to a host built-in, not a declared task; run it on the host",
             ));
         };
-        let target = crate::runner::task_engine::TaskTarget::for_selection(
+        let target = workspace_task_target(
             &preflight.resolved.resolved_root,
-            name,
+            &preflight.selector.task_name,
+            &preflight.runtime_args_exec,
             &selection,
-        );
+        )
+        .map_err(|error| Self::refuse(error.to_string()))?;
         let checkout = self.host_checkout.canonicalize().map_err(|error| {
             Self::refuse(format!("the published checkout is unavailable: {error}"))
         })?;
@@ -689,6 +716,24 @@ mod checkout_boundary_tests {
             after.digest(),
             "a changed command must not retain the reserved resolution"
         );
+    }
+
+    #[test]
+    fn reserved_managed_identity_includes_default_and_named_profile() {
+        let fixture = tempfile::tempdir().unwrap();
+        let checkout = fixture.path().join("checkout");
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(
+            checkout.join("effigy.toml"),
+            "[tasks.build]\nmode = 'tui'\nconcurrent = [{ name = 'one', run = 'echo one' }]\n[tasks.build.profiles.admin]\nconcurrent = [{ name = 'two', run = 'echo two' }]\n",
+        ).unwrap();
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = StateRoot::effects(&cx, &checkout).unwrap();
+        let mut dispatch = HostDispatch::new(checkout, root);
+        for (args, expected) in [(vec![], "default"), (vec!["admin".into()], "admin")] {
+            let resolved = dispatch.resolve(&cx, &invoke(".", args)).unwrap();
+            assert_eq!(resolved.spec().task.profile(), Some(expected));
+        }
     }
 
     #[test]

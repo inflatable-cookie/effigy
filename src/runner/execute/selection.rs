@@ -65,11 +65,13 @@ fn validate_workspace_resolution(
     if !catalog.starts_with(&checkout) {
         return Err(refuse());
     }
-    let target = crate::runner::task_engine::TaskTarget::for_selection(
+    let target = crate::runner::workspace_client::host_dispatch::workspace_task_target(
         &preflight.resolved.resolved_root,
         &preflight.selector.task_name,
+        &preflight.runtime_args_exec,
         selection,
-    );
+    )
+    .map_err(|_| refuse())?;
     if target.shared_lock.is_some() {
         return Err(refuse());
     }

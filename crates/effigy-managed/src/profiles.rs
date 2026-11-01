@@ -107,7 +107,8 @@ pub fn available_concurrent_profiles(task: &ManifestTask) -> Vec<String> {
     available
 }
 
-fn requested_profile_name(runtime_args: &TaskRuntimeArgs) -> &str {
+/// The profile selector used by managed plan resolution.
+pub fn requested_profile_name(runtime_args: &TaskRuntimeArgs) -> &str {
     runtime_args
         .passthrough
         .first()
