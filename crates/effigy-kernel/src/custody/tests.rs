@@ -49,6 +49,83 @@ fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
         Ok(StoredProcessRecord::Discard { .. })
     ));
 }
+
+#[test]
+#[ignore = "failing-first: requires an older executable and pre-fork capability ACK"]
+fn discard_old_sentinel_refuses_before_child_exec() {
+    let old_binary =
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut spec = inv().spec().clone();
+    spec.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "workspace-proof",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: crate::outcome::Invocation::validated(
+                vec!["effigy".into(), "container".into(), "down".into()],
+                |_| true,
+            )
+            .unwrap(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(Path::new(&old_binary)).unwrap(),
+                placement: crate::supervise::Placement::Inline,
+            }),
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .expect("old sentinel accepts the ordinary run");
+    let marker = home.path().join("discard-executed");
+    let result = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "touch \"$MARKER\"".into()],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "MARKER".into(),
+                EnvValue::Plain(marker.as_os_str().to_owned()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Discard,
+            label: "workspace apply".into(),
+        },
+        &cx,
+    );
+    let refused = result.is_err();
+    drop(result);
+    let process_effect_recorded = run
+        .effects()
+        .unwrap()
+        .iter()
+        .any(|effect| effect.spec.kind == KIND);
+    let cleanup = run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    );
+    assert!(refused, "an old sentinel accepted a discard receipt");
+    assert!(
+        !process_effect_recorded,
+        "capability refusal must precede process intent"
+    );
+    assert!(
+        !marker.exists(),
+        "the child ran without a compatible sentinel"
+    );
+    assert!(cleanup.is_ok(), "cleanup failed: {cleanup:?}");
+}
 fn next() -> crate::outcome::Invocation {
     crate::outcome::Invocation::validated(vec!["recover".into()], |a| a == ["recover"]).unwrap()
 }
