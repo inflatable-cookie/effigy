@@ -379,7 +379,7 @@ pub(crate) fn observation() -> effigy_kernel::ctx::ObserveContext {
 }
 
 /// One fresh run identity for the host supervisor.
-fn fresh_run_id() -> Result<RunId, RunError> {
+pub(super) fn fresh_run_id() -> Result<RunId, RunError> {
     use std::io::Read;
     let mut bytes = [0u8; 10];
     let read = std::fs::File::open("/dev/urandom")
@@ -758,7 +758,7 @@ where
 
 /// Wait while retaining the exact owners. A persistent lost pipe is one
 /// transition, not permission to retry cleanup indefinitely.
-fn await_cleanup_recovery(
+pub(super) fn await_cleanup_recovery(
     session: &mut EngineSession,
     run: &mut Run<'_>,
     owner_loss_handled: &mut bool,

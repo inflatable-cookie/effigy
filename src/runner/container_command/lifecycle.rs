@@ -3687,21 +3687,33 @@ pub(in crate::runner) struct WorkspaceUpEffects {
     host_attempted: bool,
 }
 
-impl WorkspaceUpEffects {
-    #[expect(
-        dead_code,
-        reason = "Caller is connected after reviewed guarded cleanup API lands"
-    )]
+/// Secret values remain in this process, resolved once for both apply and
+/// runtime-file integration. Binding the observed target adds no new secrets.
+pub(in crate::runner) struct WorkspacePreparedEffects {
+    policy: EffectiveContainerPolicy,
+    secrets: ResolvedContainerSecretRuntime,
+}
+
+#[allow(dead_code)] // Connected by the pending reviewed production caller.
+impl WorkspacePreparedEffects {
     pub(in crate::runner) fn prepare(
         policy: EffectiveContainerPolicy,
-        target: effigy_kernel::workspace_session::ContainerIdentity,
     ) -> Result<Self, RunnerError> {
         let secrets =
             resolve_container_secret_runtime(&policy.repo_root, &policy, secrets_required())?;
-        Ok(Self {
+        Ok(Self { policy, secrets })
+    }
+    pub(in crate::runner) fn compose_env(&self) -> Vec<(String, OsString)> {
+        super::secret_env::compose_env(&self.secrets)
+    }
+    pub(in crate::runner) fn bind(
+        self,
+        target: effigy_kernel::workspace_session::ContainerIdentity,
+    ) -> WorkspaceUpEffects {
+        WorkspaceUpEffects {
             target,
-            policy,
-            secrets,
+            policy: self.policy,
+            secrets: self.secrets,
             binding: None,
             health: None,
             routes: Vec::new(),
@@ -3712,17 +3724,11 @@ impl WorkspaceUpEffects {
             secrets_attempted: false,
             routes_attempted: false,
             host_attempted: false,
-        })
+        }
     }
+}
 
-    #[expect(
-        dead_code,
-        reason = "Caller is connected after reviewed guarded cleanup API lands"
-    )]
-    pub(in crate::runner) fn compose_env(&self) -> Vec<(String, OsString)> {
-        super::secret_env::compose_env(&self.secrets)
-    }
-
+impl WorkspaceUpEffects {
     #[expect(
         dead_code,
         reason = "Detached production activation is connected after reviewed owner APIs land"

@@ -45,7 +45,10 @@ pub(in crate::runner) enum IntegratedFailure<'a, E> {
         cause: EnvError,
         custody: Box<ParkedPhase<'a, E>>,
     },
-    Publication(PublicationFailure),
+    Publication {
+        cause: PublicationFailure,
+        effects: Box<E>,
+    },
 }
 
 type Resumed =
@@ -222,7 +225,11 @@ pub(in crate::runner) fn run<'a, E: IntegrationEffects>(
         });
     }
     // Ownership stays on this stack; only a real selected owner leaves it.
-    let (owner, obligation) =
-        phase_b::publish_and_select(phase, bound).map_err(IntegratedFailure::Publication)?;
-    Ok((owner, obligation, effects))
+    match phase_b::publish_and_select(phase, bound) {
+        Ok((owner, obligation)) => Ok((owner, obligation, effects)),
+        Err(cause) => Err(IntegratedFailure::Publication {
+            cause,
+            effects: Box::new(effects),
+        }),
+    }
 }
