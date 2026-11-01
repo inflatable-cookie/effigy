@@ -1,497 +1,394 @@
-# 037 - Workspace Terminal Attachment Fence (design, draft)
+# 037 - Workspace Terminal Attachment Release Authority (design v4, draft)
 
-Status: **draft, pre-implementation.** Revision 3, for independent security
-re-review at the exact head that adds it. No source change is authorized until
-this revision passes review. Owner task: effigy#525. Design base: `6b72af5f6`.
-Implementation base: the independently reviewed integrated #512 head (see §14),
-not an arbitrary PR #659 head.
+Status: **docs-only design, pre-implementation, for independent review.** Owner
+task: effigy#525. Design base: `6b72af5f6`. Implementation base: the independently
+reviewed integrated #512 head (`512-int`, both-parent review), not an arbitrary
+PR #659 head. No source change is authorized until this design passes review.
 
-Scope: admitted workspace terminals (`src/runner/workspace_client/terminal.rs`)
-and every transition that invalidates an attachment's owner: explicit release,
-EOF, detach, transport loss, liveness-watch release, run closure, and
-interrupted or dead-owner settlement. Input and resize both.
+Scope: every transition that ends an admitted workspace terminal's ability to
+deliver input or geometry: explicit release, EOF, acknowledged detach, transport
+loss, liveness-watch loss, run closure (normal, stop/down, escalation), interrupted
+or dead-owner settlement, and same-handle retry. Input and resize both.
 
-## 0. Revision 3 changes (from the review at `941ceab`)
+## 0. What changed from v3, and why
 
-| Review item | Revision 3 answer |
-|---|---|
-| F released before outbox reconciliation | Reconcile happens under M while F-sh is held (§6). |
-| Pre-acquisition inode checks insufficient; intent inode retired | One global intent inode, never unlinked. Post-lock `fstat` vs `fstatat` check, bounded reopen, named refusal (§5). |
-| Gate probe Held by matching owner treated as Unknown | Matching Held is Live. Non-matching or Free holds the effect (§8). |
-| L1 inside L2 in closure | Closure reads S1 after taking the intent lock. Creation is serialized through the same intent lock, so S1 cannot grow. S2 is a revalidation inside L2, never a lock acquisition (§8). |
-| Enqueue vs release race | Enqueue is fenced: intent-shared, F-sh, row check, append under M (§6). |
-| Newer vs snapshotted resize | Reservation snapshots the size. Reconcile sets `applied` to the snapshot, so a newer size is always applied next (§6, T-RESIZE). |
-| Fork before exec may hang | Documented as a lock held until exec or exit; timeout is `Unknown`; no automatic release (§10). |
-| WAL BUSY must be induced | T-WAL-BUSY asserts the BUSY error, not only a timeout (§9). |
-| Crash after write, before reconcile | `Unknown` for the reserved bytes. No exactly-once or count claim (§10). |
-| O_NOFOLLOW checks only the last component | Every parent is traversed by a verified `O_DIRECTORY|O_NOFOLLOW` fd (§5). |
-| Supervisor: same-user replacement out of scope | Stated as a residual (§11). |
-| Supervisor: writer must be nonblocking | `O_NONBLOCK` on the PTY fd and `EAGAIN` as `WouldBlock`, plus a stalled-child test (§7). |
+Supervisor ruling (2026-11-01): replace the flock fence with **single release
+authority**. v3's per-attachment and intent flock protocol is retired as the
+primary mechanism. The reasons, verified at base:
+
+- The PTY master is created and kept by the custody owner (`custody/spawn.rs`
+  ~326-341: `pty()` returns `(master, slave)`, the parent keeps `out_read = master`).
+  The custody owner is the per-run supervisor (`supervise.rs`, owner loop
+  ~1259-1310). The pump in `terminal.rs` lives in the workspace client serving
+  process. So the write path and the release path already sit in different
+  processes. That is the root of the cross-process problem.
+- If exactly one process can write to the PTY and commit releases, no cross-process
+  effect fence is needed. Serialization becomes in-process: a stop flag and a
+  bounded wait under the outbox mutex, with no lock file, no inode checks, no
+  global intent lock and no lock order across processes.
+- Cross-process callers already have a durable request channel: the `requests`
+  table (`store.rs` ~1894), consumed by the owner loop (`supervise.rs` ~1295-1310,
+  `pending_requests` in `run/mod.rs` ~1454). So a cross-process release can be a
+  request, not a lock.
+
+Consequences: v3's intent inode, fence files, descriptor identity, fenced enqueue,
+and multi-process lock order are removed. New costs: a request action, a
+death-proof path, and a mixed-version gate (§7, §8, §12). Those are real costs and
+are not claimed to disappear.
 
 ## 1. Problem (verified at base)
 
-- The pump (`terminal.rs` `pump`, ~442-522) reads `owner_liveness` through the
-  journal, then calls `write_once` or `resize_once`. The journal read ends before
-  the effect. A release that commits between them is not seen by the effect.
-- The outbox mutex **is** held across the writer call. `write_once` (~573-596)
-  and `resize_once` (~600-616) take `shared.lock()` and call `writer.write` /
-  `writer.resize` while holding it.
-- `Outbox` derives `Debug` and holds `pending: VecDeque<u8>`. Any `{:?}` of the
-  terminal prints input bytes. §4 replaces that derive.
-- The existing `require_live_owner` (`run/workspace.rs` ~1203-1215, ~1243-1290)
-  already treats a `Gate::probe` `Held` result from the matching holder as live.
-  A live run's supervisor holds the owner gate for its lifetime. A `Held` result
-  is the normal case, not a failure.
+- The pump (`terminal.rs` `pump` ~442-522) reads the owner row, then calls
+  `write_once` or `resize_once`. The read ends before the effect. A release that
+  commits in between is not seen by the effect. This is the #485 race.
+- The outbox mutex is held across `writer.write` / `writer.resize`
+  (`write_once` ~573-596, `resize_once` ~600-616).
+- `Outbox` derives `Debug` and holds `pending: VecDeque<u8>`. A `{:?}` prints input
+  bytes.
+- Production has no `WorkspaceTerminal::open` caller: `terminal.rs:712` is in tests
+  only. Production binding is #519. The race is real in the design, and the FakePty
+  reproduction is the failing-first proof. Production reachability is not claimed.
 
-## 2. Process and path inventory
+## 2. Terms
 
-| Path | Process | Locks, in order | Journal |
+- **Owner incarnation**: the exact per-run owner process, identified by
+  `runs.owner_identity` (`ProcessIdentity`: pid, start, boot), plus the custody
+  tree recorded under that run. Identity is compared with
+  `ident::process_identity` and `ident::process_state`, never with a flock.
+- **Authority**: the owner incarnation's in-memory terminal state (outbox, stop
+  flag, writer handle) together with its committed `run_attachments` row. Only the
+  owner incarnation may perform an effect or commit a release for a live run.
+- **Owner-local path**: the transition runs inside the owner incarnation.
+- **Requested path**: a non-owner process writes a durable request. The owner
+  performs the transition and reports the outcome.
+- **Death-proven path**: a non-owner process performs the transition only after
+  proving the owner incarnation and its custody tree are dead (§6).
+- **Unknown**: any path that cannot establish one of the above. It returns a named
+  Unknown, commits nothing it cannot prove, and never forces a release.
+
+## 3. Release and closure inventory
+
+Every path that ends a terminal's authority, and where it runs at base.
+
+| # | Path (base location) | Calling process | v4 route | Proof or condition |
+|---|---|---|---|---|
+| 1 | Explicit release / EOF (`Attachment::release` → `release_attachment`, `run/workspace.rs` ~714, ~908) from `workspace_channel.rs` calls at ~2680, ~2748, ~3011 | client-serving host | owner-local if the caller is the owner incarnation; otherwise requested (`ReleaseAttachment`, §5) | owner alive: request; owner dead: §6 |
+| 2 | Acknowledged detach (`workspace_channel.rs` ~2412, ~3054 → `Release::Detach`; existing `RequestAction::Detach` ~1302) | client-serving host | requested, reusing the existing `Detach` request kind for the owner's ack | same as #1 |
+| 3 | Transport failure / replacement / retry (`workspace_channel.rs` ~2748 and ~3011 call sites) | client-serving host | same as #1 | same as #1 |
+| 4 | Liveness-watch loss (`supervise.rs` `Control::control` ~1448-1461 → `Run::release_workspace_attachment`, `run/workspace.rs` ~1440) | owner incarnation | owner-local, no request | none beyond owner identity |
+| 5 | Normal child or run closure (`run/settle.rs` ~357 → `workspace::closed`, `run/workspace.rs` ~482) | owner incarnation | owner-local | none beyond owner identity |
+| 6 | Stop / escalate / down (`RequestAction::Stop`/`Escalate`, `supervise.rs` ~940, ~944; `kernel_run.rs` ~1669; `gateway/operator.rs` ~843) | any | request (existing path). The owner then settles through #5 | owner alive: request; owner dead: #8 |
+| 7 | Settle request (`RequestAction::Settle`, `supervise.rs` ~1307) | any | owner-local when consumed | as #6 |
+| 8 | Interrupted / dead-owner settlement (`run/settle.rs` ~569 `settle_interrupted_wait`; callers `run/children.rs` ~120, `supervise.rs` ~747, `faults/driver.rs` ~428) | recovering host | death-proven path only (§6). Otherwise named Unknown | §6 proof |
+| 9 | Same-handle recovery (`release_recoverable`) | — | **not present at base** (`rg` finds no definition). Flagged: the brief names it from another source line. Not designed here | — |
+| 10 | Owner handoff / new incarnation (`resume_owner`, `run/workspace.rs` ~767; admission ~449) | new incarnation | a new incarnation may not become authority while the predecessor is alive or unproven (§6, §7) | predecessor death proof |
+| 11 | Creation / secondary attach (`attach_secondary`, `open`, `workspace.rs` ~779-900) | any host | not a release. Creation is requested or owner-local. Admission is unchanged | — |
+
+Paths #4, #5 and #7 already run in the owner incarnation. Paths #1–3 and #6 cross
+processes and need requests. Path #8 is the only death-proven one.
+
+## 4. Owner-local protocol (the only effect and commit site)
+
+Owner-local state per terminal (in the owner incarnation): `pending`, `latest`,
+`applied`, `delivered`, `stop`, `retired`, `in_flight: Option<Reservation>`,
+`quarantine: Option<Quarantine>`. All of it is under the outbox mutex M, which holds
+memory only. The writer call is never under M.
+
+**Effect.** Under M: refuse if `stop` or `retired`; check the owner row (§8 liveness
+check, which is a read in the owner's own process and needs no lock); record
+`in_flight` (input prefix or resize snapshot); copy the bytes or the size; release M.
+Call the writer (nonblocking, §10). Under M: reconcile (drain `written` from the
+front of `pending`, or set `applied` to the snapshot); clear `in_flight`; notify.
+
+**Release or closure (owner-local, serialized in the owner):**
+
+1. Under M: set `stop = true`. Enqueue and new effects are refused from now on.
+2. Wait, bounded by `OWNER_STOP_WAIT`, until `in_flight` is clear. The only effect
+   that can be in flight is one nonblocking writer call (§10). A timeout returns
+   Unknown and the release is not committed (§9).
+3. Under M: move `pending` and `latest` into `quarantine` (not discarded, not
+   delivered). Record `quarantined_input` and `quarantined_geometry` counts.
+4. Commit the journal transition (`release_row` or the close transaction) in L2.
+5. Resolve the quarantine (§9). Close the writer fd, which retires the child's
+   terminal, only after the commit is verified.
+6. Reply to the requester (if requested) with the outcome and counts (§5).
+
+Bytes in `quarantine` are never delivered. They are either discarded after a
+verified commit or restored in exact order after a verified precommit failure.
+
+**Enqueue (input and resize acceptance from the channel).** Under M: refuse if
+`stop` or `retired`; refuse if the owner row is not live (owner-local read); else
+append. Because release sets `stop` under M first, no byte is accepted after the
+stop point. A byte accepted before the stop point is in `pending` and is counted
+exactly.
+
+**Resize semantics (latest-wins, unchanged).** The reservation snapshots `latest`.
+Reconcile sets `applied` to the snapshot. A newer `latest` enqueued during the
+effect stays and is applied on the next tick. Newer-during-snapshot and
+newer-after-reconcile are both tested (§11).
+
+**Drop, retire and stop paths.** Only the owner incarnation's pump or the release
+path clears `pending`, `latest` or `quarantine`. `WorkspaceTerminal::drop` sets
+`stop` under M and joins the pump with a bounded wait. If the join times out, drop
+records Unknown for the pending counts and detaches the handle. It never clears
+state directly. Pump retirement on `Gone`, on writer `Closed`, on stop, and on panic
+all go through the same owner-local path (§4 steps 3–5).
+
+## 5. Requested protocol (cross-process release)
+
+**Request.** A new `RequestAction::ReleaseAttachment { attachment }` variant,
+written through the existing `request_bounded` path (`run/mod.rs` ~1389) with the
+run's `expected_generation`. It is stored in `requests.action` (TEXT, serialized
+JSON), so **no DDL is needed**. The `Request` JSON carries the attachment id.
+
+**Compatibility gap (verified).** `pending_requests` deserializes every pending
+row with serde (`run/mod.rs` ~1454-1460). An old owner that does not know the
+variant fails the whole pending read. A new variant must therefore be written only
+when the owner incarnation is known to understand it (§7).
+
+**Owner handling.** The owner loop (`supervise.rs` ~1295-1310) handles
+`ReleaseAttachment` by running §4 steps 1–6 for that attachment only. It marks the
+request resolved in the same commit as the attachment's release, or leaves it
+pending on Unknown (retry).
+
+**Requester result.**
+
+- If the requester's channel is connected, the owner's reply carries the outcome
+  and the exact counts from §4 step 3.
+- If not, the requester re-reads the row state, which is the durable outcome of
+  the commit. The counts are not persisted and are reported as **Unknown**. Making
+  them durable would need a result column (schema decision, §12).
+- The **cross-process discard count stays Unknown** (Supervisor ruling). The owner
+  computes exact counts for its own terminal. A non-owner process never does.
+
+**Timeouts.** A requester waits up to `REQUEST_WAIT` for the outcome, then returns
+Unknown. The request stays pending. It is not re-sent by the requester. The owner
+processes it when it can (§9, live-but-stuck).
+
+## 6. Death-proven path (dead owner only)
+
+A non-owner process may perform a release or settlement without the owner only
+when all of these hold, checked in order:
+
+1. **Exact incarnation dead.** `runs.owner_identity` is checked with
+   `ident::process_identity(pid).verified()` against the recorded identity. The
+   process must be verified absent, or verified to have a different start or boot
+   identity (pid reuse). `Active` or `Stopped` with a matching identity means
+   alive. Anything else (observation failed, identity unverified) means **Unknown**.
+   Death is never inferred from a missing row, a failed flock, or a missing pid
+   alone.
+2. **Custody tree dead.** Every custody member recorded for the run (the owner and
+   the fork chain in `custody/spawn.rs` ~436–470, and any `workspace_session_custody`
+   rows, `settle.rs` ~371) is verified dead by identity, or recorded absent. A member
+   whose identity cannot be verified means **Unknown**.
+3. **No retained master, by construction.** The PTY master is created with
+   `CLOEXEC` in the owner, never passed to the workload, and the custody fork path
+   closes every older fd before workload exec (`spawn.rs` comment "already closed
+   every older fd", ~470). The conclusion is a construction argument and needs
+   independent review and a test (T-FD-INHERIT). It is not a runtime proof that no
+   process holds the master. If review does not accept the argument, the death-proven
+   path is disabled, and every case returns Unknown.
+
+When all three hold, the death-proven path runs §4 steps 2–5 with no live owner:
+there are no in-flight effects, and the quarantine is the dead owner's memory, which
+is gone. Counts are Unknown (`OwnerProcessDead`). Settlement never fabricates a
+closed state.
+
+**Not a proof of no retained fd.** Steps 1–2 prove the processes are dead. Step 3
+argues that none of them retained the master. Nothing observes a stray holder
+directly. That residual is stated in §13.
+
+## 7. Authority handoff and mixed versions
+
+- **One authority at a time.** A new owner incarnation (recovery after death,
+  §6) is authority only after the predecessor is proven dead. A live predecessor
+  keeps authority, and the new incarnation's `resume_owner` must refuse.
+- **Mixed-version gate.** A pre-v4 host binary calls `Attachment::release` directly
+  from `workspace_channel.rs`, bypassing the owner. A v4 owner cannot stop that call
+  in-process. Without a gate, a v4 owner and a pre-v4 host can both commit releases
+  for the same run. The gate must be durable and checked before a v4 owner starts
+  effects and before a pre-v4 host can attach. The mechanism needs a schema field
+  (for example, `runs.owner_protocol`) or a workspace channel protocol version
+  check. **This is a decision (§12), not solved here.**
+- **Pre-existing rows.** Rows and runs created before v4 have no protocol marker.
+  They are treated as pre-v4: a pre-v4 owner or host may still release them
+  directly. Recovery for these rows goes through §6 only, and only after the gate
+  in §12 says they cannot have a live pre-v4 writer.
+- **Serde gap.** An old owner that cannot parse `ReleaseAttachment` must be
+  unreachable for requests. The same gate covers this.
+
+## 8. Liveness and the observation boundary
+
+- `Observe` contexts stay read-only. The owner reads its own row with its existing
+  context. A non-owner reads the row only to decide between §5 and §6.
+- Owner-local liveness under the outbox mutex or a single owner thread is:
+  attached row exact (`attached_observed`), `require_live_owner` `Ok`. A matching
+  `Gate::probe` `Held` is live. Any other result, including a `SQLITE_BUSY` read
+  after `READ_BUSY_WAIT`, is Unknown, and the effect holds. `Gone` (row not
+  attached) is the only retirement trigger.
+- No `FenceLease`, no flock and no descriptor identity exist in v4. The owner's
+  authority is its in-memory state plus its committed row.
+
+## 9. Failure, ordering and crash
+
+| Point | Owner-local or requested | Result | Counts |
 |---|---|---|---|
-| Effect (`write_once`, `resize_once`) | terminal owner host | I-sh → F-sh (I released) → journal read (WAL) → writer call → reconcile under M → F-sh release | read; no write |
-| Enqueue (`WorkspaceTerminal` input or resize acceptance) | any host holding the terminal | I-sh → F-sh → row check → append under M → release | read |
-| Explicit release / EOF / detach / transport / retry (`Attachment::release`) | any host holding the handle | I-ex → F-ex → M (discard count) → L2 `release_row` → release | write |
-| Liveness-watch release (`supervise.rs` → `Run::release_workspace_attachment`) | supervisor | L0 (Run guard) → I-ex → F-ex → M → L2 → release | write |
-| Run closure (`settle.rs` → `workspace::closed`) | settling host | L0 → I-ex → S1 read → F-ex (sorted) → M → L2 (revalidate S2 == S1, then close) → unlink F → release | write |
-| Interrupted / dead-owner settlement (`settle_interrupted_wait`) | recovering host | L0 (recovered gate) → same as closure | write |
-| Attachment creation (`open` Owner or CreateSecondary; owner admission ~449) | any host | I-sh → `O_CREAT|O_EXCL` of F (pre-txn) → L2 insert (phase, session, count re-checked) → release | write |
+| `stop` set, in-flight effect running | either | release waits up to `OWNER_STOP_WAIT` for one nonblocking call | exact after reconcile |
+| `OWNER_STOP_WAIT` expires | either | release not committed; Unknown; request stays pending | not reported |
+| Precommit failure (error before COMMIT is issued) | either | quarantine restored in exact order; row still attached; `stop` cleared | none discarded |
+| Ambiguous commit (COMMIT error or unknown) | either | re-read the row under the same owner. Released or deleted: committed, discard exact. Still attached: restore. Re-read fails: **Unknown, writer retired (fail closed), quarantine kept unresolved, not delivered** | exact only when verified |
+| Owner crash after COMMIT, before ack | requested | row state is the outcome; requester re-reads; counts Unknown | Unknown |
+| Owner crash after writer call, before reconcile | either | reserved bytes Unknown; no exactly-once claim | Unknown for reserved |
+| Owner crash during quarantine, before commit | either | row still attached; next owner (after §6) or same owner resumes; quarantine is gone with the process | Unknown |
+| Requester crash during request | requested | request remains; owner processes it; no requester state is needed | — |
+| Owner live but stuck (not servicing) | requested | requester times out Unknown; no commit; no forced release; §5 timeout | not reported |
+| Owner stopped (SIGSTOP) then resumed | requested | owner processes the pending request once; no duplicate stop; idempotent on a released row | exact |
+| Duplicate request | requested | idempotent: second sees released row, `Ok`, no second stop | — |
+| Close and release both requested | either | serialized in the owner; second is idempotent | exact for first |
 
-Notation: L0 = Run owner gate (existing `Gate`). I = the single state-root
-intent inode. F = per-attachment fence inode. M = terminal outbox mutex
-(in-process). L2 = SQLite writer transaction (`BEGIN IMMEDIATE`).
+Idempotence: a request or release for a row already released or deleted returns the
+existing refusal or `Ok`, never a second stop and never a false Closed.
 
-Only two statements write `run_attachments` (`workspace.rs` `closed`'s DELETE
-and `release_row`'s UPDATE); creation inserts at `workspace.rs` ~879 and the owner
-admission at ~449. Every invalidator therefore reaches the fence through
-`run/workspace.rs`. `workspace_channel.rs` call sites keep calling
-`Attachment::release` unchanged.
+## 10. Writer contract
 
-## 3. Lock order (single total order)
+- The writer is owned by the owner incarnation. The PTY master fd is `CLOEXEC`.
+- `write` and `resize` must return without waiting. `EAGAIN` / `EWOULDBLOCK` and
+  `Ok(0)` map to `WouldBlock`.
+- **Not proven.** `O_NONBLOCK` on the data fd does not prove that the resize ioctl
+  and every `TerminalWriter` path are bounded. The production claim needs #519's
+  actual proof: the ioctl path, plus a stalled-child test on the real master.
+- The stalled-child test (T-STALLED) checks that a writer returns `WouldBlock`
+  promptly and that the next owner-local operation still runs. It checks that the
+  owner does not block on the writer. A stalled child with an accepted-but-unread
+  buffer does not hold the owner, because `WouldBlock` releases the reservation
+  immediately. The invalidator is not blocked by a stalled child in v4, because it
+  is the owner itself.
 
-**L0 → I → F (sorted by attachment id) → L2.** M is taken only after I or F, never
-while holding L2, and never while waiting on another lock.
+## 11. Tests (deterministic, named)
 
-Rules:
+- **T-REPRO-INPUT, T-REPRO-RESIZE (failing-first, pre-fix).** The two existing
+  FakePty controls on `e28838a36` (nextest IDs `5a08e98f-64f4-4422-b8f9-cd4acc508a83`
+  and `4bb4f9af-2cf4-43f8-bba3-90406e0cfba3`, both exit 100). Re-run on base
+  `6b72af5f6` and on the fixed head, both must be preserved.
+- **T-STOP-BEFORE-EFFECT.** Release commits after `stop` and before the next
+  reservation: zero old-owner effects, typed refusal.
+- **T-STOP-DURING-EFFECT.** Release waits on an in-flight reservation; the effect
+  finishes before the commit; no later effect.
+- **T-QUARANTINE-PRECOMMIT.** Fault before COMMIT: restore in exact order, the row
+  stays attached.
+- **T-QUARANTINE-AMBIGUOUS.** Fault after COMMIT before return: re-read shows
+  released, discard exact. Fault in re-read: Unknown, writer retired, no delivery.
+- **T-RESIZE-NEWER.** Newer resize during a snapshotted old resize, and newer after
+  reconcile: newest applied, never older after newer.
+- **T-ENQUEUE-RACE.** Enqueue after stop refused. Enqueue before stop counted.
+- **T-DROP-PATHS.** Idle drop, drop during in-flight, drop with a stalled writer
+  (join times out, Unknown), drop racing release. Each path clears state only in the
+  owner.
+- **T-REQUEST.** Request written, consumed once, idempotent duplicate, stuck owner
+  (SIGSTOP) → requester Unknown, resume (SIGCONT) → processed once.
+- **T-DEATH-EXACT.** Owner process killed (SIGKILL) at each death point in §9.
+  Death-proven path runs only with identity proof. Counts Unknown.
+- **T-PID-REUSE.** Recorded pid reused with a different start identity: dead
+  verified, path allowed. Same identity with `Stopped`: alive, path refused.
+- **T-IDENTITY-UNKNOWN.** Observation fails: Unknown, no release.
+- **T-CUSTODY-TREE.** Dead owner with a live recorded custody member: refuse. Member
+  identity unverifiable: refuse.
+- **T-FD-INHERIT.** Owner spawns a workload with the master present: the workload
+  does not see the master fd (`CLOEXEC`, close-before-exec).
+- **T-MIXED-VERSION.** Fixture: pre-v4 row and pre-v4 host. The gate refuses or
+  routes them through §6 only. The v4 owner does not write an unknown request
+  variant to a pre-v4 owner.
+- **T-PARTIAL-FAILURE.** Each invalidator path (#1–#8) has its own test. No path
+  covers another.
+- All process-level tests use recorded PIDs and clean up by recorded PID. No pattern
+  kills.
 
-1. Locks are taken only in the order above. No thread waits on an earlier lock
-   while holding a later one.
-2. No thread waits on I, F or L0 while holding L2. No thread waits on I or F while
-   holding M.
-3. No thread holds F on attachment A and requests F on A again. Per-thread
-   registry refuses reentry with `RunError::broken`.
-4. Every wait is bounded. Shared acquisitions are `LOCK_NB` polls with a deadline.
-   Exclusive waits are bounded by `FENCE_WAIT`.
-5. No journal transaction spans PTY or lock-file I/O (052 §8.11).
-6. No lock conversion (shared ↔ exclusive). Release and re-acquire instead.
+## 12. Decisions needed (ruling required before code)
 
-**Why it is acyclic.**
+1. **Mixed-version gate.** Which mechanism: `runs.owner_protocol` schema field, or a
+   workspace channel protocol version check, or both. Schema consequence and
+   migration for existing rows.
+2. **Requester count.** Keep Unknown for durable-only requests (current proposal),
+   or add a result column (schema).
+3. **Owner placement.** #519 must place the outbox and pump in the custody owner
+   incarnation, the process that holds the master. Otherwise input and release
+   cross processes without a single authority. Confirm this, because it moves the
+   pump out of the workspace client serving process.
+4. **Death-proof construction (§6 step 3).** Accept the construction argument plus
+   T-FD-INHERIT, or require another mechanism. If not accepted, the death-proven
+   path is disabled and dead-owner cases stay Unknown.
+5. **`release_recoverable`.** Not present at base. Confirm which source line the
+   brief means before designing it.
 
-- I is held exclusively only by invalidators and closure, and each takes it
-  before any F. Effects, enqueues and creators take I shared, briefly, and never
-  wait for an F or L0 while holding it in a way that can cycle: an effect holds
-  I-sh only while it opens and locks its F (§5), and F-ex can only be held by a
-  thread that already holds I-ex. So I-sh and F-ex never coexist.
-- Therefore an effect's F-sh acquisition does not wait on an invalidator. It can
-  wait only on a holder that does not exist while I-sh is held.
-- Effects hold F-sh during the journal read and the writer call. Their waits
-  inside that window are bounded: `READ_BUSY_WAIT` (250 ms, `store.rs:50`) and the
-  nonblocking writer (§7).
-- Invalidators hold I-ex and then wait for F-ex. Existing F-sh holders finish their
-  one bounded effect and release, so F-ex waits are bounded by effect duration.
-- L2 holders wait on nothing except SQLite (`BusyWait`). Creators hold I-sh while
-  they wait on L2, which is allowed (I before L2). Closure never takes a lock inside
-  L2.
-- `Gate::probe` is `LOCK_SH|LOCK_NB`, momentary, and never waits.
+## 13. Residual and uncovered
 
-**Residual waits, all bounded.**
+1. **No runtime proof that no process holds the master.** §6 step 3 is a
+   construction argument.
+2. **Same-user hostile processes** are out of scope (Supervisor ruling).
+3. **Pre-v4 rows and hosts** are not covered until the gate in §12 lands.
+4. **#519 writer proof** is not supplied by this design.
+5. **Live-but-stuck owner** blocks release until it recovers or dies. Unknown is
+   the outcome, not a forced release.
+6. **Counts are not persisted** (§5), so a restart cannot recover them.
+7. **Admission and queue races** in `open` and admission (~449) are not re-audited
+   here. The owner handoff in §7 must be checked against the admission
+   transaction before code.
 
-| Wait | Bound | Failure result |
+## 14. Effort: v3 flock fence against v4 single authority
+
+| Dimension | v3 (flock fence) | v4 (single authority) |
 |---|---|---|
-| Effect or enqueue I-sh (`LOCK_NB` poll) | 50 ms total | hold, no effect, retry next tick |
-| Effect or enqueue F-sh | 50 ms total | hold, no effect |
-| Effect journal read | `READ_BUSY_WAIT` = 250 ms | `Unknown`, hold |
-| Effect writer call | nonblocking, §7 | `WouldBlock` / `Ok(0)` |
-| Invalidator I-ex / F-ex | `FENCE_WAIT` = 2 s | refused as `Unknown`, nothing committed |
-| Invalidator L2 | existing `BusyWait` budget | `Unknown`, rolled back |
-| Creation L2 | existing `BusyWait` budget | refused; orphan F remains (§10) |
+| Cross-process locks | per-attachment F, global I, order L0→I→F→L2 | none on the normal path |
+| File state | fence and intent inodes, traversal, reopen | none |
+| Descriptor and inode identity | required, residual for accidental replacement | not needed |
+| Death detection | flock-based, rejected by Supervisor | identity-based (§6) |
+| Request channel | not needed | new `ReleaseAttachment` action, owner loop change |
+| Death-proof path | not designed | required (§6), depends on custody records |
+| Mixed-version | not designed | gate required (§7, §12) |
+| Schema | none (v3) | none for the action; gate may need a field |
+| Overlap with #512 A | `run/workspace.rs`, `settle.rs`, `supervise.rs` | same, plus `custody/spawn.rs` (fd closure) and `custody/anchor.rs` (records), and `workspace_channel.rs` if requests come from the channel |
+| Pump placement | serving process | owner incarnation (§12, decision 3) |
+| Uncovered paths | several, flagged in v3 | §3 table; #9 not present at base |
 
-`FENCE_WAIT` must exceed one effect's hold time (read budget plus writer call).
+Net: v4 removes the fence machinery, but it moves the pump and adds a request path,
+a death proof and a compatibility gate. The total is not clearly smaller, and the
+largest new risk is the owner-placement change (decision 3).
 
-## 4. Pump and outbox (no lock-free writes, no shared I/O under M)
+## 15. File ownership and base (v4)
 
-The pump and the connection share the outbox. M protects memory only. The writer
-call runs outside M, under F-sh.
-
-Typed reservation, taken under M under F-sh:
-
-- `in_flight: Option<Reservation>` with `{ input_len: usize, resize: Option<TerminalSize> }`.
-  `input_len` is the length of the front of `pending` the effect may write, at
-  most `MAX_CHUNK`. `resize` is the snapshot of `latest` the effect may apply.
-- At most one reservation exists per terminal. The reservation is cleared under M
-  when it is reconciled.
-
-Effect sequence (the protocol in §6 wraps it):
-
-1. Under M, under F-sh: if `stop` or `retired`, refuse. Compute `wants_write` and
-   `wants_resize`. For the chosen kind, record the reservation and copy the bytes
-   or size. Release M.
-2. Call the writer (no M held, F-sh held).
-3. Under M, still under F-sh: reconcile.
-   - Input: drain exactly `written` bytes from the **front** of `pending`. The
-     front is the reserved prefix. Only the pump drains, and only under F-sh or as
-     the owning pump's retire, so nothing else can change the prefix. Bytes
-     appended by enqueue sit behind the prefix and are untouched. `delivered +=
-     written`.
-   - Resize: on `Ok`, set `applied = snapshot`. A newer `latest` set by enqueue
-     during the effect stays, and the next tick applies it. `applied` never
-     becomes a size newer than the one actually applied.
-   - Clear `in_flight`.
-4. Release M, then F-sh.
-
-Consequences:
-
-- Partial write (`Ok(k)`, `k < n`): `k` bytes drained, the rest stays queued.
-- `WouldBlock` / `Ok(0)`: nothing drained, reservation cleared, pump idles.
-- Retire during an effect: retire runs only on the pump thread or under F-ex, so
-  it cannot run during an effect. Retire clears what remains after reconcile.
-- A panic between step 2 and step 3 leaves `in_flight` set. The pump guard's
-  `Drop` marks the terminal retired, clears `pending`, and reports the reserved
-  bytes as `Unknown` (§7). Lock release is by unwind.
-- The `Outbox` manual `Debug` prints counts only.
-
-## 5. Fence files and descriptor identity
-
-**Layout (under the pinned state root).**
-
-- `workspace-fence/intent.lock`: **one** intent inode per state root. Created once
-  by owner-authorized setup. **Never unlinked, never replaced.**
-- `workspace-fence/<run-id>/<attachment-id>.fence`: F, one per attachment.
-  Directory names and file names are fixed-format, length-bounded ids. Nothing
-  else is written there.
-
-**Traversal.** The state root is opened once as a directory fd from the pinned
-`StateRoot`. Each component is opened with `openat(parent_fd, name,
-O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)`, and each directory is checked with `fstat`:
-directory, owner = euid, mode with no group or other write. The final file is
-opened with `O_NOFOLLOW|O_CLOEXEC`. Parents are never followed by path. If the
-existing `StateRoot` exposes only a path, the implementation first adds a verified
-directory handle. That is a stated dependency, not a silent change.
-
-**Open-lock-verify (every acquisition of I or F, shared or exclusive).**
-
-1. `fd = openat(parent_fd, name, O_RDWR|O_NOFOLLOW|O_CLOEXEC)`, no `O_CREAT`.
-2. `flock(fd, LOCK_SH|LOCK_NB)` or `LOCK_EX|LOCK_NB`, polled to the deadline.
-3. `fstat(fd)`: regular file, `st_nlink == 1`, owner = euid, mode `0600`, size 0.
-4. `fstatat(parent_fd, name, AT_SYMLINK_NOFOLLOW)`: `(dev, ino)` equals the fd's.
-5. On a mismatch at step 3 or 4: close the fd, which releases the lock, and reopen.
-   At most 3 attempts. After the third, refuse with `FenceReplaced` and no effect.
-6. Only after step 4 holds is the lock treated as held. The check is repeated
-   after the lock is taken, not only before.
-
-The fd is never duplicated (`dup`, `try_clone` and fd passing are not used). Each
-`open` creates a fresh open file description. Within one process, two `open`s of
-the same file conflict, which is why rule 3 forbids reentry.
-
-**Effect protocol (per effect and per enqueue).**
-
-1. Take I-sh (open-lock-verify on `intent.lock`).
-2. Open-lock-verify F-sh on `<attachment-id>.fence`. A missing F is refused,
-   never created.
-3. Release I-sh.
-4. Under F-sh: the owner read (§8). Refuse or hold on any mismatch.
-5. Reservation and writer call, reconcile (§4).
-6. Close F. The kernel releases the lock.
-
-**Creation.** Take I-sh. Create the run directory if absent (`mkdirat`, no unlink
-ever). `openat(..., O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC)` with mode `0600`, then
-`fsync` on the directory. Then the L2 insert, which re-checks phase, session and
-count inside its own transaction. Release I-sh. Attachment ids are fresh (owner
-ids are derived from the run and are created once at admission, and a closed run
-cannot be admitted again). `O_EXCL` refuses any existing file, so an id is never
-recreated. A failed insert leaves an orphan F, which is benign and never used.
-
-**Retirement.** F is unlinked only by closure, after the L2 commit that deletes its
-row, under I-ex and F-ex, and before both are released (§8). Explicit release never
-unlinks, because the row still exists in `released` state. No path ever calls
-`O_CREAT` for an existing id. A waiter that opened F before the unlink must hold
-I-sh, which is impossible while closure holds I-ex. A waiter that opens afterwards
-gets `ENOENT` and refuses, and never recreates F.
-
-**Filesystem check.** The state root must be on a local filesystem: APFS or HFS+
-on macOS, and ext2/3/4, btrfs, xfs or tmpfs on Linux, checked with `fstatfs`.
-Anything else is refused.
-
-## 6. Authority, enqueue and the lease
-
-- `Observe` contexts stay read-only. The pump keeps its `ObserveContext` for
-  reads.
-- `WorkspaceTerminal::open` takes an `EffectContext` and mints a `FenceLease`
-  from it. The lease holds a bounded child effect context (`HostAuthority`
-  required) and the attachment identity tuple. No constructor takes an
-  `ObserveContext`.
-- Lease acquisition must succeed for `open`. Otherwise `open` returns
-  `TerminalRefusal::Unavailable`. A failed or unknown acquisition never authorizes
-  an effect, release, forced unlock or settlement.
-- Enqueue is fenced (§5 protocol steps 1-4, then append under M). Enqueue waits
-  for no invalidator, since an invalidator cannot hold F-ex while I-sh is held.
-  An enqueue that finds the row gone or the owner not live is refused, so no
-  byte is accepted after release commits.
-- Panic in the writer or the pump: unwinding drops the lease and the fds, and the
-  kernel releases the locks. The outbox mutex is poison-tolerant (existing).
-
-## 7. Writer contract and nonblocking I/O
-
-- The PTY fd is set `O_NONBLOCK` by the production writer (#519). `write` and
-  `resize` map `EAGAIN` / `EWOULDBLOCK` to `WouldBlock`. Any other error ends the
-  writer.
-- The `TerminalWriter` contract: `write` and `resize` never block. A writer that
-  cannot honour this is not admitted to the pump.
-- **Stalled-child test (T-STALLED).** A real child (or a pipe with a full buffer)
-  that does not read. The writer returns `WouldBlock` promptly. The pump holds
-  F-sh only for the bounded effect. An invalidator's `FENCE_WAIT` expires with
-  `Unknown`, and nothing commits.
-- The fake writer in tests asserts the contract. A writer that would block returns
-  an error, not a wait.
-- This design does not prove the production PTY binding. That is #519.
-
-**Fork and exec.** `O_CLOEXEC` closes the fence fds at `exec`. In the window
-between `fork` and `exec`, the child holds a copy of the fd, and so the lock. A
-child that never execs keeps the lock until it exits. Spawn goes through the
-existing `Command` path, which execs immediately. Test T-CLOEXEC covers the exec
-path. The pre-exec hang is handled in §10.
-
-**Platform semantics.** `flock(2)` locks belong to the open file description on
-both macOS and Linux. Both support `LOCK_NB`. Neither gives fairness and neither
-converts atomically, so the protocol never converts. `fcntl` record locks are per
-process and are not used.
-
-## 8. Liveness, closure and invalidation
-
-**Liveness (effect and enqueue, under F-sh).**
-
-- `attached == false` (exact row, released or absent): `Gone`. The pump retires.
-- `require_live_owner` `Ok` (matching `Gate::probe` `Held` plus live process):
-  `Live`. The effect may proceed.
-- Any other `require_live_owner` result, including `Free`, a non-matching holder,
-  or an observation error: `Unknown`. The effect holds without writing.
-- A journal `SQLITE_BUSY` after `READ_BUSY_WAIT`: `Unknown`, hold.
-
-**Explicit release** (`Attachment::release`). The `mutations_only` check runs
-first. Then I-ex (bounded), then F-ex (bounded). Then the M discard count (§9),
-then L2 `release_row`, then release F, then I. A missing or already released row
-returns the existing refusal or idempotent `Ok`, and still holds F while it checks,
-so no effect is in flight. An ambiguous commit (SQLite returns an error after the
-commit may have landed) returns `Unknown`. The caller re-reads. Nothing is treated
-as released, and no effect is authorized.
-
-**Secondary release.** Only the secondary's own F is taken. The owner's F and row
-are untouched. A secondary release never stops the run.
-
-**Liveness-watch release** (`supervise.rs` → `release_workspace_attachment`). Runs
-under L0. Takes I-ex, F-ex, the discard count, L2 `release_row`, then releases.
-A timeout returns an error, the supervisor keeps the watch, and it retries.
-
-**Run closure and settlement** (`settle.rs` ~357 → `workspace::closed`).
-
-1. Under L0, take I-ex (bounded). No creator can hold I-sh now, so the set cannot
-   grow while I-ex is held.
-2. Read S1 = the rows for the run: `(attachment id, lifetime, session,
-   generation)`.
-3. Take F-ex for every member of S1, in attachment-id order, each bounded.
-4. Take the discard counts (§9) for every member, under M.
-5. Open L2. Read S2. If S2 ≠ S1, the state is inconsistent. Roll back and return
-   `Unknown` (incomplete). Do not retry inside L2, and never acquire a lock inside
-   L2. The run stays open for the next settlement.
-6. Commit the existing close transaction (`phase closed`, `DELETE`, outcome).
-7. Unlink each F for S1 (I-ex and F-ex still held). A failed unlink is an orphan
-   and does not change the commit.
-8. Release all F-ex, then I-ex.
-
-The close transaction at `settle.rs` ~357 is the transaction that closes the run.
-The locks are taken immediately before it and released after the commit, with no
-early return in between. Its existing `workspace_session_custody` deletion is in
-the same commit.
-
-**Owner already closing.** A second settlement waits on L0. A release waiting on
-I-ex sees the row gone after the closure commits, and returns idempotent `Ok`. No
-duplicate stop.
-
-**Interrupted / dead-owner settlement** (`settle_interrupted_wait`). Same as
-closure, under the recovered gate. The dead owner's process is gone, so its F has
-no holder. The discard count is `Unknown(OwnerProcessDead)` unless the owner is
-alive. Settlement never fabricates a closed state.
-
-**Process death.**
-
-| Death point | Kernel releases | Journal | Result |
-|---|---|---|---|
-| Effect holding F-sh, before write | F-sh | unchanged | owner live; next effect re-reads |
-| Effect after write, before reconcile | F-sh | unchanged | reserved bytes `Unknown`; no exactly-once claim |
-| Invalidator holding I-ex/F-ex, before L2 | both | unchanged | row still attached; retry |
-| Invalidator after L2 commit, before unlink | both | committed | transition committed; orphan F, benign |
-| Closure during L2 | both | rolled back by SQLite | no change; retry |
-
-Kernel release of a lock never grants authority. Every effect re-reads the row
-under F-sh, and every invalidator commits through L2.
-
-## 9. Discard accounting
-
-The queued bytes live in the pump's outbox. A fence in another process can stop
-new effects, but it cannot read or discard them.
-
-- **Same process (exact).** The terminal registry maps `(run, attachment)` to a
-  weak reference to the terminal's shared state. An invalidator in the owner's
-  process takes M under F-ex and records:
-  - `input_bytes = pending.len()` and `geometry_pending = latest != applied`, exact,
-    when no reservation is set;
-  - if a reservation is set (only after a panic, since F-ex excludes a live
-    effect), the reserved bytes are `Unknown` and the rest is exact.
-- **Other live process.** `Unknown(OwnerInAnotherProcess)`. The transition still
-  commits. The owner's own retire discards the bytes.
-- **Owner process dead.** `Unknown(OwnerProcessDead)`, from failed lock or kernel
-  evidence, never from a guess.
-
-The count is returned as a typed `Discard` value. It is not persisted, which avoids
-a journal change. No bytes appear in output, logs or the journal. Debug output
-shows counts only.
-
-**Cross-process discard count is `Unknown` (ruled).** Options (a) IPC and (b) a
-durable pending record are not pursued without a separate ruling.
-
-## 10. Failure, crash and limitation details
-
-- **Fork before exec hangs.** A child stuck between `fork` and `exec` keeps a copy
-  of the fd, so the lock persists. Invalidators hit `FENCE_WAIT` and return
-  `Unknown(LockHeld)`. Nothing is released automatically, and no forced unlock
-  exists. Recovery is an operator action on the named process, with exact-PID
-  controls only. Holders never fork outside the exec path.
-- **Crash after a PTY write, before reconcile.** The reserved bytes are `Unknown`.
-  Nothing in this design claims exactly-once delivery or an exact count for them.
-- **Orphan F after crash or failed insert.** Benign. The id is never reused, and
-  closure does not require the file's absence. Orphans are reclaimed by no path in
-  this revision. Sweeping them would need its own ruling.
-- **Stale identity.** An effect whose F is missing refuses. An effect whose F's
-  identity changed (`FenceReplaced`) refuses after three bounded attempts.
-- **Accidental replacement during an active holder.** The post-lock check narrows
-  the window, but a rename of F while a holder keeps its fd is undetected until the
-  next acquisition. Residual, stated in §11.
-- **WAL contention.** A WAL reader does not normally wait on a writer. The bound is
-  the 250 ms busy timeout. T-WAL-BUSY must observe the `SQLITE_BUSY` error on the
-  effect's read. If no mechanism can induce BUSY in the test database, the claim
-  is limited to the timeout path, and the test says so.
-
-## 11. Residual and out of scope
-
-1. **Same-user hostile replacement is out of scope (Supervisor ruling).** A
-   same-user process that renames or replaces files under the state root can
-   replace F or the intent inode. Detection covers accidental replacement at
-   acquisition time and at the post-lock check. It is not a security boundary.
-2. **Accidental replacement during an active holder.** Detected at the next
-   acquisition, not while the holder keeps its old fd. Stated, not hidden.
-3. **Cross-process discard count is `Unknown`** (ruled).
-4. **Writer contract** is assumed of #519. This design does not prove the
-   production binding.
-5. **Fork-before-exec hang** (§10). A lock can outlive its owner until exec or exit.
-6. **Discard counts are not persisted.** A restart cannot recover them.
-7. **Orphan fence files** are not swept by this revision.
-
-No claim of live PTY, TLS, native Linux or reconnect proof is made from fake tests.
-
-## 12. Test plan (targeted, named)
-
-No validation runs until implementation. Each invalidator path has its own test.
-No single path stands in for another.
-
-- **T-REPRO (pre-fix, failing-first).** Reproduce the input and resize races on
-  base `6b72af5f6` with a deterministic barrier (pump paused after the owner read,
-  EOF committed, pump resumed). Record the nextest IDs.
-- **T-ORDER-A.** Release or close commits before the pump's F-sh. Zero old-owner
-  effects; typed refusal.
-- **T-ORDER-B.** Pump holds F-sh for one effect while release waits. The effect
-  completes before the invalidating commit. No later effect. Typed result.
-- **T-RECONCILE.** An invalidator tries F-ex while an effect is between writer call
-  and reconcile. It blocks until reconcile. Count is exact. Covers partial write,
-  `WouldBlock`, `Ok(0)`, and resize.
-- **T-ENQUEUE.** Enqueue races release. Enqueue after release commits is refused.
-  Enqueue during an effect appends behind the reserved prefix. Bytes untouched.
-- **T-RESIZE.** Newer resize enqueued during a snapshotted old resize: next tick
-  applies the newer size, never the old one after it. Newer enqueued after reconcile:
-  applied on the next tick.
-- **T-CONCURRENT-CREATE.** Creator waits on I-sh while closure holds I-ex. Creator
-  after close is refused. Creator before close is in S1.
-- **T-OWNER-GATE.** Matching `Held` is live and effects proceed. Free or non-matching
-  holds without writing.
-- **T-WAL-BUSY.** Asserts `SQLITE_BUSY` on the effect read, and that the effect holds
-  within 250 ms. Invalidator times out at `FENCE_WAIT`.
-- **T-PATHS.** Explicit EOF, acknowledged detach, liveness loss, normal closure,
-  interrupted/dead-owner recovery, retry after ambiguous commit. Input and resize
-  each. A foreign terminal's bytes and geometry untouched.
-- **T-ISOLATION.** Owner vs secondary. Wrong root, session, run or generation.
-- **T-LOCKFILE.** Replaced inode, hard link (`nlink`), symlink (`O_NOFOLLOW`), wrong
-  owner, wrong mode, missing file, non-local filesystem. Each refuses without effect.
-- **T-PARENT.** Intermediate replacement: rename the run directory and substitute a
-  symlink or a different directory. Root substitution. Each refuses.
-- **T-REOPEN.** Replacement between open and `flock`, and between `flock` and the
-  post-lock check. Bounded reopen, then `FenceReplaced`.
-- **T-CLOEXEC.** Spawn a child while F-ex is held. Drop the holder. A probe acquires
-  F-ex nonblocking.
-- **T-STALLED.** Stalled child; writer returns `WouldBlock`; invalidator times out
-  with `Unknown`; nothing commits.
-- **T-WRITER-PREF.** While I-ex is held, a new effect fails at I-sh. Existing F-sh
-  holder completes first.
-- **T-SEPARATE-PROCESS.** A real child holds F-sh; the parent invalidates. SIGKILL
-  the holder. The lock is released, no stale authority is granted, and the row is
-  unchanged. Repeat with F-ex. Clean up by recorded PID.
-- **T-DISCARD.** Queued input plus coalesced geometry. Same-process count exact.
-  Cross-process count `Unknown`. No payload bytes in output, logs or journal.
-- **T-PANIC.** Writer panic under F-sh. Lock released by unwind. Reserved bytes
-  `Unknown`.
-
-## 13. File ownership and sequence
-
-**#525 owns (implementation phase):**
+**#525 owns:**
 
 | File | Change |
 |---|---|
-| `src/runner/workspace_client/terminal.rs` | pump restructure, reservation, fence lease, enqueue fence, manual `Debug` for `Outbox` |
-| `src/runner/workspace_client/tests.rs` | FakePty barriers, `T-*` pump tests |
-| `crates/effigy-kernel/src/run/workspace.rs` | release, liveness release, creation, owner admission (~449) |
-| `crates/effigy-kernel/src/run/workspace/tests.rs` | `T-PATHS`, `T-ISOLATION`, `T-LOCKFILE`, `T-PARENT`, `T-REOPEN` |
-| `crates/effigy-kernel/src/run/workspace_fence.rs` (new) | intent inode, fence inodes, traversal, `fstatfs` checks |
-| `crates/effigy-kernel/tests/workspace_fence_holder.rs` (new) | separate-process holder for `T-SEPARATE-PROCESS`, `T-CLOEXEC`, `T-STALLED` |
-| `docs/knowledge/contracts/052-runtime-kernel-contract.md` | §8.11 guarantee, lock ownership, limitations |
+| `src/runner/workspace_client/terminal.rs` | owner-side pump, stop/quarantine/reconcile, drop path, enqueue check |
+| `src/runner/workspace_client/tests.rs` | FakePty barriers, T-REPRO, T-STOP, T-QUARANTINE, T-RESIZE, T-ENQUEUE, T-DROP |
+| `crates/effigy-kernel/src/run/workspace.rs` | owner-local release path; request routing in `Attachment::release`; §6 precondition |
+| `crates/effigy-kernel/src/run/workspace/tests.rs` | T-REQUEST, T-DEATH-EXACT (non-process parts), T-PID-REUSE, T-IDENTITY-UNKNOWN |
+| `crates/effigy-kernel/src/run/mod.rs` | `RequestAction::ReleaseAttachment`, serde compatibility test |
+| `crates/effigy-kernel/src/run/settle.rs` | close transaction call site only, owner-local ordering |
+| `crates/effigy-kernel/tests/` new fixture | process-level T-DEATH-EXACT, T-STUCK, T-FD-INHERIT, T-MIXED-VERSION |
+| `docs/knowledge/contracts/052-runtime-kernel-contract.md` | §8.11 authority model |
 | `CHANGELOG.md` | `[Unreleased]` entry |
 
-**Shared or flagged (confirm before editing):**
+**Shared, coordinate before editing:**
 
 | File | Why | Rule |
 |---|---|---|
-| `crates/effigy-kernel/src/run/settle.rs` | #525 takes the close locks around the close transaction (~357) and `settle_interrupted_wait`. Custody settlement (~178–243) uses `custody::settle_effect`. | #525 touches only the close and interrupted-settle regions. No shared hunk with `settle_effect`. |
-| `crates/effigy-kernel/src/supervise.rs` | #525 edits the liveness-watch release call site (~1460). A's spawn and handoff callers sit at ~8, ~226, ~1035+. | Shared. #525 edits only the liveness call site. Rebase in sequence if both touch the file. |
-| `crates/effigy-kernel/src/run/mod.rs` | One-line module declaration for `workspace_fence`. | Shared only if A adds a module. |
-| `crates/effigy-kernel/src/faults/scenarios.rs` | Fault points, if a protocol step needs one. | Not in A's list. Avoid unless required. |
+| `crates/effigy-kernel/src/supervise.rs` | Owner loop consumes `ReleaseAttachment`; liveness-watch call site (~1460) | Shared with A's spawn and handoff callers. Serialize. |
+| `crates/effigy-kernel/src/custody/spawn.rs` | Owner fd closure and master `CLOEXEC`, the basis of §6 step 3 | **A's file.** #525 needs no edit, only an agreed assertion or test. Any change is A's, reviewed. |
+| `crates/effigy-kernel/src/custody/anchor.rs` | Custody member records used by §6 step 2 | Read-only for #525 unless A agrees. |
+| `crates/effigy-kernel/src/workspace_channel.rs` | Calls to `Attachment::release` (~2412, ~2680, ~2748, ~3011, ~3054). Requests may be sent from here. | **#512-owned.** No edit unless #512 agrees. Routing lives in `Attachment::release`. |
+| `crates/effigy-kernel/src/run/children.rs` | `settle_interrupted_wait` caller (~120) | Death-proof precondition. Coordinate with the owner of `children.rs`. |
+| `src/runner/workspace_client/` other files, `custody/tests.rs`, containers | not in the path | Not touched. |
 
-**Not touched by #525:** `custody.rs`, `custody/` (all files), `custody/tests.rs`,
-`crates/effigy-containers/**`, the lifecycle caller,
-`crates/effigy-kernel/tests/support/custody-fixture.rs`, `host_dispatch.rs`,
-`workspace_channel.rs`. PR #659 touches none of the custody or containers paths.
+**Base and sequence.** Implementation starts on the independently reviewed integrated
+`512-int` head, after A's custody spawn change lands or is reviewed (its fd closure
+is §6 step 3). #525 rebases onto that head, with both-parent review of the merge.
+The sole integrator coordinates, and the #512 merge hold stays in place.
 
-**Open items:** the exact file list for A's process-output tests is not in this
-doc. Confirm it does not overlap `workspace_client/tests.rs` or
-`run/workspace/tests.rs`. The lifecycle caller is not identified.
+## 16. Contract and changelog (at implementation)
 
-## 14. Integration and sequence
-
-- Implementation base: the **independently reviewed integrated #512 head** (the
-  "512-int" line), with both-parent review of the integration merge. #525 is
-  integrated additively on that head, not on an arbitrary PR #659 head.
-- The sole integrator coordinates. No source merge while #659 holds are active.
-- Overlapping files (`run/workspace.rs`, `run/settle.rs`, `supervise.rs`) are edited
-  only after that head is fixed. Each rebase needs the same independent review.
-- #519 owns the production PTY binding and the nonblocking writer. This design
-  assumes that contract and does not prove it.
-
-## 15. Contract and changelog (at implementation)
-
-- Update `docs/knowledge/contracts/052-runtime-kernel-contract.md` §8.11 with the
-  fence guarantee, lock ownership and order, and the limitations in §11.
-- `CHANGELOG.md` `[Unreleased]`: one entry, after review.
+- `docs/knowledge/contracts/052-runtime-kernel-contract.md` §8.11: single release
+  authority, the request action, the death-proven path, the mixed-version gate, and
+  the limitations in §13.
+- `CHANGELOG.md` `[Unreleased]`: one entry after review.
