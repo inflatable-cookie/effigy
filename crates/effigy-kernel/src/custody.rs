@@ -987,6 +987,15 @@ impl Custody {
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
+        // A discard receipt needs every recovery helper to understand the
+        // disposition before this owner records an intent or forks. Existing
+        // helper identities do not yet carry a verified image capability.
+        if matches!(spec.terminal, Terminal::Discard) {
+            return Err(SpawnError::Refused(
+                "workspace discard helper capability unavailable; run workspace down and retry"
+                    .into(),
+            ));
+        }
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
         if crate::store::in_transaction() {

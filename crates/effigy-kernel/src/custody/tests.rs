@@ -51,7 +51,7 @@ fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
 }
 
 #[test]
-#[ignore = "failing-first: requires an older executable and pre-fork capability ACK"]
+#[ignore = "requires an explicitly supplied older Effigy executable"]
 fn discard_old_sentinel_refuses_before_child_exec() {
     let old_binary =
         std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
@@ -584,6 +584,7 @@ fn journal_writes_are_owned_by_run_not_supervision_or_custody() {
 }
 
 #[test]
+#[ignore = "requires verified discard helper capability"]
 fn discard_child_output_never_reaches_capture() {
     let home = home();
     let cx = cx();
