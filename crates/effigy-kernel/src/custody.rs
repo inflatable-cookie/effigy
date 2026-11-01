@@ -992,8 +992,7 @@ impl Custody {
         // helper identities do not yet carry a verified image capability.
         if matches!(spec.terminal, Terminal::Discard) {
             return Err(SpawnError::Refused(
-                "workspace discard helper capability unavailable; run workspace down and retry"
-                    .into(),
+                "workspace discard helper capability unavailable".into(),
             ));
         }
         cx.require(capability)
