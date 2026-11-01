@@ -100,6 +100,8 @@ struct DetachedOperationState {
     active: bool,
     stage: Option<&'static str>,
     preparation_step: Option<&'static str>,
+    /// Workspace preparation diagnostics must not echo backend/secret values.
+    workspace_mode: bool,
     /// The environment and checkout the activation was asked to bring up.
     identity: Option<String>,
 }
@@ -301,17 +303,55 @@ fn run_container_up_inner(
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
-    crate::runner::workspace_client::container_up::require_supported_activation(repo_root, name)?;
+    let workspace_prevalidation =
+        crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?;
+    if workspace_prevalidation.is_some()
+        && (attach || retention != Retention::Persistent || !holders.is_empty())
+    {
+        return Err(RunnerError::task_invocation("workspace activation requires detached persistent ownership; held/attached handoff is unavailable"));
+    }
     // `container up` is a Prepare path (contract 020): a checkout whose bundle
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.
     prepare_sources_for_container_up(repo_root)?;
     // Source refresh may have changed mode. Recheck before policy preparation,
     // mount creation, secrets, handover or the ordinary reconciler can run.
-    crate::runner::workspace_client::container_up::require_supported_activation(repo_root, name)?;
+    let workspace_prevalidation = match workspace_prevalidation {
+        Some(checked) => {
+            checked.before_policy_preparation(repo_root, name)?;
+            Some(checked)
+        }
+        None => crate::runner::workspace_client::container_up::prevalidate_cli(repo_root, name)?,
+    };
 
     operation.stage = Some("preparation");
-    let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
+    operation.workspace_mode = workspace_prevalidation.is_some();
+    let mut plan =
+        prepare_container_up(repo_root, name, attach, detach, operation).map_err(|error| {
+            if operation.workspace_mode {
+                RunnerError::task_invocation(
+                    "workspace ordinary preparation failed; no workspace apply was attempted",
+                )
+            } else {
+                error
+            }
+        })?;
+    if let Some(checked) = workspace_prevalidation {
+        let declaration = checked.verify_prepared(&plan.policy)?;
+        operation.stage = Some("workspace_activation");
+        let published = crate::runner::workspace_client::container_up::launch_prepared(
+            &plan.policy,
+            declaration,
+        )?;
+        // The host's acknowledgement is committed and selected. The ordinary
+        // reconciler must never execute a second apply for this activation.
+        return Ok(if output_json {
+            published.json.to_string()
+        } else {
+            published.text
+        });
+    }
+
     // A new bring-up owns its environment's published waits: a record left by
     // an earlier session is never read as this one's (effigy#458). A run that
     // holds this environment published its host graph before this `up` could
@@ -521,7 +561,11 @@ fn prepare_container_up(
                 prepared
             }
             Err(error) => {
-                ports_step.fail(error.to_string());
+                ports_step.fail(if operation.workspace_mode {
+                    "workspace ordinary policy preparation failed".to_owned()
+                } else {
+                    error.to_string()
+                });
                 return Err(error.into());
             }
         };
@@ -3677,6 +3721,24 @@ impl WorkspaceUpEffects {
     )]
     pub(in crate::runner) fn compose_env(&self) -> Vec<(String, OsString)> {
         super::secret_env::compose_env(&self.secrets)
+    }
+
+    #[expect(
+        dead_code,
+        reason = "Detached production activation is connected after reviewed owner APIs land"
+    )]
+    pub(in crate::runner) fn startup_report(
+        &self,
+    ) -> crate::runner::workspace_client::serving_host::ContainerStartupReport {
+        let mut report = up_detached_report(&self.policy, false, self.health);
+        annotate_registered_gateway_routes(&mut report, &self.routes);
+        annotate_managed_host_listeners(&mut report, &self.listeners);
+        annotate_tcp_alias_host_notes(&mut report, &self.tcp_alias_notes);
+        annotate_warning_lines(&mut report, &self.secrets.warnings);
+        crate::runner::workspace_client::serving_host::ContainerStartupReport {
+            json: report.json,
+            text: report.success_text,
+        }
     }
 
     fn binding(

@@ -162,6 +162,45 @@ pub(super) fn read_backend(
 }
 
 impl CliPrevalidation {
+    /// Source refresh is ordinary preparation too. Recheck its retained root
+    /// and selection before policy preparation can create mount sources.
+    pub(crate) fn before_policy_preparation(
+        &self,
+        repo_root: &Path,
+        name: Option<&str>,
+    ) -> Result<(), RunnerError> {
+        let policy =
+            effigy_containers::load_container_policy(repo_root, name).map_err(|_| unavailable())?;
+        let current = DirFd::open(repo_root).map_err(|_| unavailable())?;
+        if current.identity().map_err(|_| unavailable())? != self.identity
+            || self.directory.identity().map_err(|_| unavailable())? != self.identity
+            || policy.name != self.environment
+        {
+            return Err(RunnerError::task_invocation(
+                "workspace checkout changed before policy preparation",
+            ));
+        }
+        let checkout = read_checkout(repo_root)?;
+        if self
+            .checkout
+            .is_some_and(|original| Some(original) != checkout)
+        {
+            return Err(RunnerError::task_invocation(
+                "workspace checkout token changed before policy preparation",
+            ));
+        }
+        let backend = read_backend(&policy, checkout)?;
+        if backend.kind != self.backend.kind
+            || backend.engine != self.backend.engine
+            || backend.context != self.backend.context
+        {
+            return Err(RunnerError::task_invocation(
+                "workspace backend/profile changed before policy preparation",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn verify_prepared(
         &self,
         policy: &EffectiveContainerPolicy,

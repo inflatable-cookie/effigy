@@ -83,7 +83,7 @@ fn container_up_detached_preflight_refuses_before_any_journal_token_or_mount_eff
 }
 
 #[test]
-fn container_mode_cli_refuses_before_mount_preparation_or_backend_effects() {
+fn container_mode_cli_phase_zero_refuses_malformed_identity_before_preparation() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = effigy_test_support::Fixture::new("container-up-cli-refusal").expect("fixture");
     let project = fixture.path().join("project");
@@ -128,6 +128,12 @@ mounts = ["prepared:/workspace/prepared:ro"]
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
             .expect("fake executable");
     }
+    std::fs::create_dir(project.join(".git")).expect("identity directory");
+    std::fs::write(
+        project.join(".git/effigy-checkout-id"),
+        "malformed-private-token",
+    )
+    .expect("wrong existing identity");
     let marker = fixture.path().join("runtime-called");
     let mut paths = vec![bin];
     paths.extend(std::env::split_paths(
@@ -143,7 +149,7 @@ mounts = ["prepared:/workspace/prepared:ro"]
         .expect("real CLI process");
     assert!(
         !output.status.success(),
-        "unsupported activation acknowledged"
+        "invalid identity activation acknowledged"
     );
     let result = format!(
         "{}{}",
@@ -151,7 +157,7 @@ mounts = ["prepared:/workspace/prepared:ro"]
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        result.contains("bounded workspace Phase-A preparation is unavailable"),
+        result.contains("workspace checkout/backend prevalidation unavailable"),
         "{result}"
     );
     assert!(!marker.exists(), "runtime was contacted");

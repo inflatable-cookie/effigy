@@ -16,6 +16,7 @@ mod declaration;
 pub(in crate::runner) mod integrations;
 mod plan;
 mod supervisor_preflight;
+pub(crate) use cli_preflight::{prevalidate_cli, PreparedIntent};
 pub(crate) use declaration::PostPrepDeclaration;
 
 const PREPARATION_UNAVAILABLE: &str =
@@ -59,6 +60,56 @@ pub(crate) fn require_supported_activation(
         return Err(RunnerError::task_invocation(PREPARATION_UNAVAILABLE));
     }
     Ok(())
+}
+
+/// Ordinary CLI preparation finishes before launch. Only this declarative
+/// intent crosses the process boundary; all authority is created by the host.
+pub(crate) fn launch_prepared(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    prepared: PreparedIntent,
+) -> Result<super::serving_host::ContainerStartupReport, crate::runner::error::RunnerError> {
+    use super::serving_host::{self, Activation};
+    use crate::runner::error::RunnerError;
+    let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
+    let state_home = crate::runner::task_engine::state_home_path()
+        .ok_or_else(|| RunnerError::task_invocation("workspace serving state home unavailable"))?;
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&policy.repo_root),
+    };
+    let root = effigy_kernel::root::StateRoot::checkout_effects(&cx, &state_home, &location)
+        .map_err(|_| RunnerError::task_invocation("workspace serving launch root unavailable"))?;
+    let budget = effigy_containers::environment::RUN_BUDGET;
+    let request = ServingHostRequest {
+        schema: serving_host::SCHEMA.into(),
+        state_home,
+        project_path: policy.repo_root.clone(),
+        checkout: *prepared.checkout.token(),
+        environment: policy.name.clone(),
+        profile: prepared.backend.context,
+        activation: Activation::ContainerUp {
+            request: ContainerUpRequest {
+                environment: policy.name.clone(),
+                retention: Retention::Persistent,
+                budget_ms: budget.as_millis() as u64,
+                post_prep: Some(prepared.declaration),
+            },
+        },
+    };
+    let executable = crate::runner::task_engine::startup_executable()
+        .map_err(|_| RunnerError::task_invocation("workspace serving executable unavailable"))?;
+    let mut host = serving_host::start(&cx, &root, &request, &executable)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let published = host
+        .await_serving(&cx, budget)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let report = published.report.ok_or_else(|| {
+        RunnerError::task_invocation(
+            "workspace host did not provide its committed integration report",
+        )
+    })?;
+    host.detach(&cx)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(report)
 }
 
 /// The front end's intent. No credential or purported observation is accepted.

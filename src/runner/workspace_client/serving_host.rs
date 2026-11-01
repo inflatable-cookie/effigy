@@ -144,6 +144,15 @@ pub(crate) struct DisposableActivation {
     pub(crate) announce_delay_ms: u64,
 }
 
+/// The normal container report produced from completed integration results.
+/// It is descriptive output, never activation authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ContainerStartupReport {
+    pub(crate) json: serde_json::Value,
+    pub(crate) text: String,
+}
+
 /// What one serving host announced to its front end: the committed session it
 /// keeps and the lease its listener published.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +170,8 @@ pub(crate) struct ServingPublished {
     pub(crate) pin: String,
     /// The `supervisor_id` the lease recorded.
     pub(crate) supervisor_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) report: Option<ContainerStartupReport>,
 }
 
 impl ServingPublished {
@@ -175,6 +186,7 @@ impl ServingPublished {
             endpoint: lease.endpoint().to_owned(),
             pin: lease.pin().hex(),
             supervisor_id: lease.supervisor_id().to_owned(),
+            report: None,
         }
     }
 }
@@ -547,6 +559,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                 &root,
                 service,
                 disposable.fail_refusal_cleanup,
+                None,
             )
         }
         Activation::ContainerUp { request: input } => {
@@ -556,7 +569,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                     return settle_refused_host(session, run, error);
                 }
             };
-            serve_activated(session, run, &root, service, false)
+            serve_activated(session, run, &root, service, false, None)
         }
     }
 }
@@ -568,6 +581,7 @@ fn serve_activated<Ad, Rs, Ob, Id>(
     root: &StateRoot,
     mut service: ServiceOwner<'_, Ad, Rs, Ob, Id>,
     fail_refusal_cleanup: bool,
+    startup_report: Option<ContainerStartupReport>,
 ) -> Result<(), RunError>
 where
     Ad: effigy_kernel::workspace_channel::Admission,
@@ -623,7 +637,8 @@ where
     }
 
     // Announce only the committed session, after the activation committed.
-    let published = ServingPublished::of(service.session(), service.lease());
+    let mut published = ServingPublished::of(service.session(), service.lease());
+    published.report = startup_report;
     let event = serde_json::to_vec(&HostEvent::Serving(published.clone()))
         .map_err(|error| RunError::broken(format!("the serving result: {error}")))?;
     session.event(event);
