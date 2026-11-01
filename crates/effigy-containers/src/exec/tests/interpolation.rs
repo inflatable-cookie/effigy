@@ -120,14 +120,14 @@ fn home_with_fake_fixture(root: &Path) -> PathBuf {
 }
 
 #[test]
-fn private_route_refuses_before_interpolation_or_child() {
+fn public_private_route_refuses_before_interpolation_or_child() {
     let root = tempfile::tempdir().expect("fixture root");
     let home = home_with_fake_fixture(root.path());
     let program = fake_colima(root.path(), "private", "exit 0");
     let error = crate::with_test_effigy_home(&home, || {
-        super::process::run_private_detached_command(
+        super::implementation::run_backend_invocation_private_until(
             root.path(),
-            &program.to_string_lossy(),
+            program.as_os_str(),
             &compose_args(),
             "workspace apply",
             &secret_env(),
@@ -135,11 +135,18 @@ fn private_route_refuses_before_interpolation_or_child() {
         )
         .expect_err("private path must refuse")
     });
-    assert!(error.to_string().contains(
-        "private workspace Compose is unavailable until the reviewed same-Env capability lands"
-    ));
-    assert!(observed(root.path(), "private").is_empty());
-    assert!(files_under(&home).is_empty());
+    match error {
+        super::implementation::ContainerExecError::Launch { error, .. } => {
+            assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+            assert_eq!(
+                error.to_string(),
+                "private workspace Compose is unavailable until the reviewed same-Env capability lands"
+            );
+        }
+        other => panic!("unexpected private refusal: {other}"),
+    }
+    assert!(!root.path().join("private.observed").exists());
+    assert!(fs::read_dir(&home).unwrap().next().is_none());
 }
 
 #[test]

@@ -1679,6 +1679,7 @@ mod detached_capture_tests {
     }
 
     #[test]
+    #[ignore = "private execution is refused until reviewed same-Env custody exists"]
     fn workspace_private_detached_output_never_reaches_a_durable_log_or_error() {
         for exit_code in [0, 1] {
             let fixture = tempfile::tempdir().unwrap();
@@ -1717,6 +1718,7 @@ mod detached_capture_tests {
     }
 
     #[test]
+    #[ignore = "private execution is refused until reviewed same-Env custody exists"]
     fn workspace_private_deadline_reaps_owned_group_without_output() {
         use nix::{sys::signal::kill, unistd::Pid};
         let fixture = tempfile::tempdir().unwrap();
@@ -1775,6 +1777,7 @@ os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.s
     }
 
     #[test]
+    #[ignore = "private execution is refused until reviewed same-Env custody exists"]
     fn workspace_private_leader_exit_stops_delayed_descendant() {
         for exit_code in [0, 1] {
             let fixture = tempfile::tempdir().unwrap();
