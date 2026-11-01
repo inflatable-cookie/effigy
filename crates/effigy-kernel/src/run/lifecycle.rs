@@ -275,16 +275,25 @@ mod tests {
         crate::fault::set_helper_log(Some(helper_log.clone()));
         let retry = run.enable_custody(&plan);
         crate::fault::set_helper_log(None);
-        let logged = std::fs::read_to_string(helper_log).unwrap_or_default();
+        let logged = match std::fs::read_to_string(helper_log) {
+            Ok(contents) => Ok(contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error),
+        };
         let same = run.sentinel.as_ref().map(|lease| lease.identity.clone());
         let cleanup =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
-        for line in logged.lines() {
-            if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
-                reap_test_child(&child);
+        if let Ok(contents) = &logged {
+            for line in contents.lines() {
+                if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
+                    reap_test_child(&child);
+                }
             }
         }
-        assert!(retry.is_err());
+        let logged = logged.expect("helper log must be absent or readable");
+        assert!(retry
+            .err()
+            .is_some_and(|error| error.to_string().contains("sentinel already registered")));
         assert_eq!(same, Some(identity));
         assert!(
             logged.is_empty(),
