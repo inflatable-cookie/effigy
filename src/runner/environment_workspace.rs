@@ -10,6 +10,10 @@ pub(in crate::runner) mod integrated;
 pub(in crate::runner) mod phase_a;
 #[path = "environment_workspace/phase_b.rs"]
 pub(in crate::runner) mod phase_b;
+#[path = "environment_workspace/private_apply.rs"]
+pub(in crate::runner) mod private_apply;
+
+pub(in crate::runner) use private_apply::{PrivateApply, PrivateApplyCommand};
 
 use effigy_containers::environment::{
     BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
@@ -160,11 +164,12 @@ pub(in crate::runner) enum WorkspaceUpError {
 pub(in crate::runner) fn up<'a>(
     request: WorkspaceUpRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
+    apply: PrivateApply,
     publish: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up_impl(request.into(), compose_env, None, publish)
+    up_impl(request.into(), compose_env, None, apply, publish)
 }
 
 /// The exact owner inputs used by the planned production path.
@@ -186,6 +191,7 @@ fn up_impl<'a>(
     request: ActivationRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
     planned: Option<PlannedWorkspaceUp<'_>>,
+    apply: PrivateApply,
     publish: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
@@ -374,7 +380,9 @@ fn up_impl<'a>(
         let (program, args) = backend
             .compose_invocation(&effigy_containers::compose::compose_up_args(policy))
             .map_err(EnvError::Backend)?;
-        let bringing_up = activation.apply_sealed_with(
+        // The apply receives the exact guarded Env run, its child effect and the
+        // activation's one absolute deadline. No strategy can reopen a budget.
+        let bringing_up = activation.apply_sealed_with_owner(
             Up {
                 render: policy.render.as_ref().map(|render| &render.closure),
                 project: &policy.project_name,
@@ -386,18 +394,19 @@ fn up_impl<'a>(
             },
             sealed,
             &preflight,
-            || {
-                effigy_containers::exec::run_backend_invocation_private_until(
-                    &policy.repo_root,
-                    &program,
-                    &args,
-                    "apply frozen workspace render",
-                    compose_env,
-                    until,
+            |run, effect, deadline| {
+                apply(
+                    run,
+                    effect,
+                    &PrivateApplyCommand {
+                        workdir: &policy.repo_root,
+                        program: &program,
+                        args: &args,
+                        label: "apply frozen workspace render",
+                        env: compose_env,
+                        until: deadline,
+                    },
                 )
-                .map_err(|_| {
-                    BackendError::Uncertain("workspace frozen render apply unavailable".into())
-                })
             },
         )?;
         creation = bringing_up.creation;
@@ -480,6 +489,7 @@ fn up_impl<'a>(
 pub(in crate::runner) fn up_prepared<'a>(
     request: WorkspaceUpRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
+    apply: PrivateApply,
     observe: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<
@@ -487,7 +497,7 @@ pub(in crate::runner) fn up_prepared<'a>(
         EnvError,
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up(request, compose_env, |activation| {
+    up(request, compose_env, apply, |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,
@@ -500,6 +510,7 @@ pub(in crate::runner) fn up_prepared_planned<'a>(
     request: PlannedWorkspaceUpRequest<'_>,
     compose_env: &[(String, std::ffi::OsString)],
     planned: PlannedWorkspaceUp<'_>,
+    apply: PrivateApply,
     observe: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<
@@ -507,12 +518,18 @@ pub(in crate::runner) fn up_prepared_planned<'a>(
         EnvError,
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up_impl(request.into(), compose_env, Some(planned), |activation| {
-        let input = observe(activation)?;
-        crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
-            activation, input,
-        )
-    })
+    up_impl(
+        request.into(),
+        compose_env,
+        Some(planned),
+        apply,
+        |activation| {
+            let input = observe(activation)?;
+            crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
+                activation, input,
+            )
+        },
+    )
 }
 
 /// Resume an exact committed Pending selection at its retained owning
