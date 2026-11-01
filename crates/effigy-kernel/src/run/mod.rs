@@ -603,6 +603,7 @@ impl<'a> Run<'a> {
             crate::workspace_session::refuse_session_overlap(store.conn(), &inv.spec().owner)?;
         }
         for owner in guard.ids().filter(|_| session_binding.is_none()) {
+            crate::workspace_session::refuse_bound_reservation_recovery(store.conn(), owner)?;
             predecessors.extend(
                 journal::predecessors(store.conn(), owner)?
                     .into_iter()

@@ -1158,6 +1158,82 @@ fn a_competing_environment_activation_is_fenced_by_name() {
 }
 
 #[test]
+fn a_competitor_must_not_recover_a_reserved_environment_run() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reservation");
+    let run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(23)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().unwrap(),
+    )
+    .expect("reserved run");
+    // Simulate the gate-free interval; do not settle the reserved run.
+    drop(run);
+    let result = Run::begin(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:down"),
+        opts(run_id(24)),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(result, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "competitor must refuse before recovery"
+    );
+    let duplicate = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(25)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().unwrap(),
+    );
+    assert!(
+        matches!(duplicate, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "a duplicate claim must not recover the owner"
+    );
+    let alias = environment
+        .with_checkout(CheckoutId::new(CheckoutKind::Primary, [8; 16]))
+        .unwrap();
+    let mut spec = inv(alias, "environment:down").spec().clone();
+    spec.gates.push(environment.clone());
+    let alias_invocation = ResolvedInvocation::new(spec).unwrap();
+    let aliased = Run::begin(
+        &cx,
+        &root,
+        &alias_invocation,
+        opts(run_id(26)),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(aliased, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "an alias must not recover the owner"
+    );
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(23).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "admitted", "the reserved run was not settled");
+}
+
+#[test]
 fn staging_freezes_one_successor_identity_for_the_workspace_owner() {
     let cx = context();
     let fixture = home();

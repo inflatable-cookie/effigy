@@ -3145,6 +3145,26 @@ pub(crate) fn refuse_reserved_generation(
     Ok(())
 }
 
+/// A bound reservation may still have its owning activation alive while its
+/// Env gate is temporarily released. Refuse before predecessor recovery, since
+/// recovering that run would otherwise settle another owner's activation.
+pub(crate) fn refuse_bound_reservation_recovery(
+    conn: &rusqlite::Connection,
+    owner: &ResourceId,
+) -> Result<(), RunError> {
+    if owner.kind() != ResourceKind::Env {
+        return Ok(());
+    }
+    if recoverable_reservation(conn, owner)?.is_some_and(|record| {
+        record.state == ActivationReservationState::Reserved && record.environment_run.is_some()
+    }) {
+        return Err(RunError::refused(
+            "this environment is reserved by a workspace activation; reservation remains recoverable",
+        ));
+    }
+    Ok(())
+}
+
 /// The guest publication an activation run recorded must be applied and carry
 /// a receipt: `active` may only follow a completed required obligation (§8.11).
 fn published_receipt(environment_run: &Run<'_>) -> Result<WorkspacePublicationReceipt, RunError> {
