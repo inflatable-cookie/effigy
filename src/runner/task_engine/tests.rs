@@ -1353,11 +1353,18 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         started.client.close_input();
         if let Err(error) = started
             .client
-            .wait(cx.child(std::time::Duration::from_secs(30)).operation())
+            .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
         {
             failures.push(format!("{profile}: supervisor reap: {error}"));
+            if let Err(retry_error) = started
+                .client
+                .wait_recoverable(cx.child(std::time::Duration::from_secs(30)).operation())
+            {
+                failures.push(format!("{profile}: supervisor reap retry: {retry_error}"));
+            }
         }
-        match effigy_kernel::store::Store::read(&observation, &started.root) {
+        let post_wait_observation = kernel::observe();
+        match effigy_kernel::store::Store::read(&post_wait_observation, &started.root) {
             effigy_kernel::observe::Observed::Verified(reader, _) => {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)

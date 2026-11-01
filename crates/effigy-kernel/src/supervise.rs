@@ -993,6 +993,12 @@ impl SupervisorClient {
         Ok(self.run)
     }
     pub fn wait(mut self, cx: &OperationContext) -> io::Result<()> {
+        self.wait_recoverable(cx)
+    }
+
+    /// Wait without consuming the child handle when the context expires or
+    /// observation fails, so its owner can retry cleanup with a fresh budget.
+    pub fn wait_recoverable(&mut self, cx: &OperationContext) -> io::Result<()> {
         let mut stream_error = None;
         while !self.closed {
             if let Err(error) = self.event(cx) {
@@ -1194,9 +1200,25 @@ fn launch(
             // The supervisor refused to admit its run and said why, with the
             // category it read to a person. Nothing ran on its behalf, and its
             // sentence is printed as it stands.
+            result.writer.take();
+            let _ = helper_failed(
+                SUPERVISOR,
+                &mut result.child,
+                &log,
+                io::Error::other("admission refused"),
+            );
             return Err(RunError::reported(category, detail));
         }
-        Ok(_) => return Err(RunError::broken("invalid admission event")),
+        Ok(_) => {
+            result.writer.take();
+            let _ = helper_failed(
+                SUPERVISOR,
+                &mut result.child,
+                &log,
+                io::Error::other("invalid admission event"),
+            );
+            return Err(RunError::broken("invalid admission event"));
+        }
         Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
     }
     // Explicit detach is an operation, not a different topology. The caller

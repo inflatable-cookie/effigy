@@ -191,6 +191,96 @@ fn fixture() -> PathBuf {
     crate::fixture::custody_fixture()
 }
 
+#[test]
+fn refused_engine_handshake_reaps_its_live_child() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let event = serde_json::to_vec(&Event::Refused {
+        category: crate::human::Category::Refused,
+        detail: "fixture refusal".into(),
+    })
+    .unwrap();
+    let frame = (event.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(event)
+        .map(|byte| format!("\\{byte:03o}"))
+        .collect::<String>();
+    let helper = world.helper(&format!("printf '{frame}'; exec sleep 60"));
+    let result = start_engine_at(
+        &cx,
+        &root,
+        EngineLaunch {
+            payload: vec![],
+            cwd: world.home(),
+            env: vec![],
+            handoff: None,
+            admission: None,
+        },
+        &helper.executable,
+        ClientMode::Owning,
+    );
+    let pid: i32 = std::fs::read_to_string(world.pid_file())
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // A failed assertion must not leave this test's helper alive.
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    if alive {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+    }
+    assert!(result.is_err(), "fixture refused admission");
+    assert!(!alive, "a refused helper must be reaped before returning");
+}
+
+#[test]
+fn timed_out_wait_keeps_exact_child_for_fresh_budget_reap() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let helper = world.helper("exec sleep 1");
+    let mut child = Command::new(&helper.executable.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let writer = child.stdin.take().unwrap();
+    let events = child.stdout.take().unwrap();
+    nonblocking(events.as_raw_fd()).unwrap();
+    let mut client = SupervisorClient {
+        child,
+        writer: Some(writer),
+        events,
+        buffer: Vec::new(),
+        run: RunId::new(1, [5; 10]).unwrap(),
+        fence: Fence {
+            resource: owner("wait-retry"),
+            generation: Generation::new(1),
+        },
+        root,
+        active: false,
+        closed: false,
+    };
+    let short = cx.operation().child(Duration::from_millis(20));
+    let timed_out = client.wait_recoverable(&short).is_err();
+    let retained = client.child.id() == pid;
+    let fresh = cx.operation().child(Duration::from_secs(5));
+    let reaped =
+        client.wait_recoverable(&fresh).is_err() && client.child.try_wait().unwrap().is_some();
+    if !reaped {
+        let _ = client.child.kill();
+        let _ = client.child.wait();
+    }
+    assert!(timed_out && retained, "timeout retains the exact child");
+    assert!(reaped, "fresh budget reaps the same child after EOF");
+}
+
 /// A helper death reads as unavailable and names the helper, how it ended and
 /// the stderr tail it left.
 fn helper_exited(error: RunError, helper: &str, exit: &HelperExit) {
