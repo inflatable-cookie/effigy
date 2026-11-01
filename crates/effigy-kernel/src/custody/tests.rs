@@ -118,7 +118,9 @@ fn workspace_partial_fork_marker_is_durable_and_legacy_unreadable() {
     let effect = run.effects().unwrap().pop().unwrap();
     drop(run);
     assert_eq!(effect.state, EffectState::Unknown);
-    let marker = effect.receipt.expect("partial fork requires a durable marker");
+    let marker = effect
+        .receipt
+        .expect("partial fork requires a durable marker");
     assert!(serde_json::from_value::<ProcessRecord>(marker.clone()).is_err());
     assert!(serde_json::from_value::<StoredProcessRecord>(marker).is_err());
 }
@@ -196,8 +198,15 @@ fn workspace_partial_marker_ambiguous_commit_keeps_owner_gate() {
         custody: None,
     };
     let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
-    let mut run =
-        Run::begin(&cx, &root, &invocation, options(id()), &cleanup, &mut Strict).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(id()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
     let ticket = run
         .intend_process(EffectSpec {
             target: run.fence().clone(),
@@ -208,16 +217,29 @@ fn workspace_partial_marker_ambiguous_commit_keeps_owner_gate() {
         })
         .unwrap();
     let _clear = ClearFault;
-    crate::fault::arm_point(crate::fault::Point::AppliedAfter, crate::fault::Fault::Enospc);
+    crate::fault::arm_point(
+        crate::fault::Point::AppliedAfter,
+        crate::fault::Fault::Enospc,
+    );
     let result = run.mark_workspace_partial_fork(&ticket);
     crate::fault::arm(None);
     let effect = run.effects().unwrap().pop().unwrap();
     let other = RunId::new(1, [4; 10]).unwrap();
-    let competing = Run::begin(&cx, &root, &invocation, options(other), &cleanup, &mut Strict);
+    let competing = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(other),
+        &cleanup,
+        &mut Strict,
+    );
     assert!(result.is_err());
     assert_eq!(effect.state, EffectState::Unknown);
     assert!(effect.receipt.is_some());
-    assert!(competing.is_err(), "the original owner must retain its gate");
+    assert!(
+        competing.is_err(),
+        "the original owner must retain its gate"
+    );
 }
 
 #[test]
@@ -227,11 +249,9 @@ fn workspace_partial_marker_refuses_another_live_target() {
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let invocation = |name| {
         let mut spec = inv().spec().clone();
-        spec.owner = ResourceId::environment(
-            CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
-            name,
-        )
-        .unwrap();
+        spec.owner =
+            ResourceId::environment(CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]), name)
+                .unwrap();
         ResolvedInvocation::new(spec).unwrap()
     };
     let options = |run_id| BeginOpts {
