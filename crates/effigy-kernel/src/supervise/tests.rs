@@ -876,3 +876,93 @@ fn anchor_closure_round_only_retires_on_positive_evidence() {
         "an unresolved anchor row is not the anchor's own evidence"
     );
 }
+
+/// A memory guard's acknowledgement names the exact receipt frame it answers.
+/// A late answer to an earlier frame is refused instead of being read as the
+/// answer to the frame just written (effigy#529).
+#[test]
+fn a_stale_memory_acknowledgement_never_answers_a_later_frame() {
+    use memory::{validate_register, Config};
+    let owner = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .expect("own identity");
+    let resource = ResourceId::environment(
+        crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [9; 16]),
+        "guard-bind",
+    )
+    .expect("owner");
+    let config = Config {
+        protocol: HELPER_PROTOCOL,
+        memory: true,
+        owner,
+        gates: 1,
+        run: RunId::new(1, [8; 10]).unwrap(),
+        fence: Fence {
+            resource,
+            generation: crate::id::Generation::new(1),
+        },
+        watch: 3,
+    };
+    let frame = |sequence| Effect {
+        sequence,
+        spec: crate::run::EffectSpec {
+            target: config.fence.clone(),
+            kind: crate::custody::KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: crate::run::Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: crate::run::EffectState::Applied,
+        receipt: None,
+        reason: None,
+    };
+    let stale = validate_register(&frame(2), 1, 1, 1, &config)
+        .expect_err("a repeated request number must be refused");
+    assert!(stale.to_string().contains("did not advance"), "{stale}");
+    // The advancing request passes the binding and reaches receipt proof, which
+    // this deliberate empty receipt does not satisfy: a different refusal.
+    let fresh = validate_register(&frame(2), 2, 1, 1, &config)
+        .expect_err("a receiptless frame is still refused");
+    assert!(!fresh.to_string().contains("did not advance"), "{fresh}");
+    // A foreign target and a replayed sequence are refused before any request
+    // binding can make them look acceptable.
+    let mut foreign = frame(2);
+    foreign.spec.target.resource = ResourceId::environment(
+        crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [4; 16]),
+        "other",
+    )
+    .expect("other owner");
+    assert!(validate_register(&foreign, 1, 0, 1, &config).is_err());
+    assert!(validate_register(&frame(1), 1, 0, 1, &config).is_err());
+}
+
+/// A memory-backup frame from a binary that speaks another protocol refuses
+/// before it reads gates or adopts any descriptor, so a mixed helper pair never
+/// exchanges a custody frame it cannot interpret (effigy#529).
+#[test]
+fn a_memory_helper_frame_from_another_protocol_refuses_by_name() {
+    let executable = Executable::capture(&fixture()).unwrap();
+    let other = HELPER_PROTOCOL + 1;
+    let mut child = helper(&executable, SENTINEL)
+        .unwrap()
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut writer = child.stdin.take().unwrap();
+    write_frame(
+        &mut writer,
+        &serde_json::json!({ "protocol": other, "memory": true }),
+    )
+    .unwrap();
+    drop(writer);
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "this helper speaks protocol {other} and this binary speaks {HELPER_PROTOCOL}"
+        )),
+        "a mismatched memory helper names both versions: {stderr}"
+    );
+    assert!(!output.status.success(), "{output:?}");
+}

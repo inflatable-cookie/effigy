@@ -925,6 +925,93 @@ fn layered_workspace_sentinel_dead_owner_recovery() {
     }
 }
 
+#[test]
+fn register_refuses_a_backup_that_has_exited_and_sends_no_frame() {
+    let home = effigy_test_support::short_tempdir("ld-").unwrap();
+    let cx = super::super::tests::context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let owner = ResourceId::environment(layered_checkout(), "dead-backup").unwrap();
+    let mut fake = super::super::tests::Fake::new(home.path());
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &super::super::tests::inv(owner),
+        super::super::tests::opts(1),
+        &super::super::tests::cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    let plan = LifecyclePlan {
+        executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+            .unwrap(),
+        placement: crate::supervise::Placement::Detached,
+    };
+    run.enable_custody(&plan).unwrap();
+    let backup = run.checkout_backup_identity().expect("qualified backup");
+    let sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+    let ticket = run
+        .intend_process(EffectSpec {
+            target: run.fence().clone(),
+            kind: crate::custody::KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    // Stop the one recorded backup child, then prove the owner refuses to send
+    // its receipt to that incarnation instead of writing into a closed pipe.
+    // SAFETY: the exact unreaped backup child this run started.
+    assert_eq!(unsafe { libc::kill(backup.pid as i32, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while matches!(
+        crate::ident::process_state(backup.pid),
+        Observed::Verified(
+            crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+            _
+        )
+    ) {
+        assert!(Instant::now() < deadline, "the backup must exit");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let error = run
+        .acknowledge_checkout_process(&ticket)
+        .expect_err("an exited backup must receive no frame");
+    let detail = error.to_string();
+    assert!(
+        detail.contains("exited before workload go") || detail.contains("identity unavailable"),
+        "the refusal names the retained backup: {detail}"
+    );
+    // The checkout fence itself is unchanged and still verifies; what this
+    // change adds is that no receipt frame can reach that dead incarnation.
+    assert!(run.verify_custody().is_ok());
+    let retry = run
+        .acknowledge_checkout_process(&ticket)
+        .expect_err("the same dead backup is refused again");
+    assert!(
+        retry.to_string().contains("exited before workload go")
+            || retry.to_string().contains("identity unavailable"),
+        "a retry never falls through to a pipe write: {retry}"
+    );
+    // Fixture teardown only: the exact backup died and the sentinel's owner
+    // pipe closes when the run is dropped, so both are reaped by recorded pid.
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    match cleanup {
+        Ok(_) => panic!("a backup that exited without settling is an unresolved cleanup"),
+        Err((error, owner)) => {
+            assert!(
+                error.to_string().contains("backup")
+                    || error.to_string().contains("foreground guard"),
+                "the unresolved cleanup names the retained backup: {error}"
+            );
+            drop(owner);
+        }
+    }
+    reap_test_child(&backup);
+    if let Some(sentinel) = sentinel {
+        reap_test_child(&sentinel);
+    }
+}
+
 fn reap_test_child(identity: &ProcessIdentity) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {

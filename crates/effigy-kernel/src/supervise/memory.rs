@@ -20,6 +20,9 @@ pub(crate) struct MemoryGuard {
     cx: EffectContext,
     close_deadline: Option<Instant>,
     closure: Option<ClosurePin>,
+    /// Monotonic per-guard request number: a stale acknowledgement carries the
+    /// previous number and never answers the frame just written.
+    requests: u64,
 }
 
 /// Owns a helper whose startup did not complete. Deliberately exposes no
@@ -39,18 +42,20 @@ impl PartialMemoryGuard {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Config {
-    protocol: u32,
-    memory: bool,
-    owner: ProcessIdentity,
-    gates: usize,
-    run: RunId,
-    fence: Fence,
-    watch: RawFd,
+pub(super) struct Config {
+    pub(super) protocol: u32,
+    pub(super) memory: bool,
+    pub(super) owner: ProcessIdentity,
+    pub(super) gates: usize,
+    pub(super) run: RunId,
+    pub(super) fence: Fence,
+    pub(super) watch: RawFd,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
-    Register(Effect),
+    /// A receipt frame names the request it answers, so its acknowledgement
+    /// cannot be confused with a late acknowledgement of an earlier frame.
+    Register { effect: Effect, request: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +160,7 @@ impl MemoryGuard {
             cx: cx.clone(),
             close_deadline: None,
             closure: Some(closure),
+            requests: 0,
         };
         let started = (|| -> Result<(), RunError> {
             if purpose == MemoryPurpose::CheckoutLease {
@@ -178,7 +184,7 @@ impl MemoryGuard {
             if purpose == MemoryPurpose::CheckoutLease {
                 crate::fault_point!(WorkspaceBackupAfterConfig)?;
             }
-            guard.ack()?;
+            guard.ready()?;
             if purpose == MemoryPurpose::CheckoutLease {
                 crate::fault_point!(WorkspaceBackupAfterAck)?;
             }
@@ -202,23 +208,58 @@ impl MemoryGuard {
             .ok_or_else(|| RunError::unavailable("foreground custody pipe is closed"))
     }
     pub(crate) fn register(&mut self, effect: &Effect) -> Result<(), RunError> {
-        if self.child.try_wait()?.is_some() {
-            return Err(RunError::unavailable(
-                "foreground guard exited before workload go",
-            ));
-        }
+        // The retained backup is the one this process started: re-prove its
+        // exact incarnation before a frame is written to it. A guard that has
+        // exited or been replaced gets no receipt, and stays retained.
+        self.verify_retained()?;
+        let request = self.requests.saturating_add(1);
         let input = self
             .input
             .as_mut()
             .ok_or_else(|| io::Error::other("foreground guard closed"))?;
         memory_frame(
             input,
-            &Message::Register(effect.clone()),
+            &Message::Register {
+                effect: effect.clone(),
+                request,
+            },
             self.cx.child(Duration::from_secs(30)).operation(),
         )?;
-        self.ack()
+        self.ack(request)?;
+        self.requests = request;
+        Ok(())
     }
-    fn ack(&mut self) -> Result<(), RunError> {
+    /// Read-only proof that the retained guard is still the exact process this
+    /// owner started and that its pipe is still ours.
+    pub(crate) fn verify_retained(&mut self) -> Result<(), RunError> {
+        if self.child.try_wait()?.is_some() {
+            return Err(RunError::unavailable(
+                "foreground guard exited before workload go",
+            ));
+        }
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or_else(|| RunError::unavailable("foreground guard identity unavailable"))?;
+        if ident::process_identity(identity.pid).verified() != Some(identity)
+            || !matches!(
+                ident::process_state(identity.pid),
+                Observed::Verified(
+                    ident::ProcessState::Active | ident::ProcessState::Stopped,
+                    _
+                )
+            )
+            || self.input.is_none()
+        {
+            return Err(RunError::unavailable(
+                "foreground guard identity unavailable",
+            ));
+        }
+        Ok(())
+    }
+    /// The one-byte startup readiness answer: the guard has adopted its config
+    /// and gates. It is not a receipt registration.
+    fn ready(&mut self) -> Result<(), RunError> {
         let mut byte = [0];
         let cx = self.cx.child(Duration::from_secs(30));
         loop {
@@ -247,6 +288,41 @@ impl MemoryGuard {
         }
         if byte != [1] {
             return Err(RunError::broken("invalid foreground guard acknowledgement"));
+        }
+        Ok(())
+    }
+    fn ack(&mut self, request: u64) -> Result<(), RunError> {
+        let mut bytes = [0u8; 8];
+        let cx = self.cx.child(Duration::from_secs(30));
+        let mut offset = 0;
+        while offset < bytes.len() {
+            cx.operation().check("foreground guard acknowledgement")?;
+            let output = self
+                .output
+                .as_mut()
+                .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+            match output.read(&mut bytes[offset..]) {
+                Ok(0) => {
+                    return Err(
+                        io::Error::other("foreground guard closed acknowledgement pipe").into(),
+                    )
+                }
+                Ok(n) => offset += n,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if u64::from_be_bytes(bytes) != request {
+            return Err(RunError::broken(
+                "foreground guard acknowledged another request",
+            ));
         }
         Ok(())
     }
@@ -360,6 +436,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     output.write_all(&[1])?;
     output.flush()?;
     let mut effects: Vec<Effect> = Vec::new();
+    let mut last_request = 0u64;
     // Registration frames are length-prefixed. Reading the first byte is the
     // only intentionally open wait: owner EOF triggers cleanup, never unlock.
     let mut protocol_error = None;
@@ -378,18 +455,19 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                     }
                     let mut bytes = vec![0; size];
                     read_exact(input, &mut bytes)?;
-                    let Message::Register(effect) = serde_json::from_slice(&bytes)?;
-                    if effect.spec.kind != crate::custody::KIND
-                        || effect.state != EffectState::Applied
-                        || effect.sequence <= effects.last().map_or(0, |last| last.sequence)
-                        || effect.spec.target != config.fence
-                    {
-                        return Err(RunError::broken("invalid foreground custody receipt"));
-                    }
-                    crate::custody::verify_foreground_receipt(&effect, config.run)?;
-                    // Acknowledge only after a complete receipt is retained.
+                    let Message::Register { effect, request } = serde_json::from_slice(&bytes)?;
+                    validate_register(
+                        &effect,
+                        request,
+                        last_request,
+                        effects.last().map_or(0, |last| last.sequence),
+                        &config,
+                    )?;
+                    // Acknowledge only after a complete receipt is retained,
+                    // and name the exact request this answer belongs to.
                     effects.push(effect);
-                    output.write_all(&[1])?;
+                    last_request = request;
+                    output.write_all(&request.to_be_bytes())?;
                     output.flush()?;
                     Ok(())
                 })();
@@ -451,6 +529,31 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         return Err(error);
     }
     Ok(())
+}
+
+/// One registration frame's whole validation. Pure, so the request binding and
+/// the retained-receipt rules are provable without a live helper. The request
+/// must strictly advance: a late acknowledgement cannot answer a later frame.
+pub(super) fn validate_register(
+    effect: &Effect,
+    request: u64,
+    last_request: u64,
+    last_sequence: i64,
+    config: &Config,
+) -> Result<(), RunError> {
+    if effect.spec.kind != crate::custody::KIND
+        || effect.state != EffectState::Applied
+        || effect.sequence <= last_sequence
+        || effect.spec.target != config.fence
+    {
+        return Err(RunError::broken("invalid foreground custody receipt"));
+    }
+    if request <= last_request {
+        return Err(RunError::broken(
+            "foreground custody request did not advance",
+        ));
+    }
+    crate::custody::verify_foreground_receipt(effect, config.run)
 }
 
 fn inherited_pipe(fd: RawFd, access: i32) -> io::Result<std::fs::File> {
