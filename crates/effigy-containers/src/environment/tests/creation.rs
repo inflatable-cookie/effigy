@@ -474,6 +474,52 @@ fn stale_preflight_images_refuse_under_the_gate() {
 }
 
 #[test]
+fn primary_reference_belongs_to_exact_frozen_preflight() {
+    let frozen = render(&[PRIMARY, "worker"]);
+    let mut fake = Fake::new(vec![], vec![]);
+    let preflight =
+        crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+    assert_eq!(
+        preflight
+            .primary_image_reference(request(&frozen), &mut fake)
+            .unwrap(),
+        "fixture:latest"
+    );
+    let mut wrong_service = request(&frozen);
+    wrong_service.primary_service = "worker";
+    assert!(preflight
+        .primary_image_reference(wrong_service, &mut fake)
+        .is_err());
+    let mut wrong_checkout = request(&frozen);
+    wrong_checkout.workdir = Path::new("other");
+    assert!(preflight
+        .primary_image_reference(wrong_checkout, &mut fake)
+        .is_err());
+    fake.selection.context = "another-context".into();
+    assert!(preflight
+        .primary_image_reference(request(&frozen), &mut fake)
+        .is_err());
+    fake.selection = selection();
+    fake.images
+        .push_back(verified(format!("sha256:{}", id('d'))));
+    assert!(
+        preflight
+            .primary_image_reference(request(&frozen), &mut fake)
+            .is_err(),
+        "retagged image refuses"
+    );
+    let mut expired = request(&frozen);
+    expired.deadline = Instant::now() - Duration::from_millis(1);
+    assert!(preflight
+        .primary_image_reference(expired, &mut fake)
+        .is_err());
+    let other = render(&[PRIMARY]);
+    assert!(preflight
+        .primary_image_reference(request(&other), &mut fake)
+        .is_err());
+}
+
+#[test]
 fn journalled_generation_and_recheck_refuse_replaced_or_retagged_rows() {
     let fixture = home();
     let state = root(fixture.path());

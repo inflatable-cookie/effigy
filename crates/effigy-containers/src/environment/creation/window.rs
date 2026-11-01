@@ -17,9 +17,12 @@ const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, 
 pub struct CreationPreflight {
     digest: String,
     project: String,
+    primary_service: String,
+    workdir: std::path::PathBuf,
     engine: String,
     context: String,
     images: BTreeMap<String, String>,
+    references: BTreeMap<String, String>,
 }
 impl CreationPreflight {
     pub fn observe(
@@ -65,13 +68,75 @@ impl CreationPreflight {
         let declared = declared_services(render, request.project)
             .map_err(|error| CreationRefusal::Unknown(error.to_string()))?;
         let images = images(backend, request, &declared)?;
+        let references = declared
+            .iter()
+            .filter_map(|(service, declaration)| {
+                declaration
+                    .image
+                    .as_ref()
+                    .map(|reference| (service.clone(), reference.clone()))
+            })
+            .collect();
         Ok(Self {
             digest: render.digest().into(),
             project: request.project.into(),
+            primary_service: request.primary_service.into(),
+            workdir: request.workdir.into(),
             engine: backend.selection().engine.as_str().into(),
             context: backend.selection().context.clone(),
             images,
+            references,
         })
+    }
+
+    /// The primary reference from this exact frozen render and backend.
+    pub fn primary_image_reference<'a>(
+        &'a self,
+        request: CreationRequest<'_>,
+        backend: &mut dyn EnvironmentBackend,
+    ) -> Result<&'a str, CreationRefusal> {
+        if std::time::Instant::now() >= request.deadline {
+            return Err(CreationRefusal::Unknown(
+                "preflight deadline expired".into(),
+            ));
+        }
+        let render = request
+            .render
+            .ok_or_else(|| CreationRefusal::Unknown("preflight has no frozen render".into()))?;
+        if self.digest != render.digest()
+            || self.project != request.project
+            || self.primary_service != request.primary_service
+            || self.workdir != request.workdir
+            || self.engine != backend.selection().engine.as_str()
+            || self.context != backend.selection().context
+        {
+            return Err(CreationRefusal::ImageMismatch(
+                "primary image preflight differs from the frozen plan".into(),
+            ));
+        }
+        let reference = self
+            .references
+            .get(request.primary_service)
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                CreationRefusal::ImageMismatch("primary image reference is unavailable".into())
+            })?;
+        let current = match backend.image_id_until(request.workdir, reference, request.deadline) {
+            Observed::Verified(id, _) => exact_image_id(&id),
+            _ => None,
+        };
+        if current.as_ref() != self.images.get(request.primary_service) || current.is_none() {
+            return Err(CreationRefusal::ImageMismatch(
+                "primary image changed since preflight".into(),
+            ));
+        }
+        if std::time::Instant::now() >= request.deadline {
+            return Err(CreationRefusal::Unknown(
+                "preflight deadline expired".into(),
+            ));
+        }
+        Ok(reference)
     }
 }
 
@@ -119,6 +184,8 @@ impl CreationWindow {
         if let Some(preflight) = request.preflight {
             if preflight.digest != render.digest()
                 || preflight.project != request.project
+                || preflight.primary_service != request.primary_service
+                || preflight.workdir != request.workdir
                 || preflight.engine != backend.selection().engine.as_str()
                 || preflight.context != backend.selection().context
                 || preflight.images != images

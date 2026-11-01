@@ -173,6 +173,12 @@ pub(in crate::runner) struct PreparedEnvironmentObservation {
 }
 
 impl PreparedEnvironmentObservation {
+    pub(in crate::runner) fn state_root(&self) -> &effigy_kernel::root::StateRoot {
+        &self.root
+    }
+    pub(in crate::runner) fn checkout_id(&self) -> effigy_kernel::id::CheckoutId {
+        self.env.checkout
+    }
     pub(in crate::runner) fn prepare(
         policy: &EffectiveContainerPolicy,
     ) -> Result<Self, RunnerError> {

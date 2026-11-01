@@ -331,6 +331,7 @@ impl ReservedBackendObservation for FakeBackend {
     fn identity(
         &mut self,
         _: &EffectiveContainerPolicy,
+        _: &BackendSelection,
         _: &str,
         _: PublicationDeadline,
     ) -> Observed<WorkspaceContainerIdentity> {
@@ -620,6 +621,52 @@ fn decision_primary_observation_preserves_absence_identity_and_refusals() {
         before,
         "expired decision performs no observation"
     );
+}
+
+#[test]
+fn pinned_primary_uses_retained_checkout_and_scoped_token() {
+    use effigy_kernel::id::{CheckoutId, CheckoutKind};
+    let (_fixture, root, _) = checkout("pinned-primary");
+    let policy = rendered_policy(&root);
+    let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
+    let state = effigy_kernel::root::StateRoot::effects(&cx, &root).unwrap();
+    let checkout = CheckoutId::new(CheckoutKind::LinkedWorktree, [0x2a; 16]);
+    let token = "2a".repeat(16);
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert(
+        "com.docker.compose.project".into(),
+        policy.project_name.clone(),
+    );
+    labels.insert(
+        "com.docker.compose.service".into(),
+        policy.primary_service.clone(),
+    );
+    labels.insert("com.docker.compose.oneoff".into(), "False".into());
+    labels.insert("com.effigy.scope".into(), token);
+    labels.insert("com.effigy.checkout".into(), root.display().to_string());
+    let mut row = effigy_containers::environment::Workload {
+        id: CONTAINER_ID.into(),
+        name: "primary".into(),
+        running: true,
+        labels,
+        binds: vec![],
+        image: String::new(),
+        image_reference: String::new(),
+    };
+    let backend = colima_selection("pinned");
+    let binding = verify_pinned_primary(&state, checkout, &policy, &backend, &row).unwrap();
+    assert_eq!(binding.container_id, CONTAINER_ID);
+    assert_eq!(binding.selected, backend);
+    row.labels
+        .insert("com.effigy.scope".into(), "00".repeat(16));
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
+    row.labels
+        .insert("com.effigy.scope".into(), "2a".repeat(16));
+    row.id = "short".into();
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
+    row.id = CONTAINER_ID.into();
+    row.labels.remove("com.docker.compose.oneoff");
+    assert!(verify_pinned_primary(&state, checkout, &policy, &backend, &row).is_err());
 }
 
 // ------------------------------------------------------- the mode boundary
