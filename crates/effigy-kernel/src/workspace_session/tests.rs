@@ -1045,11 +1045,17 @@ fn an_activation_plan_refuses_a_foreign_reservation_identity() {
     let environment = environment();
     let reservation = decided(&cx, &root, &environment);
     let (_session_run, _) = admit_staged(&cx, &root, &reservation, run_id(221));
-    let _environment_run = admit_activation(&cx, &root, &reservation, run_id(222));
+    let environment_run = admit_activation(&cx, &root, &reservation, run_id(222));
+    assert!(environment_run
+        .verify_workspace_reservation(&reservation)
+        .is_ok());
     let reader = read_journal(&cx, &root);
     assert!(plan_of(&reservation, &reader).is_some());
     let mut foreign = reservation.clone();
     foreign.record.id = ActivationReservationId::parse(&"ff".repeat(16)).expect("id");
+    assert!(environment_run
+        .verify_workspace_reservation(&foreign)
+        .is_err());
     assert!(
         foreign.plan(&reader).verified().is_none(),
         "a different reservation id cannot recover this plan"

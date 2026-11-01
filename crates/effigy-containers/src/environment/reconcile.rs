@@ -1520,6 +1520,8 @@ impl<'r> EnvRun<'r> {
         }
         let checked = permit(&mut self.run, None).map(|_| ());
         self.kernel(checked)?;
+        let checked = self.run.verify_workspace_reservation(reservation);
+        self.kernel(checked)?;
         let outcome = self.journalled_creation()?.ok_or_else(|| {
             EnvError::Invalid("activation has no journalled apply inventory".into())
         })?;
@@ -1535,6 +1537,8 @@ impl<'r> EnvRun<'r> {
             .reobserve(backend, deadline)
             .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
         let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        let checked = self.run.verify_workspace_reservation(reservation);
         self.kernel(checked)?;
         // The journal's binding transaction checks the live gate and fence;
         // callers must still bind within this EnvRun, never carry this result

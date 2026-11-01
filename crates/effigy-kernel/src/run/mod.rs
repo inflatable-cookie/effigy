@@ -907,6 +907,18 @@ impl<'a> Run<'a> {
         })
     }
 
+    /// Re-read the exact reserved activation while this run holds its Env gate.
+    /// A caller may use this before an external observation, but it is not a
+    /// substitute for revalidating target or creator evidence afterwards.
+    pub fn verify_workspace_reservation(
+        &self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<(), RunError> {
+        self.can_effect()?;
+        reservation.verify_claimed_run(self.store.conn(), self.id, &self.owner)?;
+        Ok(())
+    }
+
     pub(crate) fn owns_workspace_session(
         &self,
         root: &StateRoot,

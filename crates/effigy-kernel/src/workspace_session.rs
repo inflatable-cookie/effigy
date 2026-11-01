@@ -2165,12 +2165,12 @@ impl WorkspaceActivationReservation {
         authority.bind_workspace_target(self, candidates)
     }
 
-    pub(crate) fn claimed_inputs(
+    pub(crate) fn verify_claimed_run(
         &self,
         conn: &rusqlite::Connection,
         run: RunId,
         fence: &Fence,
-    ) -> Result<PublishInputs, RunError> {
+    ) -> Result<ActivationReservationRecord, RunError> {
         if fence.resource != self.record.environment || fence.generation != self.record.generation {
             return Err(ActivationRefusal::WrongGeneration.into());
         }
@@ -2185,7 +2185,16 @@ impl WorkspaceActivationReservation {
         if stored.environment_run != Some(run) {
             return Err(ActivationRefusal::ClaimedByAnotherRun.into());
         }
-        stored
+        Ok(stored)
+    }
+
+    pub(crate) fn claimed_inputs(
+        &self,
+        conn: &rusqlite::Connection,
+        run: RunId,
+        fence: &Fence,
+    ) -> Result<PublishInputs, RunError> {
+        self.verify_claimed_run(conn, run, fence)?
             .inputs
             .ok_or_else(|| ActivationRefusal::Unfrozen.into())
     }
