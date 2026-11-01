@@ -473,7 +473,18 @@ selectors above and touched gateway selectors must cover the new store paths
 and fenced cross-store receipt boundaries. Phase 1 runs only `qa:docs`; no
 runtime recovery or migration proof is claimed by this amendment.
 
-## 11. Gateway diagnostic disposition before v0.15 freeze
+## 11. Future detached-owner journal boundary
+
+The Supervisor's 2026-11-01 Level 1 ruling in 052 §8.7 requires lifecycle E to
+introduce a v2 owner-claim journal boundary, including read-only v1 observation,
+a named adjacent 0600 pre-migration backup, atomic idempotent migration, explicit
+old-writer refusal and tested backup restoration for supported rollback. Detached
+acknowledgement, client-claim and release-cause tombstones must remain durable
+through the specified settlement or retention boundary; missing legacy evidence
+is Unknown. The migration, data-loss review and backup/restore review remain
+future work and do not qualify the current workspace activation caller.
+
+## 12. Gateway diagnostic disposition before v0.15 freeze
 
 The ordinary gateway startup path can write raw daemon stdout and stderr to
 gateway logs, including diagnostic URLs or other secret-bearing upstream text.

@@ -150,6 +150,13 @@ ownership of that detached run; it cannot take ownership from a live owner.
 Secondary terminals do not stop the owner when they leave. This reconnect path
 remains lifecycle work and is not yet a qualified capability.
 
+That future capability requires a journal upgrade. Older Effigy writers must
+refuse a v2 journal with upgrade, down or reset guidance. A newer version can
+read a v1 journal without changing it; its first effectful use will create a
+private adjacent backup and migrate atomically. A supported rollback restores
+that backup with the previous binary. This migration and rollback are not yet
+shipped or qualified.
+
 ### Catalog sources in the workspace
 
 Workspace preparation installs the Effigy binary only. It copies no catalog

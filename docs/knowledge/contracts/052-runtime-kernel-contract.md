@@ -320,7 +320,8 @@ as lost and free slots on its own."). An orchestrator that opts in to
 `effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
 makes Effigy write exactly one row to the owning checkout journal at settle,
 in an additive schema-1 `foreground_terminals` table. An older reader selects
-the columns it knows, so the addition needs no schema-version bump.
+the columns it knows, so that existing addition needs no schema-version bump.
+The later v2 detached-owner claim boundary in §8.7 has different writer rules.
 
 The row holds the run id, the `CheckoutId`, the boot identity, the task, the
 outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
@@ -2953,6 +2954,25 @@ an Owner, and no foreground
 reconnect or retry of an unknown invocation is authorized. New owner-claim
 journal state and the attachment transition are lifecycle slice E work after the
 #512 base, not an existing or qualified implementation.
+
+**Supervisor schema ruling under Tom’s Level 1 decision, 2026-11-01:** the
+future detached-owner claim requires a v2 journal boundary. Existing schema-1
+additions elsewhere in this contract are not authority for old binaries to
+write a v2 owner-claim journal. A v1 writer encountering v2 must refuse with
+named upgrade, down or reset guidance; it must not ignore claim fields. The v2
+reader may Observe v1 without migrating or writing. Before the first effectful
+use of v1, create a named adjacent mode-0600 backup and migrate atomically and
+idempotently; an interrupted migration leaves the v1 journal intact.
+
+The v2 journal must retain the minimal exact release cause, client claim and
+acknowledgement tombstones, atomically with attachment release and any EOF Stop.
+Compaction preserves those tombstones until settlement or the defined N-day
+retention threshold. Legacy or compacted-away NULL evidence is `Unknown`, not
+detach acknowledgement or permission to claim. Unsafe downgrade refuses.
+Supported rollback restores the pre-migration backup with the previous binary;
+backup, crash interruption, repeat migration, restore and rollback require
+explicit tests and independent data-loss and backup/restore review. This is
+future lifecycle slice E design, not a shipped schema or migration proof.
 
 - The workspace session is a `Detached` run owned by `Task(TaskId)` of the
   environment's workspace entry — the **same logical owner** at every generation,
