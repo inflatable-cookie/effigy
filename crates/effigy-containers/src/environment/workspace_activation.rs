@@ -1880,6 +1880,8 @@ mod tests {
         let session = options.id;
         let mut adopted = false;
         let mut armed = false;
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hook_fired = std::sync::Arc::clone(&fired);
         let failure = effigy_kernel::fault_injection::with_hook(
             move |point| {
                 if point == "SessionSupervisorAdoptAfter" {
@@ -1890,6 +1892,7 @@ mod tests {
                 }
                 if armed && point == "StoreCommitAfter" {
                     armed = false;
+                    hook_fired.store(true, std::sync::atomic::Ordering::SeqCst);
                     return Err(std::io::Error::other("injected post-commit ambiguity"));
                 }
                 Ok(())
@@ -1906,6 +1909,7 @@ mod tests {
             },
         )
         .expect_err("ambiguous Env transaction refuses");
+        let original_error = failure.error.to_string();
         let custody = failure.custody.expect("retain session and reservation");
         let (error, custody) = custody
             .retry(&ctx, Wait::FailFast)
@@ -1923,11 +1927,27 @@ mod tests {
             Observed::Verified(OwnerState::Held, _)
         );
         let reservation = WorkspaceActivationReservation::recover(&reader, &env.resource);
-        let bound = matches!(reservation, Observed::Verified(Some(ref reservation), _) if reservation.state() == effigy_kernel::workspace_session::ActivationReservationState::Reserved && reservation.record().environment_run.is_some());
+        let bound = match reservation {
+            Observed::Verified(Some(reservation), _) => {
+                let record = reservation.record();
+                record.state == effigy_kernel::workspace_session::ActivationReservationState::Reserved
+                    && record.environment_run.is_some_and(|id| matches!(
+                        effigy_kernel::run::summary(&reader, id),
+                        Observed::Verified(summary, _) if summary.id == id
+                            && summary.generation == record.generation
+                            && summary.phase == effigy_kernel::run::Phase::Admitted
+                            && summary.invocation.as_ref().is_some_and(|inv| inv.spec().owner == env.resource)
+                    ))
+            }
+            _ => false,
+        };
         drop(reader);
         drop(custody);
         assert!(
-            retained && bound,
+            fired.load(std::sync::atomic::Ordering::SeqCst)
+                && original_error.contains("injected post-commit ambiguity")
+                && retained
+                && bound,
             "exact session remains held and claimed reservation recoverable"
         );
     }
