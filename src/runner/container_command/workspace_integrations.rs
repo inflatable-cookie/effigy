@@ -31,6 +31,8 @@ pub trait WorkspaceIntegrationAdapter {
     type Error;
     fn deadline(&self) -> Instant;
     fn record_step(&mut self, step: WorkspaceIntegrationStep, completed: bool) -> Result<(), Self::Error>;
+    /// Remove the durable attempt only after absence is established.
+    fn clear_step(&mut self, step: WorkspaceIntegrationStep) -> Result<(), Self::Error>;
     fn reconcile(&mut self, step: WorkspaceIntegrationStep, deadline: Instant) -> Result<(), Self::Error>;
     /// Return an error when absence cannot be established. Never claim cleanup
     /// succeeded merely because a withdrawal was requested.
@@ -72,6 +74,9 @@ pub fn run_workspace_integrations<A: WorkspaceIntegrationAdapter>(
             outcome.attempted.push(step);
         }
         adapter.record_step(step, false).map_err(IntegrationFailure::Effect)?;
+        if Instant::now() >= deadline {
+            return Err(IntegrationFailure::Deadline);
+        }
         adapter.reconcile(step, deadline).map_err(IntegrationFailure::Effect)?;
         if Instant::now() >= deadline {
             return Err(IntegrationFailure::Deadline);
@@ -81,16 +86,17 @@ pub fn run_workspace_integrations<A: WorkspaceIntegrationAdapter>(
     Ok(())
 }
 
-/// Best effort in reverse order. Failed withdrawals remain in the outcome;
+/// Best effort in reverse order using a fresh, bounded cleanup deadline.
+/// Failed withdrawals remain in the outcome;
 /// the caller must retain custody and report the named recoverable refusal.
 pub fn unwind_workspace_integrations<A: WorkspaceIntegrationAdapter>(
     adapter: &mut A,
     outcome: &mut WorkspaceIntegrationOutcome,
+    deadline: Instant,
 ) -> Result<(), &'static str> {
-    let deadline = adapter.deadline();
     let mut unsettled = Vec::new();
     while let Some(step) = outcome.attempted.pop() {
-        if adapter.unwind(step, deadline).is_err() || adapter.record_step(step, false).is_err() {
+        if Instant::now() >= deadline || adapter.unwind(step, deadline).is_err() || adapter.clear_step(step).is_err() {
             unsettled.push(step);
         }
     }
