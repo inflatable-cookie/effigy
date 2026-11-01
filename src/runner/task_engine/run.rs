@@ -103,9 +103,15 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     /// [`Run::begin_admitted`] under the ticket's own id and never mints one
     /// itself. A nested run, a caller key and a shared-lock run each own
     /// another run or another id, so they refuse a ticket before any effect.
-    pub(in crate::runner) workspace_admission: Option<effigy_kernel::run::AdmissionTicket>,
+    pub(in crate::runner) workspace_admission: Option<WorkspaceAdmission>,
     /// The resolved invocation directory, reported to the admission hook.
     pub(in crate::runner) cwd: Option<&'a std::path::Path>,
+}
+
+#[derive(Clone)]
+pub(in crate::runner) struct WorkspaceAdmission {
+    pub(in crate::runner) ticket: effigy_kernel::run::AdmissionTicket,
+    pub(in crate::runner) catalog_snapshot: Option<Digest>,
 }
 
 /// A validated caller key. Admission binds it to the checkout before using
@@ -480,7 +486,7 @@ impl TaskRun {
             }
         }
         let run_id = match (&request.workspace_admission, request.key) {
-            (Some(ticket), _) => ticket.run(),
+            (Some(admission), _) => admission.ticket.run(),
             (None, Some(key)) => {
                 refuse_bound_key(key, &task_id, &request.target.root)?;
                 key.id()
@@ -508,6 +514,13 @@ impl TaskRun {
         let cx = kernel::effects();
         let cleanup = kernel::cleanup()?;
         let mut provenance = BTreeMap::new();
+        if let Some(snapshot) = request
+            .workspace_admission
+            .as_ref()
+            .and_then(|admission| admission.catalog_snapshot.as_ref())
+        {
+            provenance.insert("workspace:catalog-snapshot".to_owned(), snapshot.clone());
+        }
         if let Some(token) = request.managed_run_token {
             provenance.insert(
                 MANAGED_RUN_PROVENANCE.to_owned(),
@@ -589,14 +602,14 @@ impl TaskRun {
             // The dispatcher's reservation, unchanged, under the same gates
             // and the same durable transaction: this is the only admission
             // this request gets.
-            (Some(ticket), _) => Run::begin_admitted(
+            (Some(admission), _) => Run::begin_admitted(
                 &cx,
                 root,
                 &invocation,
                 opts,
                 &cleanup,
                 &mut TaskSettlement::default(),
-                ticket,
+                admission.ticket,
             ),
             (None, Some(parent)) => parent
                 .run

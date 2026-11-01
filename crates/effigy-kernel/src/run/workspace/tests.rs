@@ -174,21 +174,59 @@ fn admitted<'a>(
 
 #[test]
 fn workspace_ticket_rejects_a_different_resolved_invocation_before_admission() {
+    assert_eq!(
+        workspace_managed_token(id(91)),
+        format!("effigy-workspace-managed-v1-{}", id(91))
+    );
+    assert_ne!(
+        workspace_managed_token(id(91)),
+        workspace_managed_token(id(92))
+    );
     let fixture = home();
     let cx = context();
     let root = StateRoot::effects(&cx, fixture.path()).unwrap();
     let key = admission_key(91);
-    let expected = inv(owner());
+    let mut expected_spec = inv(owner()).spec().clone();
+    expected_spec.provenance.insert(
+        "managed-run-token".into(),
+        Digest::of(workspace_managed_token(id(91)).as_bytes()),
+    );
+    expected_spec
+        .provenance
+        .insert("workspace:catalog-snapshot".into(), Digest::of(b"catalog"));
+    let expected = ResolvedInvocation::new(expected_spec).unwrap();
     let mut changed_argv = expected.spec().clone();
     changed_argv.argv.push("different".into());
     let mut changed_provenance = expected.spec().clone();
     changed_provenance
         .provenance
         .insert("manifest".into(), Digest::of(b"changed"));
+    let mut changed_token = expected.spec().clone();
+    changed_token.provenance.insert(
+        "managed-run-token".into(),
+        Digest::of(workspace_managed_token(id(92)).as_bytes()),
+    );
+    let mut changed_catalog = expected.spec().clone();
+    changed_catalog.provenance.insert(
+        "workspace:catalog-snapshot".into(),
+        Digest::of(b"different catalog"),
+    );
+    let mut changed_profile = expected.spec().clone();
+    changed_profile.task = TaskId::new(
+        changed_profile.task.checkout(),
+        changed_profile.task.catalog(),
+        changed_profile.task.surface(),
+        changed_profile.task.task(),
+        Some("other"),
+    )
+    .unwrap();
     let alternatives = [
         inv(foreign_owner()),
         ResolvedInvocation::new(changed_argv).unwrap(),
         ResolvedInvocation::new(changed_provenance).unwrap(),
+        ResolvedInvocation::new(changed_token).unwrap(),
+        ResolvedInvocation::new(changed_catalog).unwrap(),
+        ResolvedInvocation::new(changed_profile).unwrap(),
     ];
     let ticket = match reserve_resolved(&cx, &root, key, digest(), id(91), &expected).unwrap() {
         Reservation::Fresh(ticket) => ticket,

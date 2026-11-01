@@ -2220,6 +2220,16 @@ pub trait Resolver {
         cx: &EffectContext,
         body: &InvocationBody,
     ) -> Result<ResolvedInvocation, Refusal>;
+
+    /// Derive the exact invocation the engine will admit for this run.
+    fn admission_invocation(
+        &mut self,
+        _body: &InvocationBody,
+        resolved: &ResolvedInvocation,
+        _run: RunId,
+    ) -> Result<ResolvedInvocation, Refusal> {
+        Ok(resolved.clone())
+    }
 }
 
 /// The host engine's admission handoff: the dispatcher has reserved the
@@ -2327,7 +2337,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         // records nothing and a corrected retry is a fresh request.
         let resolved = self.resolver.resolve(cx, body)?;
         let run = self.ids.next()?;
-        let reply = match run::reserve_resolved(cx, root, key, digest, run, &resolved)
+        let admission_invocation = self.resolver.admission_invocation(body, &resolved, run)?;
+        let reply = match run::reserve_resolved(cx, root, key, digest, run, &admission_invocation)
             .map_err(refusal_from)?
         {
             Reservation::Recorded(recovered) => replay(recovered)?,

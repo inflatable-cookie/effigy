@@ -200,6 +200,11 @@ pub struct AdmissionTicket {
     run: RunId,
     digest: Digest,
 }
+
+/// Non-secret settle identity reserved for exactly this workspace run.
+pub fn workspace_managed_token(run: RunId) -> String {
+    format!("effigy-workspace-managed-v1-{run}")
+}
 impl AdmissionTicket {
     pub fn key(&self) -> AdmissionKey {
         self.key
