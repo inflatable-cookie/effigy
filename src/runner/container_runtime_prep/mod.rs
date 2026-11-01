@@ -1238,7 +1238,9 @@ fn verified_compose_inputs(
                 file.display()
             )));
         };
-        let name = relative.to_string_lossy().replace('\\', "/");
+        // The closure names checkout files `checkout/<repo-relative>`: the render
+        // builder maps them that way, so the same key is the sealed path.
+        let name = format!("checkout/{}", relative.to_string_lossy().replace('\\', "/"));
         let Some(frozen_bytes) = frozen.get(name.as_str()) else {
             return Err(BoundedReadRefusal::Unavailable(format!(
                 "workspace-compose-input-outside-render-closure: `{name}` is not part of the \
@@ -1249,7 +1251,7 @@ fn verified_compose_inputs(
         // The render is published by the reconcile that follows this preflight, so
         // its own path is not materialised yet: the bytes Compose will read come
         // from the sealed tree, and they must be the frozen ones verbatim.
-        let sealed_path = sealed_root.join(relative);
+        let sealed_path = sealed_root.join(&name);
         let sealed_bytes = std::fs::read(sealed_path.as_path()).map_err(|error| {
             BoundedReadRefusal::Unavailable(format!(
                 "workspace-compose-input-unreadable: `{name}` is not in the sealed tree: {error}"
