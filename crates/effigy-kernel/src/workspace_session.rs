@@ -600,7 +600,7 @@ impl<'a> SessionSupervisor<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<crate::outcome::Outcome<crate::run::Settled>, (RunError, Box<Self>)> {
-        match self.run.settle_recoverable(cleanup, adapter) {
+        match self.run.settle_workspace_recoverable(cleanup, adapter) {
             Ok(outcome) => Ok(outcome),
             Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
         }

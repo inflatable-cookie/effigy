@@ -110,4 +110,19 @@ impl Run<'_> {
         self.ancestor_closure.take();
         Ok(())
     }
+
+    /// Keep the same backup lease available if bounded cleanup fails.
+    pub(super) fn close_checkout_custody_recoverable(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
+        if let Some(custody) = self.checkout_custody.as_mut() {
+            if let Some(backup) = custody.backup.as_mut() {
+                backup.close(cleanup)?;
+            }
+        }
+        self.checkout_custody.take();
+        self.ancestor_closure.take();
+        Ok(())
+    }
 }
