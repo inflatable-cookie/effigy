@@ -1925,6 +1925,84 @@ impl WorkspaceActivationReservation {
         Self::decide_held(&bounded, root, environment, &publishing)
     }
 
+    /// Observe owned external data off-thread, then finalize read-only inputs
+    /// on the original gate holder. The local callback must bound its own I/O;
+    /// the kernel checks the deadline again before accepting its result but
+    /// cannot interrupt a callback that does not return.
+    pub fn decide_observing_split<T: Send + 'static>(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        wait: Wait,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<T, RunError> + Send + 'static,
+        finalize: impl FnOnce(T, std::time::Instant) -> Result<PublishInputs, RunError>,
+    ) -> Result<ActivationDecision, RunError> {
+        if environment.kind() != ResourceKind::Env {
+            return Err(ActivationRefusal::NotAnEnvironment.into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        let bounded = cx.child_until(deadline);
+        let _gate = Gate::acquire(&bounded, root, std::slice::from_ref(environment), wait)?;
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        let effective_deadline = match bounded.operation().deadline() {
+            crate::ctx::Deadline::At(until) => until.min(deadline),
+            crate::ctx::Deadline::Open(_) => deadline,
+        };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("workspace-decision-observation".into())
+            .spawn(move || {
+                let _ = sender.send(observe(effective_deadline));
+            })
+            .map_err(|error| {
+                RunError::unavailable(format!(
+                    "workspace decision observer could not start: {error}"
+                ))
+            })?;
+        let external = loop {
+            bounded
+                .operation()
+                .check("workspace decision observation")?;
+            let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(RunError::unavailable("workspace decision deadline expired"));
+            }
+            match receiver.recv_timeout(remaining.min(std::time::Duration::from_millis(25))) {
+                Ok(result) => break result?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RunError::unavailable(
+                        "workspace decision observer exited without a result",
+                    ));
+                }
+            }
+        };
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision finalization")?;
+        let publishing = finalize(external, effective_deadline)?;
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision finalization")?;
+        publishing.validate()?;
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded.operation().check("workspace decision")?;
+        Self::decide_held(&bounded, root, environment, &publishing)
+    }
+
     fn decide_held(
         cx: &EffectContext,
         root: &StateRoot,

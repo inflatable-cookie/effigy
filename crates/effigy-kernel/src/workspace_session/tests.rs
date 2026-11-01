@@ -9140,6 +9140,118 @@ fn guest_locator_challenge_binds_alias_target_peer_pin_session_and_lifetime() {
 }
 
 #[test]
+fn split_decision_finalizes_on_owner_thread_under_the_same_gate() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let owner_thread = std::thread::current().id();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| {
+            assert_ne!(std::thread::current().id(), owner_thread);
+            Ok(1)
+        },
+        |input, _| {
+            assert_eq!(std::thread::current().id(), owner_thread);
+            assert!(
+                crate::gate::Gate::acquire(
+                    &cx,
+                    &root,
+                    std::slice::from_ref(&environment),
+                    Wait::FailFast,
+                )
+                .is_err(),
+                "the environment gate must remain held during local finalization"
+            );
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(matches!(result, Ok(ActivationDecision::Activate(_))));
+}
+
+#[test]
+fn split_decision_rejects_expiry_during_local_finalization() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let entered = std::cell::Cell::new(false);
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(500),
+        |_| Ok(1),
+        |input, deadline| {
+            entered.set(true);
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(20),
+            );
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(
+        entered.get(),
+        "local finalization must run for this control"
+    );
+    assert!(matches!(result, Err(RunError::Unavailable(_))));
+    assert_eq!(reservation_rows(&read_journal(&cx, &root), &environment), 0);
+}
+
+#[test]
+fn split_decision_refuses_failed_observation_and_cancelled_finalization() {
+    let cancel = CancelToken::default();
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(10)),
+        cancel.clone(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        crate::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("effects");
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let failed = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(5),
+        |_| Err::<u8, _>(RunError::unavailable("fixture observation unavailable")),
+        |_, _| panic!("failed observation must not be finalized"),
+    );
+    assert!(matches!(failed, Err(RunError::Unavailable(_))));
+    let cancelled = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(5),
+        |_| Ok(1),
+        |input, _| {
+            cancel.cancel(StopCause::Requested);
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(matches!(cancelled, Err(RunError::Interrupted(_))));
+    let fresh = context();
+    assert_eq!(
+        reservation_rows(&read_journal(&fresh, &root), &environment),
+        0
+    );
+}
+
+#[test]
 fn decision_observes_inputs_while_holding_the_environment_gate() {
     let cx = context();
     let fixture = home();
