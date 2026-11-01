@@ -1542,25 +1542,22 @@ impl<'a> PreparedReservedPublication<'a> {
     }
 }
 
-/// Observe the exact target and build the producer's input.
-///
-/// `policy` is the caller's own [`ReservedPublicationPlan::rendered_policy`] copy:
-/// it must be the plan's exact render (checked here), and it is what the guest the
-/// producer stages through borrows.
-///
-/// Every fact is derived from the plan, the host's verified binding, the
-/// backend's image inspect, the guest's own report in that binding and the
-/// artifact's producer receipt. The frozen decision evidence is the guard: a
-/// target the decision did not name refuses before anything is staged, so a
-/// raced or replaced container is never published into.
-pub(in crate::runner) fn observe<'a>(
+struct FreshReservedEvidence {
+    artifact: PathBuf,
+    binary: crate::runner::workspace_client::context::GuestBinaryIdentity,
+    identity: WorkspaceContainerIdentity,
+    target: TargetCandidate,
+    platform: BoundPlatform,
+}
+
+/// Perform the read-only observation under the caller's activation Env gate.
+fn read_reserved_evidence(
     request: ReservedObservationRequest<'_>,
     plan: &ReservedPublicationPlan,
-    policy: &'a EffectiveContainerPolicy,
-    probe: &ReservedProbeFactory<'a>,
+    policy: &EffectiveContainerPolicy,
     facts: &ReservedDecisionFacts,
-    observation: &'a mut dyn ReservedBackendObservation,
-) -> Result<PreparedReservedPublication<'a>, EnvError> {
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<FreshReservedEvidence, EnvError> {
     let deadline = plan.deadline;
     if policy.render.as_ref().map(|render| render.closure.digest())
         != Some(plan.render_digest.as_str())
@@ -1576,11 +1573,10 @@ pub(in crate::runner) fn observe<'a>(
     }
     let ReservedDecisionFacts {
         inputs,
-        reservation_generation,
+        reservation_generation: _,
         created_by,
         creation,
     } = facts;
-    let reservation_generation = *reservation_generation;
     // The decision must be this plan's decision: another plan's frozen
     // materialisation, selection or inputs would publish bytes the decision
     // never compared.
@@ -1729,6 +1725,59 @@ pub(in crate::runner) fn observe<'a>(
         artifact_version: binary.version.clone(),
         execution_available,
     };
+    Ok(FreshReservedEvidence {
+        artifact,
+        binary,
+        identity,
+        target: TargetCandidate {
+            identity: target,
+            project: plan.policy.project_name.clone(),
+            created_by,
+        },
+        platform: binding_facts,
+    })
+}
+
+/// Independently re-read target, creator, platform and artifact without staging or minting.
+pub(in crate::runner) fn reobserve_reserved(
+    request: ReservedObservationRequest<'_>,
+    plan: &ReservedPublicationPlan,
+    policy: &EffectiveContainerPolicy,
+    facts: &ReservedDecisionFacts,
+    observation: &mut dyn ReservedBackendObservation,
+    deadline: Instant,
+) -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError> {
+    if deadline != plan.deadline.at() {
+        return Err(refused(
+            "workspace reobservation deadline differs from its frozen plan",
+        ));
+    }
+    let fresh = read_reserved_evidence(request, plan, policy, facts, observation)?;
+    plan.deadline.remaining()?;
+    Ok((
+        Observed::Verified(vec![fresh.target], evidence()),
+        Observed::Verified(fresh.platform, evidence()),
+    ))
+}
+
+pub(in crate::runner) fn observe<'a>(
+    request: ReservedObservationRequest<'_>,
+    plan: &ReservedPublicationPlan,
+    policy: &'a EffectiveContainerPolicy,
+    probe: &ReservedProbeFactory<'a>,
+    facts: &ReservedDecisionFacts,
+    observation: &'a mut dyn ReservedBackendObservation,
+) -> Result<PreparedReservedPublication<'a>, EnvError> {
+    let deadline = plan.deadline;
+    let FreshReservedEvidence {
+        artifact,
+        binary,
+        identity,
+        target: candidate,
+        platform: binding_facts,
+    } = read_reserved_evidence(request, plan, policy, facts, observation)?;
+    let target = candidate.identity.clone();
+    let reservation_generation = facts.reservation_generation;
     // The same frozen materialisation the decision recorded, with the identity
     // this observation just proved.
     let context = WorkspaceContextInput {
@@ -1771,11 +1820,7 @@ pub(in crate::runner) fn observe<'a>(
     Ok(PreparedReservedPublication {
         guest,
         artifact,
-        targets: vec![TargetCandidate {
-            identity: target.clone(),
-            project: plan.policy.project_name.clone(),
-            created_by,
-        }],
+        targets: vec![candidate],
         platform: binding_facts,
         alias: plan.alias.clone(),
         context,

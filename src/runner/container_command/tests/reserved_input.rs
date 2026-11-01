@@ -207,6 +207,7 @@ struct FakeBackend {
     /// while one is in flight.
     takes: Option<Duration>,
     reads: Rc<Cell<usize>>,
+    guest_calls: Rc<Cell<usize>>,
     guest: Option<Rc<std::cell::RefCell<crate::runner::workspace_client::guest_fake::FakeGuest>>>,
 }
 
@@ -231,6 +232,7 @@ impl FakeBackend {
             artifact: Observed::Verified(PathBuf::from("/nonexistent/artifact"), evidence()),
             takes: None,
             reads: Rc::new(Cell::new(0)),
+            guest_calls: Rc::new(Cell::new(0)),
             guest: None,
         }
     }
@@ -365,6 +367,7 @@ impl ReservedBackendObservation for FakeBackend {
         _: &ContainerIdentity,
         _: PublicationDeadline,
     ) -> Result<Box<dyn GuestWorkspace + 'a>, EnvError> {
+        self.guest_calls.set(self.guest_calls.get() + 1);
         if let Some(guest) = &self.guest {
             return Ok(crate::runner::workspace_command::provisioning::reserved_guest::tests::creator_guest(guest.clone()));
         }
@@ -1136,6 +1139,97 @@ fn planned_in_home(
     backend: &mut FakeBackend,
 ) -> ReservedPublicationPlan {
     effigy_containers::with_test_effigy_home(&observation.home, || planned_for(policy, backend))
+}
+
+#[test]
+fn reserved_reobservation_reads_fresh_evidence_without_guest_or_secret() {
+    let fixture = observation_checkout("fresh-reobserve");
+    let artifact = produced_artifact(&fixture.root, host_family());
+    let mut backend = FakeBackend::colima().with_artifact(artifact);
+    let policy = rendered_policy(&fixture.root);
+    let mut plan = planned_in_home(&fixture, &policy, &mut backend);
+    let rendered = plan.rendered_policy();
+    let facts = reobserved_decision(&plan, bound_container());
+    let before = backend.count();
+    let (target, platform) = reobserve_reserved(
+        ReservedObservationRequest {
+            repo_root: &fixture.root,
+        },
+        &plan,
+        &rendered,
+        &facts,
+        &mut backend,
+        plan.deadline().at(),
+    )
+    .expect("fresh observation succeeds");
+    assert!(matches!(target, Observed::Verified(ref candidates, _) if candidates.len() == 1));
+    assert!(matches!(platform, Observed::Verified(_, _)));
+    assert!(backend.count() > before, "the backend was actually reread");
+    assert_eq!(backend.guest_calls.get(), 0, "no guest handle was staged");
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at() - Duration::from_millis(1),
+        )
+        .is_err(),
+        "a different deadline is not accepted"
+    );
+    backend.identity = Observed::Verified(host_identity(host_machine(), "gnu"), evidence());
+    if let Observed::Verified(identity, _) = &mut backend.identity {
+        identity.vm_boot_id = OTHER_BOOT_ID.into();
+    }
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "a changed guest boot cannot reuse the prior result"
+    );
+    backend.identity = Observed::Unknown(UnknownReason::GuardUnavailable);
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "unknown does not reuse earlier evidence"
+    );
+    plan.deadline = PublicationDeadline::new(Instant::now() - Duration::from_millis(1));
+    let reads = backend.count();
+    assert!(
+        reobserve_reserved(
+            ReservedObservationRequest {
+                repo_root: &fixture.root
+            },
+            &plan,
+            &rendered,
+            &facts,
+            &mut backend,
+            plan.deadline().at(),
+        )
+        .is_err(),
+        "an expired observation refuses"
+    );
+    assert_eq!(backend.count(), reads, "expired observation reads nothing");
 }
 
 #[test]
