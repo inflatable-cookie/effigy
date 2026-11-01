@@ -1145,3 +1145,78 @@ fn a_workspace_ticket_refuses_every_shape_that_would_own_another_run() {
         );
     }
 }
+
+/// The reserved path must pass the secret reader to the actual spawned helper.
+#[test]
+fn reserved_child_receives_grant_at_handoff_fd() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("fixture");
+    let helper = root.path().join("helper");
+    let observed = root.path().join("observed");
+    std::fs::write(&helper, format!(
+        "#!/bin/sh\nif [ \"$EFFIGY_INTERNAL_SECRET_GRANT\" = 1 ]; then /bin/cat /dev/fd/11 > '{}' ; else echo absent > '{}'; fi\n",
+        observed.display(), observed.display()
+    )).expect("helper");
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    let executable = Executable::capture(&helper).expect("executable");
+    let root_catalog = catalog(root.path(), "", "", 0);
+    let session_run = begin(&TaskTarget::for_catalog(
+        root.path(),
+        "session",
+        &root_catalog,
+    ))
+    .expect("session run");
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let ticket = match reserve_ticket(root.path(), session, 77, b"child grant") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    // This nextest process owns its environment and the shared test lock.
+    unsafe {
+        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
+    }
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    let grant = crate::runner::secret_session::activate_local_dev_secret_access(true);
+    let invocation = effigy_cli::TaskInvocation {
+        name: "test".into(),
+        args: vec![],
+    };
+    let result = crate::runner::managed_run::start_reserved_with_executable(
+        root.path(),
+        &invocation,
+        root.path().to_owned(),
+        ticket,
+        &executable,
+    );
+    let bytes = std::fs::read(&observed)
+        .unwrap_or_else(|error| panic!("child did not write: {error}; launch: {:?}", result.err()));
+    assert!(
+        bytes.starts_with(b"EFFGRNT1"),
+        "child received grant frame: {bytes:?}"
+    );
+    drop(grant);
+    let ticket = match reserve_ticket(root.path(), session, 78, b"without grant") {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
+    let _ = crate::runner::managed_run::start_reserved_with_executable(
+        root.path(),
+        &invocation,
+        root.path().to_owned(),
+        ticket,
+        &executable,
+    );
+    assert_eq!(
+        std::fs::read(&observed).expect("child wrote absence"),
+        b"absent\n"
+    );
+    assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
+}

@@ -21,6 +21,8 @@ mod settlement;
 mod tui;
 mod wire;
 
+#[cfg(test)]
+pub(in crate::runner) use client::start_reserved_with_executable;
 pub(in crate::runner) use client::{
     attach_text, detach, start, start_reserved, ClientStart, Started,
 };

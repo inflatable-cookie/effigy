@@ -95,6 +95,17 @@ pub(in crate::runner) fn start_reserved(
     cwd: PathBuf,
     admission: effigy_kernel::run::AdmissionTicket,
 ) -> Result<Started, RunnerError> {
+    let executable = task_engine::startup_executable()?;
+    start_reserved_with_executable(host_checkout, invocation, cwd, admission, &executable)
+}
+
+pub(in crate::runner) fn start_reserved_with_executable(
+    host_checkout: &Path,
+    invocation: &effigy_cli::TaskInvocation,
+    cwd: PathBuf,
+    admission: effigy_kernel::run::AdmissionTicket,
+    executable: &effigy_kernel::supervise::Executable,
+) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
             "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",
@@ -111,11 +122,11 @@ pub(in crate::runner) fn start_reserved(
         crate::runner::secret_session::workload_ambient_environment()
             .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
             .collect();
-    if let Some(grant) = crate::runner::secret_session::take_child_grant() {
+    let grant = crate::runner::secret_session::take_child_grant();
+    if let Some(grant) = &grant {
         let (key, value) = grant.env_entry();
         env.push((OsString::from(key), OsString::from(value)));
     }
-    let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let root = task_engine::checkout_effects_root(host_checkout)?;
     let run = admission.run();
@@ -126,10 +137,10 @@ pub(in crate::runner) fn start_reserved(
             payload: wire::encode(&payload),
             cwd,
             env,
-            handoff: None,
+            handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
             admission: Some(admission),
         },
-        &executable,
+        executable,
         ClientMode::Owning,
     )
     .map_err(|error| {
