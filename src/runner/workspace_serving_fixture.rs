@@ -690,6 +690,7 @@ pub fn probe_production_guest(
         .ok_or("binary digest invalid")?;
     let hello = || {
         Frame::Hello(Hello {
+            capabilities: Vec::new(),
             schema: wire::SCHEMA.into(),
             protocol_versions: vec![wire::PROTOCOL_V1],
             effigy_version: document.version.clone(),
@@ -723,6 +724,7 @@ pub fn probe_production_guest(
             container_id: document.container_id.clone(),
             vm_boot_id: document.vm_boot_id.clone(),
             body: wire::RequestBody::Observe(wire::ObserveBody {
+                query: None,
                 run_id: None,
                 op: "runs:list".into(),
                 target: Some(wire::Target::Host),
