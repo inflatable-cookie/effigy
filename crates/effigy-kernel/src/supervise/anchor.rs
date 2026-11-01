@@ -234,8 +234,8 @@ pub(super) fn entry() -> Result<(), RunError> {
             // No live member remains, so the anchor is no longer anyone's
             // evidence. It retires itself here instead of waiting to be killed:
             // that is what keeps no anchor beyond its group, including after its
-            // owner, its checkout or its volume is gone. A round that saw a row
-            // churn or lacked the anchor's own positive row keeps waiting instead,
+            // owner, its checkout or its volume is gone. A round with an unproven
+            // row or without the anchor's own positive row keeps waiting instead,
             // so an anchor that cannot establish closure stays alive and is
             // reported as `unproven group closure` (effigy#520).
             return Ok(());
@@ -264,8 +264,8 @@ fn leader_live(group: u32) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClosureRound {
     /// Every listed member other than the anchor was positively not live, and the
-    /// anchor's own row was positively observed. No live member existed at
-    /// inventory time, so nothing could fork afterwards.
+    /// anchor's own row was positively observed. The inventory is not atomic,
+    /// so an unlisted descendant may still have been missed.
     Empty,
     /// A member other than the anchor is positively live.
     Live,
@@ -307,9 +307,8 @@ pub(crate) fn closure_round(rows: &[platform::MembershipRow], me: u32) -> Closur
 ///
 /// Best effort, never a proof: an inventory is not atomic with process creation,
 /// so a descendant forked and orphaned inside the window can be missed. Only a
-/// round in which no row churned and the anchor's own row was positively observed
-/// retires the anchor; a churn or a failed read keeps it alive as evidence
-/// (`unproven group closure`).
+/// round with no live or unproven member and a positively observed anchor row
+/// retires the anchor. An unproven row or failed read keeps it alive as evidence.
 fn observe_group(group: u32, me: u32) -> ClosureRound {
     match platform::group_membership(group) {
         Ok(rows) => closure_round(&rows, me),

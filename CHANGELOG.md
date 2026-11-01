@@ -713,11 +713,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - **Group closure and anchor retirement are honest about their limits.** An anchor
   retires only when one inventory round positively accounts for every in-group row
-  (a zombie cannot fork) and positively observes the anchor itself; a row that
-  vanished or left the group mid-round, a failed read, or an inventory without the
-  anchor's own row keeps it alive and reports `unproven group closure`. Group
-  closure observed through an inventory follows the same rule and is never claimed
-  from a round that saw churn. Group signals keep their authority rules unchanged:
+  (a zombie cannot fork) and positively observes the anchor itself. A listed row
+  unreadable at its state or identity read, a failed read, or an inventory without
+  the anchor's own row keeps it alive. An unresolved row reports `unproven group
+  closure`. Group closure observed through an inventory follows the same rule.
+  Group signals keep their authority rules unchanged:
   a verified anchor (member by member), a leader whose live identity is verified
   immediately before the signal, or an owner that holds its unreaped child; on
   macOS and Linux before 6.9 the numeric check-to-signal window remains and is
@@ -739,9 +739,8 @@ During v0.x, MINOR bumps may include breaking changes.
   member is live, and once a round positively resolves that the group has no live
   member it retires itself within a bounded deadline instead of waiting for an
   owner that may have been killed, whose checkout may be gone, or whose volume may
-  be unmounted. Positive resolution means every row was observed live, or as a
-  zombie, or as a task-less entry the kernel still lists in the group (neither can
-  fork); a row that was live and then unreadable inside the round may have forked a
+  be unmounted. Positive resolution means every row was observed live or as a
+  zombie. A listed row unreadable at its state or identity read may have forked a
   descendant a snapshot cannot see, so it is `unproven`, the anchor stays alive as
   the group's evidence, and the observing path reports the named state `unproven
   group closure`. Repeated snapshots are best effort, never a proof. Identity rules

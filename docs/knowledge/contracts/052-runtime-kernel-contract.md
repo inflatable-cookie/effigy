@@ -1145,9 +1145,11 @@ failure makes the inventory an error, never an absence. In both of those cases t
 anchor keeps retrying as the group's evidence and the observing path reports the
 named state `unproven group closure`. An inventory is not atomic with process
 creation, so a descendant forked and orphaned inside the window can be missed:
-repeated scans are **best effort**, never a proof of an empty group. On Linux, a PID that leaves before getpgid can establish membership is skipped; it can likewise hide a fork. The
-contract does not claim otherwise (effigy#520). That self-retirement
-is what keeps no anchor beyond its group when an owner is killed without
+repeated scans are **best effort**, never a proof of an empty group. On Linux,
+the inventory starts with all PIDs. If a PID disappears before `getpgid` can
+establish its membership, it is skipped; a member that forked before leaving can
+therefore hide a descendant. The contract does not claim otherwise (effigy#520).
+That self-retirement is what keeps no anchor beyond its group when an owner is killed without
 settling (effigy#520), and it is why a nested task session or a harness census
 does not meet a stranger it cannot account for. Tom's 2026-10-27 ruling (Q-014)
 keeps SIGTERM as the cooperative exit; settlement remains the other. An idle
