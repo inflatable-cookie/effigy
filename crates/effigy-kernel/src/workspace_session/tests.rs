@@ -1558,7 +1558,12 @@ fn session_supervisor_retains_exact_slot_on_unknown_cleanup() {
     let cx = context().patience(Duration::from_secs(120));
     let root = StateRoot::effects(&cx, fixture.path()).unwrap();
     let reservation = decided(&cx, &root, &environment());
-    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let release_action = releases.clone();
+    session.on_settle(move || {
+        release_action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
     let fence = session.fence().clone();
     let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
     let spec = EffectSpec {
@@ -1599,12 +1604,48 @@ fn session_supervisor_retains_exact_slot_on_unknown_cleanup() {
         )
         .unwrap();
     assert_eq!(custody, 1);
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
     let slot = session_run_gate(reader.conn(), &fence.resource, run_id(246)).unwrap();
     drop(reader);
     assert!(Gate::acquire(&cx, &root, &[slot], Wait::FailFast).is_err());
     supervisor
         .settle_recoverable(&cleanup(&cx), &mut adapter())
         .expect("same owner retries cleanup");
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "fixture:uncertain-environment-cleanup".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit.applied(&ticket, serde_json::Value::Null).unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let (error, custody) = parked
+        .settle(&cleanup(&cx), &mut UnknownRelease)
+        .expect_err("unknown environment cleanup retains its guarded run");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let crate::run::WorkspaceCleanupCustody::Guarded(owner) = custody else {
+        panic!("retain reacquired Env gate")
+    };
+    assert!(Gate::acquire(&cx, &root, &[environment()], Wait::FailFast).is_err());
+    owner
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("same environment owner retries cleanup");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
 }
 
