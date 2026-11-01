@@ -14,6 +14,7 @@ use super::supervisor::ServiceOwner;
 mod cli_preflight;
 mod declaration;
 pub(in crate::runner) mod integrations;
+mod plan;
 mod supervisor_preflight;
 pub(crate) use declaration::PostPrepDeclaration;
 
