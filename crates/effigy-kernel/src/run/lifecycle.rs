@@ -138,7 +138,11 @@ impl Run<'_> {
             }
         }
         result?;
-        self.start_checkout_backup()
+        let backup = self.start_checkout_backup();
+        if backup.is_err() {
+            self.poisoned = true;
+        }
+        backup
     }
 }
 /// Pure reads of persisted identities plus fresh process facts. A dead,
@@ -196,6 +200,75 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn backup_start_fault_retains_partial_owner_with_same_sentinel() {
+        let home = effigy_test_support::short_tempdir("lb-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "workspace-backup-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        crate::fault::arm_point(
+            crate::fault::Point::WorkspaceBackupAfterSpawn,
+            crate::fault::Fault::Enospc,
+        );
+        let enabled = run.enable_custody(&plan);
+        let fired = crate::fault::fired();
+        crate::fault::arm(None);
+        let sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let partial = run.has_partial_checkout_backup();
+        let backup_identity = run.partial_checkout_backup_identity();
+        let effect_refused = run.can_effect().is_err();
+        let retry = run.enable_custody(&plan);
+        let same_sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let same_backup = run.partial_checkout_backup_identity();
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        assert!(enabled.is_err());
+        assert!(fired, "the post-spawn backup fault must fire");
+        assert!(sentinel.is_some());
+        assert!(partial, "the exact partial backup must remain reachable");
+        assert!(
+            backup_identity.is_some(),
+            "the partial helper identity must be recorded"
+        );
+        assert!(effect_refused, "partial startup must not allow effects");
+        assert!(
+            retry.is_err(),
+            "partial startup must not launch a second helper"
+        );
+        assert_eq!(same_sentinel, sentinel);
+        assert_eq!(same_backup, backup_identity);
+        if let Err((_error, owner)) = cleanup {
+            assert!(
+                owner.has_partial_checkout_backup(),
+                "unknown cleanup must retain the same partial backup"
+            );
+            assert_eq!(owner.partial_checkout_backup_identity(), backup_identity);
+            assert_eq!(
+                owner.sentinel.as_ref().map(|lease| lease.identity.clone()),
+                sentinel,
+                "unknown cleanup must retain the same sentinel lease"
+            );
+            // Fixture teardown only: this is not a production settlement proof.
+            drop(owner);
+        }
+    }
 
     #[test]
     fn after_commit_fault_preserves_same_env_sentinel_for_readback() {
