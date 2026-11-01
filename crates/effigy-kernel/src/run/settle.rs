@@ -187,6 +187,11 @@ impl Run<'_> {
         successor: Option<(RunId, Generation)>,
         retain_incomplete: bool,
     ) -> Result<Outcome<Settled>, RunError> {
+        if self.partial_sentinel.is_some() {
+            return Err(RunError::unavailable(
+                "workspace sentinel startup remains unsettled",
+            ));
+        }
         let cx = cleanup_effects(cleanup)?;
         if !self.holds_owner_gate()? {
             return Err(RunError::broken("a settle without its owner gate"));
@@ -701,6 +706,7 @@ pub(crate) fn settle_interrupted_wait(
         poisoned: false,
         completed: Default::default(),
         sentinel: None,
+        partial_sentinel: None,
         closed_effects: None,
         machine_startup: None,
         checkout_custody: None,

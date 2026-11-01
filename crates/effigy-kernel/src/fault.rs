@@ -68,6 +68,7 @@ points! {
     LifecycleBefore,
     LifecycleCommit,
     LifecycleAfter,
+    WorkspaceSentinelAfterSpawn,
     WorkspaceBackupAfterSpawn,
     WorkspaceBackupAfterConfig,
     WorkspaceBackupAfterAck,

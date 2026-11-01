@@ -248,6 +248,71 @@ mod tests {
     }
 
     #[test]
+    fn sentinel_post_spawn_failure_keeps_workspace_custody_unsettled() {
+        let home = effigy_test_support::short_tempdir("ls-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "sentinel-start-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner.clone()),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let helper_log = home.path().join("sentinel.jsonl");
+        crate::fault::set_helper_log(Some(helper_log.clone()));
+        crate::fault::arm_point(
+            crate::fault::Point::WorkspaceSentinelAfterSpawn,
+            crate::fault::Fault::Enospc,
+        );
+        let start = run.enable_workspace_custody(&plan);
+        let run_id = run.id();
+        let fired = crate::fault::fired();
+        crate::fault::arm(None);
+        crate::fault::set_helper_log(None);
+        let settlement =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        let unsettled = settlement.is_err();
+        let retained = settlement.as_ref().err().and_then(|(_, owner)| {
+            owner
+                .partial_sentinel
+                .as_ref()
+                .map(|partial| (owner.id(), partial.child_id()))
+        });
+        let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
+        let log = std::fs::read_to_string(helper_log).unwrap();
+        let mut recorded = Vec::new();
+        for line in log.lines() {
+            if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
+                recorded.push(child.pid);
+                reap_test_child(&child);
+            }
+        }
+        drop(settlement); // Fixture teardown, not a cleanup receipt.
+        assert!(fired && start.is_err());
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(retained, Some((run_id, recorded[0])));
+        assert!(matches!(
+            gate,
+            Observed::Verified(crate::gate::GateState::Held(_), _)
+        ));
+        assert!(
+            unsettled,
+            "a started sentinel with unknown custody must not settle cleanly"
+        );
+    }
+
+    #[test]
     fn enabling_existing_custody_does_not_spawn_a_second_sentinel() {
         let home = effigy_test_support::short_tempdir("ld-").unwrap();
         let cx = super::super::tests::context();

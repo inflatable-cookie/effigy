@@ -118,6 +118,22 @@ pub(crate) struct SentinelLease {
     child: Child,
     writer: Option<ChildStdin>,
 }
+
+/// A workspace sentinel whose startup was not qualified. It has no operation
+/// that can register effects or turn it into a lease after an error.
+#[allow(dead_code)]
+pub(crate) struct PartialSentinel {
+    child: Child,
+    writer: Option<ChildStdin>,
+    ready: Option<std::process::ChildStdout>,
+    log: std::fs::File,
+}
+#[cfg(all(test, feature = "fault-injection"))]
+impl PartialSentinel {
+    pub(crate) fn child_id(&self) -> u32 {
+        self.child.id()
+    }
+}
 impl SentinelLease {
     /// Read-only evidence that this exact retained lease still has its owner
     /// pipe and the recorded process incarnation. This is not authority to
@@ -472,6 +488,94 @@ fn sentinel_attempt(
         child,
         writer: Some(writer),
     })
+}
+
+/// Opt-in workspace startup retains the exact child from spawn onwards.
+/// A partial child is cleanup-only; its existence is not a birth receipt.
+#[allow(dead_code)]
+pub(crate) fn spawn_workspace_sentinel(
+    run: &Run<'_>,
+    root: &StateRoot,
+    plan: &LifecyclePlan,
+    next: &Invocation,
+) -> Result<SentinelLease, (RunError, Option<Box<PartialSentinel>>)> {
+    let prepare = || -> Result<_, RunError> {
+        if plan.placement == Placement::Guest {
+            return Err(RunError::refused("workspace sentinel needs host authority"));
+        }
+        let home = root
+            .path()
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| RunError::unavailable("invalid state root"))?;
+        let config = SentinelConfig {
+            protocol: HELPER_PROTOCOL,
+            home: home.into(),
+            machine: root.is_machine(),
+            machine_gates: root.machine_gate_address(),
+            owner: run.fence().resource.clone(),
+            run: run.id(),
+            next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
+            executable: plan.executable.clone(),
+        };
+        let log = helper_log(root)?;
+        let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
+            payload: Vec::new(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            env: std::env::vars_os().collect(),
+            handoff: None,
+            admission: None,
+        });
+        let child = spawn_helper(&plan.executable, SENTINEL, &log, inherited.as_ref())?;
+        Ok((
+            config,
+            PartialSentinel {
+                child,
+                writer: None,
+                ready: None,
+                log,
+            },
+        ))
+    };
+    let (config, mut partial) = prepare().map_err(|error| (error, None))?;
+    #[cfg(all(test, feature = "fault-injection"))]
+    crate::fault::note_helper(partial.child.id());
+    let result = (|| -> Result<ProcessIdentity, RunError> {
+        crate::fault_point!(WorkspaceSentinelAfterSpawn)?;
+        partial.writer = partial.child.stdin.take();
+        partial.ready = partial.child.stdout.take();
+        let writer = partial
+            .writer
+            .as_mut()
+            .ok_or_else(|| RunError::unavailable("sentinel pipe missing"))?;
+        let ready = partial
+            .ready
+            .as_mut()
+            .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
+        nonblocking(writer.as_raw_fd())?;
+        write_frame(writer, &config)?;
+        nonblocking(ready.as_raw_fd())?;
+        let mut ack = [0u8];
+        read_exact(ready, &mut ack)?;
+        if ack != [1] {
+            return Err(RunError::unavailable(
+                "sentinel acknowledgement unavailable",
+            ));
+        }
+        ident::process_identity(partial.child.id())
+            .verified()
+            .cloned()
+            .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))
+    })();
+    match result {
+        Ok(identity) => Ok(SentinelLease {
+            identity,
+            executable: plan.executable.clone(),
+            child: partial.child,
+            writer: partial.writer,
+        }),
+        Err(error) => Err((error, Some(Box::new(partial)))),
+    }
 }
 fn context(cancel: CancelToken, budget: Duration) -> OperationContext {
     OperationContext::new(

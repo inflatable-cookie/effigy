@@ -390,6 +390,7 @@ pub struct Run<'a> {
     // manufactures success; only finish durably records the validated outcome.
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
     sentinel: Option<crate::supervise::SentinelLease>,
+    partial_sentinel: Option<Box<crate::supervise::PartialSentinel>>,
     machine_startup: Option<machine::Startup>,
     checkout_custody: Option<checkout_custody::CheckoutCustody>,
     ancestor_closure: Option<crate::closure::ClosurePin>,
@@ -1731,6 +1732,7 @@ impl<'a> Run<'a> {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
+                partial_sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
                 checkout_custody: None,
@@ -1794,6 +1796,7 @@ impl<'a> Run<'a> {
             poisoned: false,
             completed: Default::default(),
             sentinel: None,
+            partial_sentinel: None,
             closed_effects: None,
             machine_startup: planned.map(|_| machine::Startup::default()),
             checkout_custody: None,
@@ -2746,6 +2749,37 @@ impl Run<'_> {
 }
 
 impl Run<'_> {
+    /// Workspace-only startup scaffold; failed helpers remain on this Run.
+    /// It does not qualify helper capabilities or permit Discard.
+    #[allow(dead_code)]
+    pub(crate) fn enable_workspace_custody(
+        &mut self,
+        plan: &crate::supervise::LifecyclePlan,
+    ) -> Result<(), RunError> {
+        self.can_effect()?;
+        self.require_environment_gate()?;
+        if self.root.is_machine() || self.owner.resource.kind() != crate::id::ResourceKind::Env {
+            return Err(RunError::refused(
+                "workspace custody requires a checkout environment",
+            ));
+        }
+        if self.sentinel.is_some() || self.partial_sentinel.is_some() {
+            return Err(RunError::unavailable(
+                "workspace sentinel startup remains unsettled",
+            ));
+        }
+        match crate::supervise::spawn_workspace_sentinel(self, self.root, plan, &self.next) {
+            Ok(lease) => self.register_lifecycle(lease, plan),
+            Err((error, partial)) => {
+                if partial.is_some() {
+                    self.poisoned = true;
+                    self.partial_sentinel = partial;
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Bootstrap adapters may prepare a root-owned helper before enabling
     /// custody. No process may spawn until this registration commits.
     pub fn enable_custody(
