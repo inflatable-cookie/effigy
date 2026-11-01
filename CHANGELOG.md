@@ -8,13 +8,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
-- Container-mode `up` validates checkout and backend identity before ordinary
-  preparation, then hands declarative prepared-input fingerprints to its
-  detached host. That host retains one seal and activation owner across
-  gate-free integrations and revalidation before publication. Serialized seals,
-  backend evidence and session credentials are rejected as startup intent.
-  Detach requires the committed startup acknowledgement. The production-shaped
-  fake-backend proof does not qualify a native backend.
+- Container-mode `up` validates checkout and backend identity, then refuses
+  before preparation while private workspace preparation diagnostics are
+  unavailable. Detached requests also refuse before admission. Startup intent
+  accepts declarative prepared-input fingerprints and rejects serialized seals,
+  backend evidence and session credentials. The production-shaped fake-backend
+  proof does not qualify a native backend or the currently guarded path.
 - Workspace startup refusal preserves primary and cleanup errors. A settlement
   error retains the stopped serving owner until explicit recovery or an
   owner-loss transition retries with a fresh cleanup budget.
