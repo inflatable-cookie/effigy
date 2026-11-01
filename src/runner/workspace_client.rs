@@ -968,6 +968,13 @@ impl GuestIdentity for ObservedGuest {
     }
 }
 
+/// A fresh accept on this connection, with the outcome shared by intent clones.
+#[derive(Debug)]
+struct ConnectionAdmission {
+    run: RunId,
+    delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
+}
+
 /// One authenticated channel connection: the guest client of §8.11 over the
 /// transport an integration supplies.
 pub(crate) struct WorkspaceClient<T: Transport> {
@@ -978,7 +985,7 @@ pub(crate) struct WorkspaceClient<T: Transport> {
     live: LiveGuestRun,
     /// Fresh accepts observed on this connection, keyed by the original request.
     /// This validates reply roles; the host kernel remains the authority.
-    admitted: std::collections::BTreeMap<RequestId, RunId>,
+    admitted: std::collections::BTreeMap<RequestId, ConnectionAdmission>,
     /// The highest sequence this client consumed and acknowledged per stream,
     /// so a resume asks from where it stopped. A `gap` leaves a stream where it
     /// was: missing bytes are never reported as consumed.
@@ -1000,6 +1007,16 @@ impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
 }
 
 impl<T: Transport> WorkspaceClient<T> {
+    fn owns_run(&self, run: RunId) -> bool {
+        self.admitted.values().any(|admission| {
+            admission.run == run
+                && admission
+                    .delivery
+                    .try_lock()
+                    .is_ok_and(|delivery| *delivery == IntentDelivery::Accepted(run))
+        })
+    }
+
     /// Pin, then negotiate, and hold the connection open for one command.
     ///
     /// The pinned host identity is checked before a single byte is written, so
@@ -1178,7 +1195,8 @@ impl<T: Transport> WorkspaceClient<T> {
         };
         if let RequestBody::Detach(body) = &intent.body {
             if outcome.is_ok() || *delivery == IntentDelivery::Indeterminate {
-                self.admitted.retain(|_, run| *run != body.run);
+                self.admitted
+                    .retain(|_, admission| admission.run != body.run);
             }
         }
         if matches!(
@@ -1289,7 +1307,7 @@ impl<T: Transport> WorkspaceClient<T> {
                                         "the attachment view does not match the requested run and cursor",
                                     ));
                                 }
-                                let owns_here = self.admitted.values().any(|run| *run == body.run);
+                                let owns_here = self.owns_run(body.run);
                                 let (expected_client, expected_attachment) = if owns_here {
                                     (
                                         effigy_kernel::run::Client::Owner,
@@ -1340,7 +1358,13 @@ impl<T: Transport> WorkspaceClient<T> {
                                     ))
                                 }
                                 IntentDelivery::Sendable => {
-                                    self.admitted.insert(id, accepted.run);
+                                    self.admitted.insert(
+                                        id,
+                                        ConnectionAdmission {
+                                            run: accepted.run,
+                                            delivery: intent.delivery.clone(),
+                                        },
+                                    );
                                 }
                                 _ => {}
                             }
@@ -1434,7 +1458,7 @@ impl<T: Transport> ChannelRequest for WorkspaceClient<T> {
     }
 
     fn detach(&mut self, run: RunId) -> Result<(), ChannelError> {
-        if !self.admitted.values().any(|admitted| *admitted == run) {
+        if !self.owns_run(run) {
             return Err(ChannelError::Refused {
                 code: channel::RefusalCode::Forbidden.as_str(),
                 message: "this terminal did not admit that run, so it cannot detach it; a \

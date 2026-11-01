@@ -5726,7 +5726,14 @@ fn level_one_postwrite_peer_exchange_in(
                         }
                     })
                     .and_then(|()| client.send(&intent));
-                (outcome, client.admitted.values().copied().collect())
+                (
+                    outcome,
+                    client
+                        .admitted
+                        .values()
+                        .map(|admission| admission.run)
+                        .collect(),
+                )
             }
             Err(error) => (Err(error), Vec::new()),
         };
@@ -5992,7 +5999,11 @@ fn level_one_known_admission_replay_does_not_grant_fresh_connection_ownership() 
             .unwrap();
         initial.send(&invoke).unwrap();
         assert_eq!(
-            initial.admitted.values().copied().collect::<Vec<_>>(),
+            initial
+                .admitted
+                .values()
+                .map(|admission| admission.run)
+                .collect::<Vec<_>>(),
             vec![session_run()]
         );
         drop(initial);
@@ -6085,7 +6096,11 @@ fn level_one_completion_retires_only_its_own_admission() {
     assert_eq!(client.admitted.len(), 2);
     client.send(&first).unwrap();
     assert_eq!(
-        client.admitted.values().copied().collect::<Vec<_>>(),
+        client
+            .admitted
+            .values()
+            .map(|admission| admission.run)
+            .collect::<Vec<_>>(),
         vec![other_run]
     );
     let error = client
@@ -6093,9 +6108,78 @@ fn level_one_completion_retires_only_its_own_admission() {
         .expect_err("a completed request cannot admit again");
     assert!(matches!(error, ChannelError::Unknown { .. }));
     assert_eq!(
-        client.admitted.values().copied().collect::<Vec<_>>(),
+        client
+            .admitted
+            .values()
+            .map(|admission| admission.run)
+            .collect::<Vec<_>>(),
         vec![other_run]
     );
+}
+
+#[test]
+fn level_one_completion_on_a_clone_retires_original_connection_ownership() {
+    let invoke = level_one_build_intent();
+    let still_owner = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+    let attach = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &still_owner,
+        level_one_request_attachment_reply(
+            still_owner.id(),
+            session_run(),
+            0,
+            effigy_kernel::run::Client::Owner,
+            false,
+        ),
+    );
+    level_one_append_response(
+        &mut transport,
+        &attach,
+        level_one_request_attachment_reply(
+            attach.id(),
+            session_run(),
+            0,
+            effigy_kernel::run::Client::Owner,
+            false,
+        ),
+    );
+    let written = transport.written.clone();
+    let mut original = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    original
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    original.send(&invoke).unwrap();
+
+    let mut replay_transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut replay_transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(&mut replay_transport, &invoke, level_one_completed_reply());
+    let mut replay = WorkspaceClient::connect(replay_transport, verified(), live_run()).unwrap();
+    replay
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    replay.send(&invoke.clone()).unwrap();
+    assert_eq!(
+        attach_view(
+            &original
+                .send(&still_owner)
+                .expect("known acceptance preserves original owner")
+        )
+        .client,
+        effigy_kernel::run::Client::Owner,
+    );
+    replay.send(&invoke.clone()).unwrap();
+
+    let before = written.lock().unwrap().len();
+    assert!(original.detach(session_run()).is_err());
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "completed owner sent detach"
+    );
+    level_one_unknown_has_no_clone_write(&attach, original.send(&attach));
 }
 
 #[test]
