@@ -147,6 +147,11 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   pass-through of an earlier observation, and it fails closed on unknown, changed
   or missing evidence (Supervisor under Tom’s standing delegation, 2026-11-01;
   [Q-017 amendments](../questions.md#workspace-activation-amendments); 052 §8.11).
+  Every actual Compose input, including the generated Compose file, belongs to
+  the frozen render closure. Before hashing/apply the adapter verifies the file
+  list and exact bytes against that closure; a missing input refuses rather than
+  extending the seal from containers (Supervisor under Tom's standing delegation,
+  2026-11-01; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
   Failed apply or incomplete observations produce no creation
   receipt. A retry reads only this run's journalled result and never reapplies or
   invents a later receipt. `created_by(project, full_id)` reads that journal;

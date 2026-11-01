@@ -3229,13 +3229,110 @@ preparation remains separate from that reserved authority path. Native Colima,
 Docker Desktop and Linux Docker identity/reachability qualification is still
 required at the candidate gate.
 
-The host selects the first artifact from the exact container image's backend OS/architecture/variant and one observed image loader
-family, before executing it. `/proc/self/exe` ELF machine/interpreter verifies those staged bytes; it does not select them.
-`uname` is diagnostic, including under emulation. Unknown or conflicting platform/libc, or an artifact that cannot execute,
-refuses. Prepare runs the staged binary's context-free `__guest-identity` in the exact target and compares its observation with
-the host-bound container, boot, platform and libc before publishing. No source is qualified merely by naming a backend. If a
-required backend cannot supply these facts, report the missing capability and smallest contract decision; do not fabricate an
-identity or invent a fallback.
+**Reserved publication inputs — #506.** The producer's input is built by
+`src/runner/container_command/reserved_input.rs`, and it is split at the apply
+because those facts are not all knowable at one moment. `plan` runs before
+`WorkspaceActivation::begin` freezes the decision and before ordinary apply: it
+observes the admitted `BackendSelection` through `environment::observed_backend`,
+which keeps an unreadable record or recorded backend `Unknown` instead of
+collapsing into the policy default (the observation carries the whole selection —
+kind, profile/context and engine — and the post-apply binding must match all
+three, so two profiles on one engine cannot be swapped); it observes the addresses that backend's
+guest actually reaches (Docker Desktop and Colima reach the host on loopback,
+proved bindable rather than assumed; the Colima gateway is the profile's own
+`network.gatewayAddress` through `effigy_containers::runtime_gateway_observation`,
+where a missing profile, an unreadable or oversized one, one that is not a
+regular file, one that configures no gateway and a configured one are distinct
+outcomes, and the read is size-bounded); it refuses to re-render over a **live
+predecessor** unless the live stack's own Compose config hashes equal the ones this
+render produces — the environment record's historical `desired` digest is *not*
+live evidence, a changed container id or hash refuses, and a backend that cannot
+report `compose config --hash` refuses rather than assuming compatibility. The same
+comparison is frozen in the plan (including "nothing running") and exposed as
+`recheck_live_predecessor(plan, observation)`, a budgeted typed recheck the caller
+invokes **under the activation gate immediately before the one Compose apply**: it
+re-observes and requires the *exact* frozen facts, so two individually valid
+observations of different containers, a container that appeared, and a container
+that disappeared all refuse. The pre-decision read alone cannot see any of that.
+The intended hash must describe the canonical apply paths before publication,
+and the preflight must not materialize them there: the only
+owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
+acquire `Gate(Env)` — which the gated recheck cannot do — publish desired state, and
+run on a fixed budget rather than the publication's one deadline.
+
+The frozen closure owns every Compose input, including
+`checkout/.effigy/runtime/compose/one.generated.compose.yml` under the render
+root. The preflight checks the exact apply file list against the closure and
+refuses missing or differing bytes before hashing; generated files have no
+second seal or publication authority (Supervisor under Tom's standing delegation,
+2026-11-01; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+
+The kernel owner is
+`Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight`: it
+verifies the frozen closure into one private `staging/preflight-<token>/<digest>`
+tree (`O_EXCL`, 0600, kernel closure verifier) inside the deadline, takes no gate
+and writes nothing canonical; only `Objects::publish_sealed_desired` under
+`Gate(Env)` promotes it, re-verifying the tree first. The reserved preflight seals
+the plan's render and reads its Compose inputs and literal env/extends dependencies
+from that verified private tree. Compose expands the model; only known filesystem
+path fields are projected from the private root to the canonical root in memory.
+The final model hash and the actual apply use the same explicit
+`--project-directory`, derived from the frozen ordered file inventory. An
+unsealed file dependency, unsupported include context or unexpected private-root
+value refuses equivalence. Both observations share the absolute deadline and
+aggregate capture budget; the model is never another seal or apply input. The
+receipt's tree is read-only for this purpose, and a wrong or altered tree can
+only cause a refusal, never an unsafe publication. Ownership resolution
+(canonicalization plus the scope-token read) is bounded by the deadline.
+The plan also renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
+the apply and the decision take, then freezes the `GuestContextInputs`
+materialisation the decision and the published context share.
+`ReservedPublicationPlan::publish_inputs` fills the decision's `guest`,
+`selection` and `inputs_digest` from that same frozen plan and refuses artifact or
+target evidence that names another backend, project or target. `observe` runs
+after the apply, in the same process, on the admitted activation: it re-verifies
+the exact primary binding, takes the **image platform** (OS, architecture,
+variant) from the backend's own `runtime image inspect` of the image that
+container runs and the loader family from the image root the guest reports,
+requires the guest's diagnostic machine type to agree with the image. An unknown
+successor reserves `TargetEvidence::Absent`; observation attributes its exact full
+ID only through the merged creator owner's journal lookup, scoped to the
+reservation environment and equal to the admitted activation's run. The lookup
+runs as a bounded read under the same absolute deadline; unknown, absent,
+ambiguous or another run's evidence refuses. Re-observed targets require exact
+identity equality and carry no creator attribution. The final gated binding
+still rechecks the journal receipt and live inventory through the reconciler;
+this builder grants no fence or gate authority. `ReservedDecisionFacts::of`
+receives the activation and its `EnvContext`, preserving the journal's owning
+root without opening a second credential authority. The builder selects the
+pinned artifact family from the *image* platform, authenticates it against its
+producer receipt under the same deadline, and refuses a target the frozen
+decision did not name. Execution is claimed only for native execution: an image
+built for another machine type needs emulation evidence no owner produces
+(`Q-018`) and refuses instead. The artifact must already be held and current — a
+host that would have to download refuses rather than making an unbounded external
+call inside the deadline. Its one enrolment secret is 32 OS-random bytes in
+canonical 64-hex form; no pid, clock or request id participates. The producer now
+takes that same **absolute** deadline rather than a fresh budget, and the guest it
+receives is `staging::DeadlineGuest`: one deadline and one cumulative capture
+budget for every staging, snapshot and selector command. Every blocking local read
+on the publication path runs on a bounded worker (`bounded_publication_read`):
+resolving the operator workspace and composing its manifest, the whole local
+planning sequence (the alias render, the checkout identity, the source closure
+with its includes, source lock, bundle and catalog roots and every fragment), and
+finding and authenticating the produced artifact (its version and receipt
+sidecars and its digest), and the admitted backend record and the Colima
+profile's gateway (the first establishes the checkout identity token, so it may
+write). That bound holds before and after the apply: the post-apply binding reads
+the same bounded record observation. A clock check before or after a synchronous read cannot
+enforce a budget while it is blocked, so the publication stops waiting at the one
+deadline and reports that fact unknown; an abandoned worker only reads. The
+producer's probe is owned, built by an injected factory from the identity the
+observation verified, so a caller's publication callback returns an input that
+borrows nothing from a local. The plan, the observed
+input and the guest remain in one process, so the durable owner #507 launches can
+plan, freeze, apply once, observe and publish without moving a live handle across
+a process boundary. Rootless Linux and Apple Containers remain unqualified.
 
 **Qualified TLS locator — #483 (A).** Historical context and guest transport
 signature sketch; the merged adapter and its paths are described below:

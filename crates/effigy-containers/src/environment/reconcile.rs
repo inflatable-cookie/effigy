@@ -824,20 +824,30 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
-    pub fn publish_sealed_desired(
-        &mut self,
-        sealed: &effigy_kernel::objects::SealedPreflight,
-        closure: &Closure,
-    ) -> Result<String, EnvError> {
-        let result = Objects::publish_sealed_desired(&mut self.run, sealed, closure);
-        self.kernel(result)
-    }
-
     pub fn publish_desired(&mut self, closure: &Closure) -> Result<String, EnvError> {
         self.phase("publishing the desired render", None);
         let result = Objects::publish_desired(&mut self.run, closure);
         let id = self.kernel(result)?;
         self.progress.event(format!("published render {id}"));
+        Ok(id)
+    }
+
+    /// Publish a preflight seal's closure as this environment's desired render.
+    ///
+    /// This is the same fenced publication as `publish_desired` — one journalled
+    /// intent, one objects gate, one reference transaction — but it consumes the
+    /// kernel receipt a preflight verified, which the publisher re-verifies under
+    /// this run's `Gate(Env)` before promoting. No other route can turn a seal
+    /// into canonical bytes.
+    pub fn publish_sealed_desired(
+        &mut self,
+        sealed: &effigy_kernel::objects::SealedPreflight,
+        closure: &Closure,
+    ) -> Result<String, EnvError> {
+        self.phase("publishing the sealed render", None);
+        let result = Objects::publish_sealed_desired(&mut self.run, sealed, closure);
+        let id = self.kernel(result)?;
+        self.progress.event(format!("published sealed render {id}"));
         Ok(id)
     }
 

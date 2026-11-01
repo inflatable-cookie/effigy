@@ -8,6 +8,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Build reserved workspace successor attribution from the activation's exact-ID
+  creation journal with the same publication deadline.
+
 - Host-process children use custody-owned output pipes instead of inheriting
   raw log descriptors. Their merged output is sanitized and redacted before
   append to the existing plain follower path; failed appends stop capture
@@ -65,6 +68,33 @@ During v0.x, MINOR bumps may include breaking changes.
   and enrols nothing.
 
 - Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
+
+- Reserved workspace publication inputs are built from verified observations.
+  The pre-apply plan freezes the admitted backend/profile, observed `effigy-host`
+  alias, source snapshots and environment materialisation. An unknown successor
+  reserves `TargetEvidence::Absent` for first-up or authorized non-live config
+  recreation; post-apply attribution requires the creation journal to name this
+  activation and its exact new full container ID. Attached IDs are never
+  attributed as created, and an `Observed` target must retain its exact old ID.
+  Missing, ambiguous, stale or foreign creator evidence refuses publication.
+- Live predecessor compatibility uses its exact full ID and observed Compose
+  config hash, not the environment record's historical digest. Preflight reads a
+  verified private kernel seal and anchors relative path resolution to the
+  canonical apply project directory; the gated recheck requires the exact same
+  predecessor facts immediately before the one apply. Unsupported/unknown hash
+  comparisons refuse. Only the fenced publisher promotes the retained seal.
+- Reserved publication preserves one absolute deadline across planning, backend
+  and profile reads, manifest/source closure, artifact authentication, probes and
+  guest staging. Blocking local reads use bounded workers; expiry is Unknown or
+  a timeout refusal. The post-apply builder checks full container/boot identity,
+  complete backend/profile, image platform and loader, artifact receipt and
+  digest, and immutable source pins before a selector switch or credential.
+  Unknown aliases, raced identities, platform disagreement, tampering and
+  unverified emulation refuse. The probe is owned by the input; the enrolment
+  secret is 32 OS-random bytes rendered as canonical 64-hex. The creator receipt
+  does not establish guest-session publication or native backend qualification.
+
+- An emulated image (one built for another machine type) still cannot publish a reserved workspace: no owner observes emulation qualification, so execution is claimed only for this host's own machine type and the input builder refuses the rest instead of guessing. A reserved publication also refuses to download a guest artifact inside its deadline; the host must already hold a current one.
 
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
 
@@ -1211,6 +1241,11 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Keep the workspace alias override and canonical environment identity in frozen
+  publication inputs. Enrolment credentials use the reserved environment
+  generation independently of the guest context generation.
+- Render sealed Compose read refusals as human-readable messages.
 
 - The detached workspace-serving proof and its fixture no longer depend on a
   loaded host's timing, gate luck or cleanup order. A caller's startup budget

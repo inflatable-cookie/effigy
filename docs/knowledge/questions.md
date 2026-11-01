@@ -879,3 +879,16 @@ Linux Docker qualification gate remains; safe refusal is not qualification.
 Rootless Linux and Apple Containers have no qualification claim. These
 implementation seams do not waive the production activation or native
 qualification gates.
+
+`052` §8.11 carries the current #506 detail: the answered render-preflight seal
+(`Objects::seal_for_preflight` -> retained `SealedPreflight` -> the one apply
+promoting it through `EnvRun::publish_sealed_desired` under `Gate(Env)`) and the
+creator adapter that reads #510's journal-bound exact-new-ID receipt. Unknown
+successors reserve `Absent`, including authorized non-live config recreation;
+only a receipt naming the current activation's exact new ID permits attribution.
+An attached ID is never attributed as created, and an `Observed` target retains
+its exact old identity. Missing, ambiguous or foreign evidence still refuses.
+The remaining gate is production lifecycle integration and native qualification
+under #452, rather than a missing creator receipt; the receipt alone proves no
+guest-session publication.
+
