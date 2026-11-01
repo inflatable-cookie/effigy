@@ -629,3 +629,64 @@ fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
 fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
 }
+
+#[test]
+fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sinks() {
+    for case in ["fail_binding", "fail_binary_staging", "fail_liveness"] {
+        let fixture = BackendFixture::new();
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&fixture.config).expect("config")).expect("JSON");
+        config[case] = true.into();
+        std::fs::write(
+            &fixture.config,
+            serde_json::to_vec(&config).expect("fault input"),
+        )
+        .expect("fault");
+        let output = fixture
+            .command()
+            .args(["container", "up", "--detach", "--json"])
+            .output()
+            .expect("actual CLI");
+        assert!(!output.status.success(), "{case}: no Serving");
+        for sink in [
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+            std::fs::read_to_string(fixture.config.with_extension("failure")).unwrap_or_default(),
+        ] {
+            assert!(
+                !sink.contains("adversarial-secret-backend-diagnostic"),
+                "{case}: secret-bearing error escaped"
+            );
+        }
+        let connection = rusqlite::Connection::open_with_flags(
+            fixture.project.join(".effigy/state/kernel.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("journal");
+        let diagnostics: Vec<String> = connection
+            .prepare("SELECT error FROM events WHERE error IS NOT NULL")
+            .expect("errors")
+            .query_map([], |r| r.get(0))
+            .expect("rows")
+            .collect::<Result<_, _>>()
+            .expect("diagnostics");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|s| !s.contains("adversarial-secret-backend-diagnostic")),
+            "{case}: durable error leak"
+        );
+        let classifications = std::fs::read_to_string(fixture.config.with_extension("failure"))
+            .expect("fixed stage log");
+        assert!(
+            classifications.contains(if case == "fail_binding" {
+                "bind/reacquire"
+            } else {
+                "publication/selection"
+            }),
+            "the injected {case} path was exercised: {classifications}"
+        );
+        // Unknown custody may intentionally require forced exact-PID fixture
+        // teardown. No settlement/recovery claim follows from this assertion.
+    }
+}

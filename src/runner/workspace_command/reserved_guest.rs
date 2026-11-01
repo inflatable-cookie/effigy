@@ -402,16 +402,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         };
         let observed = match input.probe.identity(&container, &object, remaining()?) {
             Observed::Verified(observed, _) => observed,
-            Observed::Unknown(reason) => {
-                return Err(unavailable(format!(
-                    "guest-local identity is unavailable: {reason}"
-                )))
-            }
+            Observed::Unknown(_) => return Err(unavailable("guest-local identity is unavailable")),
             Observed::Absent(_) => return Err(unavailable("guest-local identity is absent")),
         };
         observed
             .compare(&container)
-            .map_err(|error| refused(error.to_string()))?;
+            .map_err(|_| refused("guest-local identity differs from the reserved target"))?;
         // No credential is minted or staged until the independent guest agrees.
         let generation = allocate_generation(input.guest.as_mut()).map_err(io)?;
         let credential = (input.credential)(activation.session(), generation)?;
@@ -439,7 +435,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             input.probe.as_mut(),
             remaining()?,
         )
-        .map_err(|error| unavailable(error.to_string()))?
+        .map_err(|_| unavailable("workspace host channel qualification unavailable"))?
         .ok_or_else(|| refused("container-mode publication has no qualified channel"))?;
         for (snapshot, bytes) in &input.snapshots {
             staging::stage_document(input.guest.as_mut(), snapshot, bytes, 0o444).map_err(io)?;
@@ -500,7 +496,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 .selection,
             &channel.locator,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|_| refused("workspace context construction refused"))?;
         let bytes = document.render().map_err(io)?;
         objects.context.digest = Digest::of(&bytes);
         staging::stage_document(
@@ -523,7 +519,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 .map_err(io)?
                 .ok_or_else(|| unavailable("staged full v2 context is absent"))?,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|_| refused("workspace staged context validation refused"))?;
         if parsed != document {
             return Err(refused("guest parsed another immutable context"));
         }
@@ -537,10 +533,8 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             Observed::Verified(_, _) => {
                 return Err(refused("full-context probe observed another target"))
             }
-            Observed::Unknown(reason) => {
-                return Err(unavailable(format!(
-                    "full guest context probe is unavailable: {reason}"
-                )))
+            Observed::Unknown(_) => {
+                return Err(unavailable("full guest context probe is unavailable"))
             }
             Observed::Absent(_) => return Err(unavailable("full guest context probe is absent")),
         };
@@ -587,7 +581,9 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 let expected = match reader.read_selector(path) {
                     Observed::Verified(value, _) => Some(value),
                     Observed::Absent(_) => None,
-                    Observed::Unknown(reason) => return Err(unavailable(reason.to_string())),
+                    Observed::Unknown(_) => {
+                        return Err(unavailable("workspace selector observation unavailable"))
+                    }
                 };
                 let next = if path == CONTEXT_SELECTOR {
                     generation.to_string()

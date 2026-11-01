@@ -24,7 +24,7 @@ pub(crate) use cli_preflight::{prevalidate_cli, PreparedIntent};
 pub(crate) use declaration::PostPrepDeclaration;
 
 #[cfg(feature = "workspace-serving-fixture")]
-pub(crate) fn fixture_diagnostic(message: &str) {
+pub(crate) fn fixture_diagnostic(message: &'static str) {
     if fake_io::configured() {
         fake_io::diagnostic(message);
     }

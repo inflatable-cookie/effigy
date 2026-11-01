@@ -50,6 +50,12 @@ struct Config {
     delay_final_revalidation: bool,
     #[serde(default)]
     fail_publication: bool,
+    #[serde(default)]
+    fail_binding: bool,
+    #[serde(default)]
+    fail_liveness: bool,
+    #[serde(default)]
+    fail_binary_staging: bool,
 }
 
 pub(super) fn configured() -> bool {
@@ -60,6 +66,9 @@ pub(super) fn fail_handoff() -> bool {
 }
 pub(super) fn fail_adoption_cleanup() -> bool {
     configured() && config().is_ok_and(|config| config.fail_adoption_cleanup)
+}
+pub(super) fn binding_failure() -> bool {
+    config().is_ok_and(|c| c.fail_binding)
 }
 pub(super) fn integration_budget() -> Duration {
     if config().is_ok_and(|c| c.delay_final_revalidation) {
@@ -99,7 +108,7 @@ pub(super) fn record_unwind(
 fn failure() -> RunnerError {
     RunnerError::task_invocation("workspace fake I/O unavailable")
 }
-pub(super) fn diagnostic(message: &str) {
+pub(super) fn diagnostic(message: &'static str) {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     if let Some(config) = std::env::var_os(CONFIG) {
@@ -353,11 +362,33 @@ impl GuestWorkspace for SharedGuest {
     }
     delegate!(install_no_replace(staging: &str, path: &str) -> ());
     delegate!(set_owner(path: &str, owner: &str) -> ());
-    delegate!(stage_host_file(host_path: &Path, guest_path: &str) -> ());
+    fn stage_host_file(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError> {
+        if config().is_ok_and(|c| c.fail_binary_staging) {
+            return Err(RunnerError::task_invocation(
+                "adversarial-secret-backend-diagnostic",
+            ));
+        }
+        self.0
+            .lock()
+            .map_err(|_| failure())?
+            .guest
+            .stage_host_file(host_path, guest_path)
+    }
     delegate!(install_executable(staging: &str, path: &str) -> ());
     delegate!(replace_pointer(path: &str, target: &str) -> ());
     delegate!(replace_link(path: &str, target: &str) -> ());
-    delegate!(probe_container_identity() -> WorkspaceContainerIdentity);
+    fn probe_container_identity(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
+        if config().is_ok_and(|c| c.fail_liveness) {
+            return Err(RunnerError::task_invocation(
+                "adversarial-secret-backend-diagnostic",
+            ));
+        }
+        self.0
+            .lock()
+            .map_err(|_| failure())?
+            .guest
+            .probe_container_identity()
+    }
 }
 
 pub(super) struct Probe {
@@ -480,27 +511,23 @@ pub(super) fn activation_failure<E>(
     use crate::runner::environment::workspace::integrated::IntegratedFailure;
     use crate::runner::environment::workspace::phase_a::PhaseAFailure;
     use crate::runner::environment::workspace::phase_b::PublicationFailure;
-    let (stage, cause): (&str, &dyn std::fmt::Display) = match failure {
-        IntegratedFailure::PhaseA(PhaseAFailure::BeforeAdmission(cause)) => {
-            ("before admission", cause)
-        }
-        IntegratedFailure::PhaseA(PhaseAFailure::Admission(admission)) => {
-            ("admission", &admission.failure.error)
-        }
-        IntegratedFailure::PhaseA(PhaseAFailure::Guarded { cause, .. }) => ("sealed apply", cause),
-        IntegratedFailure::Guarded { cause, .. } => ("bind/reacquire", cause),
-        IntegratedFailure::Parked { cause, .. } => ("integrations/resume", cause),
-        IntegratedFailure::Cleanup(custody) => ("guarded cleanup", &custody.cleanup),
-        IntegratedFailure::CleanupOnly { cause, .. } => ("cleanup integrations", cause),
-        IntegratedFailure::ParkedCleanup { cause, .. } => ("parked cleanup", cause),
+    let stage = match failure {
+        IntegratedFailure::PhaseA(PhaseAFailure::BeforeAdmission(_)) => "before admission",
+        IntegratedFailure::PhaseA(PhaseAFailure::Admission(_)) => "admission",
+        IntegratedFailure::PhaseA(PhaseAFailure::Guarded { .. }) => "sealed apply",
+        IntegratedFailure::Guarded { .. } => "bind/reacquire",
+        IntegratedFailure::Parked { .. } => "integrations/resume",
+        IntegratedFailure::Cleanup(_) => "guarded cleanup",
+        IntegratedFailure::CleanupOnly { .. } => "cleanup integrations",
+        IntegratedFailure::ParkedCleanup { .. } => "parked cleanup",
         IntegratedFailure::Publication {
-            cause: PublicationFailure::Guarded { cause, .. },
+            cause: PublicationFailure::Guarded { .. },
             ..
-        } => ("publication/selection", cause),
+        } => "publication/selection",
         IntegratedFailure::Publication {
-            cause: PublicationFailure::Finishing { cause, .. },
+            cause: PublicationFailure::Finishing { .. },
             ..
-        } => ("selected finish", cause),
+        } => "selected finish",
     };
-    diagnostic(&format!("{stage}: {cause}"));
+    diagnostic(stage);
 }

@@ -3766,10 +3766,9 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
         use effigy_kernel::run::RunError;
         let failed = |error: RunnerError| {
             #[cfg(feature = "workspace-serving-fixture")]
-            crate::runner::workspace_client::container_up::fixture_diagnostic(&format!(
-                "integration effect: {error}"
-            ));
-            #[cfg(not(feature = "workspace-serving-fixture"))]
+            crate::runner::workspace_client::container_up::fixture_diagnostic(
+                "integration effect failed",
+            );
             let _ = error;
             RunError::unavailable("workspace integration effect failed")
         };

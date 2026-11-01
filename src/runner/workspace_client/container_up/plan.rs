@@ -127,6 +127,12 @@ pub(super) fn publication_input<'a>(
         ))
     })?;
     Ok(prepared.into_input(Box::new(move |until| {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if super::fake_io::binding_failure() {
+            return Err(EnvError::Kernel(RunError::unavailable(
+                "adversarial-secret-backend-diagnostic",
+            )));
+        }
         let policy = reobserve_plan.policy();
         inputs::reobserve_reserved(
             ReservedObservationRequest {
@@ -149,7 +155,7 @@ pub(super) fn prepare_observation(
         return super::fake_io::Observation::new(policy)
             .map(|observation| Box::new(observation) as Box<dyn ReservedBackendObservation + Send>)
             .map_err(|error| {
-                super::fake_io::diagnostic(&format!("prepare observation: {error}"));
+                super::fake_io::diagnostic("prepare observation unavailable");
                 error
             });
     }
