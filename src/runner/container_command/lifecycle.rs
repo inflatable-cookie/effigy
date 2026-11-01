@@ -70,9 +70,9 @@ use effigy_runtime::write::{
     run_container_reset,
 };
 
-struct ContainerUpPlan {
+pub(in crate::runner) struct ContainerUpPlan {
     stop_flag: Arc<AtomicBool>,
-    policy: EffectiveContainerPolicy,
+    pub(in crate::runner) policy: EffectiveContainerPolicy,
     requested_container: Option<String>,
     secret_runtime: ResolvedContainerSecretRuntime,
     compose_secret_env: Vec<(String, OsString)>,
@@ -83,6 +83,15 @@ struct ContainerUpPlan {
     handover_notes: Vec<String>,
     workspace_mount_decisions: Vec<WorkspaceExtraMountDecision>,
     up_plan: ContainerComposeInvocationPlan,
+}
+
+// Preparation retains secret material. Diagnostics expose only its environment.
+impl std::fmt::Debug for ContainerUpPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContainerUpPlan")
+            .field("environment", &self.policy.name)
+            .finish_non_exhaustive()
+    }
 }
 
 struct ContainerUpRuntimeIntegrations {
@@ -466,6 +475,17 @@ fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(
         ));
     }
     Ok(())
+}
+
+/// Prepare in the serving supervisor. The front end sends only intent and
+/// never transports or reconstructs the sealed publication plan.
+pub(in crate::runner) fn prepare_workspace_up(
+    repo_root: &Path,
+    name: &str,
+) -> Result<ContainerUpPlan, RunnerError> {
+    let mut operation = DetachedOperationState::default();
+    prepare_sources_for_container_up(repo_root)?;
+    prepare_container_up(repo_root, Some(name), false, true, &mut operation)
 }
 
 fn prepare_container_up(

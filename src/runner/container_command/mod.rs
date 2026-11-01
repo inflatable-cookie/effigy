@@ -50,7 +50,7 @@ mod data_custody_tests;
 mod gateway_registration;
 mod handover;
 mod hosts;
-mod lifecycle;
+pub(in crate::runner) mod lifecycle;
 mod liveness;
 mod migrate;
 pub(in crate::runner) mod policy;

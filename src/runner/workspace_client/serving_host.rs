@@ -92,11 +92,10 @@ pub(crate) struct ServingHostRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub(crate) enum Activation {
-    /// The container-up producer: the real `up_prepared` transaction, which #452
-    /// supplies once #506's planner lands.
+    /// Container-up intent; the supervisor constructs and retains its plan.
     ContainerUp {
-        /// The producer's own frozen input, opaque to this module.
-        request: Vec<u8>,
+        /// Command intent only. Live preparation never crosses this boundary.
+        request: super::container_up::ContainerUpRequest,
     },
     /// The disposable activation the process-lifetime proof runs: a real
     /// session run, listener, key, grant book and leased session with no
@@ -293,6 +292,11 @@ impl ServingHost {
     /// Acknowledge the kernel's durable detach: the supervisor keeps serving
     /// after this front end exits.
     pub(crate) fn detach(self, cx: &EffectContext) -> Result<RunId, RunError> {
+        if self.published.is_none() {
+            return Err(RunError::refused(
+                "the workspace serving host cannot detach before its committed acknowledgement",
+            ));
+        }
         let id = self.client.run;
         self.client.detach(cx, id)
     }
@@ -433,6 +437,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             "the workspace serving payload is unsupported",
         ));
     }
+    crate::runner::task_engine::adopt_state_home(request.state_home.clone());
     let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
     #[cfg_attr(not(feature = "workspace-serving-fixture"), allow(unused_variables))]
     let observe = observation();
@@ -513,15 +518,16 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                 }
             }
         }
-        Activation::ContainerUp { .. } => {
-            let error = refuse(
-                &session,
-                Category::Refused,
-                "the container-up activation producer is not wired yet; #452 supplies it",
-            );
-            let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
-            let _ = run.settle(&cleanup_budget(), &mut adapter);
-            return Err(error);
+        Activation::ContainerUp { request: input } => {
+            match super::container_up::activate(&request, input) {
+                Ok(service) => service,
+                Err(error) => {
+                    let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
+                    let _ = run.settle(&cleanup_budget(), &mut adapter);
+                    session.refused_message(error.category(), error.to_string());
+                    return Err(error);
+                }
+            }
         }
     };
 

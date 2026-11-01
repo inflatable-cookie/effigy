@@ -50,6 +50,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod context;
+pub(crate) mod container_up;
 // #482's producer side: the staged guest probe and the guest's own identity
 // observation, which the v2 context verification takes.
 pub(crate) mod guest_probe;

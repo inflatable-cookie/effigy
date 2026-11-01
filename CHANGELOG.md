@@ -8,6 +8,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Detached workspace hosts refuse detach before their committed startup
+  acknowledgement. Container-up supervisor requests accept command intent
+  only; serialized seals, backend evidence and credentials are rejected.
+
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.
 
