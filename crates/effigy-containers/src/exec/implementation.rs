@@ -1632,7 +1632,8 @@ pub fn run_backend_invocation_until(
     )
 }
 
-/// The same private output policy under the activation's absolute deadline.
+/// Refuse private execution until the reviewed same-Env capability exists.
+/// Every input reaches the same refusal before interpolation or process work.
 pub fn run_backend_invocation_private_until(
     workdir: &Path,
     program: &OsStr,
@@ -1641,25 +1642,6 @@ pub fn run_backend_invocation_private_until(
     env: &[(String, OsString)],
     deadline: Instant,
 ) -> Result<(), ContainerExecError> {
-    run_backend_invocation_private_inner(workdir, program, args, label, env, deadline)
-}
-
-fn run_backend_invocation_private_inner(
-    workdir: &Path,
-    program: &OsStr,
-    args: &[OsString],
-    label: &str,
-    env: &[(String, OsString)],
-    deadline: Instant,
-) -> Result<(), ContainerExecError> {
-    if !is_private_detached_compose_up(args) {
-        return Err(ContainerExecError::Failure {
-            command: label.to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: "[effigy] private workspace invocation requires detached up".into(),
-        });
-    }
     super::process::run_private_detached_command(
         workdir,
         &program.to_string_lossy(),
@@ -1668,73 +1650,6 @@ fn run_backend_invocation_private_inner(
         env,
         deadline,
     )
-}
-
-fn is_private_detached_compose_up(args: &[OsString]) -> bool {
-    let mut index = 0;
-    if args
-        .first()
-        .is_some_and(|arg| arg == "--context" || arg == "--host")
-    {
-        if args.len() < 3 || args[1].is_empty() {
-            return false;
-        }
-        index = 2;
-    } else if args.first().is_some_and(|arg| arg == "nerdctl") {
-        if args.len() < 5 || args[1] != "--profile" || args[2].is_empty() || args[3] != "--" {
-            return false;
-        }
-        index = 4;
-    }
-    if args.get(index).is_none_or(|arg| arg != "compose") {
-        return false;
-    }
-    index += 1;
-    while let Some(arg) = args.get(index) {
-        if arg == "up" {
-            let mut detached = false;
-            let mut services_only = false;
-            for value in &args[index + 1..] {
-                if value == "--" {
-                    services_only = true;
-                    continue;
-                }
-                if services_only {
-                    continue;
-                }
-                if value == "-d" || value == "--detach" {
-                    detached = true;
-                    continue;
-                }
-                if value == "--build" || value == "--remove-orphans" {
-                    continue;
-                }
-                if value.to_string_lossy().starts_with('-') {
-                    return false;
-                }
-            }
-            return detached;
-        }
-        if ![
-            "-f",
-            "--file",
-            "-p",
-            "--project-name",
-            "--project-directory",
-            "--env-file",
-            "--profile",
-        ]
-        .iter()
-        .any(|option| arg == option)
-        {
-            return false;
-        }
-        if args.get(index + 1).is_none_or(|value| value.is_empty()) {
-            return false;
-        }
-        index += 2;
-    }
-    false
 }
 
 pub fn run_compose_invocation_capture(

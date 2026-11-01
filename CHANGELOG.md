@@ -10,7 +10,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Container-mode `up` validates checkout and backend identity, then refuses
   before preparation while private workspace preparation diagnostics are
-  unavailable. Detached requests also refuse before admission. Startup intent
+  unavailable. Detached requests also refuse before admission. Private Compose
+  entrypoints refuse before interpolation files or child launch. Startup intent
   accepts declarative prepared-input fingerprints and rejects serialized seals,
   backend evidence and session credentials. The production-shaped fake-backend
   proof does not qualify a native backend or the currently guarded path.

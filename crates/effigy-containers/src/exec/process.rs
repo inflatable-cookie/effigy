@@ -1844,7 +1844,13 @@ os.close(w); assert os.read(r,1)==b'r'; os.close(r); os._exit({exit_code})
                 Instant::now() + Duration::from_secs(5),
             )
             .expect_err("not a detached up command");
-            assert!(error.to_string().contains("requires detached up"));
+            match error {
+                super::ContainerExecError::Launch { error, .. } => {
+                    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+                    assert_eq!(error.to_string(), "private workspace Compose is unavailable until the reviewed same-Env capability lands");
+                }
+                other => panic!("private execution must refuse before parsing: {other:?}"),
+            }
         }
         assert!(!fixture.path().join("unexpected").exists());
     }
