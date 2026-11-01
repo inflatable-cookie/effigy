@@ -40,7 +40,6 @@ pub(super) fn apply_options_action(
             match supervisor.restart_process(active) {
                 Ok(()) => {
                     state.exit_states.remove(active);
-                    state.observed_non_zero.remove(active);
                     state.output_seen.insert(active.to_owned(), false);
                     state.restart_pending.insert(active.to_owned(), true);
                     state

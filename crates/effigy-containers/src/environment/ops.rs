@@ -11,6 +11,7 @@ use effigy_kernel::run::AttachMode;
 use std::time::Instant;
 
 use super::backend::{BackendError, BackendSelection};
+use super::creation::{CreationOutcome, CreationRequest};
 use super::reconcile::{EnvContext, EnvError, EnvRef, EnvRun, Operation, GATE_WAIT};
 use super::record::{EngineRecord, Retention};
 use effigy_kernel::run::Holder;
@@ -24,9 +25,40 @@ pub struct Up<'a> {
     pub project: &'a str,
     pub backend: &'a BackendSelection,
     pub retention: Retention,
+    /// The checkout the apply and its observations run from.
+    pub workdir: &'a std::path::Path,
+    /// The service the environment's declared workspace runs the guest binary
+    /// in: the one container this activation must attribute (effigy#510).
+    pub primary_service: &'a str,
+    /// The rendered Compose files the workspace service is declared in.
+    pub compose_files: &'a [std::path::PathBuf],
 }
 
-/// What a bring-up did to the backend.
+impl<'a> Up<'a> {
+    /// What one apply observation needs: the checkout, the project,
+    /// the workspace service and the render that declares it.
+    pub fn creation_request(&self) -> CreationRequest<'a> {
+        CreationRequest {
+            workdir: self.workdir,
+            project: self.project,
+            primary_service: self.primary_service,
+            compose_files: self.compose_files,
+            render: self.render,
+            preflight: None,
+            required: false,
+            deadline: Instant::now() + super::reconcile::RUN_BUDGET,
+        }
+    }
+}
+
+/// What one bring-up did to the backend, and what its create recorded
+/// (effigy#510).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BringUp {
+    pub applied: Applied,
+    /// `None` when the environment was held and no apply ran.
+    pub creation: Option<CreationOutcome>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// The backend converged on the render.
@@ -48,7 +80,7 @@ pub fn reconcile(
     env: &EnvRef,
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
-) -> Result<Applied, EnvError> {
+) -> Result<BringUp, EnvError> {
     reconcile_observing(ctx, env, request, apply, |run| run.holders())
 }
 
@@ -60,14 +92,14 @@ pub fn reconcile_observing(
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
-) -> Result<Applied, EnvError> {
+) -> Result<BringUp, EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = reconcile_in(&mut run, request, apply, observe_holders);
+    let result = reconcile_in(&mut run, request, None, apply, observe_holders);
     let ok = result.is_ok();
     run.finish(ok)?;
     result
@@ -76,11 +108,23 @@ pub fn reconcile_observing(
 pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
+    sealed: Option<(
+        &effigy_kernel::objects::SealedPreflight,
+        &super::CreationPreflight,
+    )>,
     apply: impl FnOnce() -> Result<(), BackendError>,
     observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
-) -> Result<Applied, EnvError> {
+) -> Result<BringUp, EnvError> {
     if let Some(closure) = request.render {
-        run.publish_desired(closure)?;
+        match sealed {
+            Some((sealed, _)) => {
+                run.publish_sealed_desired(sealed, closure)?;
+                run.verify_compose_inputs(closure, request.compose_files, request.workdir)?;
+            }
+            None => {
+                run.publish_desired(closure)?;
+            }
+        }
     }
     run.settle_interrupted_holders()?;
     let previous = run.engine_record().cloned();
@@ -104,12 +148,22 @@ pub(super) fn reconcile_in(
     };
     let holders = live_holders(observed);
     if !holders.is_empty() {
-        return Ok(Applied::HeldByRuns(holders));
+        return Ok(BringUp {
+            applied: Applied::HeldByRuns(holders),
+            creation: None,
+        });
     }
-    run.apply_with(request.backend, request.project, apply)?;
-    Ok(match unreadable {
-        Some(reason) => Applied::ReconciledUnreadableHolders(reason),
-        None => Applied::Reconciled,
+    let mut adapter = request.backend.adapter();
+    let mut creation_request = request.creation_request();
+    creation_request.preflight = sealed.map(|(_, preflight)| preflight);
+    creation_request.required = sealed.is_some();
+    let creation = run.create_with(adapter.as_mut(), request.backend, creation_request, apply)?;
+    Ok(BringUp {
+        applied: match unreadable {
+            Some(reason) => Applied::ReconciledUnreadableHolders(reason),
+            None => Applied::Reconciled,
+        },
+        creation: Some(creation),
     })
 }
 

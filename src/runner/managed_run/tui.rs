@@ -23,7 +23,7 @@ use effigy_process::{
 };
 use effigy_tui::multiprocess::{
     run_multiprocess_tui_with_source, MultiProcessTuiControl, MultiProcessTuiOptions,
-    SessionProcesses, SessionTab,
+    SessionEntryState, SessionProcesses, SessionTab,
 };
 use effigy_tui::waits::EntryState;
 
@@ -428,17 +428,19 @@ impl SessionProcesses for RunSource {
             .and_then(ProcessSupervisor::take_startup_error)
     }
 
-    fn exit_diagnostics(&self) -> Vec<(String, String)> {
-        let mut exits = self
+    fn entry_states(&self) -> Vec<(String, SessionEntryState)> {
+        // The run's own engine reports an entry's exit as one record; the
+        // shell processes this client supervises report theirs.
+        let mut entries = self
             .shared()
             .exits
             .iter()
-            .map(|(name, payload)| (name.clone(), payload.clone()))
+            .map(|(name, payload)| (name.clone(), SessionEntryState::from_record(payload)))
             .collect::<Vec<_>>();
         if let Some(shells) = &self.shells {
-            exits.extend(shells.exit_diagnostics());
+            entries.extend(shells.entry_states());
         }
-        exits
+        entries
     }
 
     /// Quit is the run's stop: one request, then the run's own settle,

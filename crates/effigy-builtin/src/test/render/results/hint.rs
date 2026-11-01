@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::test::BuiltinTestExecResult;
+use crate::test::{BuiltinTestExecResult, BuiltinTestOutcome};
 
 pub(super) fn append_builtin_test_filter_hint(
     mut rendered: String,
@@ -54,7 +54,7 @@ pub(super) fn build_builtin_test_filter_hint_payload(
 fn failed_commands(results: &[BuiltinTestExecResult]) -> Vec<String> {
     results
         .iter()
-        .filter(|result| !result.success)
+        .filter(|result| result.outcome == BuiltinTestOutcome::Failed)
         .map(|result| result.command.clone())
         .collect::<Vec<String>>()
 }

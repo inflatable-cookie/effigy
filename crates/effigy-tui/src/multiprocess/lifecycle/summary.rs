@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::time::Instant;
 
@@ -8,30 +7,14 @@ use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::{OutputMode, PlainRenderer, Renderer};
 
 use super::super::diagnostics::RuntimeDiagnostics;
-use super::super::terminal_text::{format_elapsed, is_expected_shutdown_diagnostic, styled_text};
-use super::super::MultiProcessTuiError;
+use super::super::terminal_text::{format_elapsed, styled_text};
+use super::super::{MultiProcessTuiError, SessionEntry, SessionEntryState};
 use crate::core::{LogEntry, LogEntryKind};
 
 const FAILURE_TAIL_LINES: usize = 24;
 
-pub(super) fn collect_non_zero_exits(
-    observed_non_zero: HashMap<String, String>,
-    process_diagnostics: Vec<(String, String)>,
-) -> Vec<(String, String)> {
-    let mut non_zero_map = observed_non_zero;
-    for (name, diagnostic) in process_diagnostics {
-        if is_success_diagnostic(&diagnostic) {
-            continue;
-        }
-        non_zero_map.insert(name, diagnostic);
-    }
-    let mut non_zero_exits = non_zero_map.into_iter().collect::<Vec<(String, String)>>();
-    non_zero_exits.sort_by(|a, b| a.0.cmp(&b.0));
-    non_zero_exits
-}
-
 pub(super) fn render_process_summary(
-    process_diagnostics: Vec<(String, String)>,
+    entries: &[SessionEntry],
     process_logs: &HashMap<String, VecDeque<LogEntry>>,
     process_started_at: &HashMap<String, Instant>,
     diagnostics: &RuntimeDiagnostics,
@@ -43,18 +26,18 @@ pub(super) fn render_process_summary(
     let theme = Theme::default();
     let now = Instant::now();
 
-    for (name, diagnostic) in process_diagnostics {
+    for entry in entries {
         let elapsed = process_started_at
-            .get(&name)
+            .get(&entry.name)
             .map(|started| format_elapsed(now.saturating_duration_since(*started)))
             .unwrap_or_else(|| "0s".to_owned());
         renderer.key_values(&[KeyValue::new(
-            name,
-            format_process_status(&diagnostic, &elapsed, color_enabled, theme),
+            entry.name.clone(),
+            format_process_status(&entry.state, &elapsed, color_enabled, theme),
         )])?;
     }
     renderer.text("")?;
-    render_failure_output_section(&mut renderer, process_logs, process_started_at)?;
+    render_failure_output_section(&mut renderer, entries, process_logs)?;
 
     render_diagnostics_section(&mut renderer, diagnostics)?;
     Ok(())
@@ -62,18 +45,10 @@ pub(super) fn render_process_summary(
 
 fn render_failure_output_section(
     renderer: &mut PlainRenderer<anstream::AutoStream<std::io::Stdout>>,
+    entries: &[SessionEntry],
     process_logs: &HashMap<String, VecDeque<LogEntry>>,
-    process_started_at: &HashMap<String, Instant>,
 ) -> Result<(), MultiProcessTuiError> {
-    let mut failures = process_started_at
-        .keys()
-        .filter_map(|name| {
-            let logs = process_logs.get(name)?;
-            let tail = failure_log_tail(logs);
-            (!tail.is_empty()).then_some((name.as_str(), tail))
-        })
-        .collect::<Vec<_>>();
-    failures.sort_by(|a, b| a.0.cmp(b.0));
+    let failures = failure_output(entries, process_logs);
     if failures.is_empty() {
         return Ok(());
     }
@@ -89,13 +64,25 @@ fn render_failure_output_section(
     Ok(())
 }
 
+/// The output a failed entry left behind, by entry. A stopped or unstarted
+/// entry produced no failure to explain, so it contributes nothing.
+fn failure_output<'a>(
+    entries: &'a [SessionEntry],
+    process_logs: &'a HashMap<String, VecDeque<LogEntry>>,
+) -> Vec<(&'a str, Vec<String>)> {
+    entries
+        .iter()
+        .filter(|entry| matches!(entry.state, SessionEntryState::Failed { .. }))
+        .filter_map(|entry| {
+            let logs = process_logs.get(&entry.name)?;
+            let tail = failure_log_tail(logs);
+            (!tail.is_empty()).then_some((entry.name.as_str(), tail))
+        })
+        .collect::<Vec<(&str, Vec<String>)>>()
+}
+
 fn failure_log_tail(logs: &VecDeque<LogEntry>) -> Vec<String> {
     if let Some(last) = logs.iter().rposition(|entry| entry.styles.is_some()) {
-        if !logs.iter().any(|entry| {
-            matches!(entry.kind, LogEntryKind::Exit) && !is_success_diagnostic(entry.line.trim())
-        }) {
-            return Vec::new();
-        }
         let mut first = last;
         while first > 0 && logs[first - 1].styles.is_some() {
             first -= 1;
@@ -124,14 +111,6 @@ fn failure_log_tail(logs: &VecDeque<LogEntry>) -> Vec<String> {
         })
         .filter(|line| !line.trim().is_empty())
         .collect::<Vec<_>>();
-
-    let saw_failure_marker = logs.iter().any(|entry| match entry.kind {
-        LogEntryKind::Exit => !is_success_diagnostic(entry.line.trim()),
-        _ => false,
-    });
-    if !saw_failure_marker {
-        return Vec::new();
-    }
     if lines.len() > FAILURE_TAIL_LINES {
         lines.drain(..lines.len() - FAILURE_TAIL_LINES);
     }
@@ -176,34 +155,37 @@ fn render_diagnostics_section(
 }
 
 fn format_process_status(
-    diagnostic: &str,
+    state: &SessionEntryState,
     elapsed: &str,
     color_enabled: bool,
     theme: Theme,
 ) -> String {
-    if is_success_diagnostic(diagnostic) {
-        if color_enabled {
-            format!(
-                "{} {}",
-                styled_text(theme.success, "✓ OK"),
-                styled_text(theme.muted, elapsed)
-            )
-        } else {
-            format!("OK {elapsed}")
-        }
-    } else if color_enabled {
-        format!(
+    match state {
+        SessionEntryState::Passed if color_enabled => format!(
             "{} {}",
-            styled_text(theme.error, diagnostic),
+            styled_text(theme.success, "✓ OK"),
             styled_text(theme.muted, elapsed)
-        )
-    } else {
-        format!("{diagnostic} {elapsed}")
+        ),
+        SessionEntryState::Passed => format!("OK {elapsed}"),
+        SessionEntryState::Failed { detail } if color_enabled => format!(
+            "{} {}",
+            styled_text(theme.error, detail),
+            styled_text(theme.muted, elapsed)
+        ),
+        SessionEntryState::Failed { detail } => format!("{detail} {elapsed}"),
+        SessionEntryState::Stopped { detail } if color_enabled => format!(
+            "{} {}",
+            styled_text(theme.muted, detail),
+            styled_text(theme.muted, elapsed)
+        ),
+        SessionEntryState::Stopped { detail } => format!("{detail} {elapsed}"),
+        SessionEntryState::NotStarted if color_enabled => format!(
+            "{} {}",
+            styled_text(theme.muted, "not started"),
+            styled_text(theme.muted, elapsed)
+        ),
+        SessionEntryState::NotStarted => format!("not started {elapsed}"),
     }
-}
-
-fn is_success_diagnostic(diagnostic: &str) -> bool {
-    diagnostic == "exit=0" || is_expected_shutdown_diagnostic(diagnostic)
 }
 
 #[cfg(test)]

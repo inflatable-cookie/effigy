@@ -30,12 +30,16 @@ fn mode(path: &Path) -> u32 {
 fn soon(millis: u64) -> Instant {
     Instant::now() + Duration::from_millis(millis)
 }
+/// A seal's durable stage fsyncs every entry and its directories. Test temp
+/// directories sit on the Oxide removable volume, where those flushes can take
+/// seconds under suite load (census 2026-10-31), so this bound is generous. It
+/// only limits how long a stuck seal may wait; no passing seal pays for it.
 fn seal(
     cx: &EffectContext,
     root: &StateRoot,
     closure: &Closure,
 ) -> Result<SealedPreflight, RunError> {
-    Objects::seal_for_preflight(cx, root, closure, soon(30_000))
+    Objects::seal_for_preflight(cx, root, closure, soon(120_000))
 }
 fn tree_dir(home: &Path, receipt: &SealedPreflight) -> PathBuf {
     staging_dir(home).join(format!("{STAGING_PREFIX}{}", receipt.token()))
@@ -298,10 +302,13 @@ fn preflight_seal_timeout_leaves_only_the_helpers_private_tree() {
     });
     let sealed_home = home.path().to_path_buf();
     let sealed_value = value.clone();
+    // The deadline must outlast the helper's durable stage, or the test would
+    // only prove a refusal before anything was staged. The caller always waits
+    // out this bound while the helper is parked, so it is the test's cost too.
     let caller = std::thread::spawn(move || {
         let cx = context(EffectClass::Mutate);
         let root = StateRoot::effects(&cx, &sealed_home).unwrap();
-        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(150))
+        Objects::seal_for_preflight(&cx, &root, &sealed_value, soon(10_000))
     });
     entered_rx
         .recv_timeout(Duration::from_secs(20))

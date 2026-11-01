@@ -5,7 +5,8 @@
 #![allow(dead_code)] // The workspace-client owner installs the serialized consuming caller.
 
 use effigy_containers::environment::{
-    BackendError, EnvError, EnvRun, Retention, Up, WorkspaceActivation, WorkspaceBegin,
+    BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
+    WorkspaceBegin,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::id::ResolvedInvocation;
@@ -59,6 +60,9 @@ pub(in crate::runner) struct WorkspaceOwner {
     pub(in crate::runner) supervisor: SessionSupervisor<'static>,
     pub(in crate::runner) session: SessionRef,
     pub(in crate::runner) channel: PreparedHostChannel,
+    /// What this activation's create recorded: a receipt sealed to its own
+    /// environment run, or the explicit absence of attribution (effigy#510).
+    pub(in crate::runner) creation: Option<CreationOutcome>,
     /// The serving facts the publication validated; carried unchanged into the
     /// serving owner with the adopted supervisor.
     pub(in crate::runner) serving: crate::runner::workspace_client::ServingFacts,
@@ -98,7 +102,7 @@ pub(in crate::runner) enum WorkspaceUpError {
 /// kernel receipt/lease or claim production channel qualification.
 pub(in crate::runner) fn up<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    compose_env: &[(String, std::ffi::OsString)],
     publish: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
@@ -128,6 +132,45 @@ pub(in crate::runner) fn up<'a>(
         cause: Box::new(cause),
         cleanup: None,
     };
+    let closure = policy.render.as_ref().ok_or_else(|| {
+        owner_error(EnvError::Invalid(
+            "workspace activation has no frozen render".into(),
+        ))
+    })?;
+    let backend = super::backend(&policy.repo_root, policy);
+    let until = match ctx.cx.operation().deadline() {
+        effigy_kernel::ctx::Deadline::At(until) => until,
+        effigy_kernel::ctx::Deadline::Open(_) => {
+            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
+        }
+    };
+    let mut preflight_request = Up {
+        render: Some(&closure.closure),
+        project: &policy.project_name,
+        backend: &backend,
+        retention: request.retention,
+        workdir: &policy.repo_root,
+        primary_service: &policy.primary_service,
+        compose_files: &policy.compose_files,
+    }
+    .creation_request();
+    preflight_request.deadline = until;
+    let preflight = effigy_containers::environment::CreationPreflight::observe(
+        backend.adapter().as_mut(),
+        preflight_request,
+    )
+    .map_err(|error| {
+        owner_error(EnvError::Backend(BackendError::NotStarted(
+            error.to_string(),
+        )))
+    })?;
+    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+        &ctx.cx,
+        ctx.root,
+        &closure.closure,
+        until,
+    )
+    .map_err(|error| owner_error(EnvError::Kernel(error)))?;
     let mut activation = match WorkspaceActivation::begin(
         &ctx,
         &env,
@@ -144,17 +187,47 @@ pub(in crate::runner) fn up<'a>(
     let mut failed_target = effigy_kernel::observe::Observed::Unknown(
         effigy_kernel::observe::UnknownReason::GuardUnavailable,
     );
+    let mut creation = None;
     let result = (|| {
         let backend = super::backend(&policy.repo_root, policy);
-        activation.apply_with(
+        let (program, args) = backend
+            .compose_invocation(&effigy_containers::compose::compose_up_args(policy))
+            .map_err(EnvError::Backend)?;
+        let bringing_up = activation.apply_sealed_with(
             Up {
                 render: policy.render.as_ref().map(|render| &render.closure),
                 project: &policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &policy.repo_root,
+                primary_service: &policy.primary_service,
+                compose_files: &policy.compose_files,
             },
-            apply,
+            &sealed,
+            &preflight,
+            || {
+                effigy_containers::exec::run_backend_invocation_until(
+                    &policy.repo_root,
+                    &program,
+                    &args,
+                    "apply frozen workspace render",
+                    compose_env,
+                    until,
+                )
+                .map(|_| ())
+                .map_err(|error| BackendError::Uncertain(error.to_string()))
+            },
         )?;
+        creation = bringing_up.creation;
+        // A publication provider cannot turn an incomplete apply observation
+        // into a fresh target by supplying its own candidate.
+        let reservation = activation.reservation().clone();
+        activation.environment_mut().recheck_creation(
+            &reservation,
+            backend.adapter().as_mut(),
+            until,
+        )?;
+
         // The provider binds the apply's exact target/platform and stages the
         // required guest binary ticket before independently probing the guest.
         // It returns only a real qualified launch and constructor-validated
@@ -201,6 +274,7 @@ pub(in crate::runner) fn up<'a>(
         supervisor,
         session,
         channel,
+        creation,
         serving,
         effect,
         observe,
@@ -213,7 +287,7 @@ pub(in crate::runner) fn up<'a>(
 /// it does not supply a publication receipt or perform selector writes.
 pub(in crate::runner) fn up_prepared<'a>(
     request: WorkspaceUpRequest<'_>,
-    apply: impl FnOnce() -> Result<(), BackendError>,
+    compose_env: &[(String, std::ffi::OsString)],
     observe: impl FnOnce(
         &mut WorkspaceActivation<'static>,
     ) -> Result<
@@ -221,7 +295,7 @@ pub(in crate::runner) fn up_prepared<'a>(
         EnvError,
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
-    up(request, apply, |activation| {
+    up(request, compose_env, |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,

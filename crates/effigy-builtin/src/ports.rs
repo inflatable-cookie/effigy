@@ -79,6 +79,10 @@ pub struct BuiltinTestChildEvidence {
 pub struct HostSuiteOutcome {
     /// The suite command's exit code; `None` when a signal ended it.
     pub code: Option<i32>,
+    /// The run stopped this suite: it never reported a result of its own, so
+    /// the attempt is a cancellation rather than a failed check. This is the
+    /// per-suite fact, never inferred from an exit status.
+    pub stopped: bool,
 }
 
 /// One host suite's process custody, owned by the caller's run. The suite runs
@@ -94,8 +98,10 @@ pub trait HostSuiteCustody: Send {
         capture: bool,
     ) -> Result<HostSuiteOutcome, BuiltinError>;
 
-    /// Records the suite's outcome and stops its process group.
-    fn settle(self: Box<Self>, succeeded: bool);
+    /// Records this attempt's own outcome in the run that owns it and stops
+    /// its process group. A suite the run stopped closes as cancelled, and a
+    /// failed suite closes with the code it reported.
+    fn settle(self: Box<Self>, outcome: &HostSuiteOutcome);
 }
 
 /// Runtime services the built-in command layer depends on. Every

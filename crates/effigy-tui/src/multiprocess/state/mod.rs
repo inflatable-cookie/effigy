@@ -49,7 +49,6 @@ pub struct SessionState {
     pub show_options: bool,
     pub options_index: usize,
     pub footer_message: Option<String>,
-    pub observed_non_zero: HashMap<String, String>,
     pub exit_states: HashMap<String, ProcessExitState>,
     pub startup_states: HashMap<String, ProcessStartupState>,
     /// Each entry's own wait, from the session that supervises it (effigy#458).

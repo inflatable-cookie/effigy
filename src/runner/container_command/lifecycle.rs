@@ -449,7 +449,14 @@ fn run_container_up_inner(
         return Err(finish_container_up_failure(failure, cleanup_result));
     }
 
-    render_container_up_result(repo_root, &plan, health, integrations, output_json)
+    render_container_up_result(
+        repo_root,
+        &plan,
+        health,
+        integrations,
+        bring_up.creation.as_ref(),
+        output_json,
+    )
 }
 
 fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(), RunnerError> {
@@ -1008,11 +1015,12 @@ fn render_container_up_result(
     plan: &ContainerUpPlan,
     health: Option<&'static str>,
     integrations: ContainerUpRuntimeIntegrations,
+    creation: Option<&effigy_containers::environment::CreationOutcome>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if plan.attach_mode == EffectiveAttachMode::Detached {
         let mut report = detached_container_up_report(plan, health, integrations);
-        annotate_environment_record(&mut report, &plan.policy);
+        annotate_environment_record(&mut report, &plan.policy, creation);
         return Ok(render_container_report(report, output_json));
     }
     if output_json {
@@ -1063,6 +1071,7 @@ fn detached_container_up_report(
 fn annotate_environment_record(
     report: &mut ContainerCommandReport,
     policy: &EffectiveContainerPolicy,
+    creation: Option<&effigy_containers::environment::CreationOutcome>,
 ) {
     let record = environment::record(policy);
     let retention = record
@@ -1070,17 +1079,47 @@ fn annotate_environment_record(
         .and_then(|record| record.engine().map(|engine| engine.retention));
     let backend = environment::backend(&policy.repo_root, policy);
     if let Some(json) = report.json.as_object_mut() {
-        json.insert(
-            "environment".to_owned(),
-            serde_json::json!({
-                "retention": retention.map(|retention| match retention {
-                    Retention::Persistent => "persistent",
-                    Retention::Held => "held",
-                }),
-                "backend": backend.label(),
-                "backend_reason": backend.reason.describe(),
+        let mut environment = serde_json::json!({
+            "retention": retention.map(|retention| match retention {
+                Retention::Persistent => "persistent",
+                Retention::Held => "held",
             }),
-        );
+            "backend": backend.label(),
+            "backend_reason": backend.reason.describe(),
+        });
+        if let Some(creation) = creation {
+            let object = environment.as_object_mut().expect("object");
+            match creation.unproven() {
+                // Only a complete gate-scoped inference reports created IDs.
+                // Ordinary unsealed applies and uncertain observations say why
+                // they provide no workspace attribution (effigy#510).
+                Some(reason) => {
+                    object.insert(
+                        "creation_unproven".to_owned(),
+                        serde_json::Value::String(reason.to_owned()),
+                    );
+                }
+                None => {
+                    if let Some(receipt) = creation.receipt() {
+                        object.insert(
+                            "creation_image_identities".to_owned(),
+                            serde_json::json!(receipt.image_identities()),
+                        );
+                    }
+                    object.insert(
+                        "created_container_ids".to_owned(),
+                        serde_json::Value::Array(
+                            creation
+                                .created_ids()
+                                .into_iter()
+                                .map(serde_json::Value::String)
+                                .collect(),
+                        ),
+                    );
+                }
+            }
+        }
+        json.insert("environment".to_owned(), environment);
     }
 }
 
@@ -3246,6 +3285,9 @@ catalog = "postgres"
                     project: &policy.project_name,
                     backend: &crate::runner::environment::backend(&self.repo_root, policy),
                     retention: effigy_containers::environment::Retention::Persistent,
+                    workdir: &self.repo_root,
+                    primary_service: &policy.primary_service,
+                    compose_files: &policy.compose_files,
                 },
                 || Ok(()),
             )

@@ -112,6 +112,9 @@ fn read(home: &Path, name: &str, role: Role) -> Observed<Object> {
     Objects::resolve(&observe(), &root, &resource(name), role)
 }
 fn retain(home: &Path) -> crate::retention::RetentionReport {
+    try_retain(home).unwrap()
+}
+fn try_retain(home: &Path) -> Result<crate::retention::RetentionReport, StoreError> {
     let cx = context(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
@@ -121,7 +124,6 @@ fn retain(home: &Path) -> crate::retention::RetentionReport {
         &mut store,
         crate::retention::RetentionBudget { max_removals: 100 },
     )
-    .unwrap()
 }
 #[test]
 fn closure_rejects_paths_that_escape_or_conflict() {
@@ -314,7 +316,15 @@ fn concurrent_same_digest_publication_and_retention_do_not_tear() {
         }
         barrier.wait();
         for _ in 0..3 {
-            retain(home.path());
+            // Retention is optional maintenance with a two-second budget: under
+            // contention a pass may skip a busy store (its batch rolls back), and
+            // that is the contract. Only a busy or timed-out skip is tolerated.
+            match try_retain(home.path()) {
+                Ok(_)
+                | Err(StoreError::Busy { .. })
+                | Err(StoreError::Interrupted(Interrupt::TimedOut { .. })) => {}
+                Err(other) => panic!("retention failed outside a busy-store skip: {other:?}"),
+            }
         }
     });
     for n in 1..=3 {

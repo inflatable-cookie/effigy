@@ -268,6 +268,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `ServingOwner::terminal_custody` / `ServiceOwner::terminal_custody` are the
   typed handoff those callers use.
 
+- Project container inventories refuse incomplete, duplicate or replaced full-ID
+  inspect answers. Docker and Colima adapters also expose inventory and image
+  inspection under one caller deadline; expired reads launch no engine process.
 - **A workspace session's custody can live in a detached process.** A serving
   host supervisor starts before the session run is adopted or the listener
   exists, performs the activation in its own process, announces the committed
@@ -321,6 +324,34 @@ During v0.x, MINOR bumps may include breaking changes.
   process-local registry.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
+
+- **Workspace creation uses a complete gate-scoped ID difference.** The
+  environment's one frozen Compose apply journals
+  `environment:gate-scoped-id-difference`. Full before/after inventories must
+  match the frozen project, service and checkout ownership labels and immutable
+  image identities; attached IDs stay attached. The inference excludes concurrent
+  Effigy activations through the environment gate. A same-user actor forging
+  identical labels inside that window is outside v0.15's guarantee. Unreadable or
+  incomplete evidence produces no receipt, and retries never reapply or fabricate
+  attribution from a later inventory. Missing journal evidence is Unknown.
+  Newly created Colima containers may carry explicit reference/resolved-ID
+  evidence with matching references and stable pre/post resolution. Attached
+  reference-only rows instead report reference and matching rendered config hash,
+  with no resolved container-image ID: a pre-window tag move is undetectable there.
+  Partial extra-hosts overrides preserve custom service networks. Digest-pinned references
+  remain explicit. Missing nerdctl one-off labels require matching Compose
+  membership, name and frozen network evidence. Same-user retag/restore inside
+  the gate is excluded; detected tag moves refuse.
+  Workspace attribution requires a sealed render with explicit managed, scope
+  and checkout labels; ordinary unsealed applies provide no creation receipt.
+  Docker observations and apply plans pin the recorded context or endpoint.
+  The pre-apply expectation distinguishes required fresh services, verified
+  dependency image-reference replacements and the workspace predecessor. Workspace
+  environment, mount and entrypoint edits may recreate at the same image reference:
+  exactly one new workspace ID replaces the absent predecessor, while unchanged
+  services stay attached and extra/foreign IDs refuse. The v5 receipt records
+  image capabilities and the workspace predecessor separately from required
+  creations; container-up JSON exposes the image-identity evidence.
 
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
@@ -493,7 +524,9 @@ During v0.x, MINOR bumps may include breaking changes.
   A request id is looked up and reserved before any engine is asked to admit
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
-  No transport, guest client or command surface is wired to it yet.
+  No production activation caller or native backend qualification is wired to it
+  yet; the pinned TLS transport, the guest client and the guest dispatch are
+  merged (contract 052 §8.11).
 - The workspace channel binds one attachment's streams to its terminal
   (contract 052 §8.11). Output sequence numbers are one series per stream id
   shared by every kind on it, so a stream's stdout and stderr no longer restart
@@ -648,6 +681,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Clarify workspace artifact source selection, the separate dev and workspace
+  session runs, and the implemented workspace seams and outstanding production
+  activation and native qualification requirements.
+
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and
@@ -656,8 +693,10 @@ During v0.x, MINOR bumps may include breaking changes.
   gates and journals; a host refusal is returned as an error and never falls
   back to guest state or a guest engine. `effigy skill run --stdio passthrough`
   is refused in a guest because it would run a task without host authority.
-  Until a guest transport, a guest-local container observation and a published
-  session generation land, host authority reports itself unavailable with the
+  The guest transport, the guest-local container observation and the published
+  session generation are merged; what remains missing is the production
+  activation caller that publishes a qualified locator and the recorded native
+  backend qualification, so host authority reports itself unavailable with the
   specific missing fact named, and local reads keep working.
 
 - **The workspace channel checks its pinned host identity before it speaks.**
@@ -1187,11 +1226,36 @@ During v0.x, MINOR bumps may include breaking changes.
   its runs there — so a supervisor that is still leaving can no longer race the
   directory removal into `Directory not empty`.
 
+- An interactive `effigy test` run that the operator stops can no longer report
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A run the operator stopped is cancelled even
+  when the stop arrived before any suite started, while a suite that reported
+  its own failure keeps that failure: a cancellation is the run's own record,
+  never a suite's exit status. An ordinary `130` or `143` exit is therefore a
+  failure, in a terminal or without one; a suite that died from a signal no
+  stop sends (`SIGSEGV`, `SIGABRT`) is a failure too. Only a suite the run that
+  owns it recorded as stopped is `cancelled`, and that attempt's own child run
+  closes as `cancelled` while a failed attempt closes with the code it
+  reported. A nested helper invocation keeps its own exit code instead of
+  collapsing to `1`, and a run's closeout uses that error's own outcome, so a
+  cancelled `effigy test` closes its run as `cancelled` instead of `failed` and
+  its step is recorded `Cancelled` with code `130`; a cancelled QA-group run
+  closes its durable kernel run the same way. The session summary no longer
+  renders a signal-terminated process as `OK`.
+
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
 - A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
 
 - Concurrent first use of a runtime-scoped checkout no longer refuses one caller with `invalid worktree scope`. The scope token is staged in full and hard-linked into place, so a reader never sees a partial token; racing callers all read the one published token. A malformed persisted scope is still refused.
+
+- A managed host listener whose supervisor exits right after writing its final `failed` state reports that listener's own diagnostic, such as a reserved port that was already bound, instead of the generic "its supervisor exited before publishing readiness" error.
 
 - The restart-policy update after `up` (`restart: unless-stopped` for services that declare none) reaches only containers whose full ID, project, service, checkout and scope verify against the current policy. It names the verified full ID and is re-verified right before it is sent. A foreign or same-name container gets no update, and the owned-binding refusal for the selected service is unchanged.
 

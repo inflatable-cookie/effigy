@@ -941,13 +941,15 @@ fn managed_workload<T>(
     match result {
         Ok(_) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
         Err(error) => {
-            let code = error.task_exit_status().unwrap_or(1);
+            let code = error
+                .task_exit_status()
+                .unwrap_or_else(|| error.process_exit_code());
             if code == 124 {
                 effigy_kernel::outcome::WorkloadOutcome::TimedOut {
                     phase: target.label.clone(),
                 }
             } else {
-                crate::runner::task_engine::workload_for_exit(code)
+                error.workload_outcome()
             }
         }
     }

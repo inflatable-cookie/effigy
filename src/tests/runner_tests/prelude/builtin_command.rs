@@ -45,7 +45,9 @@ pub(in crate::runner::tests) fn assert_builtin_test_non_zero(
     unexpected_rendered_snippets: &[&str],
 ) {
     match err {
-        RunnerError::BuiltinTestNonZero { failures, rendered } => {
+        RunnerError::BuiltinTestNonZero {
+            failures, rendered, ..
+        } => {
             if let Some(expected) = expected_failures {
                 assert_eq!(failures, expected);
             }

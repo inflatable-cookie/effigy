@@ -21,8 +21,12 @@ pub enum LogEntryKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessExitState {
+    /// The entry reported a zero exit status.
     Success,
+    /// The entry reported a non-zero exit status.
     Failure,
+    /// The entry was stopped by a signal and never reported an exit status.
+    Stopped,
 }
 
 pub const EFFIGY_ACCENT: Color = Color::Indexed(212);

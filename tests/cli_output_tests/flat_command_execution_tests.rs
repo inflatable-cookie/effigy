@@ -280,3 +280,148 @@ fn every_shadowable_builtin_loses_to_a_same_named_manifest_task() {
         );
     }
 }
+
+/// A suite's own exit status is never evidence of an operator cancellation. A
+/// suite that reports the interrupted convention (`kill -INT $$` → 130) on its
+/// own is a failed check in the text, in the JSON payload, in the task's exit
+/// code, and in the step record a caller would persist.
+#[test]
+fn a_suite_that_reports_an_interrupted_status_on_its_own_stays_a_failure() {
+    let root = temp_workspace("builtin-own-interrupted-status");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.qa]
+run = [{ task = "test" }]
+
+[test.suites.interrupted]
+run = "kill -INT $$"
+"#,
+    )
+    .expect("write manifest");
+
+    // The machine contract: a failed suite with its own code, not a
+    // cancellation, and the ordinary failed exit for the task.
+    let json = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(&root)
+        .arg("test")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+    assert_eq!(
+        json.status.code(),
+        Some(1),
+        "an ordinary suite failure keeps the failed exit: {json:?}"
+    );
+    let payload = parse_stdout_json(&json);
+    assert_eq!(payload["ok"], false);
+    // The error details are the builtin's own results document.
+    let results = &payload["error"]["details"];
+    assert_eq!(results["schema"], "effigy.test.results.v1");
+    let target = results["targets"]
+        .as_array()
+        .and_then(|targets| targets.first())
+        .unwrap_or_else(|| panic!("targets in {results}"));
+    assert_eq!(target["outcome"], "failed", "{results}");
+    assert_eq!(target["success"], false);
+    assert_eq!(target["code"], 130);
+    assert_eq!(results["failures"][0]["code"], 130);
+
+    // A caller that runs it as a step records the ordinary failure too.
+    let step = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(&root)
+        .arg("qa")
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_EXECUTABLE", env!("CARGO_BIN_EXE_effigy"))
+        .output()
+        .expect("run effigy");
+    assert_eq!(step.status.code(), Some(1), "{step:?}");
+    let step_payload = parse_stdout_json(&step);
+    let details = &step_payload["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["exit_code"], 1);
+    let recorded = &details["steps"][0];
+    assert_eq!(recorded["exit_code"], 1);
+    assert_eq!(recorded["outcome"]["Failed"]["code"], 1);
+    let stdout = recorded["stdout"].as_str().unwrap_or_default();
+    assert!(
+        stdout.contains("exit=130"),
+        "the step keeps the suite's own status: {stdout}"
+    );
+    assert!(
+        !stdout.contains("cancelled"),
+        "an ordinary exit status is never reported as a cancellation: {stdout}"
+    );
+}
+
+/// A run the operator actually stopped is still a cancellation end to end: the
+/// builtin step reports `cancelled`, the step record keeps the interrupted code
+/// and outcome, and the caller exits 130.
+#[test]
+#[cfg(unix)]
+fn a_stopped_builtin_test_step_records_the_stop_as_cancelled() {
+    let root = temp_workspace("builtin-step-stopped");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[tasks.qa]
+run = [{ task = "test" }]
+
+[test.suites.slow]
+run = "touch started; exec sleep 30"
+"#,
+    )
+    .expect("write manifest");
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(&root)
+        .arg("qa")
+        .env("NO_COLOR", "1")
+        .env("EFFIGY_EXECUTABLE", env!("CARGO_BIN_EXE_effigy"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn effigy");
+
+    let started = root.join("started");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !started.exists() {
+        assert!(
+            child.try_wait().expect("poll").is_none(),
+            "the run ended before its suite started"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the suite never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Only this proof's own recorded child PID is signalled.
+    let signalled = unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
+    assert_eq!(signalled, 0, "signal the run this proof started");
+
+    let output = child.wait_with_output().expect("wait for effigy");
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "a stopped run keeps the interrupted code: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let details = &payload["error"]["details"];
+    assert_eq!(details["schema"], "effigy.task.run.v1");
+    assert_eq!(details["exit_code"], 130);
+    let recorded = &details["steps"][0];
+    assert_eq!(recorded["exit_code"], 130);
+    assert!(
+        !recorded["outcome"]["Cancelled"].is_null(),
+        "the stopped step is recorded as cancelled: {recorded}"
+    );
+}
