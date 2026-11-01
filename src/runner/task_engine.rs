@@ -24,8 +24,9 @@ mod spawn_env;
 mod status;
 
 pub(in crate::runner) use control::{
-    effects_in as run_effects, list as list_runs, lookup_checkout, read_log as read_run_log,
-    request_stop, resolve_in, signal_owner, Lookup, RunRecord, StopStarted, POLL as RUN_POLL,
+    effects_in as run_effects, list as list_runs, list_owned as list_owned_runs, lookup_checkout,
+    read_log as read_run_log, request_stop, resolve_in, signal_owner, Lookup, RunRecord,
+    StopStarted, POLL as RUN_POLL,
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;

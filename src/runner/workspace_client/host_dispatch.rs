@@ -315,7 +315,7 @@ impl channel::Admission for HostDispatch {
 impl channel::Observer for HostDispatch {
     fn observe(
         &mut self,
-        _cx: &ObserveContext,
+        cx: &ObserveContext,
         body: &ObserveBody,
     ) -> Result<serde_json::Value, Refusal> {
         if body
@@ -328,12 +328,9 @@ impl channel::Observer for HostDispatch {
             ));
         }
         match body.op.as_str() {
-            "runs:list" | "runs:status" => {
-                let listing = crate::runner::task_engine::list_runs(
-                    Some(self.root.owning_directory().path()),
-                    64,
-                )
-                .map_err(|error| Refusal::unavailable(error.to_string()))?;
+            "runs:list" => {
+                let listing = crate::runner::task_engine::list_owned_runs(cx, &self.root, 64)
+                    .map_err(|error| Refusal::unavailable(error.to_string()))?;
                 let runs = listing
                     .runs
                     .iter()
@@ -410,7 +407,52 @@ pub(crate) fn host_checkout(serving: &super::ServingFacts) -> &Path {
 #[cfg(test)]
 mod checkout_boundary_tests {
     use super::*;
-    use effigy_kernel::workspace_channel::{OutputMode, Resolver};
+    use effigy_kernel::workspace_channel::{Observer, OutputMode, Resolver};
+
+    #[test]
+    fn observe_refuses_expired_budget_and_status_without_run_identity() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = effigy_kernel::root::StateRoot::effects(&cx, fixture.path()).expect("state");
+        let mut dispatch = HostDispatch::new(fixture.path().to_owned(), root);
+        let expired = crate::runner::task_engine::observe_context(std::time::Duration::ZERO);
+        assert!(
+            dispatch
+                .observe(
+                    &expired,
+                    &ObserveBody {
+                        op: "runs:list".into(),
+                        target: Some(Target::Host)
+                    }
+                )
+                .is_err(),
+            "expired observation must refuse"
+        );
+        let active = crate::runner::task_engine::observe_context(std::time::Duration::from_secs(5));
+        let listing = dispatch
+            .observe(
+                &active,
+                &ObserveBody {
+                    op: "runs:list".into(),
+                    target: Some(Target::Host),
+                },
+            )
+            .expect("active observation");
+        assert_eq!(listing["schema"], "effigy.runs.v1");
+        assert!(listing["runs"].is_array());
+        assert!(
+            dispatch
+                .observe(
+                    &active,
+                    &ObserveBody {
+                        op: "runs:status".into(),
+                        target: Some(Target::Host)
+                    }
+                )
+                .is_err(),
+            "status without a run identity must not return a list"
+        );
+    }
 
     fn invoke(cwd: &str, args: Vec<String>) -> InvocationBody {
         InvocationBody {

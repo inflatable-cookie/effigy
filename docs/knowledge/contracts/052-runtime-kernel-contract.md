@@ -3140,8 +3140,8 @@ cannot authorize a guest selection without `qualify_guest` evidence.
 
 This is the normative production seam (effigy#481). The guest client, the pinned TLS transport (effigy#483), the host
 channel dispatcher (effigy#452) and the serving owner are implemented. Not implemented: the production activation caller
-(`environment::workspace::up_prepared` has only test call sites), the wider Observe surface beyond `runs:list` and
-`runs:status`, backend/consumer qualification, and the end-to-end container-mode proof. Only APIs marked implemented below
+(`environment::workspace::up_prepared` has only test call sites), the wider Observe surface beyond `runs:list`,
+including run-specific `runs:status`, backend/consumer qualification, and the end-to-end container-mode proof. Only APIs marked implemented below
 are merged seams. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed
 E-step/fault/retry proposals remain [non-normative,
 unimplemented/post-v0.15](#appendix-b-non-normative-post-v015-sequence-candidates), with no acceptance claims; [existing API
@@ -3711,7 +3711,7 @@ no run, no resolution and no second credential.
   for a live read and `invoke` for anything with authority. The method label
   grants nothing — the host decides the effect class from its own policy. The
   merged dispatcher (`workspace_client/host_dispatch.rs`) serves host-target
-  `runs:list` and `runs:status` observations and admits a declared host-placed
+  `runs:list` observations and admits a declared host-placed
   task run a reservation can carry; every other observation, a selector that
   routes to a host built-in, a shared-lock task and an engine-internal run
   refuse by name with the host command, so `doctor`, `container …` status/logs,
@@ -3897,8 +3897,9 @@ another lane's.
 - **The production server and dispatcher adapter are built from the validated serving
   facts.** `host_dispatch::HostDispatch` re-resolves `InvocationBody` from host records
   (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
-  `managed_run::start_reserved` with the exact ticket, serves `runs:list`/`runs:status`
-  on the host `ObserveContext`, and refuses every operation it does not serve.
+  `managed_run::start_reserved` with the exact ticket, serves `runs:list`
+  under the supplied host `ObserveContext`, and refuses every operation it does not serve.
+  `runs:status` refuses because the current Observe body carries no run identity.
   `host_dispatch::production_server` composes it into `channel::Server`, and
   `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
@@ -3907,7 +3908,7 @@ another lane's.
 - **The production activation caller.** `environment::workspace::up_prepared` still has
   only test call sites, so nothing in a released command prepares a guest context and
   a qualified locator yet. The wider Observe surface (every observation beyond
-  `runs:list`/`runs:status`), the guest-side entry for non-task invocations and native
+  `runs:list`, including run-specific `runs:status`), the guest-side entry for non-task invocations and native
   backend qualification remain unmerged.
 
 **Guest entry (v2, bound).** The guest's context read is one

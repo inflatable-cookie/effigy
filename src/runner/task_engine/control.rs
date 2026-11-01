@@ -393,10 +393,33 @@ pub(in crate::runner) fn list(
             view.roots
         }
     };
+    list_roots(&cx, roots, omitted, limit)
+}
+
+/// Observe this already-owned checkout with the caller's read budget.
+pub(in crate::runner) fn list_owned(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    limit: usize,
+) -> Result<RunListing, RunnerError> {
+    cx.check("workspace run listing")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    let result = list_roots(cx, vec![root.clone()], Vec::new(), limit)?;
+    cx.check("workspace run listing")
+        .map_err(|error| unreadable(&error.to_string()))?;
+    Ok(result)
+}
+
+fn list_roots(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    roots: Vec<effigy_kernel::root::StateRoot>,
+    mut omitted: Vec<String>,
+    limit: usize,
+) -> Result<RunListing, RunnerError> {
     let observed_roots = roots.len();
     let mut records = Vec::new();
     for state in roots {
-        match foreground_records(&cx, &state) {
+        match foreground_records(cx, &state) {
             Ok(rows) => records.extend(rows.into_iter().filter(|record| match &record.source {
                 RunSource::Foreground(row) => {
                     row.coordinates.owner.kind() == ResourceKind::Task || row.coordinates.root
@@ -405,7 +428,7 @@ pub(in crate::runner) fn list(
             })),
             Err(reason) => omitted.push(reason),
         }
-        let reader = match Store::read(&cx, &state) {
+        let reader = match Store::read(cx, &state) {
             Observed::Verified(reader, _) => reader,
             Observed::Absent(_) => continue,
             Observed::Unknown(reason) => {
@@ -430,7 +453,7 @@ pub(in crate::runner) fn list(
         };
         records.extend(
             rows.into_iter()
-                .map(|summary| record(&cx, &state, summary))
+                .map(|summary| record(cx, &state, summary))
                 .filter(|record| {
                     record
                         .summary()

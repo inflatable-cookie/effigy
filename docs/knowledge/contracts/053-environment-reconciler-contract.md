@@ -211,6 +211,14 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   cleanup retains a recoverable reservation. Integrations unwind in the
   ordinary reverse order on failure, and neither another apply nor another
   owner may stand in for the original activation.
+  Custody effects are journalled and crash-recoverable. Readiness, secrets,
+  routes and host integrations are idempotent reconciled effects: after a
+  crash the next `up` repeats them, reproducing the same runtime secret files
+  and routes for unchanged inputs (Supervisor, 2026-11-01). Before commit,
+  unwind follows the ordinary reverse best-effort order. An unknown external
+  effect leaves the reservation recoverable and reports `integration effects
+  unsettled; re-run up`; it never reports settlement based on an invented
+  receipt. Authenticated integration receipts are deferred beyond v0.15.
 - **One apply.** `compose up -d --build --remove-orphans`, with no recreate
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
