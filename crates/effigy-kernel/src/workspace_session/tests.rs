@@ -1601,6 +1601,30 @@ fn parked_reacquisition_refuses_advanced_environment_generation() {
 }
 
 #[test]
+fn parked_run_can_settle_after_activation_deadline_expires() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
+    let run = admit_activation(&cx, &root, &reservation, run_id(241));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_millis(100))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(120));
+    parked
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("cleanup uses a fresh budget");
+    session
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("session settles");
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("reservation can be cancelled");
+}
+
+#[test]
 fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};

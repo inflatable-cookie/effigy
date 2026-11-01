@@ -423,7 +423,77 @@ pub struct ReacquiredWorkspaceRun<'a> {
     _run: Run<'a>,
 }
 
+/// Unsettled cleanup retains either the parked run or its reacquired gate.
+#[derive(Debug)]
+pub enum WorkspaceCleanupCustody<'a> {
+    Parked(Box<ParkedWorkspaceRun<'a>>),
+    Guarded(Box<GuardedWorkspaceCleanup<'a>>),
+}
+
+/// A cleanup-only owner. It cannot issue generic run effects.
+#[derive(Debug)]
+pub struct GuardedWorkspaceCleanup<'a> {
+    run: Run<'a>,
+}
+
+impl<'a> GuardedWorkspaceCleanup<'a> {
+    pub fn settle(
+        self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
+        match self.run.settle_recoverable(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
+        }
+    }
+}
+
 impl<'a> ParkedWorkspaceRun<'a> {
+    /// Reacquire only for cleanup, with a fresh cleanup budget. This never
+    /// grants authority to resume activation or publish a generation.
+    pub fn settle(
+        mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, (RunError, WorkspaceCleanupCustody<'a>)> {
+        let checked = (|| {
+            if crate::ident::process_identity(std::process::id()).verified() != Some(&self.identity)
+            {
+                return Err(RunError::unavailable(
+                    "workspace activation owner identity changed or unavailable",
+                ));
+            }
+            let cx = cleanup
+                .operation()
+                .effects()
+                .map_err(|error| RunError::unavailable(error.to_string()))?;
+            let wait = match cleanup.operation().deadline() {
+                crate::ctx::Deadline::At(deadline) => Wait::Until(deadline),
+                crate::ctx::Deadline::Open(_) => Wait::FailFast,
+            };
+            let guard = Gate::acquire(&cx, self.run.root, &self.gates, wait)?;
+            let current = self.reservation.verify_claimed_run(
+                self.run.store.conn(),
+                self.run.id,
+                &self.run.owner,
+            )?;
+            if current != self.snapshot {
+                return Err(RunError::refused(
+                    "workspace reservation changed while parked",
+                ));
+            }
+            guard.set_run(&self.run.id);
+            self.run.guard = guard;
+            Ok(())
+        })();
+        if let Err(error) = checked {
+            return Err((error, WorkspaceCleanupCustody::Parked(Box::new(self))));
+        }
+        GuardedWorkspaceCleanup { run: self.run }
+            .settle(cleanup, adapter)
+            .map_err(|(error, custody)| (error, WorkspaceCleanupCustody::Guarded(custody)))
+    }
     /// Reacquire within the original deadline and compare the entire frozen
     /// reservation. On failure the original parked custody is returned.
     pub fn reacquire(mut self) -> Result<ReacquiredWorkspaceRun<'a>, (RunError, Box<Self>)> {
