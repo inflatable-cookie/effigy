@@ -1632,6 +1632,46 @@ pub fn run_backend_invocation_until(
     )
 }
 
+/// The same private output policy under the activation's absolute deadline.
+pub fn run_backend_invocation_private_until(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<(), ContainerExecError> {
+    run_backend_invocation_private_inner(workdir, program, args, label, env, deadline)
+}
+
+fn run_backend_invocation_private_inner(
+    workdir: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<(), ContainerExecError> {
+    if !args.iter().any(|arg| arg == "up")
+        || !args.iter().any(|arg| arg == "-d" || arg == "--detach")
+    {
+        return Err(ContainerExecError::Failure {
+            command: label.to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "[effigy] private workspace invocation requires detached up".into(),
+        });
+    }
+    super::process::run_private_detached_command(
+        workdir,
+        &program.to_string_lossy(),
+        args,
+        label,
+        env,
+        deadline,
+    )
+}
+
 pub fn run_compose_invocation_capture(
     repo_root: &Path,
     program: &OsStr,

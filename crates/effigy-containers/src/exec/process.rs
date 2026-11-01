@@ -188,6 +188,71 @@ pub(super) fn run_detached_command_with_env_until(
     )
 }
 
+/// Workspace-only detached invocation: no backend bytes enter retained logs,
+/// pipes or returned diagnostics. The caller supplies its existing deadline.
+pub(super) fn run_private_detached_command(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    deadline: Instant,
+) -> Result<(), ContainerExecError> {
+    let private_error = |kind| ContainerExecError::Launch {
+        command: label.to_owned(),
+        error: std::io::Error::new(kind, "private workspace backend invocation unavailable"),
+    };
+    let args = compose_invocation_args(program.as_ref(), args, env)
+        .map_err(|_| private_error(std::io::ErrorKind::InvalidInput))?;
+    if Instant::now() >= deadline {
+        return Err(timeout_error(label));
+    }
+    let mut command = Command::new(resolve_host_cli_program(program));
+    command
+        .current_dir(repo_root)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    #[cfg(unix)]
+    unsafe {
+        // SAFETY: only setpgid runs between fork and exec; this group belongs to the child.
+        command
+            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| private_error(error.kind()))?;
+    let status = loop {
+        if Instant::now() >= deadline {
+            terminate_unreaped_process_group(&mut child);
+            let _ = child.wait();
+            return Err(timeout_error(label));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(error) => {
+                terminate_unreaped_process_group(&mut child);
+                let _ = child.wait();
+                return Err(private_error(error.kind()));
+            }
+        }
+    };
+    if !status.success() {
+        return Err(ContainerExecError::Failure {
+            command: label.to_owned(),
+            code: status.code(),
+            stdout: String::new(),
+            stderr: "[effigy] private workspace backend failed".into(),
+        });
+    }
+    Ok(())
+}
+
 struct DetachedControl<'a> {
     stop_requested: Option<&'a std::sync::atomic::AtomicBool>,
     deadline: Option<Instant>,
@@ -1561,6 +1626,99 @@ mod detached_capture_tests {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+
+    #[test]
+    fn workspace_private_detached_output_never_reaches_a_durable_log_or_error() {
+        for exit_code in [0, 1] {
+            let fixture = tempfile::tempdir().unwrap();
+            let script = fixture.path().join("compose.py");
+            fs::write(&script, format!("import os,sys\nos.write(1,b'private-')\nos.write(1,b'secret-value')\nos.write(2,b'private-secret-value')\nsys.exit({exit_code})\n")).unwrap();
+            let args = [
+                script.into_os_string(),
+                "-p".into(),
+                "workspace-private".into(),
+                "up".into(),
+                "-d".into(),
+            ];
+            let result = super::super::implementation::run_backend_invocation_private_until(
+                fixture.path(),
+                std::ffi::OsStr::new("python3"),
+                &args,
+                "workspace apply",
+                &[],
+                Instant::now() + Duration::from_secs(10),
+            );
+            assert_eq!(result.is_ok(), exit_code == 0);
+            if let Err(error) = result {
+                assert!(!error.to_string().contains("private-secret-value"));
+            }
+            let logs = fixture.path().join(".effigy/runtime/logs");
+            if logs.exists() {
+                for entry in fs::read_dir(logs).unwrap() {
+                    assert!(!fs::read(entry.unwrap().path())
+                        .unwrap()
+                        .windows(b"private-secret-value".len())
+                        .any(|bytes| bytes == b"private-secret-value"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_private_deadline_reaps_owned_group_without_output() {
+        use nix::{sys::signal::kill, unistd::Pid};
+        let fixture = tempfile::tempdir().unwrap();
+        let script = fixture.path().join("backend.py");
+        fs::write(&script, r#"import json,os,signal,time
+r,w=os.pipe()
+child=os.fork()
+if child==0:
+ os.close(r); signal.signal(signal.SIGTERM,signal.SIG_IGN); os.write(w,b'r'); os.close(w); time.sleep(60); os._exit(0)
+os.close(w); assert os.read(r,1)==b'r'; os.close(r)
+json.dump({'pid':os.getpid(),'group':os.getpgrp(),'child':child},open('identity.json','w'))
+os.write(1,b'private-secret-value'); os.write(2,b'private-secret-value'); time.sleep(60)
+"#).unwrap();
+        let args = [
+            script.into_os_string(),
+            "-p".into(),
+            "private-timeout".into(),
+            "up".into(),
+            "-d".into(),
+        ];
+        let error = super::super::implementation::run_backend_invocation_private_until(
+            fixture.path(),
+            std::ffi::OsStr::new("python3"),
+            &args,
+            "workspace apply",
+            &[],
+            Instant::now() + Duration::from_secs(2),
+        )
+        .expect_err("timeout refuses");
+        let identity: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.path().join("identity.json")).unwrap())
+                .unwrap();
+        let descendant = i32::try_from(identity["child"].as_i64().unwrap()).unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while kill(Pid::from_raw(descendant), None).is_ok() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let gone = matches!(
+            kill(Pid::from_raw(descendant), None),
+            Err(nix::errno::Errno::ESRCH)
+        );
+        if !gone
+            && nix::unistd::getpgid(Some(Pid::from_raw(descendant)))
+                .ok()
+                .map(|id| i64::from(id.as_raw()))
+                == identity["group"].as_i64()
+        {
+            let _ = kill(Pid::from_raw(descendant), nix::sys::signal::Signal::SIGKILL);
+        }
+        assert!(gone, "owned descendant survived deadline cleanup");
+        assert!(super::error_is_timeout(&error));
+        assert!(!error.to_string().contains("private-secret-value"));
+        assert!(!fixture.path().join(".effigy/runtime/logs").exists());
     }
 
     #[test]
