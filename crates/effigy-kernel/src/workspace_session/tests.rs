@@ -1574,6 +1574,62 @@ fn parked_reacquisition_refuses_changed_session_and_releases_gate() {
 }
 
 #[test]
+fn parked_reacquisition_refuses_changed_reservation_facts() {
+    for (column, value, expected) in [
+        ("state", "cancelled".to_owned(), "session is frozen"),
+        (
+            "environment_run",
+            run_id(250).to_string(),
+            "another environment run",
+        ),
+        (
+            "reservation_id",
+            "ff".repeat(16),
+            "not the one this caller holds",
+        ),
+        (
+            "inputs",
+            serde_json::to_string(&decision_inputs(201)).unwrap(),
+            "reservation changed while parked",
+        ),
+    ] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let environment = environment();
+        let reservation = decided(&cx, &root, &environment);
+        let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(248));
+        let run = admit_activation(&cx, &root, &reservation, run_id(249));
+        let parked = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+            .unwrap();
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .transaction(&cx, |txn| {
+                let sql = format!(
+                    "UPDATE workspace_activation_reservations SET {column}=?2 WHERE environment=?1"
+                );
+                txn.conn().execute(
+                    &sql,
+                    rusqlite::params![environment.name().to_string(), value],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        let (error, _custody) = parked.reacquire().expect_err("changed reservation refuses");
+        assert!(error.to_string().contains(expected), "{column}: {error}");
+        let gate = crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast,
+        )
+        .unwrap();
+        drop(gate);
+    }
+}
+
+#[test]
 fn parked_reacquisition_refuses_advanced_environment_generation() {
     let fixture = home();
     let cx = context();
