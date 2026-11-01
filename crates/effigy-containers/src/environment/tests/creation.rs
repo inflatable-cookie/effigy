@@ -808,10 +808,50 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
 fn activation_parks_the_real_claimed_run_after_target_binding() {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
     use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    use effigy_test_support::process::FixtureCommandExt;
     use std::collections::BTreeMap;
 
-    let fixture = home();
-    let state = root(fixture.path());
+    const CHILD_HOME: &str = "EFFIGY_PARKED_ACTIVATION_CHILD_HOME";
+    let Some(child_home) = std::env::var_os(CHILD_HOME) else {
+        let fixture = home();
+        let marker = fixture.path().join("parked-ready");
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "environment::tests::creation::activation_parks_the_real_claimed_run_after_target_binding", "--nocapture"])
+            .env(CHILD_HOME, fixture.path())
+            .stdin(std::process::Stdio::piped()).stdout(output)
+            .spawn_owned().unwrap();
+        let pid = child.id();
+        let until = Instant::now() + Duration::from_secs(30);
+        while !marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let ready = marker.exists();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let gate_free = ready
+            && effigy_kernel::gate::Gate::acquire(
+                &ctx.cx,
+                &state,
+                std::slice::from_ref(&stack.resource),
+                Wait::FailFast,
+            )
+            .is_ok();
+        let refused =
+            ready && EnvRun::begin(&ctx, &stack, Operation::Down, Wait::FailFast).is_err();
+        drop(child.stdin.take());
+        let exit = child.wait().expect("reap exact child");
+        assert!(ready, "child {pid} did not park");
+        assert!(gate_free, "parked activation released Env");
+        assert!(refused, "ordinary competing admission refuses");
+        assert!(exit.success(), "child {pid} failed: {exit}");
+        return;
+    };
+    let state = root(std::path::Path::new(&child_home));
     let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
     let stack = env("stack");
     let reservation = fresh_reservation(&ctx, &stack);
@@ -882,7 +922,7 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
         .unwrap();
     let session = activation.session().clone();
     let parked = activation
-        .park(Instant::now() + Duration::from_secs(10))
+        .park(Instant::now() + Duration::from_secs(60))
         .expect("complete activation parks");
     assert_eq!(parked.session(), &session);
     let gate = effigy_kernel::gate::Gate::acquire(
@@ -893,6 +933,13 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     )
     .expect("Env is free");
     drop(gate);
+    std::fs::write(
+        std::path::Path::new(&child_home).join("parked-ready"),
+        b"ready",
+    )
+    .unwrap();
+    let mut input = String::new();
+    let _ = std::io::stdin().read_line(&mut input);
     drop(parked);
 }
 
