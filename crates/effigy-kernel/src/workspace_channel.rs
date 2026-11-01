@@ -3227,7 +3227,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     self.outbound = Outbound::new();
                     self.carry = None;
                     self.inbound.clear();
-                    self.observe_query_v1 = false;
                     // Every negotiated stream is numbered from its own
                     // position, so a second retained stream resumes where its
                     // log does instead of replaying from zero or inventing a
@@ -3268,7 +3267,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // accepts no further input.
                     self.carry = None;
                     self.inbound.clear();
-                    self.observe_query_v1 = false;
                     Ok(ResponseOutcome::Observed(Value::Null))
                 }
             }

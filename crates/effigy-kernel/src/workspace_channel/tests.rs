@@ -3970,3 +3970,115 @@ fn observe_query_v1_requires_negotiation_before_read_only_observer() {
         }
     }
 }
+
+fn observe_query_frame(session: Session, id: u8) -> Frame {
+    Frame::Request(request(
+        session,
+        RequestBody::Observe(ObserveBody {
+            query: Some(ObserveQuery {
+                cwd: ".".into(),
+                args: vec!["doctor".into()],
+                output: OutputMode::Json,
+            }),
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }),
+        id,
+    ))
+}
+
+#[test]
+fn observe_query_negotiation_survives_attach_replacement_and_detach() {
+    let (_fixture, cx, root, session) = journal("effigy-query-attachment-lifetime");
+    let (_run, live) = admitted_run(&cx, &root, session, 41, &[121]);
+    let mut host = server(session, &[]);
+    let mut hello = hello();
+    hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+    let attach = |id| {
+        Frame::Request(request(
+            session,
+            RequestBody::Attach(AttachBody {
+                run: live,
+                streams: vec![StreamKind::Stdout],
+                cursor: None,
+                cursors: None,
+            }),
+            id,
+        ))
+    };
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello),
+            Frame::Authenticate(capability()),
+            attach(1),
+            observe_query_frame(session, 2),
+            attach(3),
+            observe_query_frame(session, 4),
+            Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                5,
+            )),
+            observe_query_frame(session, 6),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("the negotiated connection remains usable");
+    let replies: Vec<_> = written_frames(&pipe)
+        .into_iter()
+        .filter_map(|frame| match frame {
+            Frame::Response(response) => Some(response),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(replies.len(), 6);
+    for reply in &replies {
+        assert!(
+            matches!(reply.outcome, ResponseOutcome::Observed(_)),
+            "{reply:?}"
+        );
+    }
+    assert_eq!(host.dispatcher.observer.calls, 3);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
+}
+
+#[test]
+fn observe_query_negotiation_is_not_inherited_by_a_fresh_connection() {
+    let (_fixture, cx, root, session) = journal("effigy-query-connection-lifetime");
+    let mut host = server(session, &[]);
+    for (connection, negotiated) in [true, false, true].into_iter().enumerate() {
+        let mut hello = hello();
+        if negotiated {
+            hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+        }
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello),
+                Frame::Authenticate(capability()),
+                observe_query_frame(session, 90 + connection as u8),
+            ]),
+            peer(),
+        );
+        host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .unwrap();
+        let outcome = written_frames(&pipe)
+            .into_iter()
+            .find_map(|frame| match frame {
+                Frame::Response(response) => Some(response.outcome),
+                _ => None,
+            })
+            .expect("the query is answered");
+        if negotiated {
+            assert!(matches!(outcome, ResponseOutcome::Observed(_)));
+        } else {
+            assert!(matches!(outcome, ResponseOutcome::Refused(refusal)
+                if refusal.code == RefusalCode::Forbidden && refusal.diagnostic.contains("observe_query_v1")));
+        }
+    }
+    assert_eq!(host.dispatcher.observer.calls, 2);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
+}
