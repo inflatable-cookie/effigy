@@ -196,11 +196,9 @@ working_dir = "/workspace"
 "#,
     )
     .expect("declaration");
-    require_supported_activation(fixture.path(), Some("db")).expect("hybrid route");
-    assert!(require_supported_activation(fixture.path(), Some("web"))
-        .expect_err("workspace route")
-        .to_string()
-        .contains(PREPARATION_UNAVAILABLE));
-    assert!(require_supported_activation(fixture.path(), None).is_err());
+    std::fs::create_dir(fixture.path().join(".git")).expect("checkout");
+    assert!(cli_preflight::prevalidate_cli(fixture.path(), Some("db"))
+        .expect("hybrid classification")
+        .is_none());
     assert!(!fixture.path().join(".effigy").exists());
 }

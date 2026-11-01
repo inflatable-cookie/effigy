@@ -10,14 +10,19 @@ fn container_up_detached_preflight_refuses_before_any_journal_token_or_mount_eff
             "empty-budget",
             0,
             [1u8; 16],
-            "workspace activation budget is empty",
+            "workspace private preparation output is unavailable",
         ),
-        ("wrong-checkout", 1000, [2u8; 16], "checkout differs"),
+        (
+            "wrong-checkout",
+            1000,
+            [2u8; 16],
+            "workspace private preparation output is unavailable",
+        ),
         (
             "absent-backend",
             1000,
             [1u8; 16],
-            "identity observation unavailable",
+            "workspace private preparation output is unavailable",
         ),
     ] {
         let fixture = effigy_test_support::Fixture::new(case).expect("fixture");

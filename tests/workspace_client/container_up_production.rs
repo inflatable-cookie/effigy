@@ -367,7 +367,75 @@ fn actual_cli_fake_backend_refuses_before_workspace_effects() {
     assert!(!fixture.fixture.path().join("applied").exists());
 }
 
+// The deferred tests below retain their original assertions for #533/#531.
+// These controls exercise the same fault inputs at the current refusal boundary.
+fn assert_fault_refused_before_effects(flags: &[&str]) {
+    let fixture = BackendFixture::new();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.config).expect("configuration"))
+            .expect("config JSON");
+    for flag in flags {
+        config[*flag] = true.into();
+    }
+    std::fs::write(
+        &fixture.config,
+        serde_json::to_vec(&config).expect("fault input"),
+    )
+    .expect("fault input");
+    let project_before = snapshot(&fixture.project);
+    let home_before = snapshot(&fixture.home);
+    let calls_before = fixture.calls();
+    let output = fixture
+        .command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(!output.status.success());
+    let public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        public.contains("workspace private preparation output is unavailable"),
+        "{public}"
+    );
+    assert!(!public.contains("adversarial-secret-backend-diagnostic"));
+    assert_eq!(
+        snapshot(&fixture.project),
+        project_before,
+        "project unchanged"
+    );
+    assert_eq!(snapshot(&fixture.home), home_before, "home unchanged");
+    assert_eq!(fixture.calls(), calls_before, "no backend calls");
+    assert!(!fixture.project.join(".effigy").exists());
+    assert!(!fixture.fixture.path().join("applied").exists());
+}
+
 #[test]
+fn cut_refuses_before_selected_handoff_faults() {
+    assert_fault_refused_before_effects(&["fail_handoff", "fail_adoption_cleanup"]);
+}
+
+#[test]
+fn cut_refuses_before_late_revalidation_fault() {
+    assert_fault_refused_before_effects(&["delay_final_revalidation"]);
+}
+
+#[test]
+fn cut_refuses_before_publication_fault() {
+    assert_fault_refused_before_effects(&["fail_publication"]);
+}
+
+#[test]
+fn cut_refuses_before_binding_staging_and_liveness_faults() {
+    for case in ["fail_binding", "fail_binary_staging", "fail_liveness"] {
+        assert_fault_refused_before_effects(&[case]);
+    }
+}
+
+#[test]
+#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
 fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() {
     let fixture = BackendFixture::new();
     let mut config: serde_json::Value =
@@ -614,16 +682,19 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
 }
 
 #[test]
+#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
 fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("delay_final_revalidation");
 }
 
 #[test]
+#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
 fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
 }
 
 #[test]
+#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
 fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sinks() {
     for case in ["fail_binding", "fail_binary_staging", "fail_liveness"] {
         let fixture = BackendFixture::new();
