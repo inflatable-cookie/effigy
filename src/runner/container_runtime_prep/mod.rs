@@ -1200,12 +1200,22 @@ pub(in crate::runner) fn seal_render_for_preflight(
             ) => return Err(BoundedReadRefusal::Unavailable(reason)),
         };
     let mut policy = policy.clone();
-    policy.compose_files = verified_compose_inputs(
-        render.closure.files(),
-        &policy.compose_files,
-        render.path.as_path(),
-        sealed_root.as_path(),
-    )?;
+    let frozen = render.closure.files().clone();
+    let compose_files = policy.compose_files.clone();
+    let render_path = render.path.clone();
+    let read_root = sealed_root.clone();
+    // The trusted private tree still lives on a filesystem that can stall. A
+    // returned seal does not make subsequent synchronous reads deadline-safe.
+    // An abandoned verifier only reads; it cannot promote or mutate the tree.
+    policy.compose_files =
+        crate::runner::workspace_command::provisioning::bounded_publication_read(
+            "workspace-compose-inputs",
+            deadline,
+            move || {
+                verified_compose_inputs(&frozen, &compose_files, &render_path, &read_root)
+                    .map_err(|error| RunnerError::task_invocation(format!("{error:?}")))
+            },
+        )?;
     live("after sealing the render")?;
     Ok(SealedRender {
         receipt: sealed,
