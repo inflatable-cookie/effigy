@@ -110,7 +110,9 @@ or removed entry durable. No such documented directory-entry guarantee has
 been established for this design. Until that guarantee and its filesystem and
 device limits are established, macOS crash recovery must preserve residue as
 Unknown; a successful file sync or a process-crash test cannot supply the
-missing power-loss guarantee. Neither platform is enabled by this proposal.
+missing power-loss guarantee. Tom ruled that macOS recovery stays fail-closed;
+the lifecycle is to be implemented and proved where durability is established.
+Neither platform is enabled by this proposal.
 
 ## Review and proof obligations
 
