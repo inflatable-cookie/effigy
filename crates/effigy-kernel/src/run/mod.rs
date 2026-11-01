@@ -2336,9 +2336,10 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// Workspace-only settlement keeps the exact owner gate when an effect is
-    /// unresolved; listener/key release actions still run before cleanup.
-    pub(crate) fn settle_workspace_recoverable(
+    /// Settle an existing workspace owner without losing its exact gate when
+    /// effects remain unresolved. Listener/key release actions run first.
+    /// This consumes the same owner and returns it on an incomplete cleanup.
+    pub fn settle_workspace_recoverable(
         mut self,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,

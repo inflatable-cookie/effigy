@@ -1541,6 +1541,91 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+#[cfg(feature = "fault-injection")]
+fn session_supervisor_retries_after_durable_close_without_replaying_effects() {
+    struct CountRelease(usize);
+    impl SettlementAdapter for CountRelease {
+        fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            self.0 += 1;
+            Observed::Verified((), evidence())
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            panic!("fixture uses release")
+        }
+    }
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
+    let spec = EffectSpec {
+        target: session.fence().clone(),
+        kind: "fixture:release-once".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        let seq: i64 = txn.conn().query_row("SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1", [run_id(240).to_string()], |row| row.get(0))?;
+        txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'applied',?7)", rusqlite::params![run_id(240).to_string(), seq, seq.to_string(), spec.kind, serde_json::to_string(&spec)?, serde_json::to_string(&spec.settlement)?, txn.now()])?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    let mut adapter = CountRelease(0);
+    let first_cleanup = cleanup(&cx);
+    let cancel = first_cleanup.operation().cancel_token().clone();
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point == crate::fault::Point::SettleCloseAfter {
+            cancel.cancel(StopCause::Requested);
+        }
+    })));
+    crate::fault::arm_point(
+        crate::fault::Point::SettleCloseAfter,
+        crate::fault::Fault::Eperm,
+    );
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&first_cleanup, &mut adapter)
+        .expect_err("fault lands after durable close");
+    crate::fault::hook(None);
+    crate::fault::arm(None);
+    assert!(!error.to_string().is_empty());
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='incomplete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect_err("inconsistent durable close retains custody");
+    assert!(error.to_string().contains("closed outcome is inconsistent"));
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='complete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let outcome = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect("same owner finishes durable close");
+    assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
+    assert_eq!(adapter.0, 1, "retry must not replay released effects");
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn session_supervisor_retains_exact_slot_on_unknown_cleanup() {
     struct UnknownRelease;
     impl SettlementAdapter for UnknownRelease {
