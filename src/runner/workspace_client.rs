@@ -1211,9 +1211,30 @@ impl<T: Transport> WorkspaceClient<T> {
             let frame = read_frame(&mut self.transport)?;
             match frame {
                 Frame::Response(response) if response.id == id => {
+                    let matching_method = matches!(
+                        (&intent.body, &response.outcome),
+                        (_, channel::ResponseOutcome::Refused(_))
+                            | (
+                                RequestBody::Invoke(_),
+                                channel::ResponseOutcome::Accepted(_)
+                                    | channel::ResponseOutcome::Completed(_)
+                            )
+                            | (
+                                RequestBody::Observe(_)
+                                    | RequestBody::Attach(_)
+                                    | RequestBody::Cancel(_)
+                                    | RequestBody::Detach(_),
+                                channel::ResponseOutcome::Observed(_)
+                            )
+                    );
+                    if !matching_method {
+                        return Err(ChannelError::unknown(
+                            "the host response outcome does not match this request method",
+                        ));
+                    }
                     let outcome = match response.outcome {
                         channel::ResponseOutcome::Observed(value) => {
-                            if matches!(intent.body, RequestBody::Attach(_)) {
+                            if let RequestBody::Attach(body) = &intent.body {
                                 // An attach answers with the host's own view of
                                 // the attachment it opened; a body that is not
                                 // one is not this client's business to guess.
@@ -1224,12 +1245,31 @@ impl<T: Transport> WorkspaceClient<T> {
                                              unreadable attachment view",
                                         )
                                     })?;
+                                if view.run != body.run || view.cursor != body.cursor.unwrap_or(0) {
+                                    return Err(ChannelError::unknown(
+                                        "the attachment view does not match the requested run and cursor",
+                                    ));
+                                }
                                 Ok(ChannelOutcome::Attached(view))
                             } else {
+                                if matches!(
+                                    intent.body,
+                                    RequestBody::Cancel(_) | RequestBody::Detach(_)
+                                ) && !value.is_null()
+                                {
+                                    return Err(ChannelError::unknown(
+                                        "the host control reply does not match this request",
+                                    ));
+                                }
                                 Ok(ChannelOutcome::Observed(value))
                             }
                         }
                         channel::ResponseOutcome::Accepted(accepted) => {
+                            if accepted.placement != effigy_kernel::ctx::Placement::Host {
+                                return Err(ChannelError::unknown(
+                                    "the host admission reply names a non-host placement",
+                                ));
+                            }
                             self.admitted = Some(accepted.run);
                             Ok(ChannelOutcome::Accepted {
                                 run: accepted.run,

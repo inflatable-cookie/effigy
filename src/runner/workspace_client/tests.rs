@@ -5532,7 +5532,7 @@ fn level_one_concurrent_intent_clone_refuses_before_a_second_transport_write() {
     assert_eq!(written.lock().unwrap().len(), before);
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum LevelOnePostwriteReply {
     Malformed,
     Oversized,
@@ -5540,24 +5540,42 @@ enum LevelOnePostwriteReply {
     Unexpected,
     HostUnknown,
     UnreadableAttach,
+    Typed {
+        method: host::Method,
+        outcome: host::ResponseOutcome,
+    },
 }
 
-fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
-    let body = if matches!(reply, LevelOnePostwriteReply::UnreadableAttach) {
-        RequestBody::Attach(AttachBody {
+fn level_one_postwrite_peer_exchange(
+    reply: LevelOnePostwriteReply,
+) -> (Intent, Result<ChannelOutcome, ChannelError>, Option<RunId>) {
+    let method = match &reply {
+        LevelOnePostwriteReply::UnreadableAttach => host::Method::Attach,
+        LevelOnePostwriteReply::Typed { method, .. } => *method,
+        _ => host::Method::Invoke,
+    };
+    let body = match method {
+        host::Method::Observe => RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }),
+        host::Method::Cancel => RequestBody::Cancel(host::RunBody { run: session_run() }),
+        host::Method::Detach => RequestBody::Detach(host::RunBody { run: session_run() }),
+        host::Method::Attach => RequestBody::Attach(AttachBody {
             run: session_run(),
             streams: vec![StreamKind::Stdout],
             cursor: None,
             cursors: None,
-        })
-    } else {
-        RequestBody::Invoke(InvocationBody {
+        }),
+        host::Method::Invoke => RequestBody::Invoke(InvocationBody {
             selector: Selector::Task("build".into()),
             cwd: ".".into(),
             target: Target::Host,
             args: vec![],
             output: ChannelOutputMode::Text,
-        })
+        }),
     };
     let intent = Intent::new(body);
     let (client_side, host_side) = connection_pair();
@@ -5627,6 +5645,10 @@ fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
                     "the host cannot establish this outcome",
                 )),
             }),
+            LevelOnePostwriteReply::Typed { outcome, .. } => Frame::Response(host::Response {
+                id: request.id,
+                outcome,
+            }),
             LevelOnePostwriteReply::UnreadableAttach => Frame::Response(host::Response {
                 id: request.id,
                 outcome: host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
@@ -5635,17 +5657,30 @@ fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
         host::write_frame(&mut transport, &response).map_err(|error| error.to_string())?;
         Ok(request.id)
     });
-    let outcome = (|| {
-        let mut client =
-            WorkspaceClient::connect(PeerTransport::new(client_side), verified(), live_run())?;
-        client.authenticate(GuestAuth::Capability(capability()))?;
-        client.send(&intent)
-    })();
+    let (outcome, admitted) =
+        match WorkspaceClient::connect(PeerTransport::new(client_side), verified(), live_run()) {
+            Ok(mut client) => {
+                let outcome = client
+                    .authenticate(GuestAuth::Capability(capability()))
+                    .and_then(|()| client.send(&intent));
+                (outcome, client.admitted)
+            }
+            Err(error) => (Err(error), None),
+        };
     let received = peer
         .join()
         .expect("peer reaped")
         .expect("peer received and answered request");
     assert_eq!(received, intent.id());
+    (intent, outcome, admitted)
+}
+
+fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
+    let (intent, outcome, admitted) = level_one_postwrite_peer_exchange(reply.clone());
+    assert!(
+        admitted.is_none(),
+        "an invalid reply changed the admitted run"
+    );
     let error = outcome.expect_err("invalid post-delivery answer");
     assert!(
         matches!(&error, ChannelError::Unknown { .. }),
@@ -5700,4 +5735,151 @@ fn level_one_postwrite_host_unknown_reports_no_resend_guidance() {
 #[test]
 fn level_one_postwrite_unreadable_attach_reply_is_unknown() {
     level_one_postwrite_unknown_control(LevelOnePostwriteReply::UnreadableAttach);
+}
+
+fn level_one_accepted_reply() -> host::ResponseOutcome {
+    host::ResponseOutcome::Accepted(host::Accepted {
+        run: session_run(),
+        placement: effigy_kernel::ctx::Placement::Host,
+    })
+}
+
+fn level_one_completed_reply() -> host::ResponseOutcome {
+    host::ResponseOutcome::Completed(host::Completed {
+        outcome: serde_json::json!({"completed":true}),
+        exit: host::ExitStatus {
+            code: Some(0),
+            signal: None,
+        },
+    })
+}
+
+fn level_one_attachment_reply(run: RunId, cursor: u64) -> host::ResponseOutcome {
+    host::ResponseOutcome::Observed(
+        serde_json::to_value(host::AttachView {
+            attachment: effigy_kernel::run::AttachmentId::new([17; 16]),
+            run,
+            client: effigy_kernel::run::Client::Secondary,
+            cursor,
+        })
+        .unwrap(),
+    )
+}
+
+#[test]
+fn level_one_wrong_same_id_outcome_type_is_unknown_for_every_request_method() {
+    let mut cases = vec![(
+        host::Method::Invoke,
+        host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+    )];
+    for method in [
+        host::Method::Observe,
+        host::Method::Attach,
+        host::Method::Cancel,
+        host::Method::Detach,
+    ] {
+        cases.push((method, level_one_accepted_reply()));
+        cases.push((method, level_one_completed_reply()));
+    }
+    for (method, outcome) in cases {
+        level_one_postwrite_unknown_control(LevelOnePostwriteReply::Typed { method, outcome });
+    }
+}
+
+#[test]
+fn level_one_wrong_same_id_outcome_payload_is_unknown() {
+    for (method, outcome) in [
+        (
+            host::Method::Attach,
+            level_one_attachment_reply(RunId::new(1, [44; 10]).unwrap(), 0),
+        ),
+        (
+            host::Method::Attach,
+            level_one_attachment_reply(session_run(), 1),
+        ),
+        (
+            host::Method::Cancel,
+            host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+        ),
+        (
+            host::Method::Detach,
+            host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+        ),
+        (
+            host::Method::Invoke,
+            host::ResponseOutcome::Accepted(host::Accepted {
+                run: session_run(),
+                placement: effigy_kernel::ctx::Placement::Guest,
+            }),
+        ),
+    ] {
+        level_one_postwrite_unknown_control(LevelOnePostwriteReply::Typed { method, outcome });
+    }
+}
+
+#[test]
+fn level_one_valid_method_outcome_matrix_and_definitive_refusals_stay_sendable() {
+    let mut cases = vec![
+        (host::Method::Invoke, level_one_accepted_reply()),
+        (host::Method::Invoke, level_one_completed_reply()),
+        (
+            host::Method::Observe,
+            host::ResponseOutcome::Observed(serde_json::json!({"observed":true})),
+        ),
+        (
+            host::Method::Attach,
+            level_one_attachment_reply(session_run(), 0),
+        ),
+        (
+            host::Method::Cancel,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
+        (
+            host::Method::Detach,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
+    ];
+    for method in [
+        host::Method::Invoke,
+        host::Method::Observe,
+        host::Method::Attach,
+        host::Method::Cancel,
+        host::Method::Detach,
+    ] {
+        cases.push((
+            method,
+            host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal")),
+        ));
+    }
+    for (method, response) in cases {
+        let (intent, outcome, _) =
+            level_one_postwrite_peer_exchange(LevelOnePostwriteReply::Typed {
+                method,
+                outcome: response.clone(),
+            });
+        match &response {
+            host::ResponseOutcome::Refused(_) => assert!(matches!(
+                outcome,
+                Err(ChannelError::Refused {
+                    code: "forbidden",
+                    ..
+                })
+            )),
+            _ => assert!(outcome.is_ok(), "{method:?} {response:?}: {outcome:?}"),
+        }
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &intent, response);
+        let written = transport.written.clone();
+        let mut replay = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        replay
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        let before = written.lock().unwrap().len();
+        let replayed = replay.send(&intent.clone());
+        assert!(
+            !matches!(replayed, Err(ChannelError::Unknown { .. })),
+            "valid answer fenced replay"
+        );
+        assert!(written.lock().unwrap().len() > before);
+    }
 }
