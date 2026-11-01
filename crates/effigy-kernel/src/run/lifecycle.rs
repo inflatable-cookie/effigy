@@ -237,6 +237,7 @@ mod tests {
         let partial = run.has_partial_checkout_backup();
         let backup_identity = run.partial_checkout_backup_identity();
         let effect_refused = run.can_effect().is_err();
+        let custody_refused = run.verify_custody().is_err();
         let retry = run.enable_custody(&plan);
         let same_sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
         let same_backup = run.partial_checkout_backup_identity();
@@ -260,6 +261,10 @@ mod tests {
             "the partial helper identity must be recorded"
         );
         assert!(effect_refused, "partial startup must not allow effects");
+        assert!(
+            custody_refused,
+            "partial backup must independently refuse custody verification"
+        );
         assert!(
             retry.is_err(),
             "partial startup must not launch a second helper"
