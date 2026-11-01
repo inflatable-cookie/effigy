@@ -454,27 +454,80 @@ mod tests {
     struct LayeredChild {
         child: Option<std::process::Child>,
         fixture: std::path::PathBuf,
+        pid: u32,
+        identity: Option<ProcessIdentity>,
+        argv: Vec<Vec<u8>>,
+        fail_kill: bool,
+        fail_wait: bool,
     }
     impl LayeredChild {
-        fn new(child: std::process::Child, fixture: &std::path::Path) -> Self {
-            Self {
+        fn spawn(
+            command: &mut std::process::Command,
+            fixture: &std::path::Path,
+        ) -> std::io::Result<Self> {
+            use std::os::unix::ffi::OsStrExt;
+            let argv = std::iter::once(command.get_program())
+                .chain(command.get_args())
+                .map(|arg| arg.as_bytes().to_vec())
+                .collect();
+            let child = command.spawn()?;
+            let pid = child.id();
+            let identity = crate::ident::process_identity(pid).verified().cloned();
+            Ok(Self {
                 child: Some(child),
                 fixture: fixture.into(),
+                pid,
+                identity,
+                argv,
+                fail_kill: false,
+                fail_wait: false,
+            })
+        }
+        fn record_unknown(&self, reason: &str) {
+            let record = self
+                .fixture
+                .join(format!("child-{}-unknown.json", self.pid));
+            let body = serde_json::json!({ "message": "harness failed; child state Unknown; clean by recorded PID after identity check", "pid": self.pid, "identity": self.identity, "argv_bytes": self.argv, "fixture": self.fixture, "reason": reason });
+            let write = std::fs::write(&record, body.to_string());
+            eprintln!("harness failed; child state Unknown; clean by recorded PID after identity check: pid {} identity {:?} argv {:?} fixture {:?}; record {:?}, write {write:?}; {reason}", self.pid, self.identity, self.argv, self.fixture, record);
+        }
+        fn kill(&mut self) -> std::io::Result<()> {
+            let result = if self.fail_kill {
+                Err(std::io::Error::other("injected kill failure"))
+            } else {
+                self.child().kill()
+            };
+            if let Err(error) = &result {
+                self.record_unknown(&format!("kill failed: {error}"));
             }
+            result
         }
         fn child(&mut self) -> &mut std::process::Child {
             self.child.as_mut().unwrap()
         }
         fn wait(&mut self, limit: Duration) -> std::io::Result<std::process::ExitStatus> {
+            if self.fail_wait {
+                let error = std::io::Error::other("injected wait failure");
+                self.record_unknown(&format!("wait failed: {error}"));
+                return Err(error);
+            }
             let deadline = Instant::now() + limit;
             loop {
-                if let Some(status) = self.child().try_wait()? {
-                    self.child.take();
-                    return Ok(status);
+                match self.child().try_wait() {
+                    Ok(Some(status)) => {
+                        self.child.take();
+                        return Ok(status);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.record_unknown(&format!("wait failed: {error}"));
+                        return Err(error);
+                    }
                 }
                 if Instant::now() >= deadline {
                     let pid = self.child().id();
-                    let kill = self.child().kill();
+                    let kill = self.kill();
+                    self.record_unknown(&format!("wait timed out; kill result {kill:?}"));
                     return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("owned fixture child {pid} timed out; kill result {kill:?}; custody retained for cleanup")));
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -483,7 +536,7 @@ mod tests {
     }
     impl Drop for LayeredChild {
         fn drop(&mut self) {
-            let Some(child) = self.child.as_mut() else {
+            let Some(mut child) = self.child.take() else {
                 return;
             };
             let pid = child.id();
@@ -491,32 +544,26 @@ mod tests {
                 Ok(Some(_)) => return,
                 Ok(None) => {}
                 Err(error) => {
-                    eprintln!(
-                        "owned child {pid} state Unknown: {error}; fixture {:?}",
-                        self.fixture
-                    );
+                    self.record_unknown(&format!("drop state check failed: {error}"));
                     return;
                 }
             }
             let kill = child.kill();
+            if let Err(error) = &kill {
+                self.record_unknown(&format!("drop kill failed: {error}"));
+            }
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
                 match child.try_wait() {
                     Ok(Some(_)) => return,
                     Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                     Err(error) => {
-                        eprintln!(
-                            "owned child {pid} wait Unknown: {error}; fixture {:?}",
-                            self.fixture
-                        );
+                        self.record_unknown(&format!("drop wait failed: {error}"));
                         return;
                     }
                 }
             }
-            eprintln!(
-                "owned child {pid} reap Unknown after kill {kill:?}; fixture {:?}",
-                self.fixture
-            );
+            self.record_unknown(&format!("child {pid} reap timed out after kill {kill:?}"));
         }
     }
 
@@ -545,12 +592,11 @@ mod tests {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let home = LayeredHome::new();
             path = home.path().into();
-            let child = std::process::Command::new("/bin/sleep")
-                .arg("30")
-                .spawn()
-                .unwrap();
-            pid = child.id();
-            let _owner = LayeredChild::new(child, home.path());
+            let mut command = std::process::Command::new("/bin/sleep");
+            command.arg("30");
+            let mut owner = LayeredChild::spawn(&mut command, home.path()).unwrap();
+            pid = owner.child().id();
+            let _owner = owner;
             panic!("test-only unwind after owned child spawn");
         }));
         assert_ne!(pid, 0, "fixture spawn failed; retained fixture {path:?}");
@@ -570,6 +616,42 @@ mod tests {
     }
 
     #[test]
+    fn layered_fixture_records_injected_wait_and_kill_unknowns() {
+        let mut home = LayeredHome::new();
+        let mut command = std::process::Command::new("/bin/sleep");
+        command.arg("30");
+        let mut child = LayeredChild::spawn(&mut command, home.path()).unwrap();
+        let pid = child.pid;
+        let record = home.path().join(format!("child-{pid}-unknown.json"));
+        child.fail_wait = true;
+        let wait_error = child.wait(Duration::from_secs(1));
+        let wait_record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        child.fail_wait = false;
+        child.fail_kill = true;
+        let kill_error = child.kill();
+        let kill_record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        child.fail_kill = false;
+        let killed = child.kill();
+        let reaped = child.wait(Duration::from_secs(3));
+        if killed.is_ok() && reaped.is_ok() {
+            home.finish();
+        }
+        assert!(wait_error.is_err() && kill_error.is_err());
+        for (record, expected) in [(wait_record, "wait failed"), (kill_record, "kill failed")] {
+            assert_eq!(record["pid"].as_u64(), Some(u64::from(pid)));
+            assert!(record["reason"].as_str().unwrap().contains(expected));
+            assert!(!record["argv_bytes"].as_array().unwrap().is_empty());
+            assert_eq!(record["fixture"].as_str(), home.path().to_str());
+        }
+        assert!(
+            killed.is_ok() && reaped.is_ok(),
+            "exact test child not reaped; fixture retained"
+        );
+    }
+
+    #[test]
     fn layered_workspace_sentinel_dead_owner_recovery() {
         use std::os::unix::process::ExitStatusExt;
         use std::process::{Command, Stdio};
@@ -581,7 +663,8 @@ mod tests {
         ] {
             let mut home = LayeredHome::new();
             let log = home.path().join("helpers.jsonl");
-            let child = Command::new(std::env::current_exe().unwrap())
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
                 .args([RECOVERY_CHILD, "--exact", "--ignored", "--test-threads=1"])
                 .env("EFFIGY_LAYERED_RECOVERY_HOME", home.path())
                 .env("EFFIGY_LAYERED_RECOVERY_MODE", "owner")
@@ -592,10 +675,8 @@ mod tests {
                     crate::fault::env_spec(point, 0, crate::fault::Fault::Stall),
                 )
                 .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap();
-            let mut owner = LayeredChild::new(child, home.path());
+                .stderr(Stdio::inherit());
+            let mut owner = LayeredChild::spawn(&mut command, home.path()).unwrap();
             let owner_pid = owner.child().id();
             let deadline = Instant::now() + Duration::from_secs(30);
             let stopped = loop {
@@ -683,7 +764,7 @@ mod tests {
                         other => Err(format!("exact stopped owner gate not observed: {other:?}")),
                     }
                 })();
-            let kill = owner.child().kill();
+            let kill = owner.kill();
             let owner_status = owner.wait(Duration::from_secs(40));
             let log_text = match std::fs::read_to_string(&log) {
                 Ok(text) => text,
@@ -738,7 +819,8 @@ mod tests {
                 "{point:?}: owner gate not free"
             );
             drop(root);
-            let child = Command::new(std::env::current_exe().unwrap())
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
                 .args([
                     RECOVERY_CHILD,
                     "--exact",
@@ -751,10 +833,8 @@ mod tests {
                 .env("EFFIGY_LAYERED_BACKUP_ROLES", "1")
                 .env("EFFIGY_KERNEL_TEST_HELPERS", &log)
                 .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap();
-            let mut recovery = LayeredChild::new(child, home.path());
+                .stderr(Stdio::inherit());
+            let mut recovery = LayeredChild::spawn(&mut command, home.path()).unwrap();
             let recovered = recovery.wait(Duration::from_secs(45));
             let all_log = match std::fs::read_to_string(&log) {
                 Ok(text) => text,
