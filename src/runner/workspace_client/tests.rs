@@ -4199,18 +4199,18 @@ fn releasing_writer(
     batch: usize,
     capacity: usize,
 ) -> FakePty {
-    let mut releaser = run::resume_owner(
-        cx,
-        root,
-        terminal_session(),
-        RunId::new(1, [9; 10]).expect("run id"),
-    )
-    .expect("owning attachment");
     let releasing_context = cx.clone();
     let releasing_root = root.clone();
     FakePty::new(log.clone())
         .bounded(batch, capacity)
         .after_first_write(move || {
+            let mut releaser = run::resume_owner(
+                &releasing_context,
+                &releasing_root,
+                terminal_session(),
+                RunId::new(1, [9; 10]).expect("run id"),
+            )
+            .expect("owning attachment");
             releaser
                 .release(&releasing_context, &releasing_root, Release::Eof)
                 .expect("the owning client's end of stream");
@@ -4227,23 +4227,18 @@ fn stale_input_and_resize_are_refused_through_the_channel_loop() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
-    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-    // One chunk fits, the rest queues, the resize handle accepts, and the owning
-    // row is released from inside the first write effect.
-    custody
-        .open(
-            &cx,
-            run,
-            vec![(1, Stream::Stdout)],
-            Box::new(releasing_writer(&log, &cx, &root, 4, 4)),
-        )
-        .expect("the run's terminal opens");
+    // The fake writer is registered after this same connection admits the run.
+    let mut custody = OpenAfterAdmission {
+        custody: TerminalCustody::new(terminal_session(), observe.clone(), root.clone()),
+        effect: cx.clone(),
+        writer: Some(Box::new(releasing_writer(&log, &cx, &root, 4, 4))),
+    };
 
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, b"abcdefgh"));
         // A resize is really sent, on the same live connection.
@@ -4251,7 +4246,11 @@ fn stale_input_and_resize_are_refused_through_the_channel_loop() {
         frames
     };
     let (client, host_side) = live_connection(&frames);
+    host_side
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner write");
     std::thread::scope(|scope| {
+        let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
@@ -4271,6 +4270,7 @@ fn stale_input_and_resize_are_refused_through_the_channel_loop() {
             "the resize sent on the released row was never applied: {:?}",
             sizes(&log)
         );
+        let _ = client.shutdown(std::net::Shutdown::Write);
         drop(client);
         // The kernel's own end-of-stream release finds the row already released.
         let _ = serving.join().expect("the serving thread");
@@ -4282,29 +4282,21 @@ fn the_serving_owner_refuses_stale_input_and_resize() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let run = RunId::new(1, [9; 10]).expect("run id");
-        let attaching = {
-            let mut frames = terminal_hello(capability());
-            frames.push(terminal_invoke(RequestId::new([1; 16])));
-            frames
-        };
         let typing = {
             let mut frames = terminal_hello(capability());
+            frames.push(terminal_invoke(RequestId::new([1; 16])));
             let attach = RequestId::new([2; 16]);
             frames.push(terminal_attach(attach, run, None));
             frames.push(typed(attach, 0, b"abcdefgh"));
             frames.push(sized(attach, 1, 50, 120));
             frames
         };
-        let (admitting, _written) = scripted(&attaching);
         // Only the typing connection has to stay live: its frames are consumed
         // and the host then blocks on the quiet socket while the writer's pump
         // finishes.
         let (typing_client, typing_host) = live_connection(&typing);
         let acceptor = PeerAccept {
-            connections: VecDeque::from(vec![
-                TestTransport::Scripted(admitting),
-                TestTransport::Peer(PeerTransport::new(typing_host)),
-            ]),
+            connections: VecDeque::from(vec![TestTransport::Peer(PeerTransport::new(typing_host))]),
         };
 
         let (listener, key, _acceptor) = SessionTlsListener::bind(
@@ -4334,23 +4326,15 @@ fn the_serving_owner_refuses_stale_input_and_resize() {
             Arc::new(observe.clone()),
             root,
         );
-        let mut terminals = owner.terminal_custody(observe);
-        // The admitting turn runs first, so the run exists when its terminal opens.
-        owner
-            .serve_pending(&mut terminals)
-            .expect("the admitting connection is served")
-            .expect("a connection was waiting");
         let log = Arc::new(Mutex::new(PtyLog::default()));
-        terminals
-            .open(
-                cx,
-                run,
-                vec![(1, Stream::Stdout)],
-                Box::new(releasing_writer(&log, cx, root, 4, 4)),
-            )
-            .expect("the session's terminal opens");
+        let mut terminals = OpenAfterAdmission {
+            custody: owner.terminal_custody(observe),
+            effect: cx.clone(),
+            writer: Some(Box::new(releasing_writer(&log, cx, root, 4, 4))),
+        };
 
         std::thread::scope(|scope| {
+            let _close = CloseOwnerWrite(typing_client.try_clone().expect("owner shutdown guard"));
             let serving = scope.spawn(|| owner.serve_pending(&mut terminals));
             wait_until("the first chunk to land", || written(&log) == b"abcd");
             wait_until("the released row to retire the writer", || {
@@ -4367,6 +4351,7 @@ fn the_serving_owner_refuses_stale_input_and_resize() {
                 "the resize sent on the released row was never applied: {:?}",
                 sizes(&log)
             );
+            let _ = typing_client.shutdown(std::net::Shutdown::Write);
             drop(typing_client);
             let _ = serving.join().expect("the serving thread");
         });
