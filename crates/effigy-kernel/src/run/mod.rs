@@ -1174,9 +1174,20 @@ impl<'a> Run<'a> {
     /// Whether this run may still record an effect. The workspace activation
     /// seam asks it before a commit publishes any state from the run.
     pub(crate) fn can_effect(&self) -> Result<(), RunError> {
+        self.require_environment_gate()?;
         self.cx.operation().check("effect")?;
         if self.poisoned || matches!(self.phase()?, Phase::Stopping | Phase::Closed) {
             return Err(RunError::broken("run must settle before more effects"));
+        }
+        Ok(())
+    }
+    fn require_environment_gate(&self) -> Result<(), RunError> {
+        if self.owner.resource.kind() == crate::id::ResourceKind::Env
+            && !self.guard.covers(&self.owner.resource)
+        {
+            return Err(RunError::refused(
+                "environment run does not hold its owner gate",
+            ));
         }
         Ok(())
     }
@@ -1321,6 +1332,7 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         workload: WorkloadOutcome,
     ) -> Result<(), RunError> {
+        self.require_environment_gate()?;
         if !matches!(
             workload,
             WorkloadOutcome::Cancelled { .. }
@@ -1358,6 +1370,7 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.require_environment_gate()?;
         self.run_settle_actions();
         self.settle_inner(cleanup, adapter)
     }
@@ -1369,6 +1382,9 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
+        if let Err(error) = self.require_environment_gate() {
+            return Err((error, Box::new(self)));
+        }
         self.run_settle_actions();
         match self.settle_inner(cleanup, adapter) {
             Ok(outcome) => Ok(outcome),
@@ -1522,6 +1538,7 @@ impl Run<'_> {
     }
 
     pub fn resolve_request(&mut self, request: &Request) -> Result<(), RunError> {
+        self.require_environment_gate()?;
         if request.run != self.id || request.expected != self.owner {
             return Err(RunError::broken("foreign request"));
         }

@@ -207,6 +207,30 @@ fn active_environment(cx: &EffectContext, root: &StateRoot, fake: &mut Fake) -> 
     run.settle(&cleanup(cx), fake).unwrap();
     fence
 }
+
+#[test]
+fn an_environment_run_without_its_owner_gate_cannot_record_effects() {
+    let fixture = effigy_test_support::Fixture::new("effigy-unguarded-env-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let mut run = begin(&cx, &root, env(), 209, &mut fake);
+    let empty = Gate::acquire(&cx, &root, &[], Wait::FailFast).unwrap();
+    let old = std::mem::replace(&mut run.guard, empty);
+    drop(old);
+    assert!(
+        run.advance(Phase::Stopping).is_err(),
+        "an unguarded environment run must not mutate"
+    );
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+    assert!(run
+        .interrupt(&cleanup(&cx), WorkloadOutcome::NotStarted)
+        .is_err());
+    let (_, run) = run
+        .settle_recoverable(&cleanup(&cx), &mut fake)
+        .expect_err("settlement retains unguarded custody");
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+}
 fn reader(cx: &EffectContext, root: &StateRoot) -> crate::store::StoreReader {
     match Store::read(&cx.operation().observe().unwrap(), root) {
         Observed::Verified(reader, _) => reader,
