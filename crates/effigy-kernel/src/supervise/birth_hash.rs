@@ -3,8 +3,8 @@
 //! A stalled filesystem read can retain at most one worker thread per process.
 //! A timed-out or cancelled started attempt permanently refuses later attempts;
 //! a late worker result can never authorize them. An expired context rejected
-//! before starting does not use the worker slot. OnceLock initialization,
-//! allocation, thread creation and scheduling are not proven bounded; this
+//! before starting does not use the worker slot. Allocation, thread creation
+//! and scheduling are not proven bounded; this
 //! scaffold cannot be used as a deadline guarantee.
 use crate::ctx::{Deadline, OperationContext};
 use crate::id::Digest;
@@ -54,6 +54,8 @@ impl Cache {
             let mut state = self.lock_until(cx, deadline)?;
             *state = State::Running;
         }
+        cx.check("helper self-hash")
+            .map_err(|_| "helper self-hash unavailable")?;
         let cache = Arc::clone(self);
         if std::thread::Builder::new()
             .name("effigy-helper-self-hash".into())
@@ -79,6 +81,8 @@ impl Cache {
             let mut state = self.lock_until(cx, deadline)?;
             match &*state {
                 State::Ready(digest, finished) if *finished < deadline => {
+                    cx.check("helper self-hash")
+                        .map_err(|_| "helper self-hash unavailable")?;
                     let digest = digest.clone();
                     // A hash alone is not a qualified birth receipt. Until
                     // receipt integration exists, do not cache it for reuse.
@@ -106,7 +110,12 @@ impl Cache {
                 return Err("helper self-hash unavailable");
             }
             match self.state.try_lock() {
-                Ok(state) => return Ok(state),
+                Ok(state) => {
+                    if cx.check("helper self-hash").is_err() || Instant::now() >= deadline {
+                        return Err("helper self-hash unavailable");
+                    }
+                    return Ok(state);
+                }
                 Err(TryLockError::Poisoned(_)) => return Err("helper self-hash unavailable"),
                 Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(2)),
             }
@@ -115,7 +124,24 @@ impl Cache {
 }
 
 static OWNER: AtomicU32 = AtomicU32::new(0);
+static INITIALIZING: AtomicBool = AtomicBool::new(false);
 static CACHE: OnceLock<Arc<Cache>> = OnceLock::new();
+
+fn initialized<'a>(
+    cache: &'a OnceLock<Arc<Cache>>,
+    initializing: &AtomicBool,
+) -> Result<&'a Arc<Cache>, &'static str> {
+    if let Some(cache) = cache.get() {
+        return Ok(cache);
+    }
+    if initializing.swap(true, Ordering::AcqRel) {
+        return Err("helper self-hash unavailable during initialization");
+    }
+    cache
+        .set(Arc::new(Cache::new()))
+        .map_err(|_| "helper self-hash initialization failed")?;
+    cache.get().ok_or("helper self-hash initialization failed")
+}
 
 /// Hash the current process image once, with an operation-bound result.
 /// A post-fork child refuses inherited state before touching the cache lock.
@@ -127,7 +153,7 @@ pub(crate) fn self_hash(cx: &OperationContext) -> Result<Digest, &'static str> {
     if owner != 0 && owner != pid {
         return Err("helper self-hash unavailable after fork");
     }
-    CACHE.get_or_init(|| Arc::new(Cache::new())).get(cx, || {
+    initialized(&CACHE, &INITIALIZING)?.get(cx, || {
         #[cfg(target_os = "linux")]
         let path = std::path::PathBuf::from("/proc/self/exe");
         #[cfg(not(target_os = "linux"))]
@@ -199,6 +225,30 @@ mod tests {
                 panic!("a spent slot must not start a worker")
             })
             .is_err());
+    }
+
+    #[test]
+    fn a_stalled_initializer_is_refused_without_waiting() {
+        let cache = OnceLock::new();
+        let initializing = AtomicBool::new(true);
+        let started = Instant::now();
+        assert!(initialized(&cache, &initializing).is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(cache.get().is_none());
+    }
+
+    #[test]
+    fn expired_context_does_not_start_or_consume_the_worker() {
+        let cache = Arc::new(Cache::new());
+        assert!(cache
+            .get(&context(Duration::ZERO), || panic!("expired attempt ran"))
+            .is_err());
+        assert_eq!(
+            cache.get(&context(Duration::from_secs(2)), || Ok(Digest::of(
+                b"fresh"
+            ))),
+            Ok(Digest::of(b"fresh"))
+        );
     }
 
     #[test]
