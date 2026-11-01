@@ -752,10 +752,30 @@ fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
             &mut NoStreams,
         ));
     }
-    let replies = client.join().expect("client thread").expect("client I/O");
+    let replies = client.join().ok().and_then(Result::ok).unwrap_or_default();
     let mut decoded = Pipe::new(&[]);
-    decoded.output = replies[1].clone();
-    let secondary = decoded.frames().iter().any(|frame| match frame {
+    decoded.output = replies.first().cloned().unwrap_or_default();
+    let initial = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoded.frames()))
+        .unwrap_or_default();
+    let initial_accepted = initial.iter().any(|frame| {
+        matches!(frame,
+        Frame::Response(Response { id: request_id, outcome: ResponseOutcome::Accepted(accepted) })
+            if *request_id == RequestId::new([1; 16]) && accepted.run == id(10))
+    });
+    let detach_ack = initial.iter().any(|frame| {
+        matches!(frame,
+        Frame::Response(Response { id: request_id, outcome: ResponseOutcome::Observed(value) })
+            if *request_id == RequestId::new([9; 16]) && value.is_null())
+    });
+    decoded.output = replies.get(1).cloned().unwrap_or_default();
+    let second_frames = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoded.frames()))
+        .unwrap_or_default();
+    let replayed = second_frames.iter().any(|frame| {
+        matches!(frame,
+        Frame::Response(Response { id: request_id, outcome: ResponseOutcome::Accepted(accepted) })
+            if *request_id == RequestId::new([1; 16]) && accepted.run == id(10))
+    });
+    let secondary = second_frames.iter().any(|frame| match frame {
         Frame::Response(Response {
             id: request_id,
             outcome: ResponseOutcome::Observed(value),
@@ -775,6 +795,18 @@ fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
     assert!(
         served.iter().all(Result::is_ok),
         "both connections must complete"
+    );
+    assert!(
+        initial_accepted,
+        "first client must receive the exact admission"
+    );
+    assert!(
+        detach_ack,
+        "first client must receive the detach acknowledgement"
+    );
+    assert!(
+        replayed,
+        "second client must receive the exact recorded admission"
     );
     assert!(
         secondary,
