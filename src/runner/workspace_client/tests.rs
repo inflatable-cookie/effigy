@@ -3197,15 +3197,6 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
     admit_over_channel(&mut server, &cx, &observe, &root, capability());
-    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-    custody
-        .open(
-            &cx,
-            run,
-            vec![(1, Stream::Stdout)],
-            Box::new(FakePty::new(Arc::new(Mutex::new(PtyLog::default())))),
-        )
-        .expect("the run's terminal opens");
     // The client consumed 40 bytes, and the log has rotated to 100: the range it
     // never saw is gone and must be reported, not skipped silently.
     captured_stdout(&root, run, 100, b"current");
@@ -3216,13 +3207,57 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
         frames.push(terminal_attach(attach, run, Some(40)));
         frames
     };
-    let (mut transport, written) = scripted(&frames);
-    server
-        .serve(&mut transport, &cx, &observe, &root, &mut custody)
-        .expect("the rotated read serves its gap");
-
-    let written = decoded(&written.lock().expect("written"));
-    let output = stream_frames(&written, attach);
+    let (mut client, host_side) = live_connection(&frames);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("the peer's bounded reads");
+    // Setup is complete: admission, retained bytes and all wire frames exist.
+    // Start the publication budget at this step gate, not before fixture I/O.
+    let observe = observation();
+    let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
+    custody
+        .open(
+            &cx,
+            run,
+            vec![(1, Stream::Stdout)],
+            Box::new(FakePty::new(Arc::new(Mutex::new(PtyLog::default())))),
+        )
+        .expect("the run's terminal opens");
+    let output = std::thread::scope(|scope| {
+        let serving = scope.spawn(|| {
+            let mut transport = PeerTransport::new(host_side);
+            server.serve(&mut transport, &cx, &observe, &root, &mut custody)
+        });
+        // Receiving both frames is the EOF gate. The peer cannot disappear
+        // before the retained reader has published the gap and its data.
+        let mut output = Vec::new();
+        while output.len() < 2 {
+            use std::io::Read as _;
+            let mut prefix = [0; 4];
+            client.read_exact(&mut prefix).expect("a frame prefix");
+            let length = u32::from_be_bytes(prefix) as usize;
+            assert!(length <= host::MAX_FRAME_BYTES, "a bounded wire frame");
+            let mut body = vec![0; length];
+            client.read_exact(&mut body).expect("a complete frame");
+            match host::decode_frame(&body).expect("a valid frame") {
+                host::Frame::Stream(stream) if stream.id == attach => output.push(stream),
+                host::Frame::Refuse(refusal) => panic!("publication refused: {refusal:?}"),
+                _ => {}
+            }
+        }
+        client
+            .shutdown(std::net::Shutdown::Write)
+            .expect("EOF after the gap and retained data");
+        let mut tail = Vec::new();
+        std::io::Read::read_to_end(&mut client, &mut tail).expect("the remaining wire frames");
+        output.extend(stream_frames(&decoded(&tail), attach));
+        drop(client);
+        serving
+            .join()
+            .expect("the serving thread")
+            .expect("the rotated read serves its gap");
+        output
+    });
     assert_eq!(output.len(), 2, "exactly a gap and its retained data");
     assert_eq!(
         output[0].gap_range(),
