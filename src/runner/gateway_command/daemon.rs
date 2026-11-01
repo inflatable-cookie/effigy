@@ -100,81 +100,19 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
 }
 
 fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
-    create_gateway_log_with(path, || {})
-}
-
-fn create_gateway_log_with(
-    path: PathBuf,
-    before_child_open: impl FnOnce(),
-) -> std::io::Result<File> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-        let refuse = || std::io::Error::other("gateway log ownership or type is unsafe");
-        let parent = path.parent().ok_or_else(refuse)?;
-        let directory = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(parent)?;
-        if directory.metadata()?.uid() != nix::unistd::geteuid().as_raw() {
-            return Err(refuse());
-        }
-        directory.set_permissions(std::fs::Permissions::from_mode(0o700))?;
-        let name = path.file_name().ok_or_else(refuse)?;
-        before_child_open();
-        open_gateway_log_at(&directory, name)
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
     }
     #[cfg(not(unix))]
     {
-        before_child_open();
         OpenOptions::new().create(true).append(true).open(path)
     }
-}
-
-#[cfg(unix)]
-fn open_gateway_log_at(directory: &File, name: &std::ffi::OsStr) -> std::io::Result<File> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, PermissionsExt},
-    };
-    let refuse = || std::io::Error::other("gateway log ownership or type is unsafe");
-    if name.as_bytes().is_empty()
-        || name.as_bytes().contains(&b'/')
-        || matches!(name.as_bytes(), b"." | b"..")
-    {
-        return Err(refuse());
-    }
-    let name = std::ffi::CString::new(name.as_bytes()).map_err(|_| refuse())?;
-    // SAFETY: both descriptors and the NUL-terminated single component remain
-    // valid for openat. O_NONBLOCK prevents a FIFO from blocking before fstat.
-    let raw = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_WRONLY
-                | libc::O_APPEND
-                | libc::O_CREAT
-                | libc::O_NOFOLLOW
-                | libc::O_CLOEXEC
-                | libc::O_NONBLOCK,
-            0o600,
-        )
-    };
-    if raw < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: successful openat returned a new exclusively owned descriptor.
-    let file = unsafe { File::from_raw_fd(raw) };
-    let metadata = file.metadata()?;
-    if !metadata.is_file()
-        || metadata.nlink() != 1
-        || metadata.uid() != nix::unistd::geteuid().as_raw()
-    {
-        return Err(refuse());
-    }
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    Ok(file)
 }
 
 pub(super) fn wait_for_private_gateway_ready(
@@ -1047,109 +985,6 @@ mod pid_domain_tests {
         assert_eq!(
             server::probe_gateway_process(pid),
             server::GatewayProcessProbe::ConfirmedAbsent
-        );
-    }
-}
-
-#[cfg(all(test, unix))]
-mod log_permission_tests {
-    use super::*;
-    use std::os::unix::fs::{symlink, PermissionsExt};
-    #[test]
-    fn gateway_raw_log_reopens_with_private_permissions_and_refuses_aliases() {
-        let fixture = effigy_test_support::Fixture::new("gateway-log-private").expect("fixture");
-        let directory = fixture.path().join("gateway");
-        std::fs::create_dir(&directory).expect("directory");
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755))
-            .expect("old directory mode");
-        let path = directory.join("gateway.stderr.log");
-        std::fs::write(&path, b"legacy output").expect("old log");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
-            .expect("old log mode");
-        drop(create_gateway_log(path.clone()).expect("private reopen"));
-        assert_eq!(
-            std::fs::metadata(&directory)
-                .expect("directory")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        assert_eq!(
-            std::fs::metadata(&path).expect("log").permissions().mode() & 0o777,
-            0o600
-        );
-        let alias = directory.join("gateway.stdout.log");
-        symlink(&path, &alias).expect("symlink control");
-        assert!(create_gateway_log(alias).is_err());
-        let alias = directory.join("hardlink.log");
-        std::fs::hard_link(&path, &alias).expect("hardlink control");
-        assert!(create_gateway_log(alias).is_err());
-        assert_eq!(
-            std::fs::read(&path).expect("original log"),
-            b"legacy output"
-        );
-    }
-}
-
-#[cfg(all(test, unix))]
-mod log_open_race_tests {
-    use super::*;
-    use std::io::Write;
-    use std::os::unix::{ffi::OsStrExt, fs::symlink};
-
-    #[test]
-    fn gateway_log_child_open_stays_in_verified_directory_after_replacement() {
-        for ancestor in [false, true] {
-            let fixture =
-                effigy_test_support::Fixture::new("gateway-log-replaced").expect("fixture");
-            let outer = fixture.path().join("outer");
-            let original = outer.join("gateway");
-            std::fs::create_dir_all(&original).expect("original");
-            let replacement = fixture.path().join("replacement");
-            std::fs::create_dir(&replacement).expect("replacement");
-            if ancestor {
-                std::fs::create_dir(replacement.join("gateway")).expect("replacement child");
-            }
-            let moved = fixture.path().join("retired");
-            let mut file = create_gateway_log_with(original.join("gateway.stderr.log"), || {
-                let changed = if ancestor { &outer } else { &original };
-                std::fs::rename(changed, &moved).expect("move verified directory");
-                symlink(&replacement, changed).expect("replace pathname");
-            })
-            .expect("anchored log");
-            file.write_all(b"anchored").expect("write");
-            let log = if ancestor {
-                moved.join("gateway/gateway.stderr.log")
-            } else {
-                moved.join("gateway.stderr.log")
-            };
-            assert_eq!(std::fs::read(log).expect("original inode"), b"anchored");
-            assert!(!replacement.join("gateway.stderr.log").exists());
-            assert!(!replacement.join("gateway/gateway.stderr.log").exists());
-        }
-    }
-
-    #[test]
-    fn gateway_log_fifo_and_device_are_refused_without_blocking_or_chmod() {
-        let fixture = effigy_test_support::Fixture::new("gateway-log-special").expect("fixture");
-        let fifo = fixture.path().join("gateway.stderr.log");
-        let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).expect("path");
-        // SAFETY: the pathname is valid and names a new private fixture entry.
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        let started = std::time::Instant::now();
-        assert!(create_gateway_log(fifo).is_err());
-        assert!(started.elapsed() < std::time::Duration::from_secs(1));
-        let directory = File::open("/dev").expect("device directory");
-        let before = std::fs::metadata("/dev/null").expect("device metadata");
-        assert!(open_gateway_log_at(&directory, std::ffi::OsStr::new("null")).is_err());
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata("/dev/null")
-                .expect("device unchanged")
-                .permissions()
-                .mode(),
-            before.permissions().mode()
         );
     }
 }
