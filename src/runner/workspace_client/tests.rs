@@ -3215,6 +3215,46 @@ fn sizes(log: &Arc<Mutex<PtyLog>>) -> Vec<TerminalSize> {
     log.lock().expect("pty log").sizes.clone()
 }
 
+// Test-only writer registration after the same connection's Invoke has
+// admitted the run, before its Attach negotiates the stream. The connection
+// stays live throughout; no owner attachment is transferred across EOF.
+struct OpenAfterAdmission {
+    custody: TerminalCustody,
+    effect: EffectContext,
+    writer: Option<Box<dyn TerminalWriter>>,
+}
+
+impl host::Streams for OpenAfterAdmission {
+    fn next_chunk(&mut self, attachment: Option<&run::Attachment>) -> Option<host::StreamChunk> {
+        self.custody.next_chunk(attachment)
+    }
+
+    fn resume(&mut self, run: RunId, cursors: &host::Cursors) -> Option<host::StreamStart> {
+        if let Some(writer) = self.writer.take() {
+            self.custody
+                .open(&self.effect, run, vec![(1, Stream::Stdout)], writer)
+                .ok()?;
+        }
+        self.custody.resume(run, cursors)
+    }
+
+    fn start(&mut self, attachment: &run::Attachment, start: &host::StreamStart) {
+        self.custody.start(attachment, start);
+    }
+
+    fn input(&mut self, attachment: &run::Attachment, bytes: &[u8]) -> Result<(), host::Refusal> {
+        self.custody.input(attachment, bytes)
+    }
+
+    fn resize(
+        &mut self,
+        attachment: &run::Attachment,
+        size: TerminalSize,
+    ) -> Result<(), host::Refusal> {
+        self.custody.resize(attachment, size)
+    }
+}
+
 #[test]
 fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let cx = effects();
@@ -3224,7 +3264,6 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observation(), &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
     // Step gate: hold delivery until the final request reaches the handle.
     // Latest-wins permits coalescing; intermediate geometries need not land.
@@ -3233,34 +3272,35 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
+        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames.push(typed(attach, 0, b"typed input"));
         frames.push(sized(attach, 1, 24, 80));
         frames.push(sized(attach, 2, 50, 120));
         frames
     };
-    let (client, host_side) = live_connection(&frames);
+    let (mut client, host_side) = live_connection(&frames);
     // All fixture I/O and wire construction precede the ready barrier. The
     // serving observation budget must not tick while setup is still running.
     let ready = std::sync::Barrier::new(2);
     let (opened, writer_ready) = std::sync::mpsc::sync_channel(0);
     let writer = Box::new(FakePty::new(log.clone()));
-    let (served, mut custody) = std::thread::scope(|scope| {
+    let (served, mut custody, wire) = std::thread::scope(|scope| {
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             ready.wait();
             let observe = observation();
-            let mut custody =
-                TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-            custody
-                .open(&cx, run, vec![(1, Stream::Stdout)], writer)
-                .expect("the run's terminal opens");
+            let mut custody = OpenAfterAdmission {
+                custody: TerminalCustody::new(terminal_session(), observe.clone(), root.clone()),
+                effect: cx.clone(),
+                writer: Some(writer),
+            };
             opened.send(()).expect("the test awaits its writer");
             drop(opened);
             let served = server
                 .serve(&mut transport, &cx, &observe, &root, &mut custody)
                 .expect("the owner's connection is served");
-            (served, custody)
+            (served, custody.custody)
         });
         ready.wait();
         writer_ready.recv().expect("the writer is ready");
@@ -3276,11 +3316,26 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
         wait_until("the writer to take the input and final geometry", || {
             written(&log) == b"typed input" && sizes(&log).last() == Some(&size(50, 120))
         });
-        drop(client);
-        serving.join().expect("the serving thread")
+        client
+            .shutdown(std::net::Shutdown::Write)
+            .expect("owner EOF");
+        let (served, custody) = serving.join().expect("the serving thread");
+        let mut wire = Vec::new();
+        std::io::Read::read_to_end(&mut client, &mut wire).expect("owner responses");
+        (served, custody, wire)
     });
 
-    assert_eq!(served.responses, 1, "the attach was answered");
+    assert_eq!(served.responses, 2, "invoke and attach were answered");
+    let frames = decoded(&wire);
+    assert!(frames.iter().any(|frame| matches!(frame, host::Frame::Response(host::Response { outcome: host::ResponseOutcome::Accepted(accepted), .. }) if accepted.run == run)));
+    assert!(frames.iter().any(|frame| match frame {
+        host::Frame::Response(host::Response {
+            outcome: host::ResponseOutcome::Observed(value),
+            ..
+        }) => serde_json::from_value::<host::AttachView>(value.clone())
+            .is_ok_and(|view| view.run == run && view.client == run::Client::Owner),
+        _ => false,
+    }));
     assert_eq!(
         calls.lock().expect("calls").admitted,
         vec![run],
