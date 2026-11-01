@@ -355,6 +355,7 @@ esac
                 VerifiedBinding {
                     container_id: OTHER_CONTAINER_ID.into(),
                     selected: selected.clone(),
+                    workload: None,
                 },
                 evidence(),
             );

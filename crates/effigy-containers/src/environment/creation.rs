@@ -8,7 +8,7 @@ mod image;
 use image::same_reference;
 pub use image::{ImageCapability, ImageIdentity};
 mod window;
-pub use window::CreationPreflight;
+pub use window::{AttachedPrimaryImage, CreationPreflight};
 pub(super) use window::{CreationWindow, InventoryDifference};
 
 use effigy_kernel::ctx::ObserveContext;

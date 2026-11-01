@@ -145,6 +145,7 @@ pub(in crate::runner) struct ReservedAddressing {
 pub(in crate::runner) struct VerifiedBinding {
     pub(in crate::runner) container_id: String,
     pub(in crate::runner) selected: BackendSelection,
+    pub(in crate::runner) workload: Option<effigy_containers::environment::Workload>,
 }
 
 impl VerifiedBinding {
@@ -489,6 +490,7 @@ impl ReservedBackendObservation for ContainerBackendObservation {
                     VerifiedBinding {
                         container_id: container.id().to_owned(),
                         selected,
+                        workload: None,
                     },
                     evidence(),
                 )
@@ -622,6 +624,7 @@ fn verify_pinned_primary(
     Ok(VerifiedBinding {
         container_id: row.id.clone(),
         selected: selected.clone(),
+        workload: Some(row.clone()),
     })
 }
 
@@ -841,6 +844,13 @@ pub(in crate::runner) fn observe_decision_target(
     plan: &ReservedPublicationPlan,
     observation: &mut dyn ReservedBackendObservation,
 ) -> Result<TargetEvidence, EnvError> {
+    observe_decision_target_with_binding(plan, observation).map(|(target, _)| target)
+}
+
+fn observe_decision_target_with_binding(
+    plan: &ReservedPublicationPlan,
+    observation: &mut dyn ReservedBackendObservation,
+) -> Result<(TargetEvidence, Option<VerifiedBinding>), EnvError> {
     let deadline = plan.deadline;
     deadline.remaining()?;
     let selected = verified(
@@ -854,6 +864,7 @@ pub(in crate::runner) fn observe_decision_target(
         observation.primary(&plan.policy, &plan.selected, deadline),
         "decision primary inventory",
     )?;
+    let mut retained = None;
     let target = match primary {
         None => TargetEvidence::Absent {
             project: plan.policy.project_name.clone(),
@@ -885,11 +896,13 @@ pub(in crate::runner) fn observe_decision_target(
                     "decision guest identity differs from the verified primary",
                 ));
             }
-            TargetEvidence::Observed(ContainerIdentity {
+            let target = TargetEvidence::Observed(ContainerIdentity {
                 container_id: identity.container_id,
                 vm_boot_id: identity.vm_boot_id,
                 backend: plan.backend_label.clone(),
-            })
+            });
+            retained = Some(binding);
+            target
         }
     };
     let fresh = verified(
@@ -900,7 +913,10 @@ pub(in crate::runner) fn observe_decision_target(
         (TargetEvidence::Absent { .. }, None) => {}
         (TargetEvidence::Observed(identity), Some(binding))
             if binding.container_id == identity.container_id
-                && binding.selected == plan.selected =>
+                && binding.selected == plan.selected
+                && retained
+                    .as_ref()
+                    .is_some_and(|prior| prior.workload == binding.workload) =>
         {
             let repeated = verified(
                 observation.identity(
@@ -929,7 +945,7 @@ pub(in crate::runner) fn observe_decision_target(
         return Err(refused("decision backend changed during observation"));
     }
     deadline.remaining()?;
-    Ok(target)
+    Ok((target, retained))
 }
 
 /// Resolve artifact evidence from the frozen preflight or the committed
@@ -938,6 +954,7 @@ pub(in crate::runner) fn observe_decision_artifact(
     plan: &ReservedPublicationPlan,
     preflight: &effigy_containers::environment::CreationPreflight,
     target: &TargetEvidence,
+    binding: Option<&VerifiedBinding>,
     root: &effigy_kernel::root::StateRoot,
     environment: &effigy_containers::environment::EnvRef,
     observe: &effigy_kernel::ctx::ObserveContext,
@@ -972,6 +989,27 @@ pub(in crate::runner) fn observe_decision_artifact(
             }
         }
         TargetEvidence::Observed(identity) => {
+            let binding = binding
+                .filter(|binding| {
+                    binding.container_id == identity.container_id
+                        && binding.selected == plan.selected
+                })
+                .ok_or_else(|| refused("artifact has no exact pinned primary binding"))?;
+            let workload = binding
+                .workload
+                .as_ref()
+                .ok_or_else(|| unavailable("pinned primary image inventory is unavailable"))?;
+            let image = preflight
+                .reobserve_attached_primary(plan.selected.adapter().as_mut(), request, workload)
+                .map_err(|error| unavailable(format!("attached primary image: {error}")))?;
+            if image.container_id() != identity.container_id
+                || image.engine() != plan.backend_label
+                || image.context() != plan.selected.context
+            {
+                return Err(refused(
+                    "attached image differs from the selected backend and primary",
+                ));
+            }
             let reader = verified(
                 effigy_kernel::store::Store::read(observe, root),
                 "committed publication journal",
@@ -997,11 +1035,11 @@ pub(in crate::runner) fn observe_decision_artifact(
                     "committed artifact differs from the observed primary or frozen selection",
                 ));
             }
-            // A retained publication identifies the guest artifact, but does
-            // not by itself prove the running container's current image equals
-            // the image the frozen preflight observed.
+            // Checkout identity is still checked by reopening a pathname before
+            // and after the guest probe. A replacement and restoration between
+            // those checks is not excluded, so this is not yet selected evidence.
             return Err(unavailable(
-                "primary image correspondence to the committed artifact is unavailable",
+                "descriptor-pinned checkout identity is unavailable for the guest probe",
             ));
         }
         _ => return Err(refused("artifact target differs from the frozen plan")),

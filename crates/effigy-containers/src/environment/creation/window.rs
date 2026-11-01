@@ -12,6 +12,29 @@ use expectation::ExpectedInventory;
 
 const OWNERSHIP_LABELS: [&str; 4] = [MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, CHECKOUT_LABEL];
 
+/// Image evidence tied to the exact attached primary and selected backend.
+#[derive(Debug, Clone)]
+pub struct AttachedPrimaryImage {
+    container_id: String,
+    engine: String,
+    context: String,
+    identity: ImageIdentity,
+}
+impl AttachedPrimaryImage {
+    pub fn container_id(&self) -> &str {
+        &self.container_id
+    }
+    pub fn engine(&self) -> &str {
+        &self.engine
+    }
+    pub fn context(&self) -> &str {
+        &self.context
+    }
+    pub fn identity(&self) -> &ImageIdentity {
+        &self.identity
+    }
+}
+
 /// Image expectations observed before taking the activation gate.
 #[derive(Debug)]
 pub struct CreationPreflight {
@@ -25,6 +48,70 @@ pub struct CreationPreflight {
     references: BTreeMap<String, String>,
 }
 impl CreationPreflight {
+    /// Recheck an attached primary through this preflight's selected backend.
+    pub fn reobserve_attached_primary(
+        &self,
+        backend: &mut dyn EnvironmentBackend,
+        request: CreationRequest<'_>,
+        expected: &Workload,
+    ) -> Result<AttachedPrimaryImage, CreationRefusal> {
+        let reference = self.primary_image_reference(request, backend)?;
+        let primary_rows = |rows: Vec<Workload>| -> Result<Workload, CreationRefusal> {
+            let matches: Vec<_> = rows
+                .into_iter()
+                .filter(|row| {
+                    row.labels.get(COMPOSE_SERVICE_LABEL).map(String::as_str)
+                        == Some(request.primary_service)
+                })
+                .collect();
+            let [row] = matches.as_slice() else {
+                return Err(CreationRefusal::Unknown(
+                    "attached primary is absent or ambiguous".into(),
+                ));
+            };
+            if row != expected
+                || !row.running
+                || row.labels.get(COMPOSE_PROJECT_LABEL).map(String::as_str)
+                    != Some(request.project)
+            {
+                return Err(CreationRefusal::Unknown(
+                    "attached primary changed before image observation".into(),
+                ));
+            }
+            Ok(row.clone())
+        };
+        let observed = primary_rows(rows(backend.inventory_until(
+            request.workdir,
+            request.project,
+            request.deadline,
+        ))?)?;
+        // A config hash only corroborates the frozen render when the Compose
+        // paths are verified against the retained seal. This pre-decision API
+        // has no such path receipt yet; never accept caller-supplied paths as
+        // evidence of that seal.
+        if ImageIdentity::needs_attached_config(backend, &observed, false) {
+            return Err(CreationRefusal::Unknown(
+                "attached reference requires verified retained-seal Compose paths".into(),
+            ));
+        }
+        let resolved = self.images.get(request.primary_service).ok_or_else(|| {
+            CreationRefusal::Unknown("primary resolved image is unavailable".into())
+        })?;
+        let identity =
+            ImageIdentity::observe(backend, &observed, reference, resolved, false, None)?;
+        primary_rows(rows(backend.inventory_until(
+            request.workdir,
+            request.project,
+            request.deadline,
+        ))?)?;
+        self.primary_image_reference(request, backend)?;
+        Ok(AttachedPrimaryImage {
+            container_id: observed.id,
+            engine: self.engine.clone(),
+            context: self.context.clone(),
+            identity,
+        })
+    }
     pub fn observe(
         backend: &mut dyn EnvironmentBackend,
         request: CreationRequest<'_>,

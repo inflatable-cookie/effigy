@@ -520,6 +520,79 @@ fn primary_reference_belongs_to_exact_frozen_preflight() {
 }
 
 #[test]
+fn attached_primary_image_uses_frozen_backend_and_real_inventory() {
+    let frozen = render(&[PRIMARY]);
+    let primary = row(PRIMARY, 'a');
+    let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+    let preflight =
+        crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+    let identity = preflight
+        .reobserve_attached_primary(&mut fake, request(&frozen), &primary)
+        .expect("matching running image");
+    assert_eq!(identity.container_id(), primary.id);
+    assert_eq!(
+        identity.identity().capability(),
+        crate::environment::ImageCapability::ContainerImageId
+    );
+    assert_eq!(identity.identity().resolved_id(), Some(image().as_str()));
+}
+
+#[test]
+fn attached_primary_image_refuses_retag_wrong_image_context_and_ambiguity() {
+    let frozen = render(&[PRIMARY]);
+    let primary = row(PRIMARY, 'a');
+    for case in ["retag", "wrong-image", "context", "ambiguous", "expired"] {
+        let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+        let preflight =
+            crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+        let mut expected = primary.clone();
+        let mut req = request(&frozen);
+        match case {
+            "retag" => fake
+                .images
+                .push_back(verified(format!("sha256:{}", id('d')))),
+            "wrong-image" => {
+                expected.image = format!("sha256:{}", id('d'));
+                fake.inventories = [
+                    verified(vec![expected.clone()]),
+                    verified(vec![expected.clone()]),
+                ]
+                .into();
+            }
+            "context" => fake.selection.context = "another".into(),
+            "ambiguous" => {
+                fake.inventories = [verified(vec![primary.clone(), row(PRIMARY, 'b')])].into()
+            }
+            _ => req.deadline = Instant::now() - Duration::from_millis(1),
+        }
+        assert!(
+            preflight
+                .reobserve_attached_primary(&mut fake, req, &expected)
+                .is_err(),
+            "{case} must refuse"
+        );
+    }
+}
+
+#[test]
+fn attached_colima_reference_refuses_without_verified_sealed_paths() {
+    let frozen = render(&[PRIMARY]);
+    for matching in [true, false] {
+        let mut primary = row(PRIMARY, 'a');
+        primary.image = "fixture:latest".into();
+        primary.labels.insert(
+            "com.docker.compose.config-hash".into(),
+            id(if matching { 'd' } else { 'e' }),
+        );
+        let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+        let preflight =
+            crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+        let result = preflight.reobserve_attached_primary(&mut fake, request(&frozen), &primary);
+        assert!(result.is_err(), "unverified Compose paths must refuse");
+    }
+}
+
+#[test]
 fn journalled_generation_and_recheck_refuse_replaced_or_retagged_rows() {
     let fixture = home();
     let state = root(fixture.path());

@@ -220,6 +220,7 @@ impl FakeBackend {
                 VerifiedBinding {
                     container_id: CONTAINER_ID.to_owned(),
                     selected: selection.clone(),
+                    workload: None,
                 },
                 evidence(),
             ),
@@ -570,10 +571,12 @@ fn decision_primary_observation_preserves_absence_identity_and_refusals() {
     let original = VerifiedBinding {
         container_id: CONTAINER_ID.into(),
         selected: colima_selection("effigy"),
+        workload: None,
     };
     let replaced = VerifiedBinding {
         container_id: OTHER_CONTAINER_ID.into(),
         selected: colima_selection("effigy"),
+        workload: None,
     };
     backend.primary_reads.extend([
         Observed::Verified(Some(original), evidence()),
@@ -1594,6 +1597,7 @@ fn a_same_engine_but_different_profile_binding_is_refused() {
         VerifiedBinding {
             container_id: CONTAINER_ID.to_owned(),
             selected: colima_selection("another-profile"),
+            workload: None,
         },
         evidence(),
     );
