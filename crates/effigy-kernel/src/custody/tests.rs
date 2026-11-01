@@ -1031,6 +1031,35 @@ fn anchor_verifier_cells_refuse_unproven_state_and_never_signal() {
     );
 }
 
+/// The fixture fix raises the fixture home's mode; it never relaxes the kernel's
+/// refusal. `Trust::Operator` still refuses a group- or other-writable directory
+/// (the r6 Linux failure) while accepting a group-readable, group-non-writable
+/// one, and `Trust::Private` stays stricter still (effigy#520).
+#[test]
+fn operator_trust_refuses_a_group_writable_directory_and_still_accepts_group_read() {
+    let home = home();
+    let directory = home.path().join("checked");
+    std::fs::create_dir(&directory).unwrap();
+    let set = |mode: u32| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    set(0o775);
+    let refused = crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).unwrap_err();
+    assert!(refused.is_open_mode(), "{refused:?}");
+    set(0o750);
+    assert!(
+        crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).is_ok(),
+        "group read without group write stays acceptable to operator trust"
+    );
+    assert!(
+        crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_err(),
+        "private trust still refuses any group bit"
+    );
+    set(0o700);
+    assert!(crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_ok());
+}
+
 /// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite
 /// lease. SIGTERM retires an idle anchor within a bounded grace, so a harness
 /// that stops its own tree never needs SIGKILL for custody evidence.
