@@ -5,7 +5,8 @@ and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim and retire as a transition are later work (§9). The
 workspace session run and its host authority channel are implemented at the
 kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
-caller and native backend qualification are not.
+caller remains under development on the unmerged #512 branch; native backend
+qualification remains outstanding.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -426,10 +427,15 @@ a projection, never authority (effigy#458).
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
-- The production workspace activation caller, remaining Level 1 command and
-  Observe coverage beyond `runs:list`, including run-specific `runs:status`,
-  and native backend
-  qualification (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
+- The #512 workspace activation caller has an unmerged production-orchestration
+  implementation and a prior fake-backend end-to-end result. It is currently
+  guarded before preparation/admission until private-output runner and
+  workspace-preparation paths are qualified and connected; review of cleanup-only
+  guarded unwind and the integration-budget recheck after observation remains
+  required. This evidence does not qualify a real backend. Remaining Level 1
+  command and Observe coverage beyond `runs:list`, including run-specific
+  `runs:status`, and native backend qualification remain outstanding
+  (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
   v0.15. The session run and channel are implemented as kernel and runner
   seams; those seams do not qualify the production caller or a backend.
 
@@ -466,3 +472,20 @@ missing/deleted checkout and large-store migration proofs in 052 §12.6. The
 selectors above and touched gateway selectors must cover the new store paths
 and fenced cross-store receipt boundaries. Phase 1 runs only `qa:docs`; no
 runtime recovery or migration proof is claimed by this amendment.
+
+## 11. Gateway diagnostic disposition before v0.15 freeze
+
+The ordinary gateway startup path can write raw daemon stdout and stderr to
+gateway logs, including diagnostic URLs or other secret-bearing upstream text.
+New gateway log files are created with mode 0600, but reopening a pre-existing
+0644 file does not tighten it; legacy directory and ancestor permissions can
+permit other local users to read those files. New mode 0700 directories do not
+repair existing directories. These facts do not establish global sanitization or
+private permissions for every existing gateway installation. The v0.14.1 writer
+already emitted raw output with umask-dependent modes; the current new-file mode
+is an improvement, not a migration of old files.
+
+Security lead `8d767d55` requires Tom's disposition before v0.15 freeze. This is
+separate from the release-blocking requirement for private or discarded output
+on workspace Phase A apply and preparation. No native gateway qualification or
+release acceptance follows from the present source audit.
