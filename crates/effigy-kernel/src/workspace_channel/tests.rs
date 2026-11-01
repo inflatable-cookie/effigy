@@ -635,6 +635,12 @@ struct LiveAdmitter<'a> {
 }
 #[cfg(feature = "fault-injection")]
 impl Admission for LiveAdmitter<'_> {
+    fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+        self.runs
+            .iter()
+            .find(|run| run.id() == ticket.run())
+            .map(|run| run.fence().clone())
+    }
     fn admit(
         &mut self,
         cx: &EffectContext,
@@ -659,6 +665,78 @@ impl Admission for LiveAdmitter<'_> {
         .map_err(refusal_from)?;
         self.runs.push(run);
         Ok(())
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn mismatched_supervisor_fence_retains_the_started_owner_without_authority() {
+    struct Mismatched<'a>(LiveAdmitter<'a>);
+    impl Admission for Mismatched<'_> {
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            self.0.admit(cx, ticket, resolved)
+        }
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            let mut fence = self.0.admitted_fence(ticket)?;
+            fence.generation = Generation::new(0);
+            Some(fence)
+        }
+    }
+    let (_fixture, cx, root, session) = journal("effigy-channel-ack-mismatch");
+    let mut dispatcher = Dispatcher::new(
+        Mismatched(LiveAdmitter {
+            root: &root,
+            runs: Vec::new(),
+        }),
+        Resolver::new(task("workspace-channel").resource()),
+        Observer::default(),
+        Ids::new(&[21, 22]),
+    );
+    let error = dispatcher
+        .invoke(
+            &cx,
+            &observe_context(),
+            &root,
+            session,
+            RequestId::new([21; 16]),
+            Digest::of(b"invite"),
+            &invocation_body("build"),
+        )
+        .expect_err("mismatched acknowledgement must fail closed");
+    assert_eq!(error.code, RefusalCode::Unknown);
+    assert_eq!(dispatcher.admission.0.runs.len(), 1);
+    let run_id = dispatcher.admission.0.runs[0].id();
+    assert!(dispatcher.admitted.contains(&run_id));
+    assert!(dispatcher.admitted_owners.is_empty());
+    assert_eq!(
+        dispatcher
+            .reopen_owner(&cx, &root, session, run_id)
+            .expect_err("no owner authority")
+            .code,
+        RefusalCode::Unknown
+    );
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    let stops: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM requests WHERE run_id=?1",
+            [run_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stops, 0);
+    drop(reader);
+    for run in dispatcher.admission.0.runs.drain(..) {
+        run.settle(&cleanup(&cx), &mut NoEffects)
+            .expect("fixture cleanup");
     }
 }
 
@@ -902,12 +980,14 @@ impl super::Resolver for MultiResolver {
     }
 }
 #[cfg(feature = "fault-injection")]
-struct ArmAfterTwoInvokes {
+struct ArmAfterTwoInvokes<'a> {
     inner: Pipe,
     accepted: usize,
+    cx: &'a EffectContext,
+    root: &'a StateRoot,
 }
 #[cfg(feature = "fault-injection")]
-impl Transport for ArmAfterTwoInvokes {
+impl Transport for ArmAfterTwoInvokes<'_> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.inner.read(bytes)
     }
@@ -922,6 +1002,21 @@ impl Transport for ArmAfterTwoInvokes {
         ) {
             self.accepted += 1;
             if self.accepted == 2 {
+                let mut writer = Store::open(self.cx, self.root)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                writer
+                    .transaction(self.cx, |txn| {
+                        txn.conn().execute(
+                            "UPDATE runs SET generation=generation+1 WHERE run_id=?1",
+                            [RunId::new(7, [181; 10]).unwrap().to_string()],
+                        )?;
+                        txn.conn().execute(
+                            "UPDATE resources SET generation=generation+1 WHERE name=?1",
+                            [task("second").resource().name().to_string()],
+                        )?;
+                        Ok::<_, crate::run::RunError>(())
+                    })
+                    .map_err(|error| io::Error::other(error.to_string()))?;
                 crate::fault::arm_point(
                     crate::fault::Point::RunAttachReleaseBefore,
                     crate::fault::Fault::Eperm,
@@ -980,6 +1075,8 @@ fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
             peer(),
         ),
         accepted: 0,
+        cx: &cx,
+        root: &root,
     };
     let result = host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams);
     let fired = crate::fault::fired();
@@ -1002,19 +1099,6 @@ fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
         .1
         .clone();
     let mut writer = Store::open(&cx, &root).unwrap();
-    writer
-        .transaction(&cx, |txn| {
-            txn.conn().execute(
-                "UPDATE runs SET generation=generation+1 WHERE run_id=?1",
-                [second.to_string()],
-            )?;
-            txn.conn().execute(
-                "UPDATE resources SET generation=generation+1 WHERE name=?1",
-                [second_fence.resource.name().to_string()],
-            )?;
-            Ok::<_, crate::run::RunError>(())
-        })
-        .unwrap();
     let stale = host.retry_cleanup(&fresh, &root);
     let stale_requests: i64 = match Store::read(&observe_context(), &root) {
         Observed::Verified(reader, _) => reader
@@ -1259,28 +1343,22 @@ fn admitted_run<'a>(
 ) -> (Run<'a>, RunId) {
     // Its own owner gate, so two admitted runs in one proof do not contend.
     let owner = task(&format!("workspace-channel-{request}")).resource();
-    let mut dispatcher = Dispatcher::new(
-        Admitter::default(),
-        Resolver::new(owner.clone()),
-        Observer::default(),
-        Ids::new(ids),
-    );
     let id = RequestId::new([request; 16]);
-    let AdmissionReply::Accepted(accepted) = dispatcher
-        .invoke(
-            cx,
-            &observe_context(),
-            root,
+    let run_id = Ids::new(ids).next().expect("run id");
+    let Reservation::Fresh(ticket) = run::reserve_resolved(
+        cx,
+        root,
+        run::AdmissionKey {
             session,
-            id,
-            Digest::of(b"invite"),
-            &invocation_body("build"),
-        )
-        .expect("reserved")
-    else {
-        panic!("a fresh admission is accepted");
+            request: id,
+        },
+        Digest::of(b"invite"),
+        run_id,
+        &invocation(owner.clone()),
+    )
+    .expect("reserved") else {
+        panic!("a fresh reservation is required");
     };
-    let ticket = dispatcher.admission.tickets[0].clone();
     let run = Run::begin_admitted(
         cx,
         root,
@@ -1297,7 +1375,7 @@ fn admitted_run<'a>(
         ticket,
     )
     .expect("admitted");
-    (run, accepted.run)
+    (run, run_id)
 }
 
 #[test]
@@ -1328,6 +1406,12 @@ fn concurrent_recorded_admission_does_not_grant_the_loser_owner() {
         run: Option<Run<'a>>,
     }
     impl Admission for RaceAdmission<'_> {
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            self.run
+                .as_ref()
+                .filter(|run| run.id() == ticket.run())
+                .map(|run| run.fence().clone())
+        }
         fn admit(
             &mut self,
             cx: &EffectContext,
@@ -1927,7 +2011,7 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
     let id = RequestId::new([4; 16]);
     let digest = Digest::of(b"invite");
     // The first attempt reserves and hands exactly that ticket to the engine.
-    let reply = dispatcher
+    let refusal = dispatcher
         .invoke(
             &cx,
             &observe_context(),
@@ -1937,13 +2021,10 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
             digest.clone(),
             &invocation_body("build"),
         )
-        .expect("admitted");
-    let AdmissionReply::Accepted(accepted) = reply else {
-        panic!("a fresh admission is accepted");
-    };
+        .expect_err("an engine without an acknowledged owner cannot grant authority");
+    assert_eq!(refusal.code, RefusalCode::Unknown);
     assert_eq!(dispatcher.admission.tickets.len(), 1);
-    assert_eq!(accepted.run, dispatcher.admission.tickets[0].run());
-    assert_eq!(accepted.placement, Placement::Host);
+    assert!(dispatcher.admitted_owners.is_empty());
 
     // The same id and digest after a reconnect, and after a restart, reads the
     // kernel's recorded reservation: the run was never admitted, so the answer
@@ -1991,49 +2072,14 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
 fn a_recorded_admission_and_outcome_answer_retries_across_a_restart() {
     let (_fixture, cx, root, session) = journal("effigy-channel-recorded");
     let owner = task("workspace-channel").resource();
-    let mut dispatcher = Dispatcher::new(
-        Admitter::default(),
-        Resolver::new(owner.clone()),
-        Observer::default(),
-        Ids::new(&[81, 82]),
-    );
     let id = RequestId::new([10; 16]);
     let digest = Digest::of(b"invite");
     let body = invocation_body("build");
-    let reply = dispatcher
-        .invoke(
-            &cx,
-            &observe_context(),
-            &root,
-            session,
-            id,
-            digest.clone(),
-            &body,
-        )
-        .expect("reserved");
-    let AdmissionReply::Accepted(reserved) = reply else {
-        panic!("a fresh admission is accepted");
+    let (mut admitted, run_id) = admitted_run(&cx, &root, session, 10, &[81]);
+    let reserved = Accepted {
+        run: run_id,
+        placement: Placement::Host,
     };
-    let ticket = dispatcher.admission.tickets[0].clone();
-    assert_eq!(ticket.run(), reserved.run);
-
-    // The engine admits exactly the run the reservation named.
-    let mut admitted = Run::begin_admitted(
-        &cx,
-        &root,
-        &invocation(owner.clone()),
-        BeginOpts {
-            id: ticket.run(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next_argv(),
-            custody: None,
-        },
-        &cleanup(&cx),
-        &mut NoEffects,
-        ticket,
-    )
-    .expect("admitted");
 
     // A retry while the run is live recovers the recorded admission, and the
     // engine is never asked to admit again.
@@ -2110,8 +2156,8 @@ fn a_recorded_admission_and_outcome_answer_retries_across_a_restart() {
     let runs: i64 = reader
         .conn()
         .query_row(
-            "SELECT count(*) FROM runs WHERE owner=?1",
-            [owner.name().to_string()],
+            "SELECT count(*) FROM runs WHERE run_id=?1",
+            [run_id.to_string()],
             |row| row.get(0),
         )
         .expect("count");
@@ -2213,7 +2259,7 @@ fn an_unresolvable_selector_records_nothing_so_a_retry_is_judged_afresh() {
     assert_eq!(rows, 0);
     drop(reader);
     dispatcher.resolver.fail = false;
-    let AdmissionReply::Accepted(accepted) = dispatcher
+    let refusal = dispatcher
         .invoke(
             &cx,
             &observe_context(),
@@ -2223,12 +2269,13 @@ fn an_unresolvable_selector_records_nothing_so_a_retry_is_judged_afresh() {
             digest,
             &invocation_body("build"),
         )
-        .expect("admitted once the selector resolves")
-    else {
-        panic!("a fresh admission is accepted");
-    };
+        .expect_err("an unacknowledged owner is refused after resolution");
+    assert_eq!(refusal.code, RefusalCode::Unknown);
     assert_eq!(dispatcher.admission.tickets.len(), 1);
-    assert_eq!(accepted.run, dispatcher.admission.tickets[0].run());
+    assert_eq!(
+        dispatcher.admission.tickets[0].run(),
+        RunId::new(7, [31; 10]).unwrap()
+    );
 }
 
 #[test]
@@ -2303,39 +2350,16 @@ fn an_owner_detach_and_a_secondary_eof_both_leave_the_run_running() {
     );
     let id = RequestId::new([11; 16]);
     let digest = Digest::of(b"invite");
-    let body = invocation_body("build");
-    let AdmissionReply::Accepted(accepted) = connection
-        .invoke(
-            &cx,
-            &observe_context(),
-            &root,
-            session,
-            id,
-            digest.clone(),
-            &body,
-        )
-        .expect("reserved")
-    else {
-        panic!("a fresh admission is accepted");
+    let (mut run, run_id) = admitted_run(&cx, &root, session, 11, &[91]);
+    let accepted = Accepted {
+        run: run_id,
+        placement: Placement::Host,
     };
-    let ticket = connection.admission.tickets[0].clone();
-    let mut run = Run::begin_admitted(
-        &cx,
-        &root,
-        &invocation(owner.clone()),
-        BeginOpts {
-            id: ticket.run(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next_argv(),
-            custody: None,
-        },
-        &cleanup(&cx),
-        &mut NoEffects,
-        ticket,
-    )
-    .expect("admitted");
-    assert_eq!(accepted.run, run.id());
+    connection.admitted.insert(run_id);
+    connection.admitted_owners.insert(
+        run_id,
+        run::resume_owner(&cx, &root, session, run_id).expect("original owner"),
+    );
 
     // The connection that admitted the run is its owning client.
     let mut owner_handle = connection
@@ -2638,8 +2662,8 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
     assert!(matches!(
         responses[1],
         Frame::Response(Response {
-            outcome: ResponseOutcome::Accepted(Accepted {
-                placement: Placement::Host,
+            outcome: ResponseOutcome::Refused(Refusal {
+                code: RefusalCode::Unknown,
                 ..
             }),
             ..

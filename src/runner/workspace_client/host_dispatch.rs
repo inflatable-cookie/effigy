@@ -345,6 +345,18 @@ impl HostDispatch {
 /// mints no id, holds no grant and records no effect itself; the owning client
 /// of the admitted run is retained with the serving owner.
 impl channel::Admission for HostDispatch {
+    fn admitted_fence(
+        &self,
+        ticket: &effigy_kernel::run::AdmissionTicket,
+    ) -> Option<effigy_kernel::run::Fence> {
+        self.admitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|started| started.run == ticket.run())
+            .map(|started| started.client.fence.clone())
+    }
+
     fn admit(
         &mut self,
         cx: &EffectContext,
@@ -400,19 +412,16 @@ impl channel::Admission for HostDispatch {
             resolution,
         )
         .map_err(|error| Refusal::unavailable(error.to_string()))?;
-        if started.run != ticket.run() {
-            // The engine admitted another run than the reservation names. Its
-            // client is dropped here, which stops that run as owner loss, and
-            // this request refuses instead of reporting a run it did not get.
-            drop(started);
-            return Err(Refusal::unknown(
-                "the host engine admitted a run that is not the reserved one",
-            ));
-        }
+        let matches_ticket = started.run == ticket.run();
         self.admitted
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(started);
+        if !matches_ticket {
+            return Err(Refusal::unknown(
+                "the host engine admitted a run that is not the reserved one",
+            ));
+        }
         Ok(())
     }
 }

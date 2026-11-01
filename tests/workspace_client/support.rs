@@ -263,6 +263,13 @@ pub struct Engine<'a> {
     pub runs: Runs<'a>,
 }
 impl Admission for Engine<'_> {
+    fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<effigy_kernel::run::Fence> {
+        self.runs
+            .borrow()
+            .iter()
+            .find(|run| run.id() == ticket.run())
+            .map(|run| run.fence().clone())
+    }
     fn admit(
         &mut self,
         cx: &EffectContext,

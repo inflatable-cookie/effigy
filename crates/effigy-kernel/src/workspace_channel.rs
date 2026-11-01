@@ -2263,6 +2263,11 @@ pub trait Admission {
         ticket: &AdmissionTicket,
         resolved: &ResolvedInvocation,
     ) -> Result<(), Refusal>;
+    /// Fence acknowledged by the exact retained supervisor for this ticket.
+    /// An adapter without that evidence cannot confer owner authority.
+    fn admitted_fence(&self, _ticket: &AdmissionTicket) -> Option<run::Fence> {
+        None
+    }
 }
 
 /// The host's read surface. Observe runs under [`ObserveContext`] and writes
@@ -2292,6 +2297,7 @@ pub struct Dispatcher<A, R, O, I> {
     /// Runs this connection admitted or recovered as admitted. Only they make
     /// this connection the owning client; every other attach is secondary.
     admitted: BTreeSet<RunId>,
+    admitted_owners: BTreeMap<RunId, Attachment>,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
     pub fn new(admission: A, resolver: R, observer: O, ids: I) -> Self {
@@ -2301,10 +2307,33 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
             observer,
             ids,
             admitted: BTreeSet::new(),
+            admitted_owners: BTreeMap::new(),
         }
     }
     pub fn observer_mut(&mut self) -> &mut O {
         &mut self.observer
+    }
+
+    fn verified_owner(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        session: Session,
+        run: RunId,
+    ) -> Result<Attachment, Refusal> {
+        let original = self
+            .admitted_owners
+            .get(&run)
+            .ok_or_else(|| Refusal::unknown("the original admitted owner is unavailable"))?;
+        original.check_release_root(root).map_err(refusal_from)?;
+        let handle = run::resume_owner(cx, root, session, run).map_err(refusal_from)?;
+        if handle.fence() != original.fence()
+            || handle.id() != original.id()
+            || handle.session() != original.session()
+        {
+            return Err(Refusal::unknown("the admitted owner attachment changed"));
+        }
+        Ok(handle)
     }
 
     /// `observe` is host `ObserveContext` only: no run, reservation, token,
@@ -2369,6 +2398,18 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
                 // admitting a second run under a fresh id.
                 self.admission.admit(cx, &ticket, &resolved)?;
                 self.admitted.insert(ticket.run());
+                let expected = self.admission.admitted_fence(&ticket).ok_or_else(|| {
+                    Refusal::unknown("the admitted owner's fence was not acknowledged")
+                })?;
+                let owner = run::resume_owner(cx, root, session, ticket.run()).map_err(|_| {
+                    Refusal::unknown("the admitted owner attachment could not be verified")
+                })?;
+                if owner.fence() != &expected {
+                    return Err(Refusal::unknown(
+                        "the admitted owner fence did not match its acknowledgement",
+                    ));
+                }
+                self.admitted_owners.insert(ticket.run(), owner);
                 AdmissionReply::Accepted(Accepted {
                     run: ticket.run(),
                     placement: Placement::Host,
@@ -2394,7 +2435,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         // other terminal takes a secondary attachment, which never stops,
         // detaches or releases the owner's run (§8.11).
         if self.admitted.contains(&body.run) {
-            return run::resume_owner(cx, root, session, body.run).map_err(refusal_from);
+            return self.verified_owner(cx, root, session, body.run);
         }
         let attachment = AttachmentId::new(*id.bytes());
         match run::resume_secondary(cx, root, session, body.run, attachment) {
@@ -2405,9 +2446,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         }
     }
 
-    /// Reopen the owning client's handle on a run this session admitted, for a
-    /// reconnect after a restart. The kernel refuses any other run, and a
-    /// secondary terminal never becomes the owner this way.
+    /// Reopen the owner handle only for the connection that admitted the run.
     pub fn reopen_owner(
         &mut self,
         cx: &EffectContext,
@@ -2418,7 +2457,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         if !self.admitted.contains(&run) {
             return Err(Refusal::forbidden("this connection did not admit the run"));
         }
-        let handle = run::resume_owner(cx, root, session, run).map_err(refusal_from)?;
+        let handle = self.verified_owner(cx, root, session, run)?;
         Ok(handle)
     }
 
@@ -2445,7 +2484,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
                     ));
                 }
                 let id = self.ids.next()?;
-                let owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
+                let owner = self.verified_owner(cx, root, session, body.run)?;
                 // The stop request is the whole effect: the handle is not
                 // released here, so this client cannot end another client's
                 // attachment on its way past.
@@ -2467,10 +2506,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         if !self.admitted.contains(&body.run) {
             return Err(Refusal::forbidden("this connection did not admit the run"));
         }
-        let mut owner = run::resume_owner(cx, root, session, body.run).map_err(refusal_from)?;
+        let mut owner = self.verified_owner(cx, root, session, body.run)?;
         owner
             .release(cx, root, Release::Detach)
-            .map_err(refusal_from)
+            .map_err(refusal_from)?;
+        self.admitted.remove(&body.run);
+        self.admitted_owners.remove(&body.run);
+        Ok(())
     }
 }
 
@@ -2680,6 +2722,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             .map_err(|_| Refusal::unknown("attachment cleanup is unsettled"))?;
         if handle.client() == Client::Owner {
             self.dispatcher.admitted.remove(&handle.run());
+            self.dispatcher.admitted_owners.remove(&handle.run());
         }
         self.unsettled_attachment = None;
         self.retry_pending_owners(cx, root)
@@ -2713,6 +2756,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
                 }
                 self.dispatcher.admitted.remove(&run);
+                self.dispatcher.admitted_owners.remove(&run);
             }
         }
         self.pending_eof_root = None;
@@ -2769,6 +2813,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // Admission ownership belongs only to the connection that admitted it.
         // A replay on another connection cannot recover an owner attachment.
         self.dispatcher.admitted.clear();
+        self.dispatcher.admitted_owners.clear();
         self.pending_eof_root = None;
         self.pending_eof_owners.clear();
         self.outbound = Outbound::new();
@@ -2864,12 +2909,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     return Err(Refusal::unknown("owner cleanup root is unavailable"));
                 }
             }
-            if attachment.as_ref().is_some_and(|handle| {
-                handle.client() == Client::Owner && self.dispatcher.admitted.contains(&handle.run())
-            }) {
-                let handle = attachment.take().expect("owner attachment was present");
-                self.pending_eof_owners.insert(handle.run(), handle);
-            }
             for run in self.dispatcher.admitted.clone() {
                 if self
                     .unsettled_attachment
@@ -2879,11 +2918,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 {
                     continue;
                 }
-                match run::resume_owner(cx, root, self.fence.session, run) {
-                    Ok(owner) => {
+                match self.dispatcher.admitted_owners.remove(&run) {
+                    Some(owner) => {
                         self.pending_eof_owners.insert(run, owner);
                     }
-                    Err(_) => {
+                    None => {
                         if attachment.is_some() && self.unsettled_attachment.is_none() {
                             self.unsettled_attachment = attachment.take();
                         }
@@ -2937,6 +2976,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
                 }
                 self.dispatcher.admitted.remove(&run);
+                self.dispatcher.admitted_owners.remove(&run);
             }
         } else if outcome.is_err() && !self.dispatcher.admitted.is_empty() {
             // Invalid input is not owner EOF, but its disconnected owner must
@@ -3020,6 +3060,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             }
             if handle.client() == Client::Owner {
                 self.dispatcher.admitted.remove(&handle.run());
+                self.dispatcher.admitted_owners.remove(&handle.run());
             }
         }
         Ok(())
@@ -3346,6 +3387,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                             }
                             if is_owner {
                                 self.dispatcher.admitted.remove(&body.run);
+                                self.dispatcher.admitted_owners.remove(&body.run);
                             }
                             attachment.take();
                         }
@@ -3355,11 +3397,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                     "this connection did not admit the run",
                                 ));
                             }
-                            let mut owner = run::resume_owner(cx, root, session, body.run)
-                                .map_err(refusal_from)?;
+                            let mut owner = self
+                                .dispatcher
+                                .verified_owner(cx, root, session, body.run)?;
                             match owner.release(cx, root, Release::Detach) {
                                 Ok(()) => {
                                     self.dispatcher.admitted.remove(&body.run);
+                                    self.dispatcher.admitted_owners.remove(&body.run);
                                 }
                                 Err(error) => {
                                     if !matches!(error, run::RunError::Refused(_)) {

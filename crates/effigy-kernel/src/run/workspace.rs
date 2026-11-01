@@ -812,7 +812,7 @@ impl Attachment {
         Ok(())
     }
 
-    fn check_release_root(&self, root: &StateRoot) -> Result<(), RunError> {
+    pub(crate) fn check_release_root(&self, root: &StateRoot) -> Result<(), RunError> {
         let identity = root
             .state_directory()
             .identity()

@@ -806,6 +806,15 @@ struct CountingAdmitter<'a> {
 }
 
 impl host::Admission for CountingAdmitter<'_> {
+    fn admitted_fence(
+        &self,
+        ticket: &effigy_kernel::run::AdmissionTicket,
+    ) -> Option<effigy_kernel::run::Fence> {
+        self.runs
+            .iter()
+            .find(|run| run.id() == ticket.run())
+            .map(|run| run.fence().clone())
+    }
     fn admit(
         &mut self,
         cx: &EffectContext,
