@@ -3224,6 +3224,38 @@ struct OpenAfterAdmission {
     writer: Option<Box<dyn TerminalWriter>>,
 }
 
+struct CloseOwnerWrite(UnixStream);
+impl Drop for CloseOwnerWrite {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown(std::net::Shutdown::Write);
+    }
+}
+
+#[test]
+fn owner_connection_guard_closes_the_peer_on_panic() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (client, mut peer) = connection_pair();
+    peer.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("bounded peer read");
+    let saw_eof = AtomicBool::new(false);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::thread::scope(|scope| {
+            let _close = CloseOwnerWrite(client.try_clone().expect("shutdown guard"));
+            scope.spawn(|| {
+                use std::io::Read as _;
+                let mut byte = [0u8; 1];
+                saw_eof.store(
+                    peer.read(&mut byte).is_ok_and(|count| count == 0),
+                    Ordering::SeqCst,
+                );
+            });
+            panic!("exercise scoped teardown");
+        });
+    }));
+    assert!(outcome.is_err());
+    assert!(saw_eof.load(Ordering::SeqCst));
+}
+
 impl host::Streams for OpenAfterAdmission {
     fn next_chunk(&mut self, attachment: Option<&run::Attachment>) -> Option<host::StreamChunk> {
         self.custody.next_chunk(attachment)
@@ -3280,12 +3312,21 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
         frames
     };
     let (mut client, host_side) = live_connection(&frames);
+    client
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded response read");
+    host_side
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded owner read");
     // All fixture I/O and wire construction precede the ready barrier. The
     // serving observation budget must not tick while setup is still running.
     let ready = std::sync::Barrier::new(2);
     let (opened, writer_ready) = std::sync::mpsc::sync_channel(0);
     let writer = Box::new(FakePty::new(log.clone()));
     let (served, mut custody, wire) = std::thread::scope(|scope| {
+        // This guard is dropped before the scope joins its threads, including
+        // when an assertion panics, so the exact peer cannot wait forever.
+        let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             ready.wait();
