@@ -46,7 +46,71 @@ pub struct WorkspaceActivation<'r> {
     attempt: effigy_kernel::run::RequestId,
 }
 
+/// The same session and environment run, with only Env released. This state
+/// cannot publish or mutate the environment until evidence is revalidated.
+#[derive(Debug)]
+pub struct ParkedWorkspaceActivation<'r> {
+    _environment: super::reconcile::ParkedEnvRun<'r>,
+    _supervisor: SessionSupervisor<'r>,
+    session: SessionRef,
+    _reservation: WorkspaceActivationReservation,
+    _supervisor_id: String,
+    _attempt: effigy_kernel::run::RequestId,
+}
+
+impl ParkedWorkspaceActivation<'_> {
+    pub fn session(&self) -> &SessionRef {
+        &self.session
+    }
+}
+
 impl<'r> WorkspaceActivation<'r> {
+    /// Release Env after the one apply and target bind, retaining both exact
+    /// owners and the creator evidence. Failure returns guarded custody.
+    pub fn park(
+        self,
+        deadline: std::time::Instant,
+    ) -> Result<ParkedWorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        if self.committed.is_some() || self.selected {
+            return Err((
+                EnvError::Invalid("committed activation cannot be parked".into()),
+                Box::new(self),
+            ));
+        }
+        let Self {
+            environment,
+            supervisor,
+            session,
+            reservation,
+            selected,
+            committed,
+            supervisor_id,
+            attempt,
+        } = self;
+        match environment.park_workspace(&reservation, deadline) {
+            Ok(environment) => Ok(ParkedWorkspaceActivation {
+                _environment: environment,
+                _supervisor: supervisor,
+                session,
+                _reservation: reservation,
+                _supervisor_id: supervisor_id,
+                _attempt: attempt,
+            }),
+            Err((error, environment)) => Err((
+                error,
+                Box::new(Self {
+                    environment: *environment,
+                    supervisor,
+                    session,
+                    reservation,
+                    selected,
+                    committed,
+                    supervisor_id,
+                    attempt,
+                }),
+            )),
+        }
+    }
     /// Decide and freeze one exact session binding with Env free. The kernel's
     /// exclusive staging and private Task slot serialize concurrent successors;
     /// a loser cannot replace the staged run or publish another session's S.
@@ -651,6 +715,38 @@ mod tests {
         activation
             .abort(&ctx, Wait::FailFast)
             .expect("settle activation");
+    }
+
+    #[test]
+    fn park_without_bound_target_retains_guarded_custody() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("context");
+        let env = env("workspace");
+        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(44),
+            "fixture-supervisor",
+        )
+        .expect("begin") else {
+            panic!("fresh activation")
+        };
+        let (_, activation) = activation
+            .park(std::time::Instant::now() + std::time::Duration::from_secs(10))
+            .expect_err("unbound target refuses parking");
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &ctx.cx,
+            &state,
+            std::slice::from_ref(&env.resource),
+            Wait::FailFast
+        )
+        .is_err());
+        activation
+            .abort(&ctx, Wait::FailFast)
+            .expect("retained owner settles");
     }
 
     #[test]

@@ -599,7 +599,100 @@ pub struct EnvRun<'r> {
     step: Step,
 }
 
+/// The exact environment run and its progress state while Env is free.
+/// No generic environment effects are exposed through this state.
+#[derive(Debug)]
+pub struct ParkedEnvRun<'r> {
+    _run: effigy_kernel::run::ParkedWorkspaceRun<'r>,
+    _cx: EffectContext,
+    _root: &'r StateRoot,
+    _env: EnvRef,
+    _cleanup_budget: Duration,
+    _began: EnvRecord,
+    _published: bool,
+    _failed: bool,
+    _transitioned: bool,
+    _progress: ProgressSource,
+    _step: Step,
+    _receipt: super::CreationReceipt,
+    _target: effigy_kernel::workspace_session::ContainerIdentity,
+    _plan: effigy_kernel::workspace_session::ActivationPlan,
+}
+
 impl<'r> EnvRun<'r> {
+    /// Park only after target binding and a complete journalled creator receipt.
+    /// Any refusal returns the still-guarded owner for explicit settlement.
+    pub(super) fn park_workspace(
+        mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        deadline: Instant,
+    ) -> Result<ParkedEnvRun<'r>, (EnvError, Box<Self>)> {
+        let snapshot = (|| {
+            let plan = self.workspace_plan(reservation)?;
+            let target = self
+                .run
+                .workspace_bound_target(reservation)
+                .map_err(EnvError::Kernel)?;
+            let receipt = self
+                .journalled_creation()?
+                .and_then(|outcome| outcome.receipt().cloned())
+                .ok_or_else(|| {
+                    EnvError::Invalid("activation has no complete creator receipt".into())
+                })?;
+            Ok::<_, EnvError>((plan, target, receipt))
+        })();
+        let (plan, target, receipt) = match snapshot {
+            Ok(value) => value,
+            Err(error) => return Err((error, Box::new(self))),
+        };
+        let Self {
+            run,
+            cx,
+            root,
+            env,
+            cleanup_budget,
+            began,
+            published,
+            failed,
+            transitioned,
+            progress,
+            step,
+        } = self;
+        match run.park_workspace(reservation, deadline) {
+            Ok(run) => Ok(ParkedEnvRun {
+                _run: run,
+                _cx: cx,
+                _root: root,
+                _env: env,
+                _cleanup_budget: cleanup_budget,
+                _began: began,
+                _published: published,
+                _failed: failed,
+                _transitioned: transitioned,
+                _progress: progress,
+                _step: step,
+                _receipt: receipt,
+                _target: target,
+                _plan: plan,
+            }),
+            Err((error, run)) => Err((
+                EnvError::Kernel(error),
+                Box::new(Self {
+                    run: *run,
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                }),
+            )),
+        }
+    }
     /// Admits the operation: takes `Gate(Env)`, settles an interrupted
     /// predecessor (K5) and commits `Admitted` before any effect (K3).
     pub fn begin(
