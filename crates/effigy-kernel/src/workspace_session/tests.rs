@@ -1625,6 +1625,40 @@ fn parked_run_can_settle_after_activation_deadline_expires() {
 }
 
 #[test]
+fn parked_cleanup_gate_timeout_returns_custody_for_retry() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(242));
+    let run = admit_activation(&cx, &root, &reservation, run_id(243));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let guard = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .unwrap();
+    let short_cleanup = cx.operation().cleanup(Duration::from_millis(40)).unwrap();
+    let (_, custody) = parked
+        .settle(&short_cleanup, &mut adapter())
+        .expect_err("held gate refuses cleanup");
+    let crate::run::WorkspaceCleanupCustody::Parked(parked) = custody else {
+        panic!("parked owner must remain")
+    };
+    drop(guard);
+    parked
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("retry settles the same run");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
