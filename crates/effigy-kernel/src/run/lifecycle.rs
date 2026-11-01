@@ -598,6 +598,49 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an explicitly supplied older Effigy executable"]
+    fn old_helpers_wait_for_config_and_exit_on_eof() {
+        use std::process::{Command, Stdio};
+
+        let binary = std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY")
+            .expect("name the older Effigy executable");
+        for entry in ["__kernel-sentinel", "__kernel-supervise"] {
+            let mut home = LayeredHome::new();
+            let mut command = Command::new(&binary);
+            command
+                .arg(entry)
+                .env_clear()
+                .env("HOME", home.path())
+                .env("TMPDIR", home.path())
+                .current_dir(home.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut child = LayeredChild::spawn(&mut command, home.path()).unwrap();
+            assert!(child.identity.is_some(), "old helper identity unavailable");
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                child.child().try_wait().unwrap().is_none(),
+                "{entry} exited before EOF"
+            );
+            assert_eq!(
+                std::fs::read_dir(home.path()).unwrap().count(),
+                0,
+                "{entry} wrote before config"
+            );
+            drop(child.child().stdin.take());
+            let status = child.wait(Duration::from_secs(3));
+            assert!(status.is_ok(), "{entry} did not exit after EOF: {status:?}");
+            assert_eq!(
+                std::fs::read_dir(home.path()).unwrap().count(),
+                0,
+                "{entry} wrote after EOF"
+            );
+            home.finish();
+        }
+    }
+
+    #[test]
     fn layered_fixture_unwind_reaps_its_exact_owned_child() {
         let mut path = std::path::PathBuf::new();
         let mut pid = 0u32;
