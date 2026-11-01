@@ -2533,6 +2533,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     /// Do not serve another client while an owner's EOF cleanup is uncertain.
     owner_cleanup_unsettled: bool,
     unsettled_attachment: Option<Attachment>,
+    unsettled_replacement: Option<Attachment>,
     /// Data frames this connection has queued and the client has not yet
     /// acknowledged, plus the request id they name.
     outbound: Outbound,
@@ -2579,6 +2580,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             dispatcher,
             owner_cleanup_unsettled: false,
             unsettled_attachment: None,
+            unsettled_replacement: None,
             outbound: Outbound::new(),
             attach: None,
             carry: None,
@@ -3110,9 +3112,14 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         // of stream, which for a secondary never stops the run.
                         if previous.id() != handle.id() && previous.client() == Client::Secondary {
                             let mut previous = previous;
-                            previous
-                                .release(cx, root, Release::Eof)
-                                .map_err(refusal_from)?;
+                            if previous.release(cx, root, Release::Eof).is_err() {
+                                self.unsettled_attachment = Some(previous);
+                                self.unsettled_replacement = Some(handle);
+                                self.owner_cleanup_unsettled = true;
+                                return Err(Refusal::unknown(
+                                    "attachment replacement cleanup is unsettled",
+                                ));
+                            }
                         }
                     }
                     // A replacement is a new attachment lifetime, and it is

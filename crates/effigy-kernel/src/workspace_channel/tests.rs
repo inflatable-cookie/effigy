@@ -482,6 +482,76 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
     }
 }
 
+#[test]
+#[cfg(feature = "fault-injection")]
+fn replacement_release_fault_retains_both_secondary_handles() {
+    use crate::fault::{self, Point};
+    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-replacement-fault");
+        let (_run, live) = admitted_run(&cx, &root, session, 93, &[175]);
+        let mut host = server(session, &[176]);
+        let attach = |id| {
+            Frame::Request(request(
+                session,
+                RequestBody::Attach(AttachBody {
+                    run: live,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                }),
+                id,
+            ))
+        };
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    attach(1),
+                    attach(2),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let _result = host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams);
+        let fired = fault::fired();
+        fault::arm(None);
+        assert!(fired, "replacement release fault must fire");
+        assert!(
+            host.cleanup_pending(),
+            "unsettled replacement must fence new service"
+        );
+        let old = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("old handle retained");
+        let new = host
+            .unsettled_replacement
+            .as_ref()
+            .expect("new handle retained");
+        assert_eq!(old.id(), AttachmentId::new([1; 16]));
+        assert_eq!(new.id(), AttachmentId::new([2; 16]));
+        assert_eq!(old.run(), live);
+        assert_eq!(new.run(), live);
+        assert_eq!(
+            old.attached(&cx, &root).unwrap(),
+            point == Point::RunAttachReleaseBefore
+        );
+        assert!(new.attached(&cx, &root).unwrap());
+        let mut retry = Pipe::new(
+            stream(&[Frame::Hello(hello()), Frame::Authenticate(capability())]),
+            peer(),
+        );
+        assert_eq!(
+            host.serve(&mut retry, &cx, &observe_context(), &root, &mut NoStreams)
+                .expect_err("replacement latch")
+                .code,
+            RefusalCode::Unknown
+        );
+    }
+}
+
 #[cfg(feature = "fault-injection")]
 struct LiveAdmitter<'a> {
     root: &'a StateRoot,

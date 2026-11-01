@@ -4599,7 +4599,8 @@ If an attachment release commits but its response is lost, and the child run
 closes and compacts the release row before retry can verify its cause, the
 serving owner retains unresolved custody and reports `Unknown`. It must not
 infer EOF or detach, revive the attachment, or settle the child twice. The
-operator recovery path is `effigy down` for this workspace. Durable release
+operator can attempt `effigy down` for this workspace; successful cleanup of
+this particular unresolved case has not yet been proven. Durable release
 cause retention and authenticated attachment claims are deferred to the Level 1
 lifecycle work; missing legacy evidence remains `Unknown`.
 The kernel fault controls are indexed by
