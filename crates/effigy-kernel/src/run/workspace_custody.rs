@@ -120,4 +120,19 @@ mod tests {
             "the refused fixture attempt must not create state"
         );
     }
+
+    #[test]
+    fn free_capacity_allows_the_fixture_to_create_and_remove_state() {
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().to_owned();
+        let capacity = Capacity::default();
+        let reservation = capacity.reserve().unwrap();
+        let cx = crate::run::tests::context();
+        let root = crate::root::StateRoot::effects(&cx, &path).unwrap();
+        assert!(path.join(".effigy").is_dir());
+        drop(root);
+        drop(reservation);
+        fixture.close().unwrap();
+        assert!(!path.exists(), "the fixture must be removed");
+    }
 }
