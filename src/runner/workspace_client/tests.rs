@@ -3057,6 +3057,9 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
     admit_over_channel(&mut server, &cx, &observe, &root, capability());
     let log = Arc::new(Mutex::new(PtyLog::default()));
+    // Step gate: hold delivery until the final request reaches the handle.
+    // Latest-wins permits coalescing; intermediate geometries need not land.
+    log.lock().expect("pty log").resize_open = false;
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
         .open(
@@ -3076,10 +3079,26 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
         frames.push(sized(attach, 2, 50, 120));
         frames
     };
-    let (mut transport, _written) = scripted(&frames);
-    let served = server
-        .serve(&mut transport, &cx, &observe, &root, &mut custody)
-        .expect("the owner's connection is served");
+    let (client, host_side) = live_connection(&frames);
+    let served = std::thread::scope(|scope| {
+        let serving = scope.spawn(|| {
+            let mut transport = PeerTransport::new(host_side);
+            server.serve(&mut transport, &cx, &observe, &root, &mut custody)
+        });
+        wait_until("the final requested size to reach the closed handle", || {
+            log.lock().expect("pty log").resize_attempts.last() == Some(&size(50, 120))
+        });
+        assert!(sizes(&log).is_empty(), "the closed handle delivered nothing");
+        log.lock().expect("pty log").resize_open = true;
+        wait_until("the writer to take the input and final geometry", || {
+            written(&log) == b"typed input" && sizes(&log).last() == Some(&size(50, 120))
+        });
+        drop(client);
+        serving
+            .join()
+            .expect("the serving thread")
+            .expect("the owner's connection is served")
+    });
 
     assert_eq!(served.responses, 1, "the attach was answered");
     assert_eq!(
@@ -3087,9 +3106,13 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
         vec![run],
         "the run was admitted by the kernel's own reservation path"
     );
-    wait_until("the writer to take the frame and its sizes", || {
-        written(&log) == b"typed input" && sizes(&log) == vec![size(24, 80), size(50, 120)]
-    });
+    // After joining, the delivery history is stable. Either valid subsequence
+    // ends at the final size, with no older geometry delivered after it.
+    let delivered = sizes(&log);
+    assert!(
+        delivered == vec![size(50, 120)] || delivered == vec![size(24, 80), size(50, 120)],
+        "resize delivery must be an ordered subsequence ending at the final size: {delivered:?}"
+    );
     let terminal = custody.terminal_mut(run).expect("the run's terminal");
     assert!(
         terminal.owner().is_some(),

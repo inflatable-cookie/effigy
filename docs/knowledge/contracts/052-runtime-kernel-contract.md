@@ -4560,7 +4560,11 @@ frame. The two kinds of effect alternate while both have work, so neither can
 starve the other: a writer that stays full (a child that stopped reading) never
 holds back the newest geometry, and a resize handle that stays full never holds
 back queued input. Resize remains latest-wins, so the alternation costs at most
-one turn and never a backlog. Input is bounded at two frames and then refuses rather than growing a
+one turn and never a backlog. Intermediate geometries may coalesce: delivery
+is an ordered subsequence of requested sizes ending at the final requested size,
+never an older size after a newer one. Proofs synchronize delivery with an explicit
+handle gate rather than requiring every intermediate size to land.
+Input is bounded at two frames and then refuses rather than growing a
 queue; the pump drains what a slow child refused on its own cadence, so
 backpressured input completes even when the connection is live and idle and never
 needs the client to type again; resize keeps one size and never replays an older
