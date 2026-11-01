@@ -211,7 +211,7 @@ mod tests {
         let mut run = Run::begin(
             &cx,
             &root,
-            &super::super::tests::inv(owner),
+            &super::super::tests::inv(owner.clone()),
             super::super::tests::opts(1),
             &super::super::tests::cleanup(&cx),
             &mut fake,
@@ -222,6 +222,13 @@ mod tests {
                 .unwrap(),
             placement: crate::supervise::Placement::Detached,
         };
+        let starts = Arc::new(AtomicUsize::new(0));
+        let observed_starts = Arc::clone(&starts);
+        crate::fault::hook(Some(Box::new(move |observed| {
+            if observed == crate::fault::Point::WorkspaceBackupAfterSpawn {
+                observed_starts.fetch_add(1, Ordering::SeqCst);
+            }
+        })));
         crate::fault::arm_point(point, crate::fault::Fault::Enospc);
         let enabled = run.enable_custody(&plan);
         let fired = crate::fault::fired();
@@ -233,6 +240,15 @@ mod tests {
         let retry = run.enable_custody(&plan);
         let same_sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
         let same_backup = run.partial_checkout_backup_identity();
+        let process_effects = run
+            .effects()
+            .unwrap()
+            .iter()
+            .filter(|effect| effect.spec.kind == crate::custody::KIND)
+            .count();
+        let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
+        let start_count = starts.load(Ordering::SeqCst);
+        crate::fault::hook(None);
         let cleanup =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
         assert!(enabled.is_err());
@@ -250,6 +266,12 @@ mod tests {
         );
         assert_eq!(same_sentinel, sentinel);
         assert_eq!(same_backup, backup_identity);
+        assert_eq!(start_count, 1, "retry must not cross the backup spawn hook");
+        assert_eq!(process_effects, 0, "no process effect is journalled");
+        assert!(matches!(
+            gate,
+            Observed::Verified(crate::gate::GateState::Held(_), _)
+        ));
         if let Err((_error, owner)) = cleanup {
             assert!(
                 owner.has_partial_checkout_backup(),
