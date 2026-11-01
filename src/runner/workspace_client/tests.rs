@@ -4147,8 +4147,31 @@ fn live_admission(
     root: &StateRoot,
     calls: SharedCalls,
 ) -> LiveAdmission {
-    let mut frames = terminal_hello(capability());
-    frames.push(terminal_invoke(RequestId::new([1; 16])));
+    live_admission_named(
+        cx,
+        observe,
+        root,
+        calls,
+        9,
+        1,
+        capability(),
+        "guest-request",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn live_admission_named(
+    cx: &EffectContext,
+    observe: &ObserveContext,
+    root: &StateRoot,
+    calls: SharedCalls,
+    marker: u8,
+    request: u8,
+    credential: Secret,
+    task_name: &str,
+) -> LiveAdmission {
+    let mut frames = terminal_hello(credential.clone());
+    frames.push(terminal_invoke(RequestId::new([request; 16])));
     let (client, host_side) = live_connection(&frames);
     client
         .set_read_timeout(Some(Duration::from_secs(30)))
@@ -4162,8 +4185,9 @@ fn live_admission(
     let cx = cx.clone();
     let observe = observe.clone();
     let root = root.clone();
+    let task_name = task_name.to_owned();
     let server = std::thread::spawn(move || {
-        let mut server = terminal_server(&root, calls, &[9], capability());
+        let mut server = terminal_server_owned(&root, calls, &[marker], credential, &task_name);
         let mut transport = PeerTransport::new(host_side);
         let _ = server.serve(&mut transport, &cx, &observe, &root, &mut host::NoStreams);
     });
@@ -4185,7 +4209,7 @@ fn live_admission(
         owner.client.read_exact(&mut body).expect("admission frame");
         responses.push(host::decode_frame(&body).expect("admission frame decodes"));
     }
-    let expected = RunId::new(1, [9; 10]).expect("run id");
+    let expected = RunId::new(1, [marker; 10]).expect("run id");
     assert!(responses.iter().any(|frame| matches!(frame, host::Frame::Response(host::Response { outcome: host::ResponseOutcome::Accepted(accepted), .. }) if accepted.run == expected)));
     owner
 }
@@ -4567,55 +4591,38 @@ fn two_independent_terminals_and_capabilities_never_cross() {
     let second_run = RunId::new(1, [10; 10]).expect("run id");
     let first_capability = capability();
     let second_capability = Secret::new([0xcd; 32]);
-    let mut first_server = terminal_server_owned(
+    let _first_owner = live_admission_named(
+        &cx,
+        &observe,
         &root,
         calls.clone(),
-        &[9],
+        9,
+        11,
         first_capability.clone(),
         "guest-request-one",
+    );
+    let _second_owner = live_admission_named(
+        &cx,
+        &observe,
+        &root,
+        calls.clone(),
+        10,
+        21,
+        second_capability.clone(),
+        "guest-request-two",
     );
     let mut second_server = terminal_server_owned(
         &root,
         calls.clone(),
-        &[10],
+        &[],
         second_capability.clone(),
         "guest-request-two",
-    );
-    // A third run, admitted but never typed into: its owner row must still be
-    // refused by the first terminal's custody.
-    let mut third_server = terminal_server_owned(
-        &root,
-        calls.clone(),
-        &[11],
-        second_capability.clone(),
-        "guest-request-three",
     );
     let first_log = Arc::new(Mutex::new(PtyLog::default()));
     let second_log = Arc::new(Mutex::new(PtyLog::default()));
     let mut first_custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     let mut second_custody =
         TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
-
-    // One request id names one request for the whole session, so each client
-    // gets its own ids.
-    let frames = {
-        let mut frames = terminal_hello(first_capability.clone());
-        frames.push(terminal_invoke(RequestId::new([11; 16])));
-        frames
-    };
-    let (mut transport, _written) = scripted(&frames);
-    first_server
-        .serve(&mut transport, &cx, &observe, &root, &mut host::NoStreams)
-        .expect("the first client admits its run");
-    let frames = {
-        let mut frames = terminal_hello(second_capability.clone());
-        frames.push(terminal_invoke(RequestId::new([21; 16])));
-        frames
-    };
-    let (mut transport, _written) = scripted(&frames);
-    second_server
-        .serve(&mut transport, &cx, &observe, &root, &mut host::NoStreams)
-        .expect("the second client admits its run");
 
     first_custody
         .open(
@@ -4634,50 +4641,33 @@ fn two_independent_terminals_and_capabilities_never_cross() {
         )
         .expect("the second terminal opens");
 
-    for (server, custody, capability, run, marker, attach_id) in [
-        (
-            &mut first_server,
-            &mut first_custody,
-            first_capability.clone(),
-            first_run,
-            1u8,
-            12u8,
-        ),
-        (
-            &mut second_server,
-            &mut second_custody,
-            second_capability.clone(),
-            second_run,
-            2u8,
-            22u8,
-        ),
+    // Exercise each terminal using the matching kernel attachment while both
+    // actual admitting connections remain live; this is not a wire-owner proof.
+    for (custody, run, bytes) in [
+        (&mut first_custody, first_run, b"b".as_slice()),
+        (&mut second_custody, second_run, b"c".as_slice()),
     ] {
-        let attach = RequestId::new([attach_id; 16]);
-        let frames = {
-            let mut frames = terminal_hello(capability);
-            frames.push(terminal_attach(attach, run, None));
-            frames.push(typed(attach, 0, &[b'a' + marker]));
-            frames
-        };
-        let (mut transport, _written) = scripted(&frames);
-        server
-            .serve(&mut transport, &cx, &observe, &root, custody)
-            .expect("each terminal serves its own connection");
+        let owner = run::resume_owner(&cx, &root, terminal_session(), run).expect("original owner");
+        custody.start(&owner, &StreamStart::from([(host::TERMINAL_STREAM, 0)]));
+        custody
+            .input(&owner, bytes)
+            .expect("matching terminal input");
     }
     wait_until("each terminal's own writer", || {
         written(&first_log) == b"b" && written(&second_log) == b"c"
     });
 
     let other_run = RunId::new(1, [11; 10]).expect("run id");
-    let frames = {
-        let mut frames = terminal_hello(second_capability.clone());
-        frames.push(terminal_invoke(RequestId::new([31; 16])));
-        frames
-    };
-    let (mut transport, _written) = scripted(&frames);
-    third_server
-        .serve(&mut transport, &cx, &observe, &root, &mut second_custody)
-        .expect("the second client admits another run");
+    let _third_owner = live_admission_named(
+        &cx,
+        &observe,
+        &root,
+        calls.clone(),
+        11,
+        31,
+        second_capability.clone(),
+        "guest-request-three",
+    );
 
     // A client's terminal custody never reaches another run's writer, even when
     // the caller holds that run's real attachment.
@@ -5019,22 +5009,22 @@ fn owner_eof_retires_the_writer_without_further_traffic() {
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let run = RunId::new(1, [9; 10]).expect("run id");
         let attach = RequestId::new([2; 16]);
-        let admitting = {
-            let mut frames = terminal_hello(capability());
-            frames.push(terminal_invoke(RequestId::new([1; 16])));
-            frames
-        };
         let typing = {
             let mut frames = terminal_hello(capability());
+            frames.push(terminal_invoke(RequestId::new([1; 16])));
             frames.push(terminal_attach(attach, run, None));
             frames.push(typed(attach, 0, b"before the owner leaves"));
             frames
         };
-        let (admitting, _written) = scripted(&admitting);
-        let (typing, _written) = scripted(&typing);
-        let acceptor = ScriptedAccept {
-            connections: VecDeque::from(vec![admitting, typing]),
-            accepted: 0,
+        let (typing_client, typing_host) = live_connection(&typing);
+        typing_host
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("bounded owner read");
+        typing_host
+            .set_write_timeout(Some(Duration::from_secs(30)))
+            .expect("bounded owner write");
+        let acceptor = PeerAccept {
+            connections: VecDeque::from(vec![TestTransport::Peer(PeerTransport::new(typing_host))]),
         };
 
         let (listener, key, _acceptor) = SessionTlsListener::bind(
@@ -5065,28 +5055,26 @@ fn owner_eof_retires_the_writer_without_further_traffic() {
             root,
         );
         let log = Arc::new(Mutex::new(PtyLog::default()));
-        let mut terminals = owner.terminal_custody(observe);
-        // The admitting turn runs first, so the run exists when its terminal opens.
-        owner
-            .serve_pending(&mut terminals)
-            .expect("the admitting connection is served")
-            .expect("a connection was waiting");
-        terminals
-            .open(
-                cx,
-                run,
-                vec![(1, Stream::Stdout)],
-                Box::new(FakePty::new(log.clone())),
-            )
-            .expect("the session's terminal opens");
-        owner
-            .serve_pending(&mut terminals)
-            .expect("the typing connection is served")
-            .expect("a connection was waiting");
-        wait_until("the typed frame to reach the writer", || {
-            written(&log) == b"before the owner leaves"
+        let mut terminals = OpenAfterAdmission {
+            custody: owner.terminal_custody(observe),
+            effect: cx.clone(),
+            writer: Some(Box::new(FakePty::new(log.clone()))),
+        };
+        std::thread::scope(|scope| {
+            let _close = CloseOwnerWrite(typing_client.try_clone().expect("owner shutdown guard"));
+            let serving = scope.spawn(|| owner.serve_pending(&mut terminals));
+            wait_until("the typed frame to reach the writer", || {
+                written(&log) == b"before the owner leaves"
+            });
+            typing_client
+                .shutdown(std::net::Shutdown::Write)
+                .expect("owner EOF");
+            serving
+                .join()
+                .expect("serving thread")
+                .expect("the owner connection is served")
+                .expect("a connection was waiting");
         });
-
         // The owning client's end of stream released its row. No frame, pump call
         // or further connection traffic exists: the writer's own pump notices the
         // released row and retires the writer exactly once.
@@ -5095,6 +5083,7 @@ fn owner_eof_retires_the_writer_without_further_traffic() {
         });
         assert!(
             terminals
+                .custody
                 .terminal_mut(run)
                 .expect("the run's terminal")
                 .retired(),
@@ -5115,22 +5104,22 @@ fn the_serving_owner_serves_the_terminal_custody_it_hands_over() {
     with_serving_session(|mut supervisor, session, cx, root, observe| {
         let run = RunId::new(1, [9; 10]).expect("run id");
         let attach = RequestId::new([2; 16]);
-        let admitting = {
-            let mut frames = terminal_hello(capability());
-            frames.push(terminal_invoke(RequestId::new([1; 16])));
-            frames
-        };
         let typing = {
             let mut frames = terminal_hello(capability());
+            frames.push(terminal_invoke(RequestId::new([1; 16])));
             frames.push(terminal_attach(attach, run, None));
             frames.push(typed(attach, 0, b"held by the serving owner"));
             frames
         };
-        let (admitting, _written) = scripted(&admitting);
-        let (typing, _written) = scripted(&typing);
-        let acceptor = ScriptedAccept {
-            connections: VecDeque::from(vec![admitting, typing]),
-            accepted: 0,
+        let (typing_client, typing_host) = live_connection(&typing);
+        typing_host
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("bounded owner read");
+        typing_host
+            .set_write_timeout(Some(Duration::from_secs(30)))
+            .expect("bounded owner write");
+        let acceptor = PeerAccept {
+            connections: VecDeque::from(vec![TestTransport::Peer(PeerTransport::new(typing_host))]),
         };
 
         let (listener, key, _acceptor) = SessionTlsListener::bind(
@@ -5160,36 +5149,35 @@ fn the_serving_owner_serves_the_terminal_custody_it_hands_over() {
             Arc::new(observe.clone()),
             root,
         );
-        // The typed handoff #452's container-up caller uses: the session's own
-        // terminal custody, opened per admitted run.
-        let mut terminals = owner.terminal_custody(observe);
-        assert_eq!(
-            terminals.session(),
-            session.session(),
-            "the custody is bound to the session it serves"
-        );
         let log = Arc::new(Mutex::new(PtyLog::default()));
-        owner
-            .serve_pending(&mut terminals)
-            .expect("the admitting connection is served")
-            .expect("a connection was waiting");
-        terminals
-            .open(
-                cx,
-                run,
-                vec![(1, Stream::Stdout)],
-                Box::new(FakePty::new(log.clone())),
-            )
-            .expect("the session's terminal opens");
-        let served = owner
-            .serve_pending(&mut terminals)
-            .expect("the typing connection is served")
-            .expect("a connection was waiting");
-        assert_eq!(served.responses, 1, "the attach was answered");
-        assert_eq!(owner.served(), 2);
-        wait_until("the served frame to reach the writer", || {
-            written(&log) == b"held by the serving owner"
+        let custody = owner.terminal_custody(observe);
+        assert_eq!(
+            custody.session(),
+            session.session(),
+            "custody remains session-bound"
+        );
+        let mut terminals = OpenAfterAdmission {
+            custody,
+            effect: cx.clone(),
+            writer: Some(Box::new(FakePty::new(log.clone()))),
+        };
+        let served = std::thread::scope(|scope| {
+            let _close = CloseOwnerWrite(typing_client.try_clone().expect("owner shutdown guard"));
+            let serving = scope.spawn(|| owner.serve_pending(&mut terminals));
+            wait_until("the served frame to reach the writer", || {
+                written(&log) == b"held by the serving owner"
+            });
+            typing_client
+                .shutdown(std::net::Shutdown::Write)
+                .expect("owner EOF");
+            serving
+                .join()
+                .expect("serving thread")
+                .expect("the owner connection is served")
+                .expect("a connection was waiting")
         });
+        assert_eq!(served.responses, 2, "invoke and attach were answered");
+        assert_eq!(owner.served(), 1);
         assert_eq!(
             runs_admitted(&calls),
             vec![run],
