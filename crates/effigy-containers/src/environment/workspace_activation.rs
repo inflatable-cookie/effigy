@@ -32,6 +32,181 @@ pub enum WorkspaceFinishCustody<'r> {
     },
 }
 
+/// Exact owners retained while an uncommitted guarded activation is aborted.
+#[derive(Debug)]
+pub struct GuardedAbortCustody<'r> {
+    state: GuardedAbortState<'r>,
+}
+
+#[derive(Debug)]
+enum GuardedAbortState<'r> {
+    Activation(Box<WorkspaceActivation<'r>>),
+    Environment {
+        root: &'r effigy_kernel::root::StateRoot,
+        environment: Box<Run<'r>>,
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+    Session {
+        root: &'r effigy_kernel::root::StateRoot,
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+    Reservation {
+        root: &'r effigy_kernel::root::StateRoot,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+}
+
+impl<'r> GuardedAbortCustody<'r> {
+    /// Recover the untouched activation when abort was refused before settlement.
+    pub fn into_activation(self) -> Result<Box<WorkspaceActivation<'r>>, Box<Self>> {
+        match self.state {
+            GuardedAbortState::Activation(activation) => Ok(activation),
+            state => Err(Box::new(Self { state })),
+        }
+    }
+
+    /// Retry from the retained stage with fresh cleanup authority.
+    pub fn retry(self, ctx: &EnvContext<'r>, wait: Wait) -> Result<(), (EnvError, Box<Self>)> {
+        self.state
+            .retry(ctx, wait)
+            .map_err(|(error, state)| (error, Box::new(Self { state: *state })))
+    }
+}
+
+impl<'r> GuardedAbortState<'r> {
+    fn retry(self, ctx: &EnvContext<'r>, wait: Wait) -> Result<(), (EnvError, Box<Self>)> {
+        let self_ = match self {
+            Self::Activation(activation) => return (*activation).abort_guarded_inner(ctx, wait),
+            other => other,
+        };
+        let root = match &self_ {
+            Self::Activation(_) => unreachable!(),
+            Self::Environment { root, .. }
+            | Self::Session { root, .. }
+            | Self::Reservation { root, .. } => *root,
+        };
+        if !std::ptr::eq(root, ctx.root) {
+            return Err((
+                EnvError::Invalid("workspace cleanup uses a different state root".into()),
+                Box::new(self_),
+            ));
+        }
+        match self_ {
+            Self::Activation(_) => unreachable!(),
+            Self::Environment {
+                environment,
+                supervisor,
+                reservation,
+                attempt,
+                ..
+            } => {
+                let cleanup = match ctx.cleanup() {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Box::new(Self::Environment {
+                                root,
+                                environment,
+                                supervisor,
+                                reservation,
+                                attempt,
+                            }),
+                        ))
+                    }
+                };
+                match environment.settle_workspace_recoverable(&cleanup, &mut EnvSettlement) {
+                    Ok(_) => Self::Session {
+                        root,
+                        supervisor,
+                        reservation,
+                        attempt,
+                    }
+                    .retry(ctx, wait),
+                    Err((error, environment)) => Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self::Environment {
+                            root,
+                            environment,
+                            supervisor,
+                            reservation,
+                            attempt,
+                        }),
+                    )),
+                }
+            }
+            Self::Session {
+                supervisor,
+                reservation,
+                attempt,
+                ..
+            } => {
+                let cleanup = match ctx.cleanup() {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Box::new(Self::Session {
+                                root,
+                                supervisor,
+                                reservation,
+                                attempt,
+                            }),
+                        ))
+                    }
+                };
+                match supervisor.settle_recoverable(&cleanup, &mut EnvSettlement) {
+                    Ok(_) => Self::Reservation {
+                        root,
+                        reservation,
+                        attempt,
+                    }
+                    .retry(ctx, wait),
+                    Err((error, supervisor)) => Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self::Session {
+                            root,
+                            supervisor,
+                            reservation,
+                            attempt,
+                        }),
+                    )),
+                }
+            }
+            Self::Reservation {
+                reservation,
+                attempt,
+                ..
+            } => {
+                let result = ctx.cleanup().and_then(|cleanup| {
+                    let effects = cleanup.operation().effects().map_err(|error| {
+                        EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+                    })?;
+                    reservation
+                        .cancel_for_attempt(&effects, ctx.root, wait, attempt)
+                        .map(|_| ())
+                        .map_err(EnvError::Kernel)
+                });
+                result.map_err(|error| {
+                    (
+                        error,
+                        Box::new(Self::Reservation {
+                            root,
+                            reservation,
+                            attempt,
+                        }),
+                    )
+                })
+            }
+        }
+    }
+}
+
 /// Field order releases Env before Task if a crash/unwind interrupts the owner.
 /// Such a drop is interrupted evidence, never successful settlement.
 #[derive(Debug)]
@@ -707,6 +882,58 @@ impl<'r> WorkspaceActivation<'r> {
     /// Pre-commit failure: settle both bound runs before cancelling. A committed
     /// generation instead remains fenced by its durable selection obligation;
     /// its owner must call selection recovery/abandon, never restore a predecessor.
+    pub fn abort_guarded_recoverable(
+        self,
+        ctx: &EnvContext<'r>,
+        wait: Wait,
+    ) -> Result<(), (EnvError, Box<GuardedAbortCustody<'r>>)> {
+        self.abort_guarded_inner(ctx, wait)
+            .map_err(|(error, state)| (error, Box::new(GuardedAbortCustody { state: *state })))
+    }
+
+    fn abort_guarded_inner(
+        self,
+        ctx: &EnvContext<'r>,
+        wait: Wait,
+    ) -> Result<(), (EnvError, Box<GuardedAbortState<'r>>)> {
+        if self.committed.is_some() || self.selected || !self.environment.owns_root(ctx.root) {
+            return Err((
+                EnvError::Invalid(
+                    "guarded abort requires an uncommitted activation and its original state root"
+                        .into(),
+                ),
+                Box::new(GuardedAbortState::Activation(Box::new(self))),
+            ));
+        }
+        let Self {
+            environment,
+            supervisor,
+            reservation,
+            attempt,
+            ..
+        } = self;
+        match environment.finish_workspace_recoverable(false) {
+            Ok(_) => GuardedAbortState::Session {
+                root: ctx.root,
+                supervisor: Box::new(supervisor),
+                reservation,
+                attempt,
+            }
+            .retry(ctx, wait),
+            Err((error, environment)) => Err((
+                error,
+                Box::new(GuardedAbortState::Environment {
+                    root: ctx.root,
+                    environment,
+                    supervisor: Box::new(supervisor),
+                    reservation,
+                    attempt,
+                }),
+            )),
+        }
+    }
+
+    /// Legacy abort for callers that do not retain a failed owner.
     pub fn abort(self, ctx: &EnvContext<'_>, wait: Wait) -> Result<(), EnvError> {
         self.abort_with_target(
             ctx,
@@ -1011,6 +1238,101 @@ mod tests {
         activation
             .abort(&ctx, Wait::FailFast)
             .expect("retained owner settles");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn guarded_abort_retains_env_and_session_when_settlement_fails() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(45),
+            "fixture-supervisor",
+        )
+        .unwrap() else {
+            panic!("fresh activation")
+        };
+        let result = effigy_kernel::fault_injection::with_hook(
+            move |name| {
+                if name == "SettleCloseBefore" {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || activation.abort_guarded_recoverable(&ctx, Wait::FailFast),
+        );
+        let (_, custody) = result.expect_err("injected cleanup must fail");
+        assert!(
+            effigy_kernel::gate::Gate::acquire(
+                &ctx.cx,
+                &state,
+                std::slice::from_ref(&env.resource),
+                Wait::FailFast,
+            )
+            .is_err(),
+            "failed settlement must retain the original Env gate"
+        );
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("retry settles and cancels");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn guarded_abort_retains_session_after_env_settles() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(46),
+            "fixture-supervisor",
+        )
+        .unwrap() else {
+            panic!("fresh activation")
+        };
+        let session_id = activation.session.run();
+        let mut closes = 0;
+        let (_, custody) = effigy_kernel::fault_injection::with_hook(
+            move |name| {
+                if name == "SettleCloseBefore" {
+                    closes += 1;
+                    if closes >= 2 {
+                        return Err(std::io::Error::other("injected"));
+                    }
+                }
+                Ok(())
+            },
+            || activation.abort_guarded_recoverable(&ctx, Wait::FailFast),
+        )
+        .expect_err("session settlement must fail");
+        let GuardedAbortState::Session { supervisor, .. } = &custody.state else {
+            panic!("exact session must remain held")
+        };
+        assert_eq!(supervisor.id(), session_id);
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("retry completes cleanup");
     }
 
     #[test]
