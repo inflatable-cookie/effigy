@@ -2768,7 +2768,9 @@ impl Run<'_> {
                 "workspace sentinel startup remains unsettled",
             ));
         }
-        match crate::supervise::spawn_workspace_sentinel(self, self.root, plan, &self.next) {
+        match crate::supervise::spawn_workspace_sentinel(
+            self, self.root, plan, &self.next, &self.cx,
+        ) {
             Ok(lease) => self.register_lifecycle(lease, plan),
             Err((error, partial)) => {
                 if partial.is_some() {

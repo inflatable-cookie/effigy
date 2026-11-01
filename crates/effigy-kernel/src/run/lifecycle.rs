@@ -313,6 +313,63 @@ mod tests {
     }
 
     #[test]
+    fn workspace_sentinel_cancellation_after_spawn_retains_partial() {
+        let home = effigy_test_support::short_tempdir("sc-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "sentinel-cancel-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let helper_log = home.path().join("sentinel.jsonl");
+        crate::fault::set_helper_log(Some(helper_log.clone()));
+        let cancel = cx.operation().cancel_token().clone();
+        crate::fault::hook(Some(Box::new(move |point| {
+            if point == crate::fault::Point::WorkspaceSentinelAfterSpawn {
+                cancel.cancel(crate::ctx::StopCause::Requested);
+            }
+        })));
+        let result = run.enable_workspace_custody(&plan);
+        crate::fault::hook(None);
+        crate::fault::set_helper_log(None);
+        let retained = run
+            .partial_sentinel
+            .as_ref()
+            .map(|partial| partial.child_id());
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        let logged: Vec<ProcessIdentity> = std::fs::read_to_string(helper_log)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        for child in &logged {
+            reap_test_child(child);
+        }
+        drop(cleanup); // Exact-child fixture teardown only.
+        assert!(result.is_err());
+        assert_eq!(logged.len(), 1);
+        assert_eq!(
+            retained,
+            Some(logged[0].pid),
+            "cancellation must retain the started child"
+        );
+    }
+
+    #[test]
     fn enabling_existing_custody_does_not_spawn_a_second_sentinel() {
         let home = effigy_test_support::short_tempdir("ld-").unwrap();
         let cx = super::super::tests::context();

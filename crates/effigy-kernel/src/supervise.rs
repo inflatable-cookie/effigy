@@ -498,6 +498,7 @@ pub(crate) fn spawn_workspace_sentinel(
     root: &StateRoot,
     plan: &LifecyclePlan,
     next: &Invocation,
+    cx: &EffectContext,
 ) -> Result<SentinelLease, (RunError, Option<Box<PartialSentinel>>)> {
     let prepare = || -> Result<_, RunError> {
         if plan.placement == Placement::Guest {
@@ -553,19 +554,23 @@ pub(crate) fn spawn_workspace_sentinel(
             .as_mut()
             .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
         nonblocking(writer.as_raw_fd())?;
-        write_frame(writer, &config)?;
+        let op = cx.child(Duration::from_secs(30));
+        write_frame_with(writer, &config, op.operation())?;
         nonblocking(ready.as_raw_fd())?;
         let mut ack = [0u8];
-        read_exact(ready, &mut ack)?;
+        read_exact_with(ready, &mut ack, op.operation())?;
         if ack != [1] {
             return Err(RunError::unavailable(
                 "sentinel acknowledgement unavailable",
             ));
         }
-        ident::process_identity(partial.child.id())
+        op.operation().check("workspace sentinel acknowledgement")?;
+        let identity = ident::process_identity(partial.child.id())
             .verified()
             .cloned()
-            .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))
+            .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))?;
+        op.operation().check("workspace sentinel identity")?;
+        Ok(identity)
     })();
     match result {
         Ok(identity) => Ok(SentinelLease {
@@ -594,17 +599,28 @@ fn context(cancel: CancelToken, budget: Duration) -> OperationContext {
     )
 }
 fn write_frame(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
+    let op = context(CancelToken::default(), Duration::from_secs(30));
+    write_frame_with(writer, value, &op)
+}
+fn write_frame_with(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    op: &OperationContext,
+) -> io::Result<()> {
     let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
     if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
         return Err(io::Error::other("helper frame too large"));
     }
     let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
     frame.extend(bytes);
-    write_all(writer, &frame)
+    write_all_with(writer, &frame, op)
 }
 /// A bounded write to a nonblocking helper pipe.
 fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
+    write_all_with(writer, frame, &op)
+}
+fn write_all_with(writer: &mut impl Write, frame: &[u8], op: &OperationContext) -> io::Result<()> {
     let mut offset = 0;
     while offset < frame.len() {
         op.check("helper write")
@@ -632,6 +648,13 @@ fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 }
 fn read_exact(reader: &mut impl Read, bytes: &mut [u8]) -> io::Result<()> {
     let op = context(CancelToken::default(), Duration::from_secs(30));
+    read_exact_with(reader, bytes, &op)
+}
+fn read_exact_with(
+    reader: &mut impl Read,
+    bytes: &mut [u8],
+    op: &OperationContext,
+) -> io::Result<()> {
     let mut offset = 0;
     while offset < bytes.len() {
         op.check("helper read")
