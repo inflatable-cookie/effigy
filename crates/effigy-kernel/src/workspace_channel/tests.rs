@@ -739,6 +739,90 @@ fn pre_attach_eof_fault_retains_exact_owner_handle() {
 
 #[test]
 #[cfg(feature = "fault-injection")]
+fn pre_attach_detach_fault_retains_exact_owner_handle() {
+    use crate::fault::{self, Point};
+    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-pre-attach-detach-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[177]),
+            ),
+        );
+        let live = RunId::new(7, [177; 10]).unwrap();
+        let mut pipe = ArmReleaseOnInvoke {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body("build")),
+                        1,
+                    )),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Detach(RunBody { run: live }),
+                        2,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("detach cleanup is uncertain");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired());
+        fault::arm(None);
+        let retained = host.unsettled_attachment.as_ref().map(Attachment::run);
+        let fresh = cleanup(&cx).operation().effects().unwrap();
+        let retry = host.retry_cleanup(&fresh, &root);
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(reader);
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+        }
+        assert_eq!(
+            retained,
+            Some(live),
+            "the exact failed-detach owner must remain held"
+        );
+        assert!(retry.is_ok(), "same owner detach should recover while live");
+        assert_eq!(requests, 0, "detach must not record an EOF stop");
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
 fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
     use crate::fault::{self, Point};
     for (point, still_attached, detach, close_before_retry) in [

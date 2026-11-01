@@ -3226,20 +3226,26 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                             attachment.take();
                         }
                         None => {
-                            match self.dispatcher.detach(cx, root, session, body) {
+                            if !self.dispatcher.admitted.contains(&body.run) {
+                                return Err(Refusal::forbidden(
+                                    "this connection did not admit the run",
+                                ));
+                            }
+                            let mut owner = run::resume_owner(cx, root, session, body.run)
+                                .map_err(refusal_from)?;
+                            match owner.release(cx, root, Release::Detach) {
                                 Ok(()) => {
                                     self.dispatcher.admitted.remove(&body.run);
                                 }
                                 Err(error) => {
-                                    // The dispatcher returns a typed refusal; uncertain failures
-                                    // cannot confer a renewed owner lifetime.
-                                    if error.code != RefusalCode::Forbidden {
+                                    if !matches!(error, run::RunError::Refused(_)) {
+                                        self.unsettled_attachment = Some(owner);
                                         self.owner_cleanup_unsettled = true;
                                         return Err(Refusal::unknown(
                                             "attachment detach is unsettled",
                                         ));
                                     }
-                                    return Err(error);
+                                    return Err(refusal_from(error));
                                 }
                             }
                         }
