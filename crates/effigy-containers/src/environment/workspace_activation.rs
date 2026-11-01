@@ -1954,6 +1954,145 @@ mod tests {
 
     #[cfg(feature = "fault-injection")]
     #[test]
+    fn ambiguous_env_admission_owner_death_preserves_tagged_reservation() {
+        use effigy_kernel::observe::Observed;
+        use effigy_test_support::process::FixtureCommandExt;
+        const CHILD_HOME: &str = "EFFIGY_AMBIGUOUS_ENV_ADMISSION_CHILD_HOME";
+        if let Some(path) = std::env::var_os(CHILD_HOME) {
+            let state = root(std::path::Path::new(&path));
+            let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let env = env("workspace");
+            let mut adopted = false;
+            let mut armed = false;
+            let failure = effigy_kernel::fault_injection::with_hook(
+                move |point| {
+                    if point == "SessionSupervisorAdoptAfter" {
+                        adopted = true;
+                    }
+                    if adopted && point == "BeginRecovered" {
+                        armed = true;
+                    }
+                    if armed && point == "StoreCommitAfter" {
+                        armed = false;
+                        return Err(std::io::Error::other("injected post-commit ambiguity"));
+                    }
+                    Ok(())
+                },
+                || {
+                    WorkspaceActivation::begin_recoverable(
+                        &ctx,
+                        &env,
+                        &inputs(),
+                        &invocation(),
+                        options(54),
+                        "fixture-supervisor",
+                    )
+                },
+            )
+            .expect_err("post-commit ambiguity");
+            assert!(failure
+                .error
+                .to_string()
+                .contains("injected post-commit ambiguity"));
+            let custody = failure.custody.expect("retain session");
+            std::fs::write(std::path::Path::new(&path).join("ready"), b"ready").unwrap();
+            let mut line = String::new();
+            let _ = std::io::stdin().read_line(&mut line);
+            drop(custody);
+            panic!("parent must terminate this owner");
+        }
+        let fixture = home();
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "environment::workspace_activation::tests::ambiguous_env_admission_owner_death_preserves_tagged_reservation", "--nocapture"])
+            .env(CHILD_HOME, fixture.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(output)
+            .spawn_owned().unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let ready = fixture.path().join("ready");
+        while !ready.exists() && std::time::Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let reached = ready.exists();
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+        }
+        let status = child.wait().unwrap();
+        assert!(reached, "fixture owner did not reach ambiguous admission");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(nix::libc::SIGKILL));
+        }
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let env = env("workspace");
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        let Observed::Verified(Some(reservation), _) =
+            WorkspaceActivationReservation::recover(&reader, &env.resource)
+        else {
+            panic!("reservation unavailable")
+        };
+        let record = reservation.record();
+        assert_eq!(
+            record.state,
+            effigy_kernel::workspace_session::ActivationReservationState::Reserved
+        );
+        let env_run = record.environment_run.expect("bound Env run");
+        let session = record.session.as_ref().expect("bound session");
+        assert_eq!(session.run, options(54).id);
+        let session_run = session.run;
+        let session_owner = session.owner.clone();
+        drop(reader);
+        for (owner, id) in [(&env.resource, env_run), (&session_owner, session_run)] {
+            let outcome = effigy_kernel::run::settle_interrupted(
+                &ctx.cx,
+                &state,
+                owner,
+                id,
+                options(55).next,
+                &ctx.cleanup().unwrap(),
+                &mut super::super::EnvSettlement,
+            )
+            .expect("settle exact interrupted run");
+            assert_eq!(
+                outcome.cleanup(),
+                effigy_kernel::outcome::CleanupOutcome::Complete
+            );
+        }
+        let error = reservation
+            .cancel(&ctx.cx, &state, Wait::FailFast)
+            .expect_err("another attempt cannot cancel the staged session");
+        assert!(error
+            .to_string()
+            .contains("competing attempt or untagged reservation"));
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        let Observed::Verified(Some(after), _) =
+            WorkspaceActivationReservation::recover(&reader, &env.resource)
+        else {
+            panic!("reservation unavailable")
+        };
+        assert_eq!(after.id(), reservation.id());
+        assert_eq!(
+            after.state(),
+            effigy_kernel::workspace_session::ActivationReservationState::Reserved
+        );
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
     fn supervisor_adoption_failure_retains_raw_session_on_failed_cleanup() {
         use effigy_kernel::gate::OwnerState;
         use effigy_kernel::observe::Observed;
