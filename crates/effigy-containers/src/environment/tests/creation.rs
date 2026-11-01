@@ -810,6 +810,7 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
     use effigy_test_support::process::FixtureCommandExt;
     use std::collections::BTreeMap;
+    use std::io::Write;
 
     const CHILD_HOME: &str = "EFFIGY_PARKED_ACTIVATION_CHILD_HOME";
     let Some(child_home) = std::env::var_os(CHILD_HOME) else {
@@ -900,12 +901,45 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
                     .to_string()
                     .contains("reserved by a workspace activation")
             });
+        if ready {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"settle\n")
+                .unwrap();
+        }
+        let settled_marker = fixture.path().join("settled-ready");
+        let until = Instant::now() + Duration::from_secs(30);
+        while ready && !settled_marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let settled_live = settled_marker.exists() && child.try_wait().unwrap().is_none();
+        let cancelled = if settled_live {
+            match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+                Observed::Verified(reader, _) => matches!(
+                    effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(&reader, &stack.resource),
+                    Observed::Verified(Some(reservation), _) if reservation.state() == effigy_kernel::workspace_session::ActivationReservationState::Cancelled
+                ),
+                _ => false,
+            }
+        } else {
+            false
+        };
         drop(child.stdin.take());
         let exit = child.wait().expect("reap exact child");
         assert!(ready, "child {pid} did not park");
         assert!(gate_free, "parked activation released Env");
         assert!(refused, "ordinary competing admission refuses");
         assert!(alias_refused, "alias competing admission refuses");
+        assert!(settled_live, "same child remains alive after settlement");
+        assert!(
+            cancelled,
+            "exact reservation was cancelled before child exit"
+        );
         assert!(exit.success(), "child {pid} failed: {exit}");
         return;
     };
@@ -983,6 +1017,15 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
         .park(Instant::now() + Duration::from_secs(60))
         .expect("complete activation parks");
     assert_eq!(parked.session(), &session);
+    let foreign_fixture = home();
+    let foreign_root = root(foreign_fixture.path());
+    let foreign_ctx = EnvContext::new(&foreign_root, CancelToken::default()).unwrap();
+    let (_, custody) = parked
+        .abort(&foreign_ctx, Wait::FailFast)
+        .expect_err("foreign root refuses");
+    let super::super::ParkedAbortCustody::Activation(parked) = *custody else {
+        panic!("foreign root must retain the parked activation")
+    };
     let gate = effigy_kernel::gate::Gate::acquire(
         &ctx.cx,
         &state,
@@ -1001,6 +1044,13 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
     parked
         .abort(&ctx, Wait::FailFast)
         .expect("parked owners settle and cancel");
+    std::fs::write(
+        std::path::Path::new(&child_home).join("settled-ready"),
+        b"ready",
+    )
+    .unwrap();
+    input.clear();
+    let _ = std::io::stdin().read_line(&mut input);
 }
 
 #[test]

@@ -92,6 +92,12 @@ impl<'r> ParkedWorkspaceActivation<'r> {
         wait: Wait,
     ) -> Result<(), (EnvError, Box<ParkedAbortCustody<'r>>)> {
         use effigy_kernel::outcome::CleanupOutcome;
+        if !self._environment.owns_root(ctx.root) {
+            return Err((
+                EnvError::Invalid("parked activation cleanup uses a different state root".into()),
+                Box::new(ParkedAbortCustody::Activation(Box::new(self))),
+            ));
+        }
         let cleanup = match ctx.cleanup() {
             Ok(cleanup) => cleanup,
             Err(error) => {

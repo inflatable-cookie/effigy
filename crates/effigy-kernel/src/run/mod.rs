@@ -450,6 +450,11 @@ impl<'a> GuardedWorkspaceCleanup<'a> {
 }
 
 impl<'a> ParkedWorkspaceRun<'a> {
+    #[cfg(test)]
+    pub(crate) fn expire_for_test(&mut self) {
+        self.deadline = std::time::Instant::now();
+    }
+
     /// Reacquire only for cleanup, with a fresh cleanup budget. This never
     /// grants authority to resume activation or publish a generation.
     pub fn settle(
@@ -559,6 +564,13 @@ impl std::fmt::Debug for Run<'_> {
     }
 }
 impl<'a> Run<'a> {
+    #[cfg(test)]
+    pub(crate) fn share_workspace_gate_for_test(
+        &mut self,
+    ) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
+        self.guard.share_custody()
+    }
+
     /// Consume a claimed environment run and release only its gate. Failure
     /// returns the original owner so the caller can settle it explicitly.
     pub fn park_workspace(
@@ -597,6 +609,12 @@ impl<'a> Run<'a> {
             if recorded != identity {
                 return Err(RunError::refused(
                     "workspace activation owner identity changed",
+                ));
+            }
+            self.can_effect()?;
+            if std::time::Instant::now() >= deadline {
+                return Err(RunError::unavailable(
+                    "workspace activation deadline expired",
                 ));
             }
             let gates = self.guard.park().map_err(RunError::refused)?;

@@ -620,6 +620,10 @@ pub struct ParkedEnvRun<'r> {
 }
 
 impl<'r> ParkedEnvRun<'r> {
+    pub(super) fn owns_root(&self, root: &StateRoot) -> bool {
+        std::ptr::eq(self._root, root)
+    }
+
     pub(super) fn settle(
         self,
         cleanup: &CleanupContext,
@@ -640,8 +644,14 @@ impl<'r> EnvRun<'r> {
         session: &effigy_kernel::workspace_session::SessionRef,
         deadline: Instant,
     ) -> Result<ParkedEnvRun<'r>, (EnvError, Box<Self>)> {
+        let deadline = self.observation_deadline(deadline);
         let snapshot = (|| {
-            let plan = self.workspace_plan(reservation)?;
+            if Instant::now() >= deadline {
+                return Err(EnvError::Invalid(
+                    "workspace activation deadline expired".into(),
+                ));
+            }
+            let plan = self.workspace_plan_until(reservation, deadline)?;
             if &plan.session() != session {
                 return Err(EnvError::Invalid(
                     "activation session changed before parking".into(),
@@ -660,6 +670,11 @@ impl<'r> EnvRun<'r> {
             if receipt.workspace_id() != Some(target.container_id.as_str()) {
                 return Err(EnvError::Invalid(
                     "bound target differs from the creator receipt".into(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(EnvError::Invalid(
+                    "workspace activation deadline expired".into(),
                 ));
             }
             Ok::<_, EnvError>((plan, target, receipt))
@@ -1483,9 +1498,17 @@ impl<'r> EnvRun<'r> {
         &self,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
     ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
+        self.workspace_plan_until(reservation, Instant::now() + Duration::from_secs(30))
+    }
+
+    fn workspace_plan_until(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        deadline: Instant,
+    ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
         let observe = self
             .cx
-            .child(Duration::from_secs(30))
+            .child_until(deadline)
             .operation()
             .observe()
             .map_err(|_| {

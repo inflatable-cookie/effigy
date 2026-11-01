@@ -1530,13 +1530,13 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
     let reservation = decided(&cx, &root, &environment());
     let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(233));
     let run = admit_activation(&cx, &root, &reservation, run_id(234));
-    let parked = run
+    let mut parked = run
         .park_workspace(
             &reservation,
-            std::time::Instant::now() + std::time::Duration::from_millis(100),
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
         )
         .expect("park");
-    std::thread::sleep(std::time::Duration::from_millis(120));
+    parked.expire_for_test();
     let (_error, _custody) = parked.reacquire().expect_err("expired deadline refuses");
 }
 
@@ -1609,10 +1609,10 @@ fn parked_run_can_settle_after_activation_deadline_expires() {
     let reservation = decided(&cx, &root, &environment);
     let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
     let run = admit_activation(&cx, &root, &reservation, run_id(241));
-    let parked = run
-        .park_workspace(&reservation, Instant::now() + Duration::from_millis(100))
+    let mut parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
         .unwrap();
-    std::thread::sleep(Duration::from_millis(120));
+    parked.expire_for_test();
     parked
         .settle(&cleanup(&cx), &mut adapter())
         .expect("cleanup uses a fresh budget");
@@ -1654,6 +1654,67 @@ fn parked_cleanup_gate_timeout_returns_custody_for_retry() {
     parked
         .settle(&cleanup(&cx), &mut adapter())
         .expect("retry settles the same run");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn park_refuses_release_callbacks_and_retains_guarded_run() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+    let released = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&released);
+    run.on_settle(move || flag.store(true, Ordering::SeqCst));
+    let (error, run) = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .expect_err("release action cannot be parked");
+    assert!(error.to_string().contains("release actions"));
+    assert!(!released.load(Ordering::SeqCst));
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    assert!(released.load(Ordering::SeqCst));
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn park_refuses_shared_gate_and_retains_guarded_run() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(247));
+    let copies = run.share_workspace_gate_for_test().unwrap();
+    let (error, run) = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .expect_err("shared gate cannot be parked");
+    assert!(error.to_string().contains("shared custody"));
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    drop(copies);
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
     session.settle(&cleanup(&cx), &mut adapter()).unwrap();
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
 }
