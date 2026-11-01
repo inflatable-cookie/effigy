@@ -607,6 +607,21 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
             &mut NoStreams,
         );
         let stops = host.stops(id(10));
+        let owner_row_live =
+            run::resume_owner(&host.cx, &host.root, session.session(), id(10)).is_ok();
+        let owner_response = pipe.frames().iter().any(|frame| match frame {
+            Frame::Response(Response {
+                id: request_id,
+                outcome: ResponseOutcome::Observed(value),
+            }) if *request_id == RequestId::new([2; 16]) => {
+                serde_json::from_value::<AttachView>(value.clone()).is_ok_and(|view| {
+                    view.run == id(10)
+                        && view.client == Client::Owner
+                        && view.attachment == run::owner_attachment_id(id(10))
+                })
+            }
+            _ => false,
+        });
         let retry = server.serve(
             &mut Pipe::new(&authenticated(session.session())),
             &host.cx,
@@ -622,6 +637,16 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
         host.assert_foreign();
         assert!(result.is_err(), "malformed frame must close the connection");
         assert_eq!(stops, 0, "malformed traffic cannot forge owner EOF");
+        assert!(
+            owner_row_live,
+            "the original owner row must remain attached"
+        );
+        if attach {
+            assert!(
+                owner_response,
+                "the original owner attachment must have opened"
+            );
+        }
         assert_eq!(
             retry.expect_err("unsettled owner fences service").code,
             RefusalCode::Unknown
