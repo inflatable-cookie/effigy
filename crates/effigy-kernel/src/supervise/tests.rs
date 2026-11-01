@@ -966,3 +966,89 @@ fn a_memory_helper_frame_from_another_protocol_refuses_by_name() {
     );
     assert!(!output.status.success(), "{output:?}");
 }
+
+/// The owner reserves a frame's request number before it writes the frame, so a
+/// lost or late acknowledgement can never be read as the answer to a later
+/// receipt (effigy#529; review 5730659408).
+#[test]
+fn a_lost_acknowledgement_never_answers_the_next_receipt() {
+    use memory::MemoryGuard;
+    let world = World::new();
+    let flag = world.dir.path().join("ack-now");
+    let wrote = world.dir.path().join("ack-written");
+    let script = world.dir.path().join("bin/guard");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nwhile [ ! -f '{flag}' ]; do sleep 0.02; done\n\
+             printf '\\000\\000\\000\\000\\000\\000\\000\\001'\n\
+             : > '{wrote}'\nexec cat >/dev/null\n",
+            flag = flag.display(),
+            wrote = wrote.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let child = std::process::Command::new(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let guard_pid = child.id();
+    let mut guard = MemoryGuard::testing(child, cx(), Duration::from_millis(200));
+    let frame = |sequence| Effect {
+        sequence,
+        spec: crate::run::EffectSpec {
+            target: Fence {
+                resource: owner("lost-ack"),
+                generation: crate::id::Generation::new(1),
+            },
+            kind: crate::custody::KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: crate::run::Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: crate::run::EffectState::Applied,
+        receipt: None,
+        reason: None,
+    };
+    // The helper withholds the answer to the first frame, so that exchange ends
+    // without an acknowledgement. Its request number is spent.
+    guard
+        .register(&frame(1))
+        .expect_err("the withheld answer must not count as an acknowledgement");
+    std::fs::write(&flag, b"1").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !wrote.exists() {
+        assert!(Instant::now() < deadline, "the helper must answer late");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // The next frame names a new number, so the late answer to the first frame
+    // is refused instead of being staged against this receipt.
+    let error = guard
+        .register(&frame(2))
+        .expect_err("a late answer must never acknowledge a later frame");
+    assert!(
+        error.to_string().contains("acknowledged another request"),
+        "{error}"
+    );
+    // Test fixture teardown: the recorded guard child only.
+    // SAFETY: the exact pid this test spawned.
+    unsafe {
+        libc::kill(guard_pid as i32, libc::SIGKILL);
+    }
+    let mut guard = guard;
+    let _ = guard.testing_child().wait();
+}
+
+/// A reserved number is spent even when the frame or its answer fails, so a
+/// retry can never reuse it.
+#[test]
+fn a_reserved_request_is_never_reused() {
+    use memory::Requests;
+    let mut requests = Requests::default();
+    assert_eq!(requests.reserve().unwrap(), 1);
+    // The first exchange failed. The reservation is not rolled back.
+    assert_eq!(requests.reserve().unwrap(), 2);
+    assert_eq!(requests.reserve().unwrap(), 3);
+}

@@ -15,9 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
   blocked pre-exec child is reaped. A retained memory backup re-proves its own
   exact incarnation before it is sent a custody receipt, so a backup that
   exited or was replaced gets no frame and the refusal names the retained
-  guard instead of reporting a broken pipe. Memory-backup acknowledgements now
-  name the exact receipt request, so a late answer to an earlier frame cannot
-  answer the frame just written. The helper handshake protocol is version 3:
+  guard instead of reporting a broken pipe. A memory-backup receipt frame now
+  names a per-guard request number that is reserved before the frame is written
+  and never reused, so a lost or late acknowledgement can never answer a later
+  receipt. The helper handshake protocol is version 3:
   an older helper binary and this one refuse each other by name instead of
   exchanging a frame they cannot interpret. Workspace `Discard` stays refused.
 

@@ -21,8 +21,13 @@ pub(crate) struct MemoryGuard {
     close_deadline: Option<Instant>,
     closure: Option<ClosurePin>,
     /// Monotonic per-guard request number: a stale acknowledgement carries the
-    /// previous number and never answers the frame just written.
-    requests: u64,
+    /// previous number and never answers the frame just written. A number is
+    /// reserved before its frame is written and is never reused, even when the
+    /// write or its acknowledgement fails.
+    requests: Requests,
+    /// How long one frame waits for its own acknowledgement, within the
+    /// caller's remaining context budget.
+    ack_budget: Duration,
 }
 
 /// Owns a helper whose startup did not complete. Deliberately exposes no
@@ -160,7 +165,8 @@ impl MemoryGuard {
             cx: cx.clone(),
             close_deadline: None,
             closure: Some(closure),
-            requests: 0,
+            requests: Requests::default(),
+            ack_budget: ACK_BUDGET,
         };
         let started = (|| -> Result<(), RunError> {
             if purpose == MemoryPurpose::CheckoutLease {
@@ -201,6 +207,35 @@ impl MemoryGuard {
         }
     }
 
+    /// A guard around a helper this test spawned itself, for driving the
+    /// owner-side frame and acknowledgement path without a real custodian. It
+    /// grants no custody: the recorded identity is only that process's own.
+    #[cfg(test)]
+    pub(super) fn testing(mut child: Child, cx: EffectContext, ack_budget: Duration) -> Self {
+        let input = child.stdin.take().expect("piped guard stdin");
+        let output = child.stdout.take().expect("piped guard stdout");
+        // The owner always writes and reads these pipes nonblocking, so its
+        // deadline check is reached between polls. Keep the fixture identical.
+        nonblocking(input.as_raw_fd()).expect("nonblocking guard stdin");
+        nonblocking(output.as_raw_fd()).expect("nonblocking guard stdout");
+        let identity = ident::process_identity(child.id()).verified().cloned();
+        Self {
+            child,
+            input: Some(input),
+            output: Some(output),
+            identity,
+            cx,
+            close_deadline: None,
+            closure: None,
+            requests: Requests::default(),
+            ack_budget,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn testing_child(&mut self) -> &mut Child {
+        &mut self.child
+    }
     pub(crate) fn closure_pin(&self) -> Result<ClosurePin, RunError> {
         self.closure
             .as_ref()
@@ -212,7 +247,11 @@ impl MemoryGuard {
         // exact incarnation before a frame is written to it. A guard that has
         // exited or been replaced gets no receipt, and stays retained.
         self.verify_retained()?;
-        let request = self.requests.saturating_add(1);
+        // Reserve the number BEFORE the write. A frame that may have reached
+        // the guard burns its number even when the acknowledgement is lost or
+        // late, so the next frame can never reuse it and a late answer can
+        // never satisfy a later receipt.
+        let request = self.requests.reserve()?;
         let input = self
             .input
             .as_mut()
@@ -225,9 +264,7 @@ impl MemoryGuard {
             },
             self.cx.child(Duration::from_secs(30)).operation(),
         )?;
-        self.ack(request)?;
-        self.requests = request;
-        Ok(())
+        self.ack(request)
     }
     /// Read-only proof that the retained guard is still the exact process this
     /// owner started and that its pipe is still ours.
@@ -261,7 +298,7 @@ impl MemoryGuard {
     /// and gates. It is not a receipt registration.
     fn ready(&mut self) -> Result<(), RunError> {
         let mut byte = [0];
-        let cx = self.cx.child(Duration::from_secs(30));
+        let cx = self.cx.child(self.ack_budget);
         loop {
             cx.operation().check("foreground guard acknowledgement")?;
             let output = self
@@ -292,39 +329,15 @@ impl MemoryGuard {
         Ok(())
     }
     fn ack(&mut self, request: u64) -> Result<(), RunError> {
-        let mut bytes = [0u8; 8];
-        let cx = self.cx.child(Duration::from_secs(30));
-        let mut offset = 0;
-        while offset < bytes.len() {
-            cx.operation().check("foreground guard acknowledgement")?;
-            let output = self
-                .output
-                .as_mut()
-                .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
-            match output.read(&mut bytes[offset..]) {
-                Ok(0) => {
-                    return Err(
-                        io::Error::other("foreground guard closed acknowledgement pipe").into(),
-                    )
-                }
-                Ok(n) => offset += n,
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    std::thread::sleep(Duration::from_millis(2))
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-        if u64::from_be_bytes(bytes) != request {
-            return Err(RunError::broken(
-                "foreground guard acknowledged another request",
-            ));
-        }
-        Ok(())
+        // A mismatch is a refusal, never a retry: the guard may already hold
+        // the frame this answer did not name, so the owner keeps it as
+        // unsettled custody rather than replaying a receipt.
+        let cx = self.cx.child(self.ack_budget);
+        let output = self
+            .output
+            .as_mut()
+            .ok_or_else(|| io::Error::other("foreground guard output missing"))?;
+        read_acknowledgement(output, request, cx.operation())
     }
     pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
         self.closure.take();
@@ -356,6 +369,62 @@ impl Drop for MemoryGuard {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
+}
+
+/// How long one receipt frame waits for its own acknowledgement.
+const ACK_BUDGET: Duration = Duration::from_secs(30);
+
+/// The per-guard receipt request numbers. A number is reserved before its frame
+/// is written, so a frame that may have reached the guard — or whose answer was
+/// lost — can never share its number with a later frame.
+#[derive(Debug, Default)]
+pub(super) struct Requests {
+    last: u64,
+}
+impl Requests {
+    pub(super) fn reserve(&mut self) -> Result<u64, RunError> {
+        self.last = self
+            .last
+            .checked_add(1)
+            .ok_or_else(|| RunError::refused("foreground custody request numbers exhausted"))?;
+        Ok(self.last)
+    }
+}
+
+/// Read the one answer a frame may accept: eight big-endian bytes naming that
+/// exact request. Any other value is a stale or foreign answer and is refused;
+/// it must never stand in for the acknowledgement of the frame just written.
+fn read_acknowledgement(
+    reader: &mut impl Read,
+    request: u64,
+    cx: &crate::ctx::OperationContext,
+) -> Result<(), RunError> {
+    let mut bytes = [0u8; 8];
+    let mut offset = 0;
+    while offset < bytes.len() {
+        cx.check("foreground guard acknowledgement")?;
+        match reader.read(&mut bytes[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::other("foreground guard closed acknowledgement pipe").into())
+            }
+            Ok(n) => offset += n,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                std::thread::sleep(Duration::from_millis(2))
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if u64::from_be_bytes(bytes) != request {
+        return Err(RunError::broken(
+            "foreground guard acknowledged another request",
+        ));
+    }
+    Ok(())
 }
 
 fn memory_frame(

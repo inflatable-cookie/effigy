@@ -1579,7 +1579,6 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
     }
 }
 
-/// The verifier's cells (effigy#476): only the recorded generation, the
 /// A workload that records that it reached its first instruction, so a refusal
 /// before `go` is observable as an absent file rather than an exit code.
 fn anchored_spawn_spec(home: &Path) -> ProcessSpec {
@@ -1707,6 +1706,7 @@ fn anchor_lost_after_receipt_refuses_before_go() {
     assert!(cleanup.is_ok(), "refusal cleanup: {cleanup:?}");
 }
 
+/// The verifier's cells (effigy#476): only the recorded generation, the
 /// recorded group membership and the readable nonce prove an anchor. A changed
 /// generation (a reused pid), a changed group, a changed nonce and an exited or
 /// reaped anchor all refuse, and a refusal never signals the recorded process.
