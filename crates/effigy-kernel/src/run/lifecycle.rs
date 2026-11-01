@@ -201,8 +201,7 @@ mod tests {
         Arc,
     };
 
-    #[test]
-    fn backup_start_fault_retains_partial_owner_with_same_sentinel() {
+    fn check_backup_start_fault(point: crate::fault::Point) {
         let home = effigy_test_support::short_tempdir("lb-").unwrap();
         let cx = super::super::tests::context();
         let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -223,10 +222,7 @@ mod tests {
                 .unwrap(),
             placement: crate::supervise::Placement::Detached,
         };
-        crate::fault::arm_point(
-            crate::fault::Point::WorkspaceBackupAfterSpawn,
-            crate::fault::Fault::Enospc,
-        );
+        crate::fault::arm_point(point, crate::fault::Fault::Enospc);
         let enabled = run.enable_custody(&plan);
         let fired = crate::fault::fired();
         crate::fault::arm(None);
@@ -240,7 +236,7 @@ mod tests {
         let cleanup =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
         assert!(enabled.is_err());
-        assert!(fired, "the post-spawn backup fault must fire");
+        assert!(fired, "the backup startup fault must fire: {point:?}");
         assert!(sentinel.is_some());
         assert!(partial, "the exact partial backup must remain reachable");
         assert!(
@@ -267,6 +263,16 @@ mod tests {
             );
             // Fixture teardown only: this is not a production settlement proof.
             drop(owner);
+        }
+    }
+
+    #[test]
+    fn backup_start_fault_retains_partial_owner_with_same_sentinel() {
+        for point in [
+            crate::fault::Point::WorkspaceBackupAfterSpawn,
+            crate::fault::Point::WorkspaceBackupAfterAck,
+        ] {
+            check_backup_start_fault(point);
         }
     }
 

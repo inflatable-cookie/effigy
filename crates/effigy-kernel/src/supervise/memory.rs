@@ -158,6 +158,9 @@ impl MemoryGuard {
                 guard.cx.child(Duration::from_secs(30)).operation(),
             )?;
             guard.ack()?;
+            if purpose == MemoryPurpose::CheckoutLease {
+                crate::fault_point!(WorkspaceBackupAfterAck)?;
+            }
             if identity.is_none() {
                 return Err(RunError::unavailable(
                     "foreground guard identity unavailable",
