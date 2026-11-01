@@ -653,6 +653,135 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
         );
     }
 }
+
+struct LoopbackTransport(std::net::TcpStream);
+impl Transport for LoopbackTransport {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.0, bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut self.0, bytes)
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        Some(ServerIdentity { digest: pin() })
+    }
+}
+
+#[test]
+fn successive_loopback_clients_do_not_inherit_owner_on_replay() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut first = authenticated(session.session());
+    first.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    first.push(Frame::Request(request(
+        session.session(),
+        9,
+        RequestBody::Detach(RunBody { run: id(10) }),
+    )));
+    let mut second = authenticated(session.session());
+    second.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    second.push(Frame::Request(request(
+        session.session(),
+        2,
+        RequestBody::Attach(AttachBody {
+            run: id(10),
+            streams: vec![StreamKind::TerminalOutput],
+            cursor: None,
+            cursors: None,
+        }),
+    )));
+    let inputs = [Pipe::new(&first).input, Pipe::new(&second).input];
+    let listener =
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("loopback listener");
+    listener.set_nonblocking(true).expect("nonblocking accept");
+    let address = listener.local_addr().expect("bound address");
+    let client = std::thread::spawn(move || -> std::io::Result<Vec<Vec<u8>>> {
+        let mut replies = Vec::new();
+        for input in inputs {
+            let mut socket = std::net::TcpStream::connect(address)?;
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+            std::io::Write::write_all(&mut socket, &input)?;
+            socket.shutdown(std::net::Shutdown::Write)?;
+            let mut reply = Vec::new();
+            std::io::Read::read_to_end(&mut socket, &mut reply)?;
+            replies.push(reply);
+        }
+        Ok(replies)
+    });
+    let mut served = Vec::new();
+    for _ in 0..2 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let (socket, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(error) => panic!("loopback accept failed: {error}"),
+            }
+        };
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .expect("read timeout");
+        served.push(server.serve(
+            &mut LoopbackTransport(socket),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        ));
+    }
+    let replies = client.join().expect("client thread").expect("client I/O");
+    let mut decoded = Pipe::new(&[]);
+    decoded.output = replies[1].clone();
+    let secondary = decoded.frames().iter().any(|frame| match frame {
+        Frame::Response(Response {
+            id: request_id,
+            outcome: ResponseOutcome::Observed(value),
+        }) if *request_id == RequestId::new([2; 16]) => {
+            serde_json::from_value::<AttachView>(value.clone())
+                .is_ok_and(|view| view.client == Client::Secondary)
+        }
+        _ => false,
+    });
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert!(
+        served.iter().all(Result::is_ok),
+        "both connections must complete"
+    );
+    assert!(
+        secondary,
+        "replay on a second socket must attach as secondary"
+    );
+    assert_eq!(stops, 0, "secondary EOF must not stop the detached owner");
+}
 fn input() -> StreamFrame {
     StreamFrame {
         id: RequestId::new([2; 16]),
