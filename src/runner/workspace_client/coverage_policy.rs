@@ -4,11 +4,16 @@
 //! In particular, the host must call `unsupported_resolved_task` after resolving
 //! a task's lock and control action from its own trusted catalog.
 
-use effigy_cli::{Command, ContainerSubcommand, RunsAction};
+use effigy_cli::{Command, ContainerSubcommand, RunsAction, TasksQaCommand};
 
 const OTHER: &str = "workspace Level 2 unsupported: operation; invoke the host CLI independently";
 const CONTAINER: &str =
     "workspace Level 2 unsupported: container operation; invoke the host CLI independently";
+const QA_GROUP: &str =
+    "workspace Level 2 unsupported: QA group operation; invoke the host CLI independently";
+const DOCTOR_MUTATION: &str =
+    "workspace Level 2 unsupported: doctor mutation; invoke the host CLI independently";
+const INTERNAL: &str = "hidden internal entry points are refused in a container-mode guest";
 const RUN_LOGS: &str = "workspace Level 2 unsupported: run logs; invoke the host CLI independently";
 const GATEWAY: &str = "workspace Level 2 unsupported: gateway; invoke the host CLI independently";
 const RELEASE: &str = "workspace Level 2 unsupported: release; invoke the host CLI independently";
@@ -22,21 +27,30 @@ const UNKNOWN_TASK: &str = "workspace task policy unknown; no operation admitted
 /// Return a stable, argument-free refusal for classes outside the Level 1 scope.
 ///
 /// Task requests require a second check after host-side resolution. Hidden
-/// producer entries are left to the existing stricter internal-entry refusal.
+/// producer entries are refused before they can reach the host.
 pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
     match cmd {
         Command::Version
-        | Command::Tasks(_)
         | Command::Task(_)
         | Command::Workspace(_)
-        | Command::Doctor(_)
         | Command::Help(_)
-        | Command::HelpGroup(_)
-        | Command::InternalScriptRun(_)
+        | Command::HelpGroup(_) => None,
+        Command::Tasks(args) => match &args.qa {
+            None | Some(TasksQaCommand::GroupRun { .. }) => None,
+            Some(
+                TasksQaCommand::GroupsList { .. }
+                | TasksQaCommand::GroupStatus { .. }
+                | TasksQaCommand::GroupLogs { .. }
+                | TasksQaCommand::GroupStop { .. },
+            ) => Some(QA_GROUP),
+        },
+        Command::Doctor(args) if args.fix || args.refresh => Some(DOCTOR_MUTATION),
+        Command::Doctor(_) => None,
+        Command::InternalScriptRun(_)
         | Command::InternalGateway(_)
         | Command::InternalGatewayIdentity(_)
         | Command::InternalGuestProbe(_)
-        | Command::InternalContainerLeaseReaper(_) => None,
+        | Command::InternalContainerLeaseReaper(_) => Some(INTERNAL),
         Command::Container(args) => match args.subcommand {
             ContainerSubcommand::Down { .. }
             | ContainerSubcommand::Status { .. }

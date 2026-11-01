@@ -2,7 +2,7 @@
 mod coverage_policy;
 
 use coverage_policy::{unsupported, unsupported_resolved_task, ResolvedTaskPolicy};
-use effigy_cli::parse_command;
+use effigy_cli::{parse_command, Command, GuestProbeArgs, TasksArgs, TasksQaCommand};
 
 fn parse(args: &[&str]) -> effigy_cli::Command {
     parse_command(args.iter().map(|arg| (*arg).to_owned()))
@@ -57,4 +57,58 @@ fn resolved_task_policy_refuses_shared_pause_and_unknown() {
         assert!(diagnostic.contains("host CLI independently"));
     }
     assert!(unsupported_resolved_task(ResolvedTaskPolicy::Unknown).is_some());
+}
+
+#[test]
+fn qa_subcommands_are_explicit_and_hidden_entries_never_reach_routing() {
+    let command = |qa| {
+        Command::Tasks(TasksArgs {
+            qa: Some(qa),
+            ..TasksArgs::default()
+        })
+    };
+    let run = command(TasksQaCommand::GroupRun {
+        selector: "smoke".into(),
+        file: None,
+        scopes: vec![],
+        plan: false,
+        output_json: false,
+    });
+    assert_eq!(unsupported(&run), None);
+    for qa in [
+        TasksQaCommand::GroupsList {
+            filter: None,
+            file: None,
+            output_json: false,
+            pretty_json: false,
+        },
+        TasksQaCommand::GroupStatus {
+            run_id: "private".into(),
+            output_json: false,
+        },
+        TasksQaCommand::GroupLogs {
+            run_id: "private".into(),
+            follow: false,
+        },
+        TasksQaCommand::GroupStop {
+            run_id: "private".into(),
+            output_json: false,
+        },
+    ] {
+        let diagnostic = unsupported(&command(qa)).expect("deferred QA operation must refuse");
+        assert!(diagnostic.contains("workspace Level 2 unsupported"));
+        assert!(!diagnostic.contains("private"));
+    }
+    let hidden = Command::InternalGuestProbe(GuestProbeArgs::Identity);
+    assert_eq!(
+        unsupported(&hidden),
+        Some("hidden internal entry points are refused in a container-mode guest")
+    );
+}
+
+#[test]
+fn doctor_mutations_do_not_use_the_read_only_route() {
+    assert_eq!(unsupported(&parse(&["doctor"])), None);
+    assert!(unsupported(&parse(&["doctor", "--fix"])).is_some());
+    assert!(unsupported(&parse(&["doctor", "--deep", "--refresh"])).is_some());
 }
