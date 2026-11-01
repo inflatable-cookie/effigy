@@ -641,6 +641,48 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an explicitly supplied older Effigy executable"]
+    fn diagnose_old_sentinel_before_config() {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+
+        let binary = std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY")
+            .expect("name the older Effigy executable");
+        let mut home = LayeredHome::new();
+        let log_path = home.path().join("stderr.log");
+        let log = std::fs::File::create(&log_path).unwrap();
+        let mut command = Command::new(binary);
+        command
+            .arg("__kernel-sentinel")
+            .env_clear()
+            .env("HOME", home.path())
+            .env("TMPDIR", home.path())
+            .current_dir(home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(log));
+        let mut child = LayeredChild::spawn(&mut command, home.path()).unwrap();
+        assert!(child.identity.is_some(), "old helper identity unavailable");
+        std::thread::sleep(Duration::from_millis(200));
+        let early = child.child().try_wait().unwrap();
+        drop(child.child().stdin.take());
+        let status = child
+            .wait(Duration::from_secs(3))
+            .expect("reap exact child");
+        let mut err = String::new();
+        std::fs::File::open(&log_path)
+            .unwrap()
+            .take(8192)
+            .read_to_string(&mut err)
+            .unwrap();
+        std::fs::remove_file(log_path).unwrap();
+        let entries = std::fs::read_dir(home.path()).unwrap().count();
+        println!("early={early:?}; final={status:?}; stderr={err:?}; fixture_entries={entries}");
+        assert_eq!(entries, 0, "fixture changed before or after EOF");
+        home.finish();
+    }
+
+    #[test]
     fn layered_fixture_unwind_reaps_its_exact_owned_child() {
         let mut path = std::path::PathBuf::new();
         let mut pid = 0u32;
