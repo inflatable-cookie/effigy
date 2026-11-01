@@ -467,7 +467,8 @@ impl ReservedBackendObservation for ContainerBackendObservation {
 pub(in crate::runner) type ReservedReobserver<'a> = Box<
     dyn FnOnce(
             std::time::Instant,
-        ) -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError>
+        )
+            -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError>
         + 'a,
 >;
 

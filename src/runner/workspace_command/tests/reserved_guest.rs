@@ -96,6 +96,12 @@ enum Fault {
     None,
     LongObservationBudget,
     ExpiredDeadline,
+    /// The gated re-observation sees a replaced target.
+    GatedChangedTarget,
+    /// The gated re-observation names another valid full id.
+    GatedIdMismatch,
+    /// The absolute deadline is spent before the gated read can run.
+    GatedExpiredDeadline,
     Identity,
     UnknownIdentity,
     Alias,
@@ -488,6 +494,8 @@ home = "/home/vscode"
             },
             supervisor_id: "fixture-supervisor",
         };
+        let gated_reads = std::rc::Rc::new(Cell::new(0));
+        let gated_reads_for_closure = gated_reads.clone();
         let probe_for_input: Box<dyn super::WorkspaceGuestProbe> = Box::new(probe.clone());
         let probe_identity = probe.identity.clone();
         let probe_guest = probe.guest.clone();
@@ -567,33 +575,51 @@ home = "/home/vscode"
                     fired.clone(),
                 )),
                 artifact: artifact.clone(),
-                reobserve: Box::new(move |deadline| {
-                    assert!(std::time::Instant::now() < deadline);
-                    assert!(
-                        deadline <= original_deadline,
-                        "callback exceeded the activation deadline"
-                    );
-                    Ok((
-                        Observed::Verified(
-                            vec![TargetCandidate {
-                                identity: reobserved_target.clone(),
-                                project: reobserved_project,
-                                created_by: Some(creating_run),
-                            }],
-                            evidence(),
-                        ),
-                        Observed::Verified(
-                            BoundPlatform {
-                                target: reobserved_target,
-                                platform: reobserved_image.clone(),
-                                artifact_platform: reobserved_image,
-                                artifact: reobserved_object,
-                                artifact_version: reobserved_version,
-                                execution_available: true,
-                            },
-                            evidence(),
-                        ),
-                    ))
+                reobserve: Box::new({
+                    let gated_reads = gated_reads_for_closure;
+                    move |deadline| {
+                        gated_reads.set(gated_reads.get() + 1);
+                        assert!(std::time::Instant::now() < deadline);
+                        assert!(
+                            deadline <= original_deadline,
+                            "callback exceeded the activation deadline"
+                        );
+                        Ok((
+                            Observed::Verified(
+                                vec![TargetCandidate {
+                                    identity: match fault {
+                                        // A replaced target keeps the shape and changes
+                                        // the boot id.
+                                        Fault::GatedChangedTarget => ContainerIdentity {
+                                            vm_boot_id: "ff".repeat(32),
+                                            ..reobserved_target.clone()
+                                        },
+                                        // Another valid full id: individually a good
+                                        // observation, but not the frozen one.
+                                        Fault::GatedIdMismatch => ContainerIdentity {
+                                            container_id: "ee".repeat(32),
+                                            ..reobserved_target.clone()
+                                        },
+                                        _ => reobserved_target.clone(),
+                                    },
+                                    project: reobserved_project,
+                                    created_by: Some(creating_run),
+                                }],
+                                evidence(),
+                            ),
+                            Observed::Verified(
+                                BoundPlatform {
+                                    target: reobserved_target,
+                                    platform: reobserved_image.clone(),
+                                    artifact_platform: reobserved_image,
+                                    artifact: reobserved_object,
+                                    artifact_version: reobserved_version,
+                                    execution_available: true,
+                                },
+                                evidence(),
+                            ),
+                        ))
+                    }
                 }),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
@@ -642,7 +668,9 @@ home = "/home/vscode"
                 deadline: match fault {
                     // The one absolute deadline is already past: the producer must
                     // refuse rather than measure a fresh budget from now.
-                    Fault::ExpiredDeadline => std::time::Instant::now() - Duration::from_secs(1),
+                    Fault::ExpiredDeadline | Fault::GatedExpiredDeadline => {
+                        std::time::Instant::now() - Duration::from_secs(1)
+                    }
                     // The gated re-observation must still see the activation's own
                     // deadline however far out this one is.
                     Fault::LongObservationBudget => {
@@ -672,6 +700,40 @@ home = "/home/vscode"
             assert!(applies[0].contains("--build --remove-orphans"));
             for file in &policy.compose_files {
                 assert!(applies[0].contains(file.to_str().unwrap()));
+            }
+        }
+        if matches!(
+            fault,
+            Fault::GatedChangedTarget | Fault::GatedIdMismatch | Fault::GatedExpiredDeadline
+        ) {
+            match &result {
+                Err(error) => {
+                    let text = format!("{error:?}");
+                    if matches!(fault, Fault::GatedExpiredDeadline) {
+                        // A spent deadline refuses before the read, so the read
+                        // never happens and the message names the deadline.
+                        assert!(
+                            text.contains("deadline") || text.contains("expired"),
+                            "{text}"
+                        );
+                    } else {
+                        assert!(
+                            text.contains("preflight and gated target/image identities"),
+                            "{text}"
+                        );
+                    }
+                }
+                Ok(_) => panic!("a gated re-observation that differs must refuse"),
+            }
+            assert_eq!(minted.get(), 0, "no credential is minted");
+            if matches!(fault, Fault::GatedExpiredDeadline) {
+                assert_eq!(
+                    gated_reads.get(),
+                    0,
+                    "a spent absolute deadline must refuse before the gated read runs"
+                );
+            } else {
+                assert_eq!(gated_reads.get(), 1, "the gated read ran exactly once");
             }
         }
         let mut guest = shared.borrow_mut();
@@ -816,7 +878,14 @@ home = "/home/vscode"
                 guest.link_target(ENTRY_SELECTOR).as_deref(),
                 Some("/predecessor")
             );
-            if matches!(fault, Fault::Identity | Fault::UnknownIdentity) {
+            if matches!(
+                fault,
+                Fault::Identity
+                    | Fault::UnknownIdentity
+                    | Fault::GatedChangedTarget
+                    | Fault::GatedIdMismatch
+                    | Fault::GatedExpiredDeadline
+            ) {
                 assert_eq!(minted.get(), 0);
             } else {
                 assert_eq!(
@@ -825,8 +894,26 @@ home = "/home/vscode"
                     "fault reached its intended boundary: {fault:?}"
                 );
             }
+            // The gated re-observation refuses before anything is staged, which is
+            // exactly the point: no byte reaches the guest on a changed target.
             assert!(
-                guest.file_sha256(&object.path).unwrap().is_some(),
+                guest.file_sha256(&object.path).unwrap().is_none()
+                    || !matches!(
+                        fault,
+                        Fault::GatedChangedTarget
+                            | Fault::GatedIdMismatch
+                            | Fault::GatedExpiredDeadline
+                    ),
+                "a gated refusal must not stage the artifact"
+            );
+            assert!(
+                guest.file_sha256(&object.path).unwrap().is_some()
+                    || matches!(
+                        fault,
+                        Fault::GatedChangedTarget
+                            | Fault::GatedIdMismatch
+                            | Fault::GatedExpiredDeadline
+                    ),
                 "actual staging ran before injected fault"
             );
         }
@@ -1120,6 +1207,21 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_of_a_replaced_target_refuses() {
+    run(Fault::GatedChangedTarget);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_of_another_valid_id_refuses() {
+    run(Fault::GatedIdMismatch);
+}
+
+#[test]
+fn workspace_reserved_gated_reobservation_past_the_deadline_refuses_without_reading() {
+    run(Fault::GatedExpiredDeadline);
 }
 
 #[test]

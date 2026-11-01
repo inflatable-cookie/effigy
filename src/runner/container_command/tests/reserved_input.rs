@@ -169,10 +169,7 @@ fn host_identity(platform: &str, libc: &str) -> WorkspaceContainerIdentity {
 /// A gated re-observation that reports the frozen pair again: the shape the
 /// producer accepts when the backend state is unchanged between apply and gate.
 fn reobserving(
-    pair: (
-        Observed<Vec<TargetCandidate>>,
-        Observed<BoundPlatform>,
-    ),
+    pair: (Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>),
 ) -> super::ReservedReobserver<'static> {
     let (targets, platform) = pair;
     Box::new(move |_until| Ok((targets.clone(), platform.clone())))
