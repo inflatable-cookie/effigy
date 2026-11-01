@@ -356,21 +356,22 @@ Behavior:
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
 - Prepare consumes a produced Linux artifact; it never builds one at consumer
-  runtime (contract 052 §8.9). `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE`
-  chooses the source: `auto` (default) prefers this checkout's produced
-  artifact whose install identity, active version and target receipt are
-  current and otherwise uses a current release download; `local` accepts only
-  this checkout's current artifact; `download` always uses the published release
-  artifact. Bytes are authenticated against the producer receipt before
-  publication, and an artifact for another target is never substituted.
-- if no current Linux workspace artifact is available, the refusal names the
-  host and artifact versions, the target, and both routes, for example
-  `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact`
-  to produce one, or `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` to use
-  the release artifact. Run that from the Effigy checkout, then retry
-  `effigy workspace`.
-- a stale local artifact is never consumed and is never silently replaced by a
-  download: `local` refuses it and `auto` falls through to the release path.
+  runtime. `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto` (default) first checks
+  a discovered Effigy checkout's artifact for the current active version and
+  target receipt. Otherwise it requires a release cache with current version
+  and release identity before entering release acquisition. With no such cache,
+  it refuses rather than starting a first download.
+- To produce an artifact, run
+  `EFFIGY_LINUX_RELEASE_TRIPLE=<triple> effigy workspace:linux:artifact` from the
+  Effigy checkout. To allow a first release download, set
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` on the host Prepare command
+  (for example `effigy workspace`). `download` skips local discovery and reuses
+  a verified current release cache before fetching bytes.
+- `local` refuses a stale/missing artifact when a checkout is discovered. With
+  no discovered checkout it can still enter release acquisition if the release
+  cache has current version and identity. Both that path and `auto` may replace
+  cached bytes that fail verification. See the precise
+  [source selection rules](../knowledge/contracts/052-runtime-kernel-contract.md#89-binary-provisioning).
   Entry verification afterwards is pure reads; it never builds, downloads or
   reinstalls the guest.
 - the checkout-local builder, its cache volumes and its namespace migration

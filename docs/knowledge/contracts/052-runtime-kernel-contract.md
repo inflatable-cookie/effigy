@@ -3093,10 +3093,20 @@ the missing credential named, and local reads keep working.
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
-- No consumer-time build: Prepare consumes bytes a release download or an
-  explicit `effigy workspace:linux:artifact` already produced, and otherwise
-  refuses naming that command. It never discovers a checkout to build from and
-  never writes a host source pointer at consumer runtime.
+- No consumer-time build: Prepare never builds or writes a host source pointer.
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE` defaults to `auto`. It discovers a
+  local Effigy checkout and accepts its produced artifact when the file, active
+  version and target receipt match; install identity is computed afterwards,
+  not used as this freshness predicate. Publication authenticates the bytes.
+  Otherwise `auto` enters the release acquisition path only when the cache
+  already has a file with the current active version and release install
+  identity; without that cache it refuses with the explicit build/download
+  commands. That path verifies the receipt/digest and may download replacement
+  bytes if verification fails. `download` skips local discovery and enters
+  release acquisition even with no cache, reusing a verified current cache
+  before downloading. `local` refuses a stale/missing artifact in a discovered
+  checkout; if no checkout is discovered, it reaches the same current-cache
+  predicate as `auto`. It is not an unconditional local-only switch.
 - No run-time build or download: task, exec and terminal entry never fetch
   or compile Effigy or look for a sibling checkout. A contributor produces the
   artifact with the explicit `effigy workspace:linux:artifact` task, which
@@ -3562,9 +3572,11 @@ Serialize edits to shared kernel/session, provisioning and reconcile files;
 Code-first tasks must prove crash families around staging/receipt/commit/selection (including kill just after commit, partial
 switch, third-value refusal and lost acknowledgement), concurrent attach-or-activate, the fresh Linux bootstrap, independent
 listener loss and mispinned-peer zero credential/Hello bytes. Each backend needs its bounded local fixture test plus a recorded
-native identity/dial/observe/invoke/reconnect qualification. Proposed selectors above are not implemented or run here. #452's 239
-fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
-#452's stop conditions.
+native identity/dial/observe/invoke/reconnect qualification. The bounded channel
+selectors listed above are implemented; they do not supply native qualification.
+#452's 239 fake tests are non-evidence for production identity, TLS or publication.
+The historical design sketches above are not additional implementation or
+qualification evidence.
 
 #### Implemented: the client glue (effigy#452)
 
@@ -3687,7 +3699,7 @@ ServingOwner::adopt_owned(
 With #482 and #504 merged, two adapters are this task's own work rather than
 another lane's.
 
-*Bound (this branch):*
+*Bound (merged implementation):*
 
 - **Guest-local reads over the one strict canonical document.**
   `workspace_client::context::LocalReadSource` is the narrow view a local read

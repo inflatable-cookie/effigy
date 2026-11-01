@@ -646,6 +646,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Clarify workspace artifact source selection, the separate dev and workspace
+  session runs, and the implemented workspace seams and outstanding production
+  activation and native qualification requirements.
+
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and

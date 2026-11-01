@@ -190,8 +190,8 @@ volumes and completed artifacts for retry. Its original image may be unable to
 compile newer source; a failed build then remains a failure and grants no
 artifact identity. The maintained task and the consumer Prepare both keep their
 receipt, target, digest and freshness checks; Prepare itself consumes a produced
-artifact and never builds one (052 §8.9). There is no public-release fallback
-for an unpublished local identity.
+artifact and never builds one. Source selection and release-cache eligibility
+are specified in [052 §8.9](052-runtime-kernel-contract.md#89-binary-provisioning); local install identity is not the produced-artifact freshness predicate.
 
 The maintained Linux builder uses the stable private Compose project base
 `effigy-artifact-builder-v1`, with the ordinary checkout/worktree scope suffix.
