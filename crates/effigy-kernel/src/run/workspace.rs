@@ -1035,6 +1035,13 @@ fn release_attachment(
             txn.conn(),
             attachment.run,
         )?;
+        let record = journal_run(txn.conn(), attachment.run)?
+            .ok_or_else(|| RunError::refused("this run is no longer in its journal"))?;
+        if record.owner != attachment.fence.resource.name().to_string()
+            || record.generation != attachment.fence.generation
+        {
+            return Err(RunError::refused("the attachment's run fence changed"));
+        }
         journal::check_run_fence(txn.conn(), attachment.run, &attachment.fence)?;
         if !attached {
             let same_release: bool = recover && admission_session(txn.conn(), attachment.run)? == Some(attachment.session)

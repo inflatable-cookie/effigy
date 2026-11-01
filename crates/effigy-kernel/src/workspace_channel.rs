@@ -2556,6 +2556,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     unsettled_attachment: Option<Attachment>,
     unsettled_replacement: Option<Attachment>,
     pending_eof_root: Option<crate::fs::DirectoryIdentity>,
+    pending_eof_owners: BTreeMap<RunId, Attachment>,
     /// Data frames this connection has queued and the client has not yet
     /// acknowledged, plus the request id they name.
     outbound: Outbound,
@@ -2604,6 +2605,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             unsettled_attachment: None,
             unsettled_replacement: None,
             pending_eof_root: None,
+            pending_eof_owners: BTreeMap::new(),
             outbound: Outbound::new(),
             attach: None,
             carry: None,
@@ -2624,9 +2626,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.owner_cleanup_unsettled
     }
 
-    /// Retry a retained single attachment's exact release with fresh cleanup
-    /// authority. Unknown, malformed-owner and multi-attachment states remain
-    /// fenced; this does not settle the session or any child run.
+    /// Retry retained attachment releases with fresh cleanup authority. A
+    /// verified EOF can also drain the exact owner handles captured at that
+    /// disconnect. Unknown and malformed-owner states remain fenced; this
+    /// does not settle the session or any child run.
     pub fn retry_cleanup(&mut self, cx: &EffectContext, root: &StateRoot) -> Result<(), Refusal> {
         if !self.owner_cleanup_unsettled {
             return Err(Refusal::forbidden("there is no retained channel cleanup"));
@@ -2698,16 +2701,22 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 ));
             }
             for run in self.dispatcher.admitted.clone() {
-                let mut owner = run::resume_owner(cx, root, self.fence.session, run)
-                    .map_err(|_| Refusal::unknown("owner disconnect cleanup is unsettled"))?;
+                let Some(mut owner) = self.pending_eof_owners.remove(&run) else {
+                    return Err(Refusal::unknown("original owner attachment is unavailable"));
+                };
                 if owner.release(cx, root, Release::Eof).is_err() {
-                    self.unsettled_attachment = Some(owner);
+                    if owner.pending_release().is_some() {
+                        self.unsettled_attachment = Some(owner);
+                    } else {
+                        self.pending_eof_owners.insert(run, owner);
+                    }
                     return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
                 }
                 self.dispatcher.admitted.remove(&run);
             }
         }
         self.pending_eof_root = None;
+        self.pending_eof_owners.clear();
         self.owner_cleanup_unsettled = false;
         Ok(())
     }
@@ -2761,6 +2770,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // A replay on another connection cannot recover an owner attachment.
         self.dispatcher.admitted.clear();
         self.pending_eof_root = None;
+        self.pending_eof_owners.clear();
         self.outbound = Outbound::new();
         self.attach = None;
         self.carry = None;
@@ -2854,6 +2864,34 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     return Err(Refusal::unknown("owner cleanup root is unavailable"));
                 }
             }
+            if attachment.as_ref().is_some_and(|handle| {
+                handle.client() == Client::Owner && self.dispatcher.admitted.contains(&handle.run())
+            }) {
+                let handle = attachment.take().expect("owner attachment was present");
+                self.pending_eof_owners.insert(handle.run(), handle);
+            }
+            for run in self.dispatcher.admitted.clone() {
+                if self
+                    .unsettled_attachment
+                    .as_ref()
+                    .is_some_and(|handle| handle.client() == Client::Owner && handle.run() == run)
+                    || self.pending_eof_owners.contains_key(&run)
+                {
+                    continue;
+                }
+                match run::resume_owner(cx, root, self.fence.session, run) {
+                    Ok(owner) => {
+                        self.pending_eof_owners.insert(run, owner);
+                    }
+                    Err(_) => {
+                        if attachment.is_some() && self.unsettled_attachment.is_none() {
+                            self.unsettled_attachment = attachment.take();
+                        }
+                        self.owner_cleanup_unsettled = true;
+                        return Err(Refusal::unknown("original owner attachment is unavailable"));
+                    }
+                }
+            }
         }
         if self.owner_cleanup_unsettled {
             if attachment.is_some() {
@@ -2885,18 +2923,18 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         }
         if state.closed || transport_lost {
             for run in self.dispatcher.admitted.clone() {
-                match run::resume_owner(cx, root, self.fence.session, run) {
-                    Ok(mut owner) => {
-                        if owner.release(cx, root, Release::Eof).is_err() {
-                            self.unsettled_attachment = Some(owner);
-                            self.owner_cleanup_unsettled = true;
-                            return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
-                        }
+                let Some(mut owner) = self.pending_eof_owners.remove(&run) else {
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("original owner attachment is unavailable"));
+                };
+                if owner.release(cx, root, Release::Eof).is_err() {
+                    if owner.pending_release().is_some() {
+                        self.unsettled_attachment = Some(owner);
+                    } else {
+                        self.pending_eof_owners.insert(run, owner);
                     }
-                    Err(_) => {
-                        self.owner_cleanup_unsettled = true;
-                        return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
-                    }
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
                 }
                 self.dispatcher.admitted.remove(&run);
             }

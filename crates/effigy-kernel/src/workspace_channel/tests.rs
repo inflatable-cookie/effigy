@@ -985,7 +985,6 @@ fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
     let fired = crate::fault::fired();
     crate::fault::arm(None);
     let fresh = cleanup(&cx).operation().effects().unwrap();
-    let retry = host.retry_cleanup(&fresh, &root);
     let fences = host
         .dispatcher
         .admission
@@ -993,6 +992,55 @@ fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
         .iter()
         .map(|run| (run.id(), run.fence().clone()))
         .collect::<Vec<_>>();
+    let (_foreign_fixture, _, foreign_root, _) = journal("effigy-channel-foreign-retry");
+    let foreign = host.retry_cleanup(&fresh, &foreign_root);
+    let second = RunId::new(7, [181; 10]).unwrap();
+    let second_fence = fences
+        .iter()
+        .find(|(run, _)| *run == second)
+        .unwrap()
+        .1
+        .clone();
+    let mut writer = Store::open(&cx, &root).unwrap();
+    writer
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET generation=generation+1 WHERE run_id=?1",
+                [second.to_string()],
+            )?;
+            txn.conn().execute(
+                "UPDATE resources SET generation=generation+1 WHERE name=?1",
+                [second_fence.resource.name().to_string()],
+            )?;
+            Ok::<_, crate::run::RunError>(())
+        })
+        .unwrap();
+    let stale = host.retry_cleanup(&fresh, &root);
+    let stale_requests: i64 = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [second.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    writer
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET generation=generation-1 WHERE run_id=?1",
+                [second.to_string()],
+            )?;
+            txn.conn().execute(
+                "UPDATE resources SET generation=generation-1 WHERE name=?1",
+                [second_fence.resource.name().to_string()],
+            )?;
+            Ok::<_, crate::run::RunError>(())
+        })
+        .unwrap();
+    let retry = host.retry_cleanup(&fresh, &root);
     let reader = match Store::read(&observe_context(), &root) {
         Observed::Verified(reader, _) => reader,
         other => panic!("journal unavailable: {other:?}"),
@@ -1020,6 +1068,9 @@ fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
         result.is_err() && fired,
         "first EOF release fault must fire"
     );
+    assert!(foreign.is_err(), "foreign root must refuse");
+    assert!(stale.is_err(), "changed original fence must refuse");
+    assert_eq!(stale_requests, 0, "a replacement fence receives no stop");
     assert!(
         retry.is_ok(),
         "all original owner EOF releases should recover"
