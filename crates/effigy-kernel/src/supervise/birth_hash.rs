@@ -3,8 +3,9 @@
 //! A stalled filesystem read can retain at most one worker thread per process.
 //! A timed-out or cancelled started attempt permanently refuses later attempts;
 //! a late worker result can never authorize them. An expired context rejected
-//! before starting does not use the worker slot. Thread creation itself is not
-//! proven bounded; this scaffold cannot be used as a deadline guarantee.
+//! before starting does not use the worker slot. OnceLock initialization,
+//! allocation, thread creation and scheduling are not proven bounded; this
+//! scaffold cannot be used as a deadline guarantee.
 use crate::ctx::{Deadline, OperationContext};
 use crate::id::Digest;
 use sha2::{Digest as _, Sha256};
