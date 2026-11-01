@@ -343,7 +343,10 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
             reason.contains(&format!("ended with {code}")),
             "exit {code} is a failed observation, not a gate refusal: {reason}"
         );
-        assert!(reason.contains("the object is fine"), "{reason}");
+        assert!(
+            !reason.contains("the object is fine"),
+            "backend stderr must remain private: {reason}"
+        );
     }
 
     // Only the gate's own marker plus its reserved code proves absence.
@@ -887,4 +890,19 @@ fn the_guest_dial_budget_is_never_zero_and_never_past_the_entry_ceiling() {
     assert_eq!(guest_dial_ms(Duration::ZERO), 1);
     assert_eq!(guest_dial_ms(Duration::from_millis(1500)), 1500);
     assert_eq!(guest_dial_ms(Duration::from_secs(120)), 30_000);
+}
+
+#[test]
+fn staged_probe_backend_stderr_is_never_an_observation_diagnostic() {
+    let backend = Backend::new("private-stderr");
+    backend.body("printf '%s' 'adversarial-secret-backend-diagnostic' >&2\nexit 73");
+    let _env = backend.env();
+    let policy = backend.policy();
+    let mut probe = backend.linked_probe(&policy);
+    let reason = observed_unknown(&probe.identity(&claimed(), &object(), Duration::from_secs(2)));
+    assert!(
+        reason.contains("ended with 73"),
+        "fixed status classification: {reason}"
+    );
+    assert!(!reason.contains("adversarial-secret-backend-diagnostic"));
 }

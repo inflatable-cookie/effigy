@@ -820,6 +820,29 @@ where
         })
     }
 
+    /// Preserve the stopped service and its exact session supervisor when
+    /// settlement fails. No listener or key remains servable on this path.
+    pub(crate) fn retire_for_recoverable(
+        mut self,
+        cause: RetirementCause,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Retired, (RunError, Box<Self>)> {
+        match self.owner.settle_with_recoverable(cause, cleanup, adapter) {
+            Ok(outcome) => Ok(Retired {
+                session: self.session,
+                lease: self.lease,
+                outcome,
+                served: self.served,
+                cause,
+            }),
+            Err((error, owner)) => {
+                self.owner = *owner;
+                Err((error, Box::new(self)))
+            }
+        }
+    }
+
     /// Give the session up without settling it. The listener stops and the key
     /// is wiped; the run's settlement stays with whoever owns that run.
     pub(crate) fn abandon(self) -> Abandoned {

@@ -33,6 +33,86 @@ use crate::runner::workspace_transport::qualification::{
     PreparedHostChannel, QualifiedHostLocator,
 };
 
+/// Adapter diagnostics are untrusted data and may contain credentials. Keep
+/// their Unknown classification while replacing details before the kernel
+/// records residue or a supervisor relays a cleanup error.
+struct PrivateCleanup<'a, A>(&'a mut A);
+
+fn private_cleanup_observation<T>(
+    observed: effigy_kernel::observe::Observed<T>,
+) -> effigy_kernel::observe::Observed<T> {
+    use effigy_kernel::observe::{Observed, UnknownReason};
+    match observed {
+        Observed::Unknown(reason) => Observed::Unknown(match reason {
+            UnknownReason::TimedOut { .. } => UnknownReason::TimedOut {
+                phase: "workspace cleanup".into(),
+            },
+            UnknownReason::Busy { .. } => UnknownReason::Busy {
+                phase: "workspace cleanup".into(),
+            },
+            UnknownReason::Cancelled(_) => UnknownReason::Cancelled("workspace cleanup".into()),
+            UnknownReason::ToolUnavailable(_) => {
+                UnknownReason::ToolUnavailable("workspace cleanup adapter".into())
+            }
+            UnknownReason::Unparsable(_) => {
+                UnknownReason::Unparsable("workspace cleanup evidence".into())
+            }
+            UnknownReason::Inconsistent(_) => {
+                UnknownReason::Inconsistent("workspace cleanup evidence".into())
+            }
+            UnknownReason::Untrusted(_) => {
+                UnknownReason::Untrusted("workspace cleanup evidence".into())
+            }
+            UnknownReason::StoreUnreadable(_) => {
+                UnknownReason::StoreUnreadable("workspace cleanup state".into())
+            }
+            UnknownReason::PermissionDenied => UnknownReason::PermissionDenied,
+            UnknownReason::GuardUnavailable => UnknownReason::GuardUnavailable,
+            UnknownReason::Injected => UnknownReason::Injected,
+            UnknownReason::HostAuthorityRequired => UnknownReason::HostAuthorityRequired,
+        }),
+        other => other,
+    }
+}
+
+impl<A: effigy_kernel::run::SettlementAdapter> effigy_kernel::run::SettlementAdapter
+    for PrivateCleanup<'_, A>
+{
+    fn observe(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Fence> {
+        private_cleanup_observation(self.0.observe(effect, cleanup))
+    }
+    fn release(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<()> {
+        private_cleanup_observation(self.0.release(effect, cleanup))
+    }
+    fn reconcile(
+        &mut self,
+        effect: &effigy_kernel::run::Effect,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+    ) -> effigy_kernel::observe::Observed<effigy_kernel::run::Reconciled> {
+        use effigy_kernel::observe::Observed;
+        let value = private_cleanup_observation(self.0.reconcile(effect, cleanup));
+        match value {
+            Observed::Verified(effigy_kernel::run::Reconciled::Residue(_), evidence) => {
+                Observed::Verified(
+                    effigy_kernel::run::Reconciled::Residue(
+                        "workspace cleanup residue; re-run down".into(),
+                    ),
+                    evidence,
+                )
+            }
+            other => other,
+        }
+    }
+}
+
 /// Where accepted connections come from.
 ///
 /// Production accepts through the session's bound TLS listener
@@ -472,6 +552,49 @@ where
             supervisor.interrupt(cleanup, workload)?;
         }
         supervisor.settle(cleanup, adapter)
+    }
+
+    /// Stop service while preserving this exact owner on a settlement error.
+    /// A fresh explicit recovery may retry using the returned custody.
+    pub(crate) fn settle_with_recoverable(
+        mut self,
+        cause: crate::runner::workspace_client::supervisor::RetirementCause,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+        adapter: &mut impl effigy_kernel::run::SettlementAdapter,
+    ) -> Result<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>, (RunError, Box<Self>)>
+    {
+        use crate::runner::workspace_client::supervisor::RetirementCause;
+        self.stop();
+        let workload = match cause {
+            RetirementCause::OwnerLost => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                    signal: None,
+                })
+            }
+            RetirementCause::ListenerFailed => {
+                Some(effigy_kernel::outcome::WorkloadOutcome::Cancelled {
+                    cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                    signal: None,
+                })
+            }
+            RetirementCause::Settled | RetirementCause::Stopped | RetirementCause::Down => None,
+        };
+        if let Some(workload) = workload {
+            if let Err(error) = self.supervisor.interrupt(cleanup, workload) {
+                return Err((error, Box::new(self)));
+            }
+        }
+        match self
+            .supervisor
+            .settle_recoverable(cleanup, &mut PrivateCleanup(adapter))
+        {
+            Ok(outcome) => Ok(outcome),
+            Err((error, supervisor)) => {
+                self.supervisor = *supervisor;
+                Err((error, Box::new(self)))
+            }
+        }
     }
 
     /// Take the session's serving custody. The supervisor must be the adopted

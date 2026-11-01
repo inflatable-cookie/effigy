@@ -43,13 +43,17 @@ pub(super) fn stage_binary(
             )?;
             Ok(object)
         }
-        Err(error) => {
+        Err(_) => {
             run.guest_binary_unknown(
                 &ticket,
-                effigy_kernel::observe::UnknownReason::Inconsistent(error.to_string()),
+                effigy_kernel::observe::UnknownReason::Inconsistent(
+                    "workspace guest binary staging unavailable".into(),
+                ),
             )?;
             Err(EnvError::Backend(
-                effigy_containers::environment::BackendError::Uncertain(error.to_string()),
+                effigy_containers::environment::BackendError::Uncertain(
+                    "workspace guest binary staging unavailable".into(),
+                ),
             ))
         }
     }
@@ -318,7 +322,11 @@ impl<'a> StagedGuestProbe<'a> {
                     phase: "staged guest observation".into(),
                 })
             }
-            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+            Err(_) => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "staged guest observation unavailable".into(),
+                ))
+            }
         };
         match gate_refusal(&captured) {
             Some(GateRefusal::ObjectAbsent) => {
@@ -355,19 +363,12 @@ impl<'a> StagedGuestProbe<'a> {
             None => {}
         }
         if !captured.status.success() {
-            let detail = String::from_utf8_lossy(&captured.stderr);
-            let detail = detail.trim();
             return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "the bounded staged guest probe ended with {}{}",
+                "the bounded staged guest probe ended with {}",
                 captured
                     .status
                     .code()
                     .map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
-                if detail.is_empty() {
-                    " and reported nothing".to_owned()
-                } else {
-                    format!(": {detail}")
-                }
             )));
         }
         let reply: GuestProbeReply = match serde_json::from_slice(&captured.stdout) {
@@ -395,10 +396,10 @@ impl<'a> StagedGuestProbe<'a> {
         // The guest's independent identity must be this publication's target:
         // full container id, VM boot, platform and libc. A mismatch is
         // uncertainty about what was observed, never a value.
-        if let Err(refusal) = reply.identity.compare(target) {
-            return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "the staged guest reported another identity: {refusal}"
-            )));
+        if reply.identity.compare(target).is_err() {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the staged guest reported another identity".into(),
+            ));
         }
         Observed::Verified(
             reply,
@@ -831,8 +832,8 @@ fn observation<T>(result: Result<T, RunnerError>) -> Observed<T> {
             value,
             Evidence::new("exact staged guest observation".into(), None).expect("fixed evidence"),
         ),
-        Err(error) => Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
-            error.to_string(),
+        Err(_) => Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
+            "workspace staged guest read unavailable".into(),
         )),
     }
 }
@@ -958,9 +959,9 @@ fn apply_switches(
         let current = match reader.read_selector(&change.path) {
             Observed::Verified(value, _) => Some(value),
             Observed::Absent(_) => None,
-            Observed::Unknown(reason) => {
+            Observed::Unknown(_) => {
                 return Err(EnvError::Kernel(effigy_kernel::run::RunError::unavailable(
-                    format!("selection CAS is unproven: {reason}"),
+                    "workspace selection CAS observation unavailable",
                 )))
             }
         };
@@ -977,9 +978,9 @@ fn apply_switches(
         } else {
             reader.guest.replace_pointer(&change.path, &change.next)
         }
-        .map_err(|error| {
+        .map_err(|_| {
             EnvError::Backend(effigy_containers::environment::BackendError::Uncertain(
-                error.to_string(),
+                "workspace guest selector replacement unavailable".into(),
             ))
         })?;
     }

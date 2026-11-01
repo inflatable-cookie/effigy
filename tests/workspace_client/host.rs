@@ -12,6 +12,9 @@
 //! prepared guest. This proves process custody, not container-mode preparation
 //! or native backend qualification; #452 owns those later gates.
 
+#[path = "container_up.rs"]
+mod container_up;
+
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::process::{Command, Stdio};

@@ -4,6 +4,13 @@
 //! string/default-locator or generic-publication fallback here.
 #![allow(dead_code)] // The workspace-client owner installs the serialized consuming caller.
 
+#[path = "environment_workspace/integrated.rs"]
+pub(in crate::runner) mod integrated;
+#[path = "environment_workspace/phase_a.rs"]
+pub(in crate::runner) mod phase_a;
+#[path = "environment_workspace/phase_b.rs"]
+pub(in crate::runner) mod phase_b;
+
 use effigy_containers::environment::{
     BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
     WorkspaceBegin,
@@ -257,9 +264,9 @@ fn up_impl<'a>(
             backend.adapter().as_mut(),
             preflight_request,
         )
-        .map_err(|error| {
+        .map_err(|_| {
             owner_error(EnvError::Backend(BackendError::NotStarted(
-                error.to_string(),
+                "workspace creation preflight unavailable".into(),
             )))
         })?,
     );
@@ -380,7 +387,7 @@ fn up_impl<'a>(
             sealed,
             &preflight,
             || {
-                effigy_containers::exec::run_backend_invocation_until(
+                effigy_containers::exec::run_backend_invocation_private_until(
                     &policy.repo_root,
                     &program,
                     &args,
@@ -388,8 +395,9 @@ fn up_impl<'a>(
                     compose_env,
                     until,
                 )
-                .map(|_| ())
-                .map_err(|error| BackendError::Uncertain(error.to_string()))
+                .map_err(|_| {
+                    BackendError::Uncertain("workspace frozen render apply unavailable".into())
+                })
             },
         )?;
         creation = bringing_up.creation;
@@ -542,14 +550,18 @@ pub(in crate::runner) fn recover_selection(
         Observed::Verified(journal, _) => {
             match unfinished_selection(&journal, obligation.environment()) {
                 Observed::Verified(Some(stored), _) => stored,
-                Observed::Unknown(reason) => {
-                    return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+                Observed::Unknown(_reason) => {
+                    return Err(EnvError::Kernel(RunError::unavailable(
+                        "workspace selection recovery observation unavailable",
+                    )))
                 }
                 _ => return Err(refuse()),
             }
         }
-        Observed::Unknown(reason) => {
-            return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+        Observed::Unknown(_reason) => {
+            return Err(EnvError::Kernel(RunError::unavailable(
+                "workspace selection recovery observation unavailable",
+            )))
         }
         _ => return Err(refuse()),
     };
@@ -570,8 +582,10 @@ pub(in crate::runner) fn recover_selection(
     for fact in [target_live, listener_live] {
         match fact {
             Observed::Verified((), _) => {}
-            Observed::Unknown(reason) => {
-                return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+            Observed::Unknown(_reason) => {
+                return Err(EnvError::Kernel(RunError::unavailable(
+                    "workspace selection recovery observation unavailable",
+                )))
             }
             Observed::Absent(_) => {
                 return Err(EnvError::Kernel(RunError::refused(

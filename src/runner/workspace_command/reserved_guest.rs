@@ -83,8 +83,8 @@ fn unavailable(message: impl Into<String>) -> EnvError {
 fn refused(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::refused(message))
 }
-fn io(error: RunnerError) -> EnvError {
-    unavailable(error.to_string())
+fn io(_error: RunnerError) -> EnvError {
+    unavailable("workspace guest I/O unavailable")
 }
 fn evidence() -> Evidence {
     Evidence::new("exact reserved guest publication".into(), None).expect("fixed evidence")
@@ -103,6 +103,35 @@ pub(in crate::runner) struct BoundReservedGuest<'a> {
 }
 
 impl BoundReservedGuest<'_> {
+    pub(in crate::runner) fn target(&self) -> &ContainerIdentity {
+        &self.target
+    }
+
+    /// The parked facade consumes fresh target/platform observations, never
+    /// expected kernel facts. The callback retained with this input performs
+    /// the actual backend/guest reads again on the original absolute deadline.
+    pub(in crate::runner) fn observe_resume(
+        &mut self,
+        until: Instant,
+    ) -> Observed<(ContainerIdentity, BoundPlatform)> {
+        if until != self.until || Instant::now() >= until {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "workspace target/platform resume observation".into(),
+            });
+        }
+        let fresh = match (self.input.reobserve)(until) {
+            Ok(fresh) => fresh,
+            Err(_) => return resume_unknown(),
+        };
+        checked_resume_observation(
+            &self.target,
+            &self.binding,
+            &self.input.targets,
+            fresh,
+            until,
+        )
+    }
+
     /// Reobserve the retained publication's exact target, platform, session and
     /// creator inventory after Env is reacquired. Failure retains this input.
     #[allow(dead_code)] // The parked production owner connects this seam.
@@ -149,21 +178,8 @@ impl BoundReservedGuest<'_> {
                 "workspace creator receipt changed during integration",
             ));
         }
-        let (targets, platform) = (self.input.reobserve)(self.until)?;
-        match (
-            &self.input.targets,
-            &targets,
-            &self.input.platform,
-            &platform,
-        ) {
-            (
-                Observed::Verified(original_targets, _),
-                Observed::Verified(current_targets, _),
-                Observed::Verified(original_platform, _),
-                Observed::Verified(current_platform, _),
-            ) if original_targets == current_targets
-                && original_platform == current_platform
-                && current_platform == &self.binding => {}
+        match self.observe_resume(self.until) {
+            Observed::Verified(_, _) => {}
             _ => {
                 return Err(refused(
                     "workspace target or platform changed during integration",
@@ -185,6 +201,50 @@ impl BoundReservedGuest<'_> {
         Ok(())
     }
 }
+
+fn resume_unknown() -> Observed<(ContainerIdentity, BoundPlatform)> {
+    Observed::Unknown(UnknownReason::Inconsistent(
+        "workspace target/platform resume observation unavailable or changed".into(),
+    ))
+}
+
+fn checked_resume_observation(
+    expected_target: &ContainerIdentity,
+    expected_platform: &BoundPlatform,
+    original_targets: &Observed<Vec<TargetCandidate>>,
+    fresh: TargetObservation,
+    until: Instant,
+) -> Observed<(ContainerIdentity, BoundPlatform)> {
+    if Instant::now() >= until {
+        return resume_unknown();
+    }
+    match (original_targets, fresh.0, fresh.1) {
+        (
+            Observed::Verified(original, _),
+            Observed::Verified(targets, _),
+            Observed::Verified(platform, _),
+        ) if targets == *original
+            && targets.len() == 1
+            && targets[0].identity == *expected_target
+            && platform == *expected_platform
+            && platform.target == targets[0].identity =>
+        {
+            // Both values come from the fresh observer; expected values
+            // are equality fences only and are never returned as proof.
+            let target = targets
+                .into_iter()
+                .next()
+                .expect("one observed target")
+                .identity;
+            Observed::Verified((target, platform), evidence())
+        }
+        _ => resume_unknown(),
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/resume_observation.rs"]
+mod resume_observation_tests;
 
 pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,
@@ -279,7 +339,7 @@ pub(in crate::runner) fn bind_reserved_guest<'a>(
         Err(error) => {
             activation.environment_mut().unknown_workspace_publication(
                 &ticket,
-                UnknownReason::Inconsistent(error.to_string()),
+                UnknownReason::Inconsistent("workspace reserved target binding failed".into()),
             )?;
             return Err(error);
         }
@@ -342,16 +402,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
         };
         let observed = match input.probe.identity(&container, &object, remaining()?) {
             Observed::Verified(observed, _) => observed,
-            Observed::Unknown(reason) => {
-                return Err(unavailable(format!(
-                    "guest-local identity is unavailable: {reason}"
-                )))
-            }
+            Observed::Unknown(_) => return Err(unavailable("guest-local identity is unavailable")),
             Observed::Absent(_) => return Err(unavailable("guest-local identity is absent")),
         };
         observed
             .compare(&container)
-            .map_err(|error| refused(error.to_string()))?;
+            .map_err(|_| refused("guest-local identity differs from the reserved target"))?;
         // No credential is minted or staged until the independent guest agrees.
         let generation = allocate_generation(input.guest.as_mut()).map_err(io)?;
         let credential = (input.credential)(activation.session(), generation)?;
@@ -379,7 +435,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             input.probe.as_mut(),
             remaining()?,
         )
-        .map_err(|error| unavailable(error.to_string()))?
+        .map_err(|_| unavailable("workspace host channel qualification unavailable"))?
         .ok_or_else(|| refused("container-mode publication has no qualified channel"))?;
         for (snapshot, bytes) in &input.snapshots {
             staging::stage_document(input.guest.as_mut(), snapshot, bytes, 0o444).map_err(io)?;
@@ -440,7 +496,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 .selection,
             &channel.locator,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|_| refused("workspace context construction refused"))?;
         let bytes = document.render().map_err(io)?;
         objects.context.digest = Digest::of(&bytes);
         staging::stage_document(
@@ -463,7 +519,7 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 .map_err(io)?
                 .ok_or_else(|| unavailable("staged full v2 context is absent"))?,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|_| refused("workspace staged context validation refused"))?;
         if parsed != document {
             return Err(refused("guest parsed another immutable context"));
         }
@@ -477,10 +533,8 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             Observed::Verified(_, _) => {
                 return Err(refused("full-context probe observed another target"))
             }
-            Observed::Unknown(reason) => {
-                return Err(unavailable(format!(
-                    "full guest context probe is unavailable: {reason}"
-                )))
+            Observed::Unknown(_) => {
+                return Err(unavailable("full guest context probe is unavailable"))
             }
             Observed::Absent(_) => return Err(unavailable("full guest context probe is absent")),
         };
@@ -527,7 +581,9 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
                 let expected = match reader.read_selector(path) {
                     Observed::Verified(value, _) => Some(value),
                     Observed::Absent(_) => None,
-                    Observed::Unknown(reason) => return Err(unavailable(reason.to_string())),
+                    Observed::Unknown(_) => {
+                        return Err(unavailable("workspace selector observation unavailable"))
+                    }
                 };
                 let next = if path == CONTEXT_SELECTOR {
                     generation.to_string()
@@ -580,10 +636,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             guest: Box::new(reader),
         })
     })();
-    if let Err(error) = &result {
+    if result.is_err() {
+        // Backend/guest failures may include credential bytes, command output
+        // or user paths. Persist only this fixed classification.
         activation.environment_mut().unknown_workspace_publication(
             &ticket,
-            UnknownReason::Inconsistent(error.to_string()),
+            UnknownReason::Inconsistent("workspace guest publication failed".into()),
         )?;
     }
     result
@@ -659,7 +717,9 @@ impl WorkspaceSelectionIo for OwnedSelectionIo<'_> {
             Ok(_) => Observed::Absent(effigy_kernel::observe::AbsenceProof::ContainerGone {
                 id: self.target.container_id.clone(),
             }),
-            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+            Err(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "workspace guest liveness unavailable".into(),
+            )),
         }
     }
     fn switch(

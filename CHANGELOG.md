@@ -8,6 +8,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Container-mode `up` validates checkout and backend identity, then refuses
+  before preparation while private workspace preparation diagnostics are
+  unavailable. Detached requests also refuse before admission. Private Compose
+  entrypoints refuse before interpolation files or child launch. Startup intent
+  accepts declarative prepared-input fingerprints and rejects serialized seals,
+  backend evidence and session credentials. The production-shaped fake-backend
+  proof does not qualify a native backend or the currently guarded path.
+- Workspace startup refusal preserves primary and cleanup errors. A settlement
+  error retains the stopped serving owner until explicit recovery or an
+  owner-loss transition retries with a fresh cleanup budget.
 - Compose interpolation files for the VM-hosted Colima backend are per
   invocation: a fresh random name, `O_EXCL|O_NOFOLLOW`, mode 0600 inside a
   verified 0700 `$EFFIGY_HOME/compose-env/` directory, removed when the Compose
