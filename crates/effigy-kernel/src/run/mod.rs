@@ -447,6 +447,65 @@ struct WorkspaceIntegrationRecord {
 
 const WORKSPACE_INTEGRATION_KIND: &str = "kernel:workspace-integration-step";
 
+fn workspace_integration_journal(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    owner: &Fence,
+    reservation: crate::workspace_session::ActivationReservationId,
+) -> Result<std::collections::BTreeMap<WorkspaceIntegrationStep, WorkspaceIntegrationState>, RunError>
+{
+    let mut steps = std::collections::BTreeMap::new();
+    for effect in journal::effects(conn, run)? {
+        if effect.spec.kind != WORKSPACE_INTEGRATION_KIND {
+            continue;
+        }
+        if !matches!(effect.state, EffectState::Applied | EffectState::Retained)
+            || effect.spec.target != *owner
+            || effect.spec.settlement != Settlement::Retain
+            || effect.spec.required
+        {
+            return Err(RunError::broken(
+                "workspace integration journal is inconsistent",
+            ));
+        }
+        let record: WorkspaceIntegrationRecord = serde_json::from_value(effect.spec.payload)?;
+        if record.reservation != reservation {
+            return Err(RunError::refused(
+                "workspace integration journal belongs to another reservation",
+            ));
+        }
+        match record.state {
+            WorkspaceIntegrationState::Attempted => {
+                steps.insert(record.step, record.state);
+            }
+            WorkspaceIntegrationState::Completed if steps.contains_key(&record.step) => {
+                steps.insert(record.step, record.state);
+            }
+            WorkspaceIntegrationState::Cleared if steps.contains_key(&record.step) => {
+                steps.remove(&record.step);
+            }
+            _ => {
+                return Err(RunError::broken(
+                    "workspace integration journal transition is inconsistent",
+                ))
+            }
+        }
+    }
+    Ok(steps)
+}
+
+pub(crate) fn workspace_integrations_unsettled(
+    conn: &rusqlite::Connection,
+    binding: &crate::workspace_session::SessionBinding,
+    reservation: crate::workspace_session::ActivationReservationId,
+) -> Result<bool, RunError> {
+    let owner = Fence {
+        resource: binding.owner.clone(),
+        generation: binding.generation,
+    };
+    Ok(!workspace_integration_journal(conn, binding.run, &owner, reservation)?.is_empty())
+}
+
 /// Exact journal facts the adapter must reobserve before resuming publication.
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorkspaceResumeFacts {
@@ -687,44 +746,7 @@ impl<'a> ParkedWorkspaceRun<'a> {
         RunError,
     > {
         self.verify_integration_owner(session, conn)?;
-        let mut steps = std::collections::BTreeMap::new();
-        for effect in journal::effects(conn, session.id)? {
-            if effect.spec.kind != WORKSPACE_INTEGRATION_KIND {
-                continue;
-            }
-            if effect.state != EffectState::Applied
-                || effect.spec.target != session.owner
-                || effect.spec.settlement != Settlement::Retain
-                || effect.spec.required
-            {
-                return Err(RunError::broken(
-                    "workspace integration journal is inconsistent",
-                ));
-            }
-            let record: WorkspaceIntegrationRecord = serde_json::from_value(effect.spec.payload)?;
-            if record.reservation != self.reservation.id() {
-                return Err(RunError::refused(
-                    "workspace integration journal belongs to another reservation",
-                ));
-            }
-            match record.state {
-                WorkspaceIntegrationState::Attempted => {
-                    steps.insert(record.step, record.state);
-                }
-                WorkspaceIntegrationState::Completed if steps.contains_key(&record.step) => {
-                    steps.insert(record.step, record.state);
-                }
-                WorkspaceIntegrationState::Cleared if steps.contains_key(&record.step) => {
-                    steps.remove(&record.step);
-                }
-                _ => {
-                    return Err(RunError::broken(
-                        "workspace integration journal transition is inconsistent",
-                    ))
-                }
-            }
-        }
-        Ok(steps)
+        workspace_integration_journal(conn, session.id, &session.owner, self.reservation.id())
     }
 
     /// Read attempted and completed effects while retaining the exact owners.

@@ -1642,9 +1642,11 @@ fn parked_integration_owner_death_preserves_reservation_and_journal() {
             &mut adapter(),
         )
         .expect_err("a dead owner does not silently admit a second activation");
-        assert!(error
-            .to_string()
-            .contains("reserved by a workspace activation"));
+        assert!(error.to_string().contains(if stage < 3 {
+            "integration effects unsettled; re-run up"
+        } else {
+            "reserved by a workspace activation"
+        }));
     }
 }
 
