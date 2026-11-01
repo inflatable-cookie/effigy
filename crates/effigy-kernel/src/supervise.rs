@@ -556,6 +556,7 @@ pub(crate) fn spawn_workspace_sentinel(
         nonblocking(writer.as_raw_fd())?;
         let op = cx.child(Duration::from_secs(30));
         write_frame_with(writer, &config, op.operation())?;
+        crate::fault_point!(WorkspaceSentinelAfterConfig)?;
         nonblocking(ready.as_raw_fd())?;
         let mut ack = [0u8];
         read_exact_with(ready, &mut ack, op.operation())?;
@@ -564,6 +565,7 @@ pub(crate) fn spawn_workspace_sentinel(
                 "sentinel acknowledgement unavailable",
             ));
         }
+        crate::fault_point!(WorkspaceSentinelAfterAck)?;
         op.operation().check("workspace sentinel acknowledgement")?;
         let identity = ident::process_identity(partial.child.id())
             .verified()

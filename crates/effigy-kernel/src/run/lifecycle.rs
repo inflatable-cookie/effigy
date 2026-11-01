@@ -247,8 +247,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sentinel_post_spawn_failure_keeps_workspace_custody_unsettled() {
+    fn check_workspace_sentinel_start_fault(point: crate::fault::Point) {
         let home = effigy_test_support::short_tempdir("ls-").unwrap();
         let cx = super::super::tests::context();
         let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -271,10 +270,7 @@ mod tests {
         };
         let helper_log = home.path().join("sentinel.jsonl");
         crate::fault::set_helper_log(Some(helper_log.clone()));
-        crate::fault::arm_point(
-            crate::fault::Point::WorkspaceSentinelAfterSpawn,
-            crate::fault::Fault::Enospc,
-        );
+        crate::fault::arm_point(point, crate::fault::Fault::Enospc);
         let start = run.enable_workspace_custody(&plan);
         let run_id = run.id();
         let fired = crate::fault::fired();
@@ -310,6 +306,17 @@ mod tests {
             unsettled,
             "a started sentinel with unknown custody must not settle cleanly"
         );
+    }
+
+    #[test]
+    fn sentinel_start_failure_keeps_workspace_custody_unsettled() {
+        for point in [
+            crate::fault::Point::WorkspaceSentinelAfterSpawn,
+            crate::fault::Point::WorkspaceSentinelAfterConfig,
+            crate::fault::Point::WorkspaceSentinelAfterAck,
+        ] {
+            check_workspace_sentinel_start_fault(point);
+        }
     }
 
     #[test]
