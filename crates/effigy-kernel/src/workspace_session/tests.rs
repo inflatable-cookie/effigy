@@ -1541,6 +1541,39 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+fn parked_reacquisition_refuses_changed_session_and_releases_gate() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(235));
+    let run = admit_activation(&cx, &root, &reservation, run_id(236));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE workspace_activation_reservations SET session_run=?2 WHERE environment=?1",
+                rusqlite::params![environment.name().to_string(), run_id(237).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (_error, _custody) = parked.reacquire().expect_err("changed session refuses");
+    let gate = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .expect("failed revalidation released the gate");
+    drop(gate);
+}
+
+#[test]
 fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};

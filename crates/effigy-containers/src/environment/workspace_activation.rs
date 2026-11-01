@@ -87,7 +87,7 @@ impl<'r> WorkspaceActivation<'r> {
             supervisor_id,
             attempt,
         } = self;
-        match environment.park_workspace(&reservation, deadline) {
+        match environment.park_workspace(&reservation, &session, deadline) {
             Ok(environment) => Ok(ParkedWorkspaceActivation {
                 _environment: environment,
                 _supervisor: supervisor,

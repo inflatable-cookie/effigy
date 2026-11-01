@@ -625,10 +625,16 @@ impl<'r> EnvRun<'r> {
     pub(super) fn park_workspace(
         mut self,
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session: &effigy_kernel::workspace_session::SessionRef,
         deadline: Instant,
     ) -> Result<ParkedEnvRun<'r>, (EnvError, Box<Self>)> {
         let snapshot = (|| {
             let plan = self.workspace_plan(reservation)?;
+            if &plan.session() != session {
+                return Err(EnvError::Invalid(
+                    "activation session changed before parking".into(),
+                ));
+            }
             let target = self
                 .run
                 .workspace_bound_target(reservation)
@@ -639,6 +645,11 @@ impl<'r> EnvRun<'r> {
                 .ok_or_else(|| {
                     EnvError::Invalid("activation has no complete creator receipt".into())
                 })?;
+            if receipt.workspace_id() != Some(target.container_id.as_str()) {
+                return Err(EnvError::Invalid(
+                    "bound target differs from the creator receipt".into(),
+                ));
+            }
             Ok::<_, EnvError>((plan, target, receipt))
         })();
         let (plan, target, receipt) = match snapshot {
