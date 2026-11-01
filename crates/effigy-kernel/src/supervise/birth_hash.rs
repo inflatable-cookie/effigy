@@ -317,6 +317,9 @@ mod tests {
         cancel.cancel(StopCause::Requested);
         let outcome = result.recv_timeout(Duration::from_secs(2));
         let _ = release.send(());
+        // Joining owns the test caller, but has no hard scheduling deadline;
+        // the timeout above only bounds receipt of its result. The test runner
+        // remains responsible for terminating a genuinely stalled process.
         let joined = caller.join();
         assert!(reached);
         assert!(competing.is_err());
