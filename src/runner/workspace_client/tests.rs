@@ -3085,10 +3085,14 @@ fn terminal_input_and_resize_reach_the_runs_own_writer() {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
         });
-        wait_until("the final requested size to reach the closed handle", || {
-            log.lock().expect("pty log").resize_attempts.last() == Some(&size(50, 120))
-        });
-        assert!(sizes(&log).is_empty(), "the closed handle delivered nothing");
+        wait_until(
+            "the final requested size to reach the closed handle",
+            || log.lock().expect("pty log").resize_attempts.last() == Some(&size(50, 120)),
+        );
+        assert!(
+            sizes(&log).is_empty(),
+            "the closed handle delivered nothing"
+        );
         log.lock().expect("pty log").resize_open = true;
         wait_until("the writer to take the input and final geometry", || {
             written(&log) == b"typed input" && sizes(&log).last() == Some(&size(50, 120))
