@@ -30,6 +30,7 @@ toml_edit = "0.25.11"
 
 [dev-dependencies]
 effigy-test-support = { path = "../effigy-test-support" }
+rusqlite = { version = "0.40", features = ["bundled"] }
 tempfile = "3"
 
 [lints]

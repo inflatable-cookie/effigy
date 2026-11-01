@@ -905,6 +905,40 @@ impl<'r> WorkspaceActivation<'r> {
                 Box::new(GuardedAbortState::Activation(Box::new(self))),
             ));
         }
+        // A commit can have reached durable storage even when its caller saw
+        // an error before recording `self.committed`. Check the authoritative
+        // record under the retained Env gate before settling either owner.
+        let durable_uncommitted = match effigy_kernel::store::Store::read(&ctx.observe(), ctx.root)
+        {
+            effigy_kernel::observe::Observed::Verified(reader, _) => {
+                match WorkspaceActivationReservation::recover(
+                    &reader,
+                    self.reservation.environment(),
+                ) {
+                    effigy_kernel::observe::Observed::Verified(Some(current), _) => {
+                        let record = current.record();
+                        record.id == self.reservation.id()
+                            && record.generation == self.reservation.generation()
+                            && record.state == effigy_kernel::workspace_session::ActivationReservationState::Reserved
+                            && record.environment_run == Some(self.environment.id())
+                            && record.session.as_ref().is_some_and(|session| {
+                                session.run == self.session.run()
+                                    && session.owner == self.session.fence().resource
+                                    && session.generation == self.session.generation()
+                                    && session.run == self.supervisor.id()
+                            })
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !durable_uncommitted {
+            return Err((
+                EnvError::Invalid("workspace reservation committed or indeterminate; retain activation for recovery".into()),
+                Box::new(GuardedAbortState::Activation(Box::new(self))),
+            ));
+        }
         let Self {
             environment,
             supervisor,
@@ -1333,6 +1367,52 @@ mod tests {
         custody
             .retry(&ctx, Wait::FailFast)
             .expect("retry completes cleanup");
+    }
+
+    #[test]
+    fn guarded_abort_refuses_a_durably_committed_reservation() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let env = env("workspace");
+        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin(
+            &ctx,
+            &env,
+            &inputs(),
+            &invocation(),
+            options(47),
+            "fixture-supervisor",
+        )
+        .unwrap() else {
+            panic!("fresh activation")
+        };
+        let reservation = activation.reservation.id().to_string();
+        let connection = rusqlite::Connection::open(state.path().join("kernel.db")).unwrap();
+        assert_eq!(connection.execute(
+            "UPDATE workspace_activation_reservations SET state='committed' WHERE reservation_id=?1",
+            [&reservation],
+        ).unwrap(), 1);
+        drop(connection);
+        let (_, custody) = activation
+            .abort_guarded_recoverable(&ctx, Wait::FailFast)
+            .expect_err("committed reservation must refuse before settlement");
+        let activation = custody
+            .into_activation()
+            .expect("original activation retained");
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &ctx.cx,
+            &state,
+            std::slice::from_ref(&env.resource),
+            Wait::FailFast
+        )
+        .is_err());
+        // Restore the synthetic corruption so this fixture can settle normally.
+        let connection = rusqlite::Connection::open(state.path().join("kernel.db")).unwrap();
+        connection.execute("UPDATE workspace_activation_reservations SET state='reserved' WHERE reservation_id=?1", [&reservation]).unwrap();
+        drop(connection);
+        activation
+            .abort_guarded_recoverable(&ctx, Wait::FailFast)
+            .unwrap();
     }
 
     #[test]
