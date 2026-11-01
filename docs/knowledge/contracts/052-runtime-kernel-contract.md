@@ -3942,9 +3942,10 @@ Receipts name the actual backend capability for each service:
 - `digest_reference`: the same exact repository/digest reference is immutable;
   its image-inspect resolution is still recorded and rechecked.
 
-Observed tag moves refuse. A same-user engine actor retagging and restoring a tag
-inside the gate is explicitly excluded, alongside forged identical labels
-(Effigy Supervisor, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+Observed tag moves refuse. Same-user retag/restore inside the gate is excluded
+by the Effigy Supervisor's 2026-10-31 capability ruling; forged identical labels
+are excluded by Tom's 2026-10-31 base threat-model ruling
+([Q-017 and amendments](../questions.md#q-017-workspace-client-and-operator-feedback-at-v015)).
 The gate excludes competing Effigy activations, not foreign same-user engine activity. These capability rules replace the reference-only
 Colima refusal; Docker still requires its container image ID.
 
