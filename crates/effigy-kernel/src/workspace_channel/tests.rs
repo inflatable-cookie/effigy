@@ -5221,7 +5221,6 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     assert!(
         matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["outcome"]["workload"]["Failed"]["code"] == 7)
     );
-    drop(poll);
     let mut wrong_grants = GrantBook::new();
     let mut wrong_binding = binding(session);
     wrong_binding.session.generation = Generation::new(99);
