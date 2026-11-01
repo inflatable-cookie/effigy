@@ -63,6 +63,7 @@ thread_local! {
     static FAIL_NEXT_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal fails before it touches the directory.
     static FAIL_NEXT_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal's quarantine entry vanishes after the move.
     static VANISH_NEXT_QUARANTINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal's quarantine name is this one, so a test can
@@ -223,6 +224,13 @@ pub struct InterpolationFile {
     _lock: Flock<File>,
     removed: bool,
     attempted: bool,
+    phase: RemovalPhase,
+}
+
+enum RemovalPhase {
+    Original,
+    Quarantine(String),
+    Unknown,
 }
 
 impl InterpolationFile {
@@ -237,7 +245,7 @@ impl InterpolationFile {
     pub fn remove(&mut self) -> io::Result<()> {
         self.attempted = true;
         let _directory_lock = lock_directory(&self.directory)?;
-        remove_owned(&self.directory, &self.name, &self.stat)?;
+        remove_owned_tracked(&self.directory, &self.name, &self.stat, &mut self.phase)?;
         self.removed = true;
         Ok(())
     }
@@ -331,6 +339,7 @@ impl InterpolationFile {
             _lock: locked,
             removed: false,
             attempted: false,
+            phase: RemovalPhase::Original,
         }))
     }
 }
@@ -589,24 +598,42 @@ fn quarantine_name() -> io::Result<String> {
 /// moves. The unlink never follows a check: if the moved inode is not
 /// `expected`, it is put back with a no-overwrite link and never unlinked.
 fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Result<()> {
+    remove_owned_tracked(directory, name, expected, &mut RemovalPhase::Original)
+}
+
+/// Retain the quarantine name across failures so a live owner retries the same
+/// inode rather than inventing a new destination. Unknown is never retried.
+fn remove_owned_tracked(
+    directory: &OwnedFd,
+    name: &str,
+    expected: &FileStat,
+    phase: &mut RemovalPhase,
+) -> io::Result<()> {
     #[cfg(test)]
     if FAIL_NEXT_REMOVE.with(|armed| armed.replace(false)) {
         return Err(io::Error::other("injected removal failure"));
     }
-    let quarantine = quarantine_name()?;
-    match move_without_replace(directory, name, &quarantine) {
-        Ok(()) => {}
-        // The name is already gone. Nothing confirms that this invocation's
-        // inode was the one removed, so the caller decides whether that matters.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "a Compose interpolation file was already gone; its removal is not confirmed",
-            ))
+    if matches!(phase, RemovalPhase::Original) {
+        let quarantine = quarantine_name()?;
+        match move_without_replace(directory, name, &quarantine) {
+            Ok(()) => *phase = RemovalPhase::Quarantine(quarantine),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                *phase = RemovalPhase::Unknown;
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "a Compose interpolation file was already gone; its removal is not confirmed",
+                ));
+            }
+            Err(error) => return Err(error),
         }
-        // An occupied quarantine name is refused with nothing moved.
-        Err(error) => return Err(error),
+        #[cfg(test)]
+        if FAIL_AFTER_RENAME.with(|armed| armed.replace(false)) {
+            return Err(io::Error::other("injected post-rename failure"));
+        }
     }
+    let RemovalPhase::Quarantine(quarantine) = phase else {
+        return Err(invalid("interpolation cleanup state is unknown".into()));
+    };
     #[cfg(test)]
     if VANISH_NEXT_QUARANTINE.with(|armed| armed.replace(false)) {
         let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
@@ -617,31 +644,31 @@ fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Res
                 .map_err(io::Error::from)
         }
         Ok(_) => {
-            // Something replaced the name between the check and the move. Put
-            // it back without overwriting whatever holds the name now.
-            match linkat(
+            // Never overwrite an occupied original name while restoring a
+            // replacement; its state remains unknown even after restoration.
+            let restored = linkat(
                 directory,
                 quarantine.as_str(),
                 directory,
                 name,
                 AtFlags::empty(),
-            ) {
-                Ok(()) => {
-                    let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
-                    Err(invalid(
-                        "a Compose interpolation name was replaced before removal; the replacement was restored".into(),
-                    ))
-                }
-                Err(_) => Err(invalid(
-                    "a Compose interpolation name was replaced before removal; the replacement is left in quarantine".into(),
-                )),
+            );
+            if restored.is_ok() {
+                let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
             }
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(if restored.is_ok() {
+                "a Compose interpolation name was replaced before removal; the replacement was restored".into()
+            } else {
+                "a Compose interpolation name was replaced before removal; the replacement is left in quarantine".into()
+            }))
         }
-        // The moved entry vanished before it could be checked or unlinked, so
-        // whatever it was, its removal is not confirmed.
-        Err(Errno::ENOENT) => Err(invalid(
-            "a Compose interpolation file vanished during removal; its state is unknown".into(),
-        )),
+        Err(Errno::ENOENT) => {
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(
+                "a Compose interpolation file vanished during removal; its state is unknown".into(),
+            ))
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -826,6 +853,20 @@ mod tests {
         assert!(path.exists());
         file.remove().expect("retry same owner");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn retry_resumes_the_same_quarantine_after_rename() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        assert!(!path.exists());
+        assert_eq!(entries(home.path()).len(), 1);
+        file.remove().expect("retry the moved inode");
+        assert!(entries(home.path()).is_empty());
     }
 
     #[test]

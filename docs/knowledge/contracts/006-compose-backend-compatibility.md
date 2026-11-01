@@ -339,8 +339,9 @@ Effigy ownership:
   Env custody and production Discard remain refused until separately qualified.
 - limits of this slice: explicit removal borrows the file owner, retaining its
   descriptor and lock after failure, and drop does not retry a failed removal.
-  Partial quarantine phases are not retained for recovery; there is no durable
-  attempt or group binding and no caller-drop Unknown lifecycle.
+  The live owner retains its quarantine name across a failed cleanup and can
+  retry that exact phase. The phase is not durable: there is no durable attempt
+  or group binding and no caller-drop Unknown lifecycle.
   Discard stays refused. These belong to the retained-lifecycle follow-up, #534,
   which depends on #532 and #533
 - a value both readers can take literally stays unquoted, and anything
