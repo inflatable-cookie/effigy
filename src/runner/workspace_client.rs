@@ -975,12 +975,19 @@ struct ConnectionAdmission {
     delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthenticationDelivery {
+    Unsent,
+    Indeterminate,
+    Presented,
+}
+
 /// One authenticated channel connection: the guest client of §8.11 over the
 /// transport an integration supplies.
 pub(crate) struct WorkspaceClient<T: Transport> {
     transport: T,
     observe_query_v1: bool,
-    authentication_sent: bool,
+    authentication: AuthenticationDelivery,
     verified: VerifiedWorkspaceContext,
     live: LiveGuestRun,
     /// Fresh accepts observed on this connection, keyed by the original request.
@@ -1075,7 +1082,7 @@ impl<T: Transport> WorkspaceClient<T> {
         Ok(Self {
             transport,
             observe_query_v1,
-            authentication_sent: false,
+            authentication: AuthenticationDelivery::Unsent,
             verified,
             live,
             admitted: std::collections::BTreeMap::new(),
@@ -1090,13 +1097,21 @@ impl<T: Transport> WorkspaceClient<T> {
     /// arrives as the connection's refusal on the first response read, so no
     /// request can be built on an unauthenticated connection.
     pub(crate) fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError> {
-        if self.authentication_sent {
-            return Err(ChannelError::local(
-                "this connection already presented its credential; open a fresh connection to change clients",
-            ));
+        match self.authentication {
+            AuthenticationDelivery::Unsent => {}
+            AuthenticationDelivery::Indeterminate => {
+                return Err(ChannelError::unknown(
+                    "credential delivery is indeterminate; discard this connection without sending another credential or command",
+                ));
+            }
+            AuthenticationDelivery::Presented => {
+                return Err(ChannelError::local(
+                    "this connection already presented its credential; open a fresh connection to change clients",
+                ));
+            }
         }
-        let frame = match auth {
-            GuestAuth::Capability(capability) => Frame::Authenticate(capability),
+        let (frame, enrolled) = match auth {
+            GuestAuth::Capability(capability) => (Frame::Authenticate(capability), None),
             GuestAuth::Enrolment {
                 credential,
                 session,
@@ -1112,34 +1127,42 @@ impl<T: Transport> WorkspaceClient<T> {
                 // Held until the host answers: a refused enrolment stores
                 // nothing, so a terminal never keeps a capability it was not
                 // granted.
-                self.enrolled = Some(StoredCapability {
+                let enrolled = StoredCapability {
                     generation: Generation::new(session.generation.get()),
                     secret: Secret::new(minted),
-                });
-                Frame::Enrol(EnrolRequest {
-                    credential,
-                    capability: minted,
-                    session_run_id: session.run,
-                    session_generation: session.generation,
-                    environment_generation: Generation::new(environment_generation),
-                    container_id: self.live.container.container_id.clone(),
-                    vm_boot_id: self.live.container.vm_boot_id.clone(),
-                })
+                };
+                (
+                    Frame::Enrol(EnrolRequest {
+                        credential,
+                        capability: minted,
+                        session_run_id: session.run,
+                        session_generation: session.generation,
+                        environment_generation: Generation::new(environment_generation),
+                        container_id: self.live.container.container_id.clone(),
+                        vm_boot_id: self.live.container.vm_boot_id.clone(),
+                    }),
+                    Some(enrolled),
+                )
             }
         };
-        match channel::write_frame(&mut self.transport, &frame) {
+        // Local validation cannot deliver a credential. Once encoded, fence
+        // this stream before even a partial transport write can reach the peer.
+        let body = channel::encode_frame(&frame).map_err(ChannelError::from_refusal)?;
+        let mut bytes = Vec::with_capacity(body.len() + 4);
+        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&body);
+        self.authentication = AuthenticationDelivery::Indeterminate;
+        match self.transport.write_all(&bytes) {
             Ok(()) => {
-                self.authentication_sent = true;
+                self.authentication = AuthenticationDelivery::Presented;
+                self.enrolled = enrolled;
                 Ok(())
             }
-            // The host may have refused during authentication and closed
-            // before this frame landed. Its sentence is the answer; a
-            // connection that simply failed is `unknown`, never a silent
-            // success and never a fabricated refusal.
-            Err(write) => match read_frame(&mut self.transport) {
-                Ok(Frame::Refuse(refusal)) => Err(ChannelError::from_refusal(refusal)),
-                _ => Err(ChannelError::from_refusal(write)),
-            },
+            // An unkeyed queued refusal cannot establish this credential's
+            // delivery or enrolment outcome after a possibly partial write.
+            Err(_) => Err(ChannelError::unknown(
+                "the connection failed while writing a credential; discard it without retrying authentication",
+            )),
         }
     }
 
@@ -1236,12 +1259,20 @@ impl<T: Transport> WorkspaceClient<T> {
         intent: &Intent,
         delivery: &mut IntentDelivery,
     ) -> Result<ChannelOutcome, ChannelError> {
-        if !self.authentication_sent {
-            return Err(ChannelError::from_refusal(
-                channel::Refusal::unauthenticated(
-                    "present this connection's credential before sending requests",
-                ),
-            ));
+        match self.authentication {
+            AuthenticationDelivery::Presented => {}
+            AuthenticationDelivery::Unsent => {
+                return Err(ChannelError::from_refusal(
+                    channel::Refusal::unauthenticated(
+                        "present this connection's credential before sending requests",
+                    ),
+                ));
+            }
+            AuthenticationDelivery::Indeterminate => {
+                return Err(ChannelError::from_refusal(channel::Refusal::unauthenticated(
+                    "credential delivery is indeterminate; discard this connection; no command was sent",
+                )));
+            }
         }
         let previous = *delivery;
         if matches!(&intent.body, RequestBody::Observe(body) if body.query.is_some())

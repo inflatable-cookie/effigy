@@ -1168,6 +1168,47 @@ impl ChannelOpener for PeerChannel {
 
 #[test]
 fn a_wrong_capability_refuses_before_any_effect() {
+    // Coalesce these writes as socket buffering can, so the request write
+    // completes before the host rejects authentication and closes. A failed
+    // request write has a different, indeterminate outcome tested separately.
+    struct CoalescedAuthentication(PeerTransport, Vec<u8>);
+    impl Transport for CoalescedAuthentication {
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if !self.1.is_empty() {
+                self.0.write_all(&std::mem::take(&mut self.1))?;
+            }
+            self.0.read(bytes)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(Frame::Authenticate(_))) {
+                self.1.extend_from_slice(bytes);
+                Ok(())
+            } else if self.1.is_empty() {
+                self.0.write_all(bytes)
+            } else {
+                self.1.extend_from_slice(bytes);
+                self.0.write_all(&std::mem::take(&mut self.1))
+            }
+        }
+    }
+    struct CoalescedPeer(Option<UnixStream>);
+    impl ChannelOpener for CoalescedPeer {
+        fn open(
+            &mut self,
+            verified: &VerifiedWorkspaceContext,
+            live: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            WorkspaceClient::connect(
+                CoalescedAuthentication(PeerTransport::new(self.0.take().unwrap()), Vec::new()),
+                verified.clone(),
+                live.clone(),
+            )
+            .map(|client| Box::new(client) as Box<dyn ChannelRequest>)
+        }
+    }
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let (client_side, host_side) = connection_pair();
     let (served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
@@ -1176,9 +1217,7 @@ fn a_wrong_capability_refuses_before_any_effect() {
     // A capability this host never issued.
     publish(&mut guest, &context, Some(&Secret::new([0xcd; 32])));
     let mut checkout = FakeCheckout::default();
-    let mut opener = PeerChannel {
-        connections: vec![client_side],
-    };
+    let mut opener = CoalescedPeer(Some(client_side));
 
     let error = dispatch_in(
         &parsed(&["build"]),
@@ -6232,6 +6271,326 @@ fn level_one_connection_cannot_change_its_authenticated_client() {
         client.admitted.is_empty(),
         "revoked authority retained owner eligibility"
     );
+}
+
+#[test]
+fn level_one_partial_authentication_receipt_fences_all_later_writes() {
+    use std::io::Read as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    struct PartialAuthentication {
+        inner: PeerTransport,
+        attempts: Arc<AtomicUsize>,
+        received: mpsc::Receiver<()>,
+    }
+    impl Transport for PartialAuthentication {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.inner.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(
+                host::decode_frame(&bytes[4..]),
+                Ok(Frame::Authenticate(_) | Frame::Enrol(_))
+            ) {
+                self.attempts.fetch_add(1, Ordering::SeqCst);
+                self.inner.write_all(&bytes[..bytes.len() / 2])?;
+                self.received
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "partial credential frame",
+                ))
+            } else {
+                self.inner.write_all(bytes)
+            }
+        }
+    }
+
+    for (enrol, queued_refusal) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (client_side, host_side) = connection_pair();
+        let (received_tx, received_rx) = mpsc::channel();
+        let peer = std::thread::spawn(move || -> Result<(usize, usize), String> {
+            let mut transport = PeerTransport::new(host_side);
+            if !matches!(read_frame(&mut transport), Ok(Frame::Hello(_))) {
+                return Err("expected hello".into());
+            }
+            host::write_frame(
+                &mut transport,
+                &Frame::HelloOk(host::HelloOk {
+                    capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                    protocol: host::PROTOCOL_V1,
+                    effigy_version: running_binary().version,
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut prefix = [0; 4];
+            transport
+                .stream
+                .read_exact(&mut prefix)
+                .map_err(|error| error.to_string())?;
+            let body_len = u32::from_be_bytes(prefix) as usize;
+            if body_len > host::MAX_FRAME_BYTES {
+                return Err("authentication frame exceeded the bound".into());
+            }
+            let received = (body_len + 4) / 2;
+            let mut partial = vec![0; received - 4];
+            transport
+                .stream
+                .read_exact(&mut partial)
+                .map_err(|error| error.to_string())?;
+            // An unkeyed refusal cannot prove whether this partial credential
+            // was accepted. Signal actual receipt before the write returns.
+            if queued_refusal {
+                host::write_frame(
+                    &mut transport,
+                    &Frame::Refuse(host::Refusal::unauthenticated(
+                        "unkeyed queued authentication refusal",
+                    )),
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            transport
+                .stream
+                .shutdown(std::net::Shutdown::Write)
+                .map_err(|error| error.to_string())?;
+            received_tx.send(()).map_err(|error| error.to_string())?;
+            let mut trailing = Vec::new();
+            match transport.stream.read_to_end(&mut trailing) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            Ok((received, trailing.len()))
+        });
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut client = WorkspaceClient::connect(
+            PartialAuthentication {
+                inner: PeerTransport::new(client_side),
+                attempts: attempts.clone(),
+                received: received_rx,
+            },
+            verified(),
+            live_run(),
+        )
+        .unwrap();
+        let auth = if enrol {
+            GuestAuth::Enrolment {
+                credential: capability(),
+                session: SessionIdentity {
+                    run: session_run(),
+                    generation: Generation::new(1),
+                },
+            }
+        } else {
+            GuestAuth::Capability(capability())
+        };
+        let first = client.authenticate(auth);
+        let second = client.authenticate(GuestAuth::Capability(Secret::new([0xcd; 32])));
+        let intent = level_one_build_intent();
+        let request = client.send(&intent);
+        let retained_enrolment = client.enrolled.is_some();
+        drop(client);
+        let (received, trailing) = peer
+            .join()
+            .expect("peer reaped")
+            .expect("peer read partial auth");
+        assert!(received > 4);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "second credential write after partial receipt"
+        );
+        assert_eq!(
+            trailing, 0,
+            "bytes followed an indeterminate authentication frame"
+        );
+        assert!(
+            !retained_enrolment,
+            "unacknowledged enrolment retained staged authority"
+        );
+        for outcome in [first, second] {
+            let error = outcome.expect_err("authentication ambiguity cannot grant access");
+            assert!(matches!(error, ChannelError::Unknown { .. }), "{error:?}");
+            let message = error.into_runner().to_string();
+            assert!(!message.contains(&"ab".repeat(32)));
+            assert!(message.contains("unknown"));
+        }
+        let error = request.expect_err("an uncompleted authentication sends no command");
+        assert!(matches!(
+            error,
+            ChannelError::Refused {
+                code: "unauthenticated",
+                ..
+            }
+        ));
+        assert!(error
+            .into_runner()
+            .to_string()
+            .contains("no command was sent"));
+        // This command was never encoded or written. Its intent therefore
+        // remains usable on a fresh, successfully authenticated connection.
+        let mut fresh_transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut fresh_transport, &intent, level_one_accepted_reply());
+        let mut fresh = WorkspaceClient::connect(fresh_transport, verified(), live_run()).unwrap();
+        fresh
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        assert!(matches!(
+            fresh.send(&intent),
+            Ok(ChannelOutcome::Accepted { .. })
+        ));
+    }
+}
+
+#[test]
+fn level_one_authentication_prewrite_failure_keeps_the_connection_unsent() {
+    for encoding in [false, true] {
+        let observe = Intent::new(RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }));
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(
+            &mut transport,
+            &observe,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        );
+        let written = transport.written.clone();
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        if encoding {
+            client.live.container.container_id = "x".repeat(host::MAX_FRAME_BYTES + 1);
+        } else {
+            client.live.environment_generation = "not-a-generation".into();
+        }
+        let before = written.lock().unwrap().len();
+        let error = client
+            .authenticate(GuestAuth::Enrolment {
+                credential: capability(),
+                session: SessionIdentity {
+                    run: session_run(),
+                    generation: Generation::new(1),
+                },
+            })
+            .expect_err("invalid local authentication input");
+        assert!(!matches!(error, ChannelError::Unknown { .. }));
+        assert_eq!(written.lock().unwrap().len(), before);
+        assert!(client.enrolled.is_none());
+        client.live = live_run();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .expect("no credential was attempted");
+        assert!(matches!(
+            client.send(&observe),
+            Ok(ChannelOutcome::Observed(_))
+        ));
+    }
+}
+
+#[test]
+fn level_one_partial_request_write_cannot_use_a_queued_unkeyed_refusal() {
+    use std::io::Read as _;
+    use std::sync::mpsc;
+    struct PartialRequest(PeerTransport, mpsc::Receiver<()>);
+    impl Transport for PartialRequest {
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.0.read(bytes)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(Frame::Request(_))) {
+                self.0.write_all(&bytes[..bytes.len() / 2])?;
+                self.1
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "partial request"))
+            } else {
+                self.0.write_all(bytes)
+            }
+        }
+    }
+    let (queued_tx, queued_rx) = mpsc::channel();
+    let (client_side, host_side) = connection_pair();
+    let peer = std::thread::spawn(move || -> Result<usize, String> {
+        let mut transport = PeerTransport::new(host_side);
+        if !matches!(read_frame(&mut transport), Ok(Frame::Hello(_))) {
+            return Err("hello".into());
+        }
+        host::write_frame(
+            &mut transport,
+            &Frame::HelloOk(host::HelloOk {
+                capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        if !matches!(read_frame(&mut transport), Ok(Frame::Authenticate(_))) {
+            return Err("credential".into());
+        }
+        let mut prefix = [0; 4];
+        transport
+            .stream
+            .read_exact(&mut prefix)
+            .map_err(|error| error.to_string())?;
+        let body_len = u32::from_be_bytes(prefix) as usize;
+        if body_len > host::MAX_FRAME_BYTES {
+            return Err("request frame bound".into());
+        }
+        let mut partial = vec![0; (body_len + 4) / 2 - 4];
+        transport
+            .stream
+            .read_exact(&mut partial)
+            .map_err(|error| error.to_string())?;
+        host::write_frame(
+            &mut transport,
+            &Frame::Refuse(host::Refusal::unauthenticated("unkeyed queued refusal")),
+        )
+        .map_err(|error| error.to_string())?;
+        queued_tx.send(()).map_err(|error| error.to_string())?;
+        let mut trailing = Vec::new();
+        match transport.stream.read_to_end(&mut trailing) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        Ok(trailing.len())
+    });
+    let mut client = WorkspaceClient::connect(
+        PartialRequest(PeerTransport::new(client_side), queued_rx),
+        verified(),
+        live_run(),
+    )
+    .unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let intent = level_one_build_intent();
+    let first = client.send(&intent);
+    let second = client.send(&intent.clone());
+    drop(client);
+    assert_eq!(
+        peer.join()
+            .expect("peer reaped")
+            .expect("peer received partial request"),
+        0
+    );
+    for outcome in [first, second] {
+        let error = outcome.expect_err("an unkeyed refusal proves no request outcome");
+        assert!(matches!(error, ChannelError::Unknown { .. }), "{error:?}");
+        assert!(error
+            .into_runner()
+            .to_string()
+            .contains("do not submit it as a new request"));
+    }
 }
 
 #[test]
