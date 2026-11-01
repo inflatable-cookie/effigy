@@ -989,6 +989,41 @@ fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
 }
 
 #[test]
+fn target_observer_facade_refuses_mismatches_and_retains_owner() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
+    for _ in 0..4 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            // Synthetic mismatch control; production must observe the target.
+            let mut target = view.facts().target.clone();
+            target.vm_boot_id = "replaced-boot".into();
+            verified((target, view.facts().platform.clone()))
+        })
+        .expect_err("changed boot refuses");
+    assert!(error
+        .to_string()
+        .contains("workspace resume observation changed"));
+    let activation = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            // Fixture plumbing only, not a backend-observation proof.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect("matching structural fixture resumes");
+    assert_eq!(activation.session(), &session);
+    activation
+        .abort_guarded_recoverable(&ctx, Wait::FailFast)
+        .unwrap();
+}
+
+#[test]
 fn activation_parks_the_real_claimed_run_after_target_binding() {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
     use effigy_test_support::process::FixtureCommandExt;

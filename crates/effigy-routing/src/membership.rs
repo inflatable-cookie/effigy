@@ -47,6 +47,7 @@ pub fn load_effective_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalo
             .manifest_defined_catalog_alias()
             .map(str::to_owned)
             .unwrap_or_else(|| default_alias(&catalog_root, workspace_root));
+        let effective_digest = loaded.effective_digest();
         let bundle_root = loaded.bundle_root;
         let manifest = loaded.manifest;
 
@@ -64,6 +65,7 @@ pub fn load_effective_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalo
             catalog_root,
             manifest_path,
             bundle_root,
+            effective_digest: Some(effective_digest),
             defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
             deferred_builtins: manifest
                 .defer
@@ -194,6 +196,7 @@ pub fn load_isolated_catalog(
         .manifest_defined_catalog_alias()
         .map(str::to_owned)
         .unwrap_or_else(|| default_alias(&canonical_root, &canonical_root));
+    let effective_digest = loaded.effective_digest();
     let bundle_root = loaded.bundle_root;
     let manifest = loaded.manifest;
     Ok(LoadedCatalog {
@@ -202,6 +205,7 @@ pub fn load_isolated_catalog(
         catalog_root: canonical_root,
         manifest_path: manifest_path.to_path_buf(),
         bundle_root,
+        effective_digest: Some(effective_digest),
         defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
         deferred_builtins: manifest
             .defer
