@@ -1270,15 +1270,13 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
     let _lock = crate::contract_test_support::lock_test();
     // This test proves the real reserved engine starts without a ChildGrant.
     // Nextest isolates its process and the lock protects the process-local state.
-    unsafe {
-        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
-        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
-    }
+    let _environment = crate::contract_test_support::EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
+    ]);
     crate::runner::secret_session::forget_session_passphrase_for_tests();
-    assert!(
-        crate::runner::secret_session::take_child_grant().is_none(),
-        "the positive launch starts grant-absent"
-    );
+    assert!(crate::runner::secret_session::session_passphrase().is_none());
+    assert!(!crate::runner::secret_session::local_dev_secret_access_active());
     let fixture = tempfile::tempdir().unwrap();
     let checkout = fixture.path().join("checkout");
     std::fs::create_dir(&checkout).unwrap();
@@ -1366,14 +1364,20 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             name: "build".into(),
             args,
         };
-        let mut started = match crate::runner::managed_run::start_reserved_with_executable(
+        let start_result = crate::runner::managed_run::start_reserved_with_executable(
             &checkout,
             &invocation,
             checkout.clone(),
             ticket,
             Some(resolution),
             &executable,
-        ) {
+        );
+        if crate::runner::managed_run::take_reserved_handoff_observation() != Some(false) {
+            failures.push(format!(
+                "{profile}: launch did not use the no-handoff branch"
+            ));
+        }
+        let mut started = match start_result {
             Ok(started) => started,
             Err(error) => {
                 failures.push(format!("start {profile}: {error}"));

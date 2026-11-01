@@ -57,6 +57,16 @@ pub(in crate::runner) struct Started {
     pub(in crate::runner) root: effigy_kernel::root::StateRoot,
 }
 
+#[cfg(test)]
+thread_local! {
+    static RESERVED_HANDOFF_PRESENT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn take_reserved_handoff_observation() -> Option<bool> {
+    RESERVED_HANDOFF_PRESENT.with(|observed| observed.take())
+}
+
 /// Spawns the run's detached supervisor and waits for its admission. A
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
@@ -133,6 +143,8 @@ pub(in crate::runner) fn start_reserved_with_executable(
             .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
             .collect();
     let grant = crate::runner::secret_session::take_child_grant();
+    #[cfg(test)]
+    RESERVED_HANDOFF_PRESENT.with(|observed| observed.set(Some(grant.is_some())));
     if let Some(grant) = &grant {
         let (key, value) = grant.env_entry();
         env.push((OsString::from(key), OsString::from(value)));
