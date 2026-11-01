@@ -18,8 +18,9 @@ mod tests;
 mod view;
 mod workspace_activation;
 pub use workspace_activation::{
-    GuardedAbortCustody, ParkedAbortCustody, ParkedWorkspaceActivation, WorkspaceActivation,
-    WorkspaceBegin, WorkspaceBeginFailure, WorkspaceFinishCustody,
+    CleanupParkedWorkspaceActivation, GuardedAbortCustody, ParkedAbortCustody,
+    ParkedWorkspaceActivation, WorkspaceActivation, WorkspaceBegin, WorkspaceBeginFailure,
+    WorkspaceFinishCustody,
 };
 
 pub use backend::{

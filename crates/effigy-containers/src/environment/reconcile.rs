@@ -843,6 +843,46 @@ impl<'r> ParkedEnvRun<'r> {
 }
 
 impl<'r> EnvRun<'r> {
+    pub(super) fn park_for_cleanup(
+        self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session: &Run<'_>,
+        cleanup: &effigy_kernel::ctx::CleanupContext,
+    ) -> Result<effigy_kernel::run::ParkedWorkspaceRun<'r>, (EnvError, Box<Self>)> {
+        let Self {
+            run,
+            cx,
+            root,
+            env,
+            cleanup_budget,
+            began,
+            published,
+            failed,
+            transitioned,
+            progress,
+            step,
+        } = self;
+        match run.park_workspace_for_cleanup(reservation, session, cleanup) {
+            Ok(parked) => Ok(parked),
+            Err((error, run)) => Err((
+                EnvError::Kernel(error),
+                Box::new(Self {
+                    run: *run,
+                    cx,
+                    root,
+                    env,
+                    cleanup_budget,
+                    began,
+                    published,
+                    failed,
+                    transitioned,
+                    progress,
+                    step,
+                }),
+            )),
+        }
+    }
+
     /// Park only after target binding and a complete journalled creator receipt.
     /// Any refusal returns the still-guarded owner for explicit settlement.
     pub(super) fn park_workspace(
