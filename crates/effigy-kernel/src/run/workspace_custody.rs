@@ -102,4 +102,22 @@ mod tests {
         assert!(unwind.is_err());
         assert!(capacity.reserve().is_ok());
     }
+
+    #[test]
+    fn busy_capacity_precedes_state_root_creation_in_the_fixture() {
+        let fixture = tempfile::tempdir().unwrap();
+        let capacity = Capacity::default();
+        let _reserved = capacity.reserve().unwrap();
+        let attempt = || -> Result<(), super::CapacityUnavailable> {
+            let _empty_slot = capacity.reserve()?;
+            let cx = crate::run::tests::context();
+            let _root = crate::root::StateRoot::effects(&cx, fixture.path()).unwrap();
+            Ok(())
+        };
+        assert!(attempt().is_err());
+        assert!(
+            !fixture.path().join(".effigy").exists(),
+            "the refused fixture attempt must not create state"
+        );
+    }
 }
