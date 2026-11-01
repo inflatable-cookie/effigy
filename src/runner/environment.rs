@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{
-    self as engine, Applied, BackendError, BackendSelection, EnvContext, EnvError, EnvRecord,
-    EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
+    self as engine, Applied, BackendError, BackendSelection, CreationOutcome, EnvContext, EnvError,
+    EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
@@ -262,6 +262,10 @@ fn evidence() -> effigy_kernel::observe::Evidence {
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
     repo_root: PathBuf,
+    /// The apply's creation evidence. Ordinary unsealed applies report an
+    /// unproven outcome; only the sealed workspace route can attribute IDs.
+    /// `None` when the environment was held and no apply ran.
+    pub(in crate::runner) creation: Option<CreationOutcome>,
 }
 
 /// The retention a task's ensure gives a stack it starts.
@@ -299,7 +303,7 @@ pub(in crate::runner) fn reconcile(
             ))
         },
     )?;
-    let applied = engine::reconcile(
+    let outcome = engine::reconcile(
         &ctx,
         &env,
         Up {
@@ -307,11 +311,14 @@ pub(in crate::runner) fn reconcile(
             project: &policy.project_name,
             backend: &backend(repo_root, policy),
             retention,
+            workdir: repo_root,
+            primary_service: &policy.primary_service,
+            compose_files: &policy.compose_files,
         },
         apply,
     )
     .map_err(error)?;
-    match &applied {
+    match &outcome.applied {
         Applied::HeldByRuns(holders) => eprintln!(
             "[warn] environment `{}` is held by {}; the edit applies on the next up. The runs using it stay attached",
             policy.name,
@@ -330,6 +337,7 @@ pub(in crate::runner) fn reconcile(
     Ok(BringUp {
         env,
         repo_root: policy.repo_root.clone(),
+        creation: outcome.creation,
     })
 }
 

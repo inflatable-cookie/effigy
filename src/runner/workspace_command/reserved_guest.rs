@@ -42,6 +42,9 @@ pub(in crate::runner) trait WorkspaceGuestProbe: GuestChannelProbe {
 type CredentialFactory<'a> =
     Box<dyn FnOnce(&SessionRef, u64) -> Result<WorkspaceEnrolmentCredential, EnvError> + 'a>;
 
+type TargetObservation = (Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>);
+type TargetObserver<'a> = Box<dyn FnOnce(Instant) -> Result<TargetObservation, EnvError> + 'a>;
+
 /// The producer's input. Everything here is owned: the artifact path, the
 /// observed alias plan and the injected probe. The probe is boxed rather than
 /// borrowed because the target it must name is only known after apply, while the
@@ -53,6 +56,8 @@ pub(in crate::runner) struct ReservedGuestInput<'a> {
     pub(in crate::runner) artifact: PathBuf,
     pub(in crate::runner) targets: Observed<Vec<TargetCandidate>>,
     pub(in crate::runner) platform: Observed<BoundPlatform>,
+    /// Fresh backend observation under the already-held activation gate.
+    pub(in crate::runner) reobserve: TargetObserver<'a>,
     pub(in crate::runner) alias: ChannelAliasPlan,
     pub(in crate::runner) probe: Box<dyn WorkspaceGuestProbe + 'a>,
     pub(in crate::runner) context: WorkspaceContextInput,
@@ -89,8 +94,12 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
     activation: &mut WorkspaceActivation<'static>,
     mut input: ReservedGuestInput<'a>,
 ) -> Result<WorkspacePublication<'a>, EnvError> {
-    // The caller's absolute deadline, not a fresh budget measured from now.
-    let until = input.deadline;
+    // The caller's absolute deadline, not a fresh budget measured from now, and
+    // still clamped by the activation's own observation custody so this call can
+    // never outlive it.
+    let until = activation
+        .environment_mut()
+        .observation_deadline(input.deadline);
     let remaining = || {
         until
             .checked_duration_since(Instant::now())
@@ -127,12 +136,32 @@ pub(in crate::runner) fn prepare_reserved_guest<'a>(
         .intend_workspace_publication(&ctx_plan)?;
     let result = (|| {
         remaining()?;
+        let (gated_targets, gated_platform) = (input.reobserve)(until)?;
+        match (
+            &input.targets,
+            &gated_targets,
+            &input.platform,
+            &gated_platform,
+        ) {
+            (
+                Observed::Verified(before, _),
+                Observed::Verified(after, _),
+                Observed::Verified(before_platform, _),
+                Observed::Verified(after_platform, _),
+            ) if before == after && before_platform == after_platform => {}
+            _ => {
+                return Err(refused(
+                    "preflight and gated target/image identities differ or are unavailable",
+                ))
+            }
+        }
+        remaining()?;
         let target = activation
             .environment_mut()
-            .bind_target(&reservation, input.targets)?;
+            .bind_target(&reservation, gated_targets)?;
         let binding = activation
             .environment_mut()
-            .bind_platform(&reservation, input.platform)?;
+            .bind_platform(&reservation, gated_platform)?;
         if binding.target != target {
             return Err(refused("image and apply target differ"));
         }

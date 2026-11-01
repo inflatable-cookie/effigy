@@ -457,6 +457,20 @@ impl ReservedBackendObservation for ContainerBackendObservation {
 /// probe value, so the builder can construct the probe from the identity it just
 /// verified and hand ownership to the producer: no borrow of a local that dies
 /// at the publication closure's boundary.
+/// The gated re-observation #452's producer runs under the activation gate.
+///
+/// The builder cannot serve this read itself: the post-apply observation it
+/// borrowed is held for the whole life of the returned publication, and #506
+/// will not pass that observation through as if it were a fresh one. The caller
+/// therefore injects the read, receives the same one absolute deadline, and the
+/// producer compares it against the frozen decision.
+pub(in crate::runner) type ReservedReobserver<'a> = Box<
+    dyn FnOnce(
+            std::time::Instant,
+        ) -> Result<(Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>), EnvError>
+        + 'a,
+>;
+
 pub(in crate::runner) type ReservedProbeFactory<'a> =
     Box<dyn Fn(&ContainerIdentity) -> Result<Box<dyn WorkspaceGuestProbe + 'a>, RunnerError> + 'a>;
 
@@ -1095,7 +1109,24 @@ impl<'a> PreparedReservedPublication<'a> {
     /// consumes the prepared facts, so a second publication cannot reuse the
     /// secret or the staged-target assumptions, and it takes no borrow: the
     /// probe it carries was built for the verified target and is owned here.
-    pub(in crate::runner) fn into_input(self) -> ReservedGuestInput<'a> {
+    /// The verified target and platform this publication was built from, so a
+    /// caller can hand the producer a gated read to compare against them.
+    pub(in crate::runner) fn decision_pair(
+        &self,
+    ) -> (Observed<Vec<TargetCandidate>>, Observed<BoundPlatform>) {
+        (
+            Observed::Verified(self.targets.clone(), evidence()),
+            Observed::Verified(self.platform.clone(), evidence()),
+        )
+    }
+
+    /// Consumes the prepared facts. `reobserve` is the caller's independent
+    /// gated read: it must not reuse the observation this publication was built
+    /// from, and it receives the plan's one absolute deadline.
+    pub(in crate::runner) fn into_input(
+        self,
+        reobserve: ReservedReobserver<'a>,
+    ) -> ReservedGuestInput<'a> {
         let Self {
             guest,
             artifact,
@@ -1116,6 +1147,7 @@ impl<'a> PreparedReservedPublication<'a> {
             artifact,
             targets: Observed::Verified(targets, evidence()),
             platform: Observed::Verified(platform, evidence()),
+            reobserve,
             alias,
             probe,
             context,

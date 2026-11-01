@@ -78,6 +78,27 @@ recorded state the suite now reads from the kernel directly.
 `Fixture` removes its tree on drop, waiting for kernel sentinels first
 (`wait_kernel_helpers`), and never follows a symlink inside it.
 
+An adapterless listener proof starts plain servers through Effigy, so the
+child is a generation Effigy supervises, not the fixture's own. Its state file
+records the child's PID with its boot and start identity, and the private
+gateway's `gateway.identity` records the daemon the same way.
+`tests/gateway_private/fixture_sweep.rs` signals a recorded leader only while it
+still holds that identity. A background job in the leader's group is captured
+while the leader lives, by its own identity, so it is still stopped after the
+leader exits. A group member the sweep never captured is left alone once its
+leader is gone: nothing then proves it belongs to the record. A PID reused by
+the OS, or a changed boot, is never signalled.
+
+The fixture's `Drop` runs the sweep after the proof's own `container down`, so
+an unwinding or unsettled proof is covered. A killed process runs no `Drop`, so
+each `AdapterlessSetup` also starts a watchdog: it keeps capturing the fixture's
+generations and their group members into `sweep-ledger.json` under the fixture
+root while its owner lives, and stops them by identity once the owner is gone.
+The normal cleanup reads that ledger too. A settled `down` clears the listener's
+record, so a member captured before the stop would otherwise be lost. The interrupted-parent proof
+(`managed_host_adapterless_cleanup_stops_survivors_after_an_interrupted_parent`)
+runs that path through the real adapterless fixture.
+
 ## Placement
 
 Fixtures live in the run's temporary directory: with `[scratch]` configured
@@ -92,6 +113,12 @@ internal SSD.
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
 template.
+
+Live Colima container fixtures stage under `~/.cache` until the `effigy`
+profile mounts `/Volumes/Builds/scratch`. The profile's `colima.yaml` has
+`mounts: []`, and Effigy writes no mounts, so the change is a host edit that
+needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
+change can close it.
 
 ## Kernel fault fixtures
 

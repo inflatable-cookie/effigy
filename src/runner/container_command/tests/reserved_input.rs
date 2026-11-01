@@ -166,6 +166,18 @@ fn host_identity(platform: &str, libc: &str) -> WorkspaceContainerIdentity {
 }
 
 /// The exact container the fake backend binds.
+/// A gated re-observation that reports the frozen pair again: the shape the
+/// producer accepts when the backend state is unchanged between apply and gate.
+fn reobserving(
+    pair: (
+        Observed<Vec<TargetCandidate>>,
+        Observed<BoundPlatform>,
+    ),
+) -> super::ReservedReobserver<'static> {
+    let (targets, platform) = pair;
+    Box::new(move |_until| Ok((targets.clone(), platform.clone())))
+}
+
 fn bound_container() -> ContainerIdentity {
     ContainerIdentity {
         container_id: CONTAINER_ID.to_owned(),
@@ -1232,7 +1244,8 @@ fn a_bound_target_carries_the_verified_platform_and_never_an_invented_creator() 
     });
 
     assert_eq!(prepared.verified_container_id(), CONTAINER_ID);
-    let input = prepared.into_input();
+    let pair = prepared.decision_pair();
+    let input = prepared.into_input(reobserving(pair));
     assert_eq!(input.artifact, artifact);
     assert_eq!(input.alias.backend, Backend::Colima);
     assert!(
@@ -1330,7 +1343,8 @@ fn a_reobserved_target_is_not_attributed_to_this_activation() {
         )
         .expect("reobserved publication inputs")
     });
-    let input = prepared.into_input();
+    let pair = prepared.decision_pair();
+    let input = prepared.into_input(reobserving(pair));
     let Observed::Verified(targets, _) = &input.targets else {
         panic!("a built input carries verified target candidates");
     };
@@ -1528,7 +1542,6 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
             &mut backend,
         )
         .expect("the observation builds the owner input")
-        .into_input()
     });
     assert_eq!(input.alias.backend, Backend::Colima);
     assert!(input.deadline > Instant::now());
@@ -1536,7 +1549,7 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
     // And the same closure, type-checked against `up_prepared`'s parameter.
     let second_facts = facts;
     accepts_published(|_activation| {
-        Ok(observe(
+        let prepared = observe(
             ReservedObservationRequest {
                 repo_root: &observation.root,
             },
@@ -1545,8 +1558,9 @@ fn the_published_integration_shape_compiles_and_owns_its_probe() {
             &probe,
             &second_facts,
             &mut second,
-        )?
-        .into_input())
+        )?;
+        let pair = prepared.decision_pair();
+        Ok(prepared.into_input(reobserving(pair)))
     });
 }
 
