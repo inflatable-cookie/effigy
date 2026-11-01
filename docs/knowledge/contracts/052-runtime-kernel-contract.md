@@ -3139,6 +3139,25 @@ proposals in this section and its appendices describe that later scope, not
 Level 1 delivery or current production readiness. This ruling does not
 change ordinary host commands or the detached workspace session supervisor.
 
+**Level 1 forwarding seam — implemented.**
+`src/runner/workspace_client/noninteractive_stream.rs` is that seam. A guest
+task invocation sends one `invoke`; the host admits the reserved run
+(`Front::Detached`, `terminal: None`, so the child has no PTY and stdin is at
+EOF from creation), and the guest opens that exact run's *owning* attachment on
+the same authenticated connection while it is live, so the connection's end is
+the kernel's owner-loss stop for it. Output is read incrementally through the
+session observe `runs:output:<run>:<stdout-offset>:<stderr-offset>` — a read
+that admits nothing and writes nothing — in bounded chunks per stream, and the
+guest advances a position only after its sink accepted those bytes. The terminal
+outcome is the host's recorded `RecordedOutcome` for a replay of the same
+request id, which never admits a second run. That record carries no byte extent,
+so the guest drains the closed run's retained log until a read delivers nothing.
+A gap, a `truncated` capture, an unreadable read, an unestablishable status or a
+lost connection is `unknown`, never success. `LevelOneStreams` composes the
+#485 terminal custody: a run without a terminal opens its owning attachment for
+custody only, and terminal input and resize refuse with the named Level 2
+message.
+
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
 guest for selection. `SessionLaunch::qualify_guest` issues a launch-local

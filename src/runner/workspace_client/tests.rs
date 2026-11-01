@@ -1103,8 +1103,13 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
         connections: vec![client_side],
     };
 
+    // A task invocation now takes the Level 1 forwarding path (it streams to a
+    // terminal outcome), so this seam proof uses the other authority-bearing
+    // request shape the channel carries: a named host operation. The Level 1
+    // command policy narrows which operations a guest may send, not how an
+    // admitted request reaches the host.
     let rendered = dispatch_in(
-        &parsed(&["build"]),
+        &parsed(&["container", "down"]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1121,7 +1126,7 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
     {
         let calls = calls.lock().expect("calls");
         assert_eq!(calls.resolved, 1, "the host resolved the guest's request");
-        assert_eq!(calls.selector.as_deref(), Some("build"));
+        assert_eq!(calls.selector.as_deref(), Some("container:down"));
         assert_eq!(calls.cwd.as_deref(), Some("packages/app"));
         assert_eq!(calls.admitted.len(), 1, "the host recorded one admission");
     }

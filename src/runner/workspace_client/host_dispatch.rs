@@ -268,7 +268,7 @@ impl channel::Admission for HostDispatch {
 impl channel::Observer for HostDispatch {
     fn observe(
         &mut self,
-        _cx: &ObserveContext,
+        cx: &ObserveContext,
         body: &ObserveBody,
     ) -> Result<serde_json::Value, Refusal> {
         if body
@@ -279,6 +279,16 @@ impl channel::Observer for HostDispatch {
             return Err(Self::refuse(
                 "this workspace host answers host-target observations only",
             ));
+        }
+        // The Level 1 forwarder's captured-output read: a session read of this
+        // environment journal by run and absolute offset, which admits nothing
+        // and writes nothing (052 §8.11).
+        if body
+            .op
+            .strip_prefix(super::noninteractive_stream::OUTPUT_OP_PREFIX)
+            .is_some_and(|rest| rest.starts_with(':'))
+        {
+            return super::noninteractive_stream::observe_output(cx, &self.root, &body.op);
         }
         match body.op.as_str() {
             "runs:list" | "runs:status" => {

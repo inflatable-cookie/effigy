@@ -732,6 +732,13 @@ impl TerminalCustody {
         self.runs.len()
     }
 
+    /// Whether this custody holds a terminal for `run`. A run it does not own
+    /// is a non-interactive forwarding run: the Level 1 endpoint opens its
+    /// owning attachment for custody only and publishes no stream for it.
+    pub(crate) fn owns(&self, run: RunId) -> bool {
+        self.runs.iter().any(|streams| streams.run() == run)
+    }
+
     /// One run's terminal, mutably: the writer a caller inspects between turns.
     pub(crate) fn terminal_mut(&mut self, run: RunId) -> Option<&mut WorkspaceTerminal> {
         self.runs
