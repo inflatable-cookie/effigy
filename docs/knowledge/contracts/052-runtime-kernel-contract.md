@@ -5194,6 +5194,14 @@ ordinary `Run::begin` on the environment is refused by name while a successor
 generation is reserved ("reserved by a workspace activation"). Such a caller
 reports the in-progress activation and changes nothing.
 
+A production staging attempt carries a fresh attempt identity distinct from its
+session run. Staging records the attempt with the session in one transaction;
+only that attempt may cancel its tagged reservation. A mismatched attempt or a
+legacy untagged session refuses without change and remains recoverable. A crash
+between reservation and staging leaves an untagged reservation for recovery;
+no caller may infer that it owns that reservation. This tag adds no run owner or
+gate and staging still occurs with `Gate(Env)` free (Supervisor, 2026-11-01).
+
 Then the command, in the order the reservation forces. **The activation process is
 the session owner until the handoff**: it stages and admits the successor while
 `Gate(Env)` is free, keeps that `Run` handle, takes `Env` afterwards — `Task`

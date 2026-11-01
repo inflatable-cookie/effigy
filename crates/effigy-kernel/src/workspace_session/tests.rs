@@ -7906,3 +7906,128 @@ fn decision_after_commit_fault_recovers_the_exact_reservation() {
         .cancel(&cx, &root, Wait::FailFast)
         .expect("cancel exact reservation");
 }
+
+#[test]
+fn attempts_cannot_stage_or_cancel_each_others_session() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let inputs = decision_inputs(96);
+    let decision =
+        || match WorkspaceActivationReservation::decide(&cx, &root, &env, &inputs, Wait::FailFast)
+            .expect("decision")
+        {
+            ActivationDecision::Activate(reservation) => *reservation,
+            _ => panic!("fresh decision"),
+        };
+    let first = decision();
+    let recovered = decision();
+    assert_eq!(
+        first.id(),
+        recovered.id(),
+        "an unstaged reservation is recoverable"
+    );
+    let a = run::RequestId::new([1; 16]);
+    let b = run::RequestId::new([2; 16]);
+    assert!(
+        first
+            .cancel_for_attempt(&cx, &root, Wait::FailFast, a)
+            .is_err(),
+        "crash before staging leaves a recoverable untagged reservation"
+    );
+    let owner = workspace_entry();
+    let id = run_id(95);
+    first
+        .stage_for_attempt(&cx, &root, &owner, id, a)
+        .expect("first attempt stages");
+    assert!(
+        recovered.claim_session(&cx, &root).is_err(),
+        "a legacy claimant cannot bypass the creating attempt"
+    );
+    assert!(
+        recovered
+            .claim_session_with_attempt(&cx, &root, Some(b))
+            .is_err(),
+        "a different attempt cannot claim the staged run"
+    );
+    assert!(
+        first
+            .claim_session_with_attempt(&cx, &root, Some(a))
+            .is_ok(),
+        "the creating attempt can claim the staged run"
+    );
+    assert!(
+        recovered
+            .stage_for_attempt(&cx, &root, &owner, id, b)
+            .is_err(),
+        "a different attempt cannot claim even the same run"
+    );
+    assert!(
+        recovered
+            .cancel_for_attempt(&cx, &root, Wait::FailFast, b)
+            .is_err(),
+        "a contender cannot cancel"
+    );
+    let reader = read_journal(&cx, &root);
+    let current = WorkspaceActivationReservation::recover(&reader, &env)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reservation");
+    assert_eq!(current.state(), ActivationReservationState::Reserved);
+    first
+        .cancel_for_attempt(&cx, &root, Wait::FailFast, a)
+        .expect("staging attempt cancels");
+}
+
+#[test]
+fn tagged_cleanup_refuses_legacy_untagged_staging() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let reservation = decided_with(&cx, &root, &env, 97);
+    reservation
+        .stage_session_binding(&cx, &root, &workspace_entry(), run_id(97))
+        .expect("legacy stage");
+    let attempt = run::RequestId::new([3; 16]);
+    assert!(reservation
+        .cancel_for_attempt(&cx, &root, Wait::FailFast, attempt)
+        .is_err());
+    let current = WorkspaceActivationReservation::recover(&read_journal(&cx, &root), &env)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("recover");
+    assert_eq!(current.state(), ActivationReservationState::Reserved);
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("legacy cleanup");
+}
+
+#[test]
+fn staged_attempt_refuses_an_existing_run_identity() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let owner = workspace_entry();
+    let id = run_id(98);
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv(owner.clone(), "workspace"),
+        opts(id),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("prior run");
+    end_run(&cx, run, WorkloadOutcome::NotStarted);
+    let reservation = decided_with(&cx, &root, &environment(), 98);
+    assert!(
+        reservation
+            .stage_for_attempt(&cx, &root, &owner, id, run::RequestId::new([4; 16]))
+            .is_err(),
+        "a prior run must not become this attempt's cleanup target"
+    );
+}

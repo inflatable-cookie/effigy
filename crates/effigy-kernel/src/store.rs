@@ -1592,7 +1592,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 8] = [
+const ADDITIVE_TABLES: [(&str, &str); 9] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1693,6 +1693,13 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
   ON workspace_activation_reservations(session_run)",
+    ),
+    (
+        "workspace_activation_attempts",
+        "CREATE TABLE IF NOT EXISTS workspace_activation_attempts (
+  reservation_id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL
+) STRICT;",
     ),
     (
         "workspace_session_runs",

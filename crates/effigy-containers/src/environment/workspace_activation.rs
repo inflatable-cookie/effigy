@@ -29,6 +29,7 @@ pub struct WorkspaceActivation<'r> {
     selected: bool,
     committed: Option<effigy_kernel::workspace_session::SelectionObligation>,
     supervisor_id: String,
+    attempt: effigy_kernel::run::RequestId,
 }
 
 impl<'r> WorkspaceActivation<'r> {
@@ -103,11 +104,45 @@ impl<'r> WorkspaceActivation<'r> {
             ActivationDecision::Attach(session) => return Ok(WorkspaceBegin::Attach(session)),
             ActivationDecision::Activate(reservation) => *reservation,
         };
-        reservation
-            .stage_session_binding(&ctx.cx, ctx.root, &invocation.spec().owner, options.id)
-            .map_err(EnvError::Kernel)?;
-        let cleanup = ctx.cleanup()?;
-        let (session_run, session) = SessionRef::admit_reserved(
+        let attempt = fresh_attempt().map_err(|error| EnvError::Cleanup {
+            cause: Box::new(error),
+            failures: vec![EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "attempt identity unavailable; reservation remains recoverable",
+            ))],
+        })?;
+        if let Err(error) = reservation.stage_for_attempt(
+            &ctx.cx,
+            ctx.root,
+            &invocation.spec().owner,
+            options.id,
+            attempt,
+        ) {
+            return Err(cleanup_failed_reservation(
+                ctx,
+                &reservation,
+                attempt,
+                EnvError::Kernel(error),
+                None,
+                None,
+            ));
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return Err(cleanup_failed_reservation(
+                    ctx,
+                    &reservation,
+                    attempt,
+                    error,
+                    None,
+                    None,
+                ))
+            }
+        };
+        let run_id = options.id;
+        let next = options.next.clone();
+        let owner = invocation.spec().owner.clone();
+        let (session_run, session) = match SessionRef::admit_reserved_for_attempt(
             &ctx.cx,
             ctx.root,
             invocation,
@@ -116,36 +151,59 @@ impl<'r> WorkspaceActivation<'r> {
             &mut EnvSettlement,
             &reservation,
             effigy_kernel::supervise::Placement::Detached,
-        )
-        .map_err(EnvError::Kernel)?;
-        // Custody is registered before listener construction. The consumer
-        // receives this already-adopted supervisor and never re-adopts it.
-        let supervisor =
-            SessionSupervisor::adopt(session_run, supervisor_id).map_err(EnvError::Kernel)?;
-        // Retain this exact owning Task Run while acquiring the claimed Env.
+            attempt,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(cleanup_failed_reservation(
+                    ctx,
+                    &reservation,
+                    attempt,
+                    EnvError::Kernel(error),
+                    Some((&owner, run_id, next)),
+                    None,
+                ))
+            }
+        };
+        let supervisor = match SessionSupervisor::adopt_recoverable(session_run, supervisor_id) {
+            Ok(supervisor) => supervisor,
+            Err((error, run)) => {
+                return Err(cleanup_failed_reservation(
+                    ctx,
+                    &reservation,
+                    attempt,
+                    EnvError::Kernel(error),
+                    None,
+                    Some(run),
+                ))
+            }
+        };
         let environment = match EnvRun::begin_claimed(ctx, env, Operation::Up, wait, &reservation) {
             Ok(environment) => environment,
             Err(error) => {
-                let mut failures = Vec::new();
                 let settled = ctx.cleanup().and_then(|cleanup| {
                     supervisor
                         .settle(&cleanup, &mut EnvSettlement)
+                        .map(|_| ())
                         .map_err(EnvError::Kernel)
                 });
-                if let Err(error) = settled {
-                    failures.push(error);
-                }
-                if let Err(error) = reservation.cancel(&ctx.cx, ctx.root, wait) {
-                    failures.push(EnvError::Kernel(error));
-                }
-                return Err(if failures.is_empty() {
-                    error
-                } else {
-                    EnvError::Cleanup {
-                        cause: Box::new(error),
-                        failures,
+                let cause = match settled {
+                    Ok(()) => error,
+                    Err(failure) => {
+                        return Err(EnvError::Cleanup {
+                            cause: Box::new(error),
+                            failures: vec![failure],
+                        })
                     }
-                });
+                };
+                return Err(cleanup_failed_reservation(
+                    ctx,
+                    &reservation,
+                    attempt,
+                    cause,
+                    None,
+                    None,
+                ));
             }
         };
         Ok(WorkspaceBegin::Activate(Box::new(Self {
@@ -156,6 +214,7 @@ impl<'r> WorkspaceActivation<'r> {
             selected: false,
             committed: None,
             supervisor_id: supervisor_id.to_owned(),
+            attempt,
         })))
     }
 
@@ -318,10 +377,105 @@ impl<'r> WorkspaceActivation<'r> {
             )
             .map_err(EnvError::Kernel)
         } else {
+            let cleanup = ctx.cleanup()?;
+            let effects = cleanup.operation().effects().map_err(|error| {
+                EnvError::Invalid(format!("cleanup authority unavailable: {error}"))
+            })?;
             self.reservation
-                .cancel(&ctx.cx, ctx.root, wait)
+                .cancel_for_attempt(&effects, ctx.root, wait, self.attempt)
                 .map(|_| ())
                 .map_err(EnvError::Kernel)
+        }
+    }
+}
+
+fn fresh_attempt() -> Result<effigy_kernel::run::RequestId, EnvError> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut source| source.read_exact(&mut bytes))
+        .map_err(|error| {
+            EnvError::Kernel(effigy_kernel::run::RunError::unavailable(format!(
+                "workspace attempt entropy: {error}"
+            )))
+        })?;
+    Ok(effigy_kernel::run::RequestId::new(bytes))
+}
+
+/// Settle an exact admitted session before cancelling this attempt's tag.
+fn cleanup_failed_reservation<'r>(
+    ctx: &EnvContext<'r>,
+    reservation: &WorkspaceActivationReservation,
+    attempt: effigy_kernel::run::RequestId,
+    cause: EnvError,
+    uncertain: Option<(
+        &effigy_kernel::id::ResourceId,
+        effigy_kernel::id::RunId,
+        effigy_kernel::outcome::Invocation,
+    )>,
+    owned: Option<Box<Run<'r>>>,
+) -> EnvError {
+    use effigy_kernel::observe::Observed;
+    let mut failures = Vec::new();
+    match ctx.cleanup() {
+        Err(error) => failures.push(error),
+        Ok(cleanup) => match cleanup.operation().effects() {
+            Err(error) => failures.push(EnvError::Invalid(format!(
+                "cleanup authority unavailable: {error}"
+            ))),
+            Ok(effects) => {
+                if let Some(run) = owned {
+                    if let Err(error) = (*run).settle(&cleanup, &mut EnvSettlement) {
+                        failures.push(EnvError::Kernel(error));
+                    }
+                } else if let Some((owner, id, next)) = uncertain {
+                    let observed = cleanup.operation().observe().ok().map(|observe| {
+                        match effigy_kernel::store::Store::read(&observe, ctx.root) {
+                            Observed::Verified(reader, _) => {
+                                effigy_kernel::run::summary(&reader, id)
+                            }
+                            Observed::Absent(proof) => Observed::Absent(proof),
+                            Observed::Unknown(reason) => Observed::Unknown(reason),
+                        }
+                    });
+                    match observed {
+                        Some(Observed::Verified(summary, _))
+                            if summary.cleanup_complete != Some(true) =>
+                        {
+                            if let Err(error) = effigy_kernel::run::settle_interrupted(
+                                &effects,
+                                ctx.root,
+                                owner,
+                                id,
+                                next,
+                                &cleanup,
+                                &mut EnvSettlement,
+                            ) {
+                                failures.push(EnvError::Kernel(error));
+                            }
+                        }
+                        Some(Observed::Verified(_, _) | Observed::Absent(_)) => {}
+                        _ => failures.push(EnvError::Invalid(
+                            "cannot observe the exact session for cleanup".into(),
+                        )),
+                    }
+                }
+                if failures.is_empty() {
+                    if let Err(error) =
+                        reservation.cancel_for_attempt(&effects, ctx.root, Wait::FailFast, attempt)
+                    {
+                        failures.push(EnvError::Kernel(error));
+                    }
+                }
+            }
+        },
+    }
+    if failures.is_empty() {
+        cause
+    } else {
+        EnvError::Cleanup {
+            cause: Box::new(cause),
+            failures,
         }
     }
 }
@@ -503,6 +657,73 @@ mod tests {
         reservation
             .cancel(&ctx.cx, &state, Wait::FailFast)
             .expect("fixture cleanup");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn tagged_owner_settles_its_early_failures_without_losing_reservations() {
+        use effigy_kernel::observe::Observed;
+        use effigy_kernel::workspace_session::ActivationReservationState;
+        for point in [
+            "SessionStageBefore",
+            "SessionStageAfter",
+            "BeginBefore",
+            "BeginAdmitted",
+            "SessionSupervisorAdoptBefore",
+            "SessionSupervisorAdoptAfter",
+        ] {
+            let fixture = home();
+            let state = root(fixture.path());
+            let ctx = EnvContext::new(&state, CancelToken::default()).expect("context");
+            let env = env("workspace");
+            let mut fired = false;
+            let outcome = effigy_kernel::fault_injection::with_hook(
+                move |name| {
+                    if !fired && name == point {
+                        fired = true;
+                        return Err(std::io::Error::other("injected"));
+                    }
+                    Ok(())
+                },
+                || {
+                    WorkspaceActivation::begin(
+                        &ctx,
+                        &env,
+                        &inputs(),
+                        &invocation(),
+                        options(42),
+                        "fixture-supervisor",
+                    )
+                },
+            );
+            assert!(outcome.is_err(), "{point} must fail");
+            let Observed::Verified(reader, _) =
+                effigy_kernel::store::Store::read(&ctx.observe(), &state)
+            else {
+                panic!("journal unavailable: {point}");
+            };
+            let Observed::Verified(Some(reservation), _) =
+                WorkspaceActivationReservation::recover(&reader, &env.resource)
+            else {
+                panic!("reservation missing: {point}");
+            };
+            if point == "SessionStageBefore" {
+                assert_eq!(
+                    reservation.state(),
+                    ActivationReservationState::Reserved,
+                    "pre-stage reservation remains recoverable"
+                );
+                reservation
+                    .cancel(&ctx.cx, &state, Wait::FailFast)
+                    .expect("fixture cleanup");
+            } else {
+                assert_eq!(
+                    reservation.state(),
+                    ActivationReservationState::Cancelled,
+                    "{point} must cancel its tagged reservation"
+                );
+            }
+        }
     }
 
     #[test]

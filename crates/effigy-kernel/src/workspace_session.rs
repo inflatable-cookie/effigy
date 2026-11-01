@@ -465,9 +465,60 @@ impl SessionRef {
         reservation: &WorkspaceActivationReservation,
         placement: Placement,
     ) -> Result<(Run<'a>, SessionRef), RunError> {
+        Self::admit_reserved_inner(
+            cx,
+            root,
+            invocation,
+            opts,
+            cleanup,
+            adapter,
+            reservation,
+            placement,
+            None,
+        )
+    }
+
+    /// Admit only the session staged by this activation attempt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_reserved_for_attempt<'a>(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        invocation: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        reservation: &WorkspaceActivationReservation,
+        placement: Placement,
+        attempt: run::RequestId,
+    ) -> Result<(Run<'a>, SessionRef), RunError> {
+        Self::admit_reserved_inner(
+            cx,
+            root,
+            invocation,
+            opts,
+            cleanup,
+            adapter,
+            reservation,
+            placement,
+            Some(attempt),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_reserved_inner<'a>(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        invocation: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        reservation: &WorkspaceActivationReservation,
+        placement: Placement,
+        attempt: Option<run::RequestId>,
+    ) -> Result<(Run<'a>, SessionRef), RunError> {
         session_placement(&opts, placement)?;
         let id = opts.id;
-        let claim = reservation.claim_session(cx, root)?;
+        let claim = reservation.claim_session_with_attempt(cx, root, attempt)?;
         if claim.binding.owner != invocation.spec().owner {
             return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
         }
@@ -514,9 +565,25 @@ pub struct SessionSupervisor<'a> {
 }
 
 impl<'a> SessionSupervisor<'a> {
-    pub fn adopt(mut run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
-        run.register_session_custody(supervisor)?;
-        Ok(Self { run })
+    pub fn adopt(run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
+        Self::adopt_recoverable(run, supervisor).map_err(|(error, _)| error)
+    }
+
+    /// Retain custody on a registration failure so the caller can settle it.
+    pub fn adopt_recoverable(
+        mut run: Run<'a>,
+        supervisor: &str,
+    ) -> Result<Self, (RunError, Box<Run<'a>>)> {
+        let result = (|| {
+            crate::fault_point!(SessionSupervisorAdoptBefore)?;
+            run.register_session_custody(supervisor)?;
+            crate::fault_point!(SessionSupervisorAdoptAfter)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(Self { run }),
+            Err(error) => Err((error, Box::new(run))),
+        }
     }
 
     pub fn settle(
@@ -2014,6 +2081,10 @@ impl WorkspaceActivationReservation {
                 // revived: its id is derived from the same pair, and its inputs
                 // are the ones this decision froze.
                 txn.conn().execute(
+                    "DELETE FROM workspace_activation_attempts WHERE reservation_id=?1",
+                    [existing.id.to_string()],
+                )?;
+                txn.conn().execute(
                     "UPDATE workspace_activation_reservations SET state='reserved',session_owner=NULL,session_run=NULL,session_generation=NULL,inputs=?3,updated_at=?4 \
                      WHERE environment=?1 AND environment_generation=?2",
                     params![
@@ -2173,6 +2244,15 @@ impl WorkspaceActivationReservation {
         cx: &EffectContext,
         root: &StateRoot,
     ) -> Result<SessionClaim, RunError> {
+        self.claim_session_with_attempt(cx, root, None)
+    }
+
+    fn claim_session_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        attempt: Option<run::RequestId>,
+    ) -> Result<SessionClaim, RunError> {
         let observe = activation_observe(cx)?;
         let reader = activation_reader(&observe, root)?;
         let stored = read_reservation(
@@ -2186,6 +2266,7 @@ impl WorkspaceActivationReservation {
         if stored.id != self.record.id {
             return Err(RunError::from(ActivationRefusal::WrongReservation));
         }
+        check_staging_attempt(reader.conn(), stored.id, attempt)?;
         match stored.state {
             ActivationReservationState::Reserved => {}
             ActivationReservationState::Committed => {
@@ -2203,6 +2284,7 @@ impl WorkspaceActivationReservation {
             environment: stored.environment,
             generation: stored.generation,
             binding,
+            attempt,
         })
     }
 
@@ -2227,6 +2309,29 @@ impl WorkspaceActivationReservation {
         owner: &ResourceId,
         run: RunId,
     ) -> Result<SessionBinding, RunError> {
+        self.stage_with_attempt(cx, root, owner, run, None)
+    }
+
+    /// Stage the exact session and its creating attempt in one transaction.
+    pub fn stage_for_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        owner: &ResourceId,
+        run: RunId,
+        attempt: run::RequestId,
+    ) -> Result<SessionBinding, RunError> {
+        self.stage_with_attempt(cx, root, owner, run, Some(attempt))
+    }
+
+    fn stage_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        owner: &ResourceId,
+        run: RunId,
+        attempt: Option<run::RequestId>,
+    ) -> Result<SessionBinding, RunError> {
         check_session_owner(&self.record, owner)?;
         crate::fault_point!(SessionStageBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
@@ -2240,12 +2345,29 @@ impl WorkspaceActivationReservation {
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
             }
+            let prior_attempt: Option<String> = txn.conn().query_row(
+                "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+                [stored.id.to_string()], |row| row.get(0),
+            ).optional()?;
+            match (stored.session.is_some(), prior_attempt.as_deref(), attempt) {
+                (true, Some(saved), Some(offered)) if saved == offered.to_string() => {},
+                (true, None, None) => {},
+                (false, None, _) => {},
+                _ => return Err(RunError::refused("competing attempt or untagged reservation; reservation remains recoverable")),
+            }
             if stored.state == ActivationReservationState::Reserved && stored.environment_run.is_none() {
                 if let Some(existing) = &stored.session {
                     if existing.owner == *owner && existing.run == run {
                         return Ok(existing.clone());
                     }
                 }
+            }
+            let run_exists: bool = txn.conn().query_row(
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
+                [run.to_string()], |row| row.get(0),
+            )?;
+            if run_exists {
+                return Err(RunError::refused("session run identity already exists; reservation remains recoverable"));
             }
             let base = next_generation(txn.conn(), owner)?.get() - 1;
             let highest: i64 = txn.conn().query_row(
@@ -2312,6 +2434,12 @@ impl WorkspaceActivationReservation {
                     ],
                 )?,
             };
+            if let Some(attempt) = attempt {
+                txn.conn().execute(
+                    "INSERT INTO workspace_activation_attempts(reservation_id,attempt_id) VALUES (?1,?2)",
+                    params![stored.id.to_string(), attempt.to_string()],
+                )?;
+            }
             // Exactly one writer stages this session: a competing Task run's
             // staging loses here rather than replacing the winner.
             if changed != 1 {
@@ -2676,6 +2804,27 @@ impl WorkspaceActivationReservation {
         root: &StateRoot,
         wait: Wait,
     ) -> Result<Self, RunError> {
+        self.cancel_with_attempt(cx, root, wait, None)
+    }
+
+    /// Only the attempt that staged this session may cancel its reservation.
+    pub fn cancel_for_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: Wait,
+        attempt: run::RequestId,
+    ) -> Result<Self, RunError> {
+        self.cancel_with_attempt(cx, root, wait, Some(attempt))
+    }
+
+    fn cancel_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: Wait,
+        attempt: Option<run::RequestId>,
+    ) -> Result<Self, RunError> {
         let _gate = Gate::acquire(
             cx,
             root,
@@ -2693,6 +2842,21 @@ impl WorkspaceActivationReservation {
                     })?;
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
+            }
+            let saved: Option<String> = txn
+                .conn()
+                .query_row(
+                    "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+                    [stored.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match (saved.as_deref(), attempt) {
+                (Some(saved), Some(offered)) if saved == offered.to_string() => {}
+                (None, None) => {}
+                _ => return Err(RunError::refused(
+                    "competing attempt or untagged reservation; reservation remains recoverable",
+                )),
             }
             match stored.state {
                 ActivationReservationState::Committed => {
@@ -2867,6 +3031,27 @@ pub struct SessionClaim {
     environment: ResourceId,
     generation: Generation,
     binding: SessionBinding,
+    attempt: Option<run::RequestId>,
+}
+
+fn check_staging_attempt(
+    conn: &rusqlite::Connection,
+    reservation: ActivationReservationId,
+    attempt: Option<run::RequestId>,
+) -> Result<(), RunError> {
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+            params![reservation.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if stored != attempt.map(|id| id.to_string()) {
+        return Err(RunError::refused(
+            "competing attempt or untagged reservation; reservation remains recoverable",
+        ));
+    }
+    Ok(())
 }
 
 impl SessionClaim {
@@ -2909,6 +3094,7 @@ impl SessionClaim {
         if stored.id != self.reservation {
             return Err(RunError::from(ActivationRefusal::WrongReservation));
         }
+        check_staging_attempt(txn.conn(), self.reservation, self.attempt)?;
         match stored.state {
             ActivationReservationState::Reserved => {}
             ActivationReservationState::Committed => {

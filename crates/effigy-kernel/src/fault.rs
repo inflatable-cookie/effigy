@@ -84,6 +84,8 @@ points! {
     ActivationDecisionAfter,
     SessionStageBefore,
     SessionStageAfter,
+    SessionSupervisorAdoptBefore,
+    SessionSupervisorAdoptAfter,
     SelectionCommitBefore,
     SelectionCommitAfter,
     SelectionSwitchBefore,

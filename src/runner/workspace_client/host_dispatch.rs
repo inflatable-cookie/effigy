@@ -110,6 +110,13 @@ impl channel::Resolver for HostDispatch {
                  channel; run the command on the host",
             ));
         };
+        let runtime = effigy_tasks::parse_task_runtime_args(&body.args)
+            .map_err(|error| Self::refuse(error.to_string()))?;
+        if runtime.repo_override.is_some() {
+            return Err(Self::refuse(
+                "a workspace request cannot override the published checkout",
+            ));
+        }
         let cwd = self.checkout_directory(&body.cwd)?;
         let invocation = effigy_cli::TaskInvocation {
             name: name.clone(),
@@ -130,6 +137,24 @@ impl channel::Resolver for HostDispatch {
             name,
             &selection,
         );
+        let checkout = self.host_checkout.canonicalize().map_err(|error| {
+            Self::refuse(format!("the published checkout is unavailable: {error}"))
+        })?;
+        let resolved_root = target.root.canonicalize().map_err(|error| {
+            Self::refuse(format!("the resolved checkout is unavailable: {error}"))
+        })?;
+        let catalog = target
+            .root
+            .join(&target.catalog)
+            .canonicalize()
+            .map_err(|error| {
+                Self::refuse(format!("the resolved catalog is unavailable: {error}"))
+            })?;
+        if resolved_root != checkout || !catalog.starts_with(&checkout) {
+            return Err(Self::refuse(
+                "the resolved task is outside the published checkout",
+            ));
+        }
         // A run that would first take a task-declared shared lock owns another
         // run, so it cannot carry this reservation. Refuse before the host
         // records the request.
@@ -182,12 +207,34 @@ impl HostDispatch {
                 "`{relative}` is not a checkout-relative working directory"
             )));
         }
+        let current = effigy_kernel::fs::DirFd::open(&self.host_checkout).map_err(|error| {
+            Self::refuse(format!("the published checkout is unavailable: {error}"))
+        })?;
+        let current_identity = current
+            .identity()
+            .map_err(|error| Self::refuse(error.to_string()))?;
+        let published_identity = self
+            .root
+            .owning_directory()
+            .identity()
+            .map_err(|error| Self::refuse(error.to_string()))?;
+        if current_identity != published_identity {
+            return Err(Self::refuse("the published checkout was replaced"));
+        }
         let directory = if relative == "." || relative.is_empty() {
             self.host_checkout.clone()
         } else {
             self.host_checkout.join(relative)
         };
-        if !directory.starts_with(&self.host_checkout) {
+        let checkout = self.host_checkout.canonicalize().map_err(|error| {
+            Self::refuse(format!("the published checkout is unavailable: {error}"))
+        })?;
+        let directory = directory.canonicalize().map_err(|error| {
+            Self::refuse(format!(
+                "the requested working directory is unavailable: {error}"
+            ))
+        })?;
+        if !directory.starts_with(&checkout) {
             return Err(Self::refuse(format!(
                 "`{relative}` resolves outside the host checkout"
             )));
@@ -358,4 +405,68 @@ pub(crate) fn production_server(
 /// The host checkout one serving owner's dispatcher resolves inside.
 pub(crate) fn host_checkout(serving: &super::ServingFacts) -> &Path {
     &serving.host_checkout
+}
+
+#[cfg(test)]
+mod checkout_boundary_tests {
+    use super::*;
+    use effigy_kernel::workspace_channel::{OutputMode, Resolver};
+
+    fn invoke(cwd: &str, args: Vec<String>) -> InvocationBody {
+        InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: cwd.into(),
+            target: Target::Host,
+            args,
+            output: OutputMode::Text,
+        }
+    }
+
+    #[test]
+    fn guest_repo_override_and_symlink_cannot_escape_published_checkout() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let checkout = fixture.path().join("checkout");
+        let other = fixture.path().join("other");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        std::fs::create_dir_all(&other).expect("other checkout");
+        for path in [&checkout, &other] {
+            std::fs::write(
+                path.join("effigy.toml"),
+                "[tasks]\nbuild = 'echo fixture'\n",
+            )
+            .expect("manifest");
+        }
+        std::os::unix::fs::symlink(&other, checkout.join("outside")).expect("fixture symlink");
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = effigy_kernel::root::StateRoot::effects(&cx, &checkout).expect("state");
+        let mut dispatch = HostDispatch::new(checkout.clone(), root);
+        assert!(
+            dispatch.resolve(&cx, &invoke(".", vec![])).is_ok(),
+            "ordinary checkout task resolves"
+        );
+        assert!(
+            dispatch.resolve(&cx, &invoke("outside", vec![])).is_err(),
+            "symlink escape refuses"
+        );
+        assert!(
+            dispatch
+                .resolve(
+                    &cx,
+                    &invoke(".", vec!["--repo".into(), other.display().to_string()])
+                )
+                .is_err(),
+            "guest repo override refuses"
+        );
+        std::fs::rename(&checkout, fixture.path().join("old-checkout")).expect("move checkout");
+        std::fs::create_dir(&checkout).expect("replace checkout");
+        std::fs::write(
+            checkout.join("effigy.toml"),
+            "[tasks]\nbuild = 'echo replacement'\n",
+        )
+        .expect("replacement manifest");
+        assert!(
+            dispatch.resolve(&cx, &invoke(".", vec![])).is_err(),
+            "a replacement checkout refuses"
+        );
+    }
 }
