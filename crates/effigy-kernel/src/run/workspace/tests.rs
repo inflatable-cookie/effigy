@@ -1082,6 +1082,25 @@ fn committed_owner_eof_retry_refuses_after_child_compacts_release_row() {
         (0, 1, 1),
         "settlement removed the release row but retained the closed run and admission"
     );
+    let requests_before = scalar(&cx, &root, "SELECT count(*) FROM requests");
+    assert!(owner.release_recoverable(&cx, &root, Release::Eof).is_err());
+    assert!(
+        resume_owner(&cx, &root, session(), id(1)).is_err(),
+        "closed owner cannot revive"
+    );
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM requests"),
+        requests_before,
+        "retry creates no additional stop"
+    );
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM workspace_admissions WHERE state='closed'"
+        ),
+        1
+    );
 }
 
 #[test]
