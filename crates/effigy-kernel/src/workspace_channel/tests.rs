@@ -439,6 +439,7 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
             .expect_err("release uncertainty");
         assert_eq!(error.code, RefusalCode::Unknown);
         assert!(fault::fired(), "the intended release fault must fire");
+        assert!(host.cleanup_pending());
         fault::arm(None);
         let handle = host
             .unsettled_attachment
@@ -584,6 +585,7 @@ fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
             .expect_err("detach uncertainty");
         assert_eq!(error.code, RefusalCode::Unknown);
         assert!(fault::fired(), "release fault must fire");
+        assert!(host.cleanup_pending());
         fault::arm(None);
         let handle = host
             .unsettled_attachment

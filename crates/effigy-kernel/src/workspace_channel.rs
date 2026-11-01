@@ -2592,6 +2592,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         &mut self.grants
     }
 
+    /// Whether this server retains an attachment or admission whose disconnect
+    /// cleanup could not be established. The serving owner must retain this
+    /// server and its run custody while the state remains unresolved.
+    pub fn cleanup_pending(&self) -> bool {
+        self.owner_cleanup_unsettled
+    }
+
     /// Serve one connection: pin check, hello, negotiation, authentication,
     /// then requests. Nothing is read or written before the pin check, and no
     /// request is answered before authentication.
