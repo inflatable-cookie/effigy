@@ -7,6 +7,109 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 const PRIMARY: &str = "workspace";
+
+#[test]
+fn owned_apply_borrows_the_same_gated_run_and_original_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let expected_run = env_run.run.id();
+    let request = request(&render);
+    let deadline = request.deadline;
+    let mut called = false;
+    let outcome =
+        env_run.create_with_owned(&mut fake, &selection(), request, |run, effect, until| {
+            called = true;
+            assert_eq!(run.id(), expected_run);
+            assert_eq!(until, deadline);
+            assert!(effect.operation().check("owned apply").is_ok());
+            assert!(
+                !effigy_kernel::store::in_transaction(),
+                "backend I/O must not span a journal transaction"
+            );
+            assert!(
+                EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).is_err(),
+                "the same Env gate remains held"
+            );
+            Ok(())
+        });
+    assert!(outcome.is_ok(), "owned apply should complete: {outcome:?}");
+    assert!(called);
+    env_run.finish(true).unwrap();
+}
+
+#[test]
+fn owned_apply_never_runs_after_the_original_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut request = request(&render);
+    request.deadline = Instant::now();
+    let mut called = false;
+    let result = env_run.create_with_owned(&mut fake, &selection(), request, |_, _, _| {
+        called = true;
+        Ok(())
+    });
+    assert!(matches!(
+        result,
+        Err(EnvError::Backend(BackendError::NotStarted(_)))
+    ));
+    assert!(
+        !called,
+        "an expired creation deadline cannot start the callback"
+    );
+    env_run.finish(false).unwrap();
+}
+
+#[test]
+fn owned_apply_uncertainty_never_replays_the_callback() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut calls = 0;
+    let first = env_run.create_with_owned(&mut fake, &selection(), request(&render), |_, _, _| {
+        calls += 1;
+        Err(BackendError::Uncertain("private apply unsettled".into()))
+    });
+    assert!(matches!(
+        first,
+        Err(EnvError::Backend(BackendError::Uncertain(_)))
+    ));
+    assert!(env_run
+        .create_with_owned(&mut fake, &selection(), request(&render), |_, _, _| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err());
+    assert_eq!(calls, 1, "an uncertain apply cannot be repeated");
+    env_run.finish(false).unwrap();
+}
+
+#[test]
+fn owned_private_apply_does_not_report_not_started_or_leak_diagnostics() {
+    for error in [
+        BackendError::NotStarted("secret-bearing backend diagnostic".into()),
+        BackendError::Uncertain("secret-bearing backend diagnostic".into()),
+    ] {
+        let result = super::super::workspace_activation::private_apply_failure(error);
+        assert!(
+            matches!(&result, BackendError::Uncertain(message) if message == "workspace private apply outcome unsettled")
+        );
+        assert!(!format!("{result:?}").contains("secret-bearing"));
+    }
+}
 fn id(byte: char) -> String {
     byte.to_string().repeat(64)
 }

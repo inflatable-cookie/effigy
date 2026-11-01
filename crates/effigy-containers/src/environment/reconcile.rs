@@ -1428,6 +1428,16 @@ impl<'r> EnvRun<'r> {
         request: super::creation::CreationRequest<'_>,
         apply: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<super::creation::CreationOutcome, EnvError> {
+        self.create_with_owned(backend, selection, request, |_, _, _| apply())
+    }
+
+    pub(super) fn create_with_owned(
+        &mut self,
+        backend: &mut dyn super::backend::EnvironmentBackend,
+        selection: &BackendSelection,
+        request: super::creation::CreationRequest<'_>,
+        apply: impl FnOnce(&mut Run<'_>, &EffectContext, Instant) -> Result<(), BackendError>,
+    ) -> Result<super::creation::CreationOutcome, EnvError> {
         use super::creation::{self, RecordedCreation};
         let mut request = request;
         if let Deadline::At(deadline) = self.cx.operation().deadline() {
@@ -1504,7 +1514,7 @@ impl<'r> EnvRun<'r> {
         let outcome = match fault("EnvBackendBefore") {
             Err(error) => Err(BackendError::NotStarted(error.to_string())),
             Ok(()) => {
-                let outcome = apply();
+                let outcome = apply(&mut self.run, &self.cx, request.deadline);
                 match (outcome, fault("EnvBackendAfter")) {
                     (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
                     (outcome, _) => outcome,
