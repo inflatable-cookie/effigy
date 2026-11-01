@@ -287,6 +287,27 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **A forwarded workspace command streams to its terminal outcome.** A task a
+  container-mode guest asks the host to run is now a Level 1 foreground command
+  (contract 052 §8.11, Tom's 2026-11-01 ruling): the host run carries no PTY and
+  starts with stdin already at EOF, the guest keeps one authenticated connection
+  through the exact admitted run's terminal outcome, and the command's stdout and
+  stderr are delivered separately and incrementally to the guest's own sinks.
+  Bytes are only acknowledged after the sink accepted them, so a partial write
+  or a dead sink never consumes output the guest did not print. Admission alone
+  is no longer reported as success: the result is the host's recorded terminal
+  status (a real exit code, or a signal as the shell convention `128 + signal`),
+  and a missing outcome, a rotated or truncated capture, or a lost connection
+  reports the result as unknown. The connection holds the run's owning attachment
+  while it is live, so its end cancels the run through kernel custody. Captured
+  output is read through a new session observe (`runs:output:<run>:<stdout>:<stderr>`)
+  because the terminal stream seam stops publishing the moment a run closes,
+  which would have lost a forwarded command's tail. Guest attach/reconnect, a
+  PTY or interactive terminal, terminal input/resize and an acknowledged detach
+  refuse with named Level 2 messages before any effect; the guest's `workspace`
+  and `container shell` commands refuse before a connection is opened. Ordinary
+  host commands and the detached workspace session supervisor are unchanged.
+
 - **A workspace session owns its terminals' input, resize and retained
   output.** `workspace_client::terminal` implements the kernel's `Terminal` and
   `Streams` seams for the merged #507 serving owner: `WorkspaceTerminal` holds

@@ -2774,6 +2774,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     /// terminal input and resize, in order and never replayed.
     inbound: BTreeMap<u32, u64>,
     observe_query_v1: bool,
+    observed_invocations: BTreeMap<RequestId, (RunId, Digest)>,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A, R, O, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2817,6 +2818,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             carry: None,
             inbound: BTreeMap::new(),
             observe_query_v1: false,
+            observed_invocations: BTreeMap::new(),
         }
     }
     pub fn grants(&self) -> &GrantBook {
@@ -2986,6 +2988,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.carry = None;
         self.inbound.clear();
         self.observe_query_v1 = false;
+        self.observed_invocations.clear();
     }
 
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
@@ -3438,20 +3441,98 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             let session = grant.session();
             match &request.body {
                 RequestBody::Observe(body) => {
+                    body.check()?;
                     if body.query.is_some() && !self.observe_query_v1 {
                         return Err(Refusal::forbidden(
                             "observe_query_v1 is unsupported on this connection; use an independent host CLI",
                         ));
                     }
+                    if let Some(rest) = body.op.strip_prefix("runs:outcome:") {
+                        if body.query.is_some()
+                            || body.run_id.is_some()
+                            || body.target != Some(Target::Host)
+                        {
+                            return Err(Refusal::invalid("invalid outcome observation"));
+                        }
+                        let (request_text, run_text) = rest.split_once(':').ok_or_else(|| {
+                            Refusal::invalid("outcome observation needs request and run")
+                        })?;
+                        let id = RequestId::parse(request_text)
+                            .map_err(|_| Refusal::invalid("invalid request identity"))?;
+                        let run: RunId = run_text
+                            .parse()
+                            .map_err(|_| Refusal::invalid("invalid run identity"))?;
+                        let (owned_run, digest) =
+                            self.observed_invocations.get(&id).ok_or_else(|| {
+                                Refusal::forbidden("request was not admitted on this connection")
+                            })?;
+                        if *owned_run != run {
+                            return Err(Refusal::forbidden("request and run do not match"));
+                        }
+                        let key = run::AdmissionKey {
+                            session,
+                            request: id,
+                        };
+                        let value = match run::lookup(observe, root, key, digest.clone()) {
+                            Observed::Verified(Recovered::Admitted { run: found, .. }, _)
+                                if found == run =>
+                            {
+                                serde_json::json!({"state": "pending"})
+                            }
+                            Observed::Verified(
+                                Recovered::Completed {
+                                    run: found,
+                                    outcome,
+                                },
+                                _,
+                            ) if found == run => {
+                                serde_json::json!({"state": "completed", "outcome": outcome})
+                            }
+                            _ => {
+                                return Err(Refusal::unknown(
+                                    "the exact recorded outcome is unavailable",
+                                ))
+                            }
+                        };
+                        return Ok(ResponseOutcome::Observed(value));
+                    }
+                    if let Some(rest) = body.op.strip_prefix("runs:output:") {
+                        let run_text = rest.split(':').next().unwrap_or_default();
+                        let run: RunId = run_text
+                            .parse()
+                            .map_err(|_| Refusal::invalid("invalid output run"))?;
+                        if body.query.is_some()
+                            || body.run_id.is_some()
+                            || body.target != Some(Target::Host)
+                            || !self
+                                .observed_invocations
+                                .values()
+                                .any(|(owned, _)| *owned == run)
+                        {
+                            return Err(Refusal::forbidden(
+                                "output run was not admitted on this connection",
+                            ));
+                        }
+                    }
                     let value = self.dispatcher.observe(observe, body)?;
                     Ok(ResponseOutcome::Observed(value))
                 }
                 RequestBody::Invoke(body) => {
-                    let reply = self
-                        .dispatcher
-                        .invoke(cx, observe, root, session, request.id, digest, body)?;
+                    let reply = self.dispatcher.invoke(
+                        cx,
+                        observe,
+                        root,
+                        session,
+                        request.id,
+                        digest.clone(),
+                        body,
+                    )?;
                     Ok(match reply {
-                        AdmissionReply::Accepted(accepted) => ResponseOutcome::Accepted(accepted),
+                        AdmissionReply::Accepted(accepted) => {
+                            self.observed_invocations
+                                .insert(request.id, (accepted.run, digest));
+                            ResponseOutcome::Accepted(accepted)
+                        }
                         AdmissionReply::Completed(completed) => {
                             ResponseOutcome::Completed(completed)
                         }

@@ -692,7 +692,14 @@ where
     // admits; until then every terminal frame refuses rather than dropping
     // input, and the loop already serves the exact value it will hand over
     // (effigy#485).
-    let mut terminals = service.terminal_custody(&observe);
+    //
+    // Level 1 forwarding composes around it rather than replacing it: a
+    // forwarded run has no terminal, so its owning attachment opens for custody
+    // only and its output is read through the session's captured-output
+    // observe; terminal input and resize refuse with the named Level 2 message
+    // (052 §8.11).
+    let mut terminals =
+        super::noninteractive_stream::LevelOneStreams::new(service.terminal_custody(&observe));
     // Every way out of the loop retires the custody, so no path can leave the
     // session's listener, key or run behind: a control failure is a listener
     // failure for this purpose, not an early return.

@@ -1120,9 +1120,14 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
         connections: vec![client_side],
     };
 
+    // A task invocation now takes the Level 1 forwarding path (it streams to a
+    // terminal outcome), so this seam proof uses the other authority-bearing
+    // request shape the channel carries: a named host operation. The Level 1
+    // command policy narrows which operations a guest may send, not how an
+    // admitted request reaches the host.
     let rendered = dispatch_in(
-        &parsed(&["build"]),
-        &[],
+        &parsed(&["container", "down"]),
+        &["container".into(), "down".into()],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1139,7 +1144,7 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
     {
         let calls = calls.lock().expect("calls");
         assert_eq!(calls.resolved, 1, "the host resolved the guest's request");
-        assert_eq!(calls.selector.as_deref(), Some("build"));
+        assert_eq!(calls.selector.as_deref(), Some("container:down"));
         assert_eq!(calls.cwd.as_deref(), Some("packages/app"));
         assert_eq!(calls.admitted.len(), 1, "the host recorded one admission");
     }
@@ -6935,6 +6940,29 @@ fn level_one_valid_method_outcome_matrix_and_definitive_refusals_stay_sendable()
     }
 }
 
+fn argv_fixture_stream_response(intent: &Intent) -> Option<Result<ChannelOutcome, ChannelError>> {
+    let run = RunId::new(1, [41; 10]).unwrap();
+    match &intent.body {
+        RequestBody::Attach(_) => Some(Err(ChannelError::Refused {
+            code: "unavailable",
+            message: "already closed".into(),
+        })),
+        RequestBody::Observe(body) if body.op.starts_with("runs:outcome:") => {
+            Some(Ok(ChannelOutcome::Observed(
+                serde_json::json!({"state":"completed","outcome":{"workload":"Succeeded","cleanup_complete":true}}),
+            )))
+        }
+        RequestBody::Observe(body) if body.op.starts_with("runs:output:") => {
+            let empty =
+                serde_json::json!({"from":0,"next":0,"bytes":"","gap":null,"truncated":false});
+            Some(Ok(ChannelOutcome::Observed(
+                serde_json::json!({"schema":"effigy.workspace-output.v1","run":run,"stdout":empty,"stderr":empty}),
+            )))
+        }
+        _ => None,
+    }
+}
+
 #[test]
 fn level_one_dispatch_uses_explicit_frozen_arguments_and_checkout_relative_cwd() {
     struct Capture(Arc<Mutex<Vec<RequestBody>>>);
@@ -6943,6 +6971,9 @@ fn level_one_dispatch_uses_explicit_frozen_arguments_and_checkout_relative_cwd()
             Ok(())
         }
         fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+            if let Some(response) = argv_fixture_stream_response(intent) {
+                return response;
+            }
             self.0.lock().unwrap().push(intent.body.clone());
             Ok(match intent.body {
                 RequestBody::Invoke(_) => ChannelOutcome::Accepted {
@@ -7063,6 +7094,9 @@ fn level_one_public_entry_keeps_original_argv_with_guest_io_faked() {
                 Ok(())
             }
             fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+                if let Some(response) = argv_fixture_stream_response(intent) {
+                    return response;
+                }
                 self.0.lock().unwrap().push(serde_json::json!({"method":intent.body.method().as_str(), "body":&intent.body}));
                 Ok(match intent.body {
                     RequestBody::Invoke(_) => ChannelOutcome::Accepted {

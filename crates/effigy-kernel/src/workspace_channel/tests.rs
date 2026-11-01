@@ -5158,3 +5158,89 @@ fn observe_query_negotiation_is_not_inherited_by_a_fresh_connection() {
     assert_eq!(host.dispatcher.resolver.calls, 0);
     assert!(host.dispatcher.admission.tickets.is_empty());
 }
+
+#[test]
+fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
+    let (_fixture, cx, root, session) = journal("effigy-outcome-observe");
+    let (mut run, run_id) = admitted_run(&cx, &root, session, 10, &[81]);
+    let mut host = server(session, &[]);
+    let id = RequestId::new([10; 16]);
+    host.observed_invocations
+        .insert(id, (run_id, Digest::of(b"invite")));
+    let grant = host.grants.authenticate(&capability()).unwrap().clone();
+    let observe = |id: RequestId, run: RunId| {
+        RequestBody::Observe(ObserveBody {
+            op: format!("runs:outcome:{id}:{run}"),
+            target: Some(Target::Host),
+            query: None,
+            run_id: None,
+        })
+    };
+    let mut attachment = None;
+    let mut streams = NoStreams;
+    let poll = |host: &mut Server<Admitter, Resolver, Observer, Ids>, body, session| {
+        host.answer(
+            &cx,
+            &observe_context(),
+            &root,
+            &grant,
+            &request(session, body, 99),
+            &mut attachment,
+            &mut streams,
+        )
+        .outcome
+    };
+    let mut poll = poll;
+    assert!(
+        matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["state"] == "pending")
+    );
+    assert!(matches!(
+        poll(
+            &mut host,
+            observe(RequestId::new([11; 16]), run_id),
+            session
+        ),
+        ResponseOutcome::Refused(_)
+    ));
+    let other = RunId::new(1, [77; 10]).unwrap();
+    assert!(matches!(
+        poll(&mut host, observe(id, other), session),
+        ResponseOutcome::Refused(_)
+    ));
+    let wrong_session = Session {
+        run: other,
+        generation: Generation::new(99),
+    };
+    assert!(matches!(
+        poll(&mut host, observe(id, run_id), wrong_session),
+        ResponseOutcome::Refused(_)
+    ));
+    run.finish(crate::outcome::WorkloadOutcome::Failed { code: 7 })
+        .unwrap();
+    run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+    assert!(
+        matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["outcome"]["workload"]["Failed"]["code"] == 7)
+    );
+    let mut wrong_grants = GrantBook::new();
+    let mut wrong_binding = binding(session);
+    wrong_binding.session.generation = Generation::new(99);
+    wrong_grants.issue(
+        capability(),
+        wrong_binding,
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let wrong_grant = wrong_grants.authenticate(&capability()).unwrap();
+    let response = host.answer(
+        &cx,
+        &observe_context(),
+        &root,
+        wrong_grant,
+        &request(session, observe(id, run_id), 100),
+        &mut attachment,
+        &mut streams,
+    );
+    assert!(matches!(response.outcome, ResponseOutcome::Refused(_)));
+    assert!(host.dispatcher.admission.tickets.is_empty());
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+}
