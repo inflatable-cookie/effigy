@@ -545,3 +545,47 @@ This section supersedes §5's "requester re-reads row state" and the `Detach` re
    touches `custody.rs`, which is A's file. Coordinate before any change.
 6. **Inline-only alternative.** Pending Tom's decision (Supervisor, 2026-11-01). This
    document does not define it. The source map for it waits for that definition.
+
+## 22. Startup and handshake ownership (ruled 2026-11-01)
+
+Supervisor ruling on #512 birth receipts. #512 A is the **sole owner** of startup
+and handshake code. #525 does not edit these files. Both briefs record this list.
+Queue holds are not changed by this document.
+
+**A-owned, #525 must not edit:**
+
+| File | Why it is startup or handshake |
+|---|---|
+| `crates/effigy-kernel/src/supervise/memory.rs` | `Config`, `HELPER_PROTOCOL`, `check_protocol`, `Register`, checkout guard startup |
+| `crates/effigy-kernel/src/supervise/anchor.rs` | supervisor go and ready pipes (`private_dup(3)`, `(4)`) |
+| `crates/effigy-kernel/src/supervise.rs` startup and `launch` path | `Event::Admitted` ordering and the birth receipt; `HANDOFF_FD` (~226–227) |
+| `crates/effigy-kernel/src/run/lifecycle.rs` | owner, supervisor and sentinel identity writes (~62, ~99) |
+| `crates/effigy-kernel/src/run/machine.rs` | identity writes at run start (~238, ~336) |
+| `crates/effigy-kernel/src/run/checkout_custody.rs` | checkout guard and backup helper |
+| `crates/effigy-kernel/src/custody.rs` | `spawn_inner` and the `intend_process` and fork barrier (A's) |
+| `crates/effigy-kernel/src/custody/spawn.rs` | fork child, fd closure, master and stdio setup |
+
+**Shared, #525 requests a change in writing before editing:**
+
+| File | #525 need | Rule |
+|---|---|---|
+| `crates/effigy-kernel/src/run/mod.rs` | `RequestAction::ReleaseAttachment` and `DetachAttachment`, atomic resolution (v4.1 §19), request bulk-resolve | #525 edits the request types and resolution only. A keeps `Run::begin` and admission |
+| `crates/effigy-kernel/src/run/settle.rs` | close transaction and request resolution (~357, ~405) | #525 edits only the close and resolution region. A keeps interrupted and partial-admission settlement |
+| `crates/effigy-kernel/src/supervise.rs` owner loop | `ReleaseAttachment` handling (~1295–1310) and liveness watch (~1460) | not startup. Requires A's written agreement, since A owns the file |
+
+**Consequences for #525 design:**
+
+- The mixed-writer gate (§7, §21.2) and any identity field for the master holder
+  (§21.1) are decisions that touch `lifecycle.rs`, `machine.rs` and `memory.rs`.
+  #525 must not implement them. It asks A for the field or the handshake capability,
+  or waits for a ruling.
+- W3 (`custody.rs` ~1476, the blocking `write_input` loop) and C3 (`HANDOFF_FD`)
+  are A's files. #525 asks; it does not edit.
+- The fork-ordering argument in §6 step 3 depends on `custody/spawn.rs`. #525 needs
+  A's agreed assertion or test there, not an edit.
+- A's receipt design may later supply a verified owner identity. #525 may consume
+  it only after A's receipt lands and is reviewed. Until then, §21.1 stays open.
+
+**Gate.** The design stays at v4.1 and is not final. The chain is: design final →
+independent security review → code. #525 code stays on hold. A's build-ID and
+receipt rules are A's, not #525's.
