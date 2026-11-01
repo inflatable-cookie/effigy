@@ -2327,7 +2327,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Dispatcher<A, R, O, I> {
         // records nothing and a corrected retry is a fresh request.
         let resolved = self.resolver.resolve(cx, body)?;
         let run = self.ids.next()?;
-        let reply = match run::reserve(cx, root, key, digest, run).map_err(refusal_from)? {
+        let reply = match run::reserve_resolved(cx, root, key, digest, run, &resolved)
+            .map_err(refusal_from)?
+        {
             Reservation::Recorded(recovered) => replay(recovered)?,
             Reservation::Fresh(ticket) => {
                 // A refused admission keeps the reservation recorded against

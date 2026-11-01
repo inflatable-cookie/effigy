@@ -66,10 +66,10 @@ pub use attachments::{
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
 pub use workspace::{
-    attach_secondary, lookup, reserve, resume_owner, resume_secondary, AdmissionKey,
-    AdmissionTicket, Attachment, AttachmentId, Chunk, Client, Gap, InvalidHexId, RecordedOutcome,
-    Recovered, Release, RequestId, Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK,
-    SECONDARY_MAX,
+    attach_secondary, lookup, reserve, reserve_resolved, resume_owner, resume_secondary,
+    AdmissionKey, AdmissionTicket, Attachment, AttachmentId, Chunk, Client, Gap, InvalidHexId,
+    RecordedOutcome, Recovered, Release, RequestId, Reservation, Session, UnknownAdmission,
+    CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
 };
 mod workspace;
 pub(crate) use settle::settle_interrupted_wait;
@@ -1691,7 +1691,7 @@ impl<'a> Run<'a> {
                 inv.spec().owner.name().to_string(), generation.get() as i64,
                 if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string()), identity])?;
             if let Some(ticket) = &admission {
-                workspace::bind(txn, ticket)?;
+                workspace::bind(txn, ticket, inv)?;
             }
             if let Some(planned) = &planned {
                 let fence = Fence {

@@ -171,6 +171,118 @@ fn admitted<'a>(
     )
     .expect("admitted run")
 }
+
+#[test]
+fn workspace_ticket_rejects_a_different_resolved_invocation_before_admission() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let key = admission_key(91);
+    let expected = inv(owner());
+    let mut changed_argv = expected.spec().clone();
+    changed_argv.argv.push("different".into());
+    let mut changed_provenance = expected.spec().clone();
+    changed_provenance
+        .provenance
+        .insert("manifest".into(), Digest::of(b"changed"));
+    let alternatives = [
+        inv(foreign_owner()),
+        ResolvedInvocation::new(changed_argv).unwrap(),
+        ResolvedInvocation::new(changed_provenance).unwrap(),
+    ];
+    let ticket = match reserve_resolved(&cx, &root, key, digest(), id(91), &expected).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected fresh reservation: {other:?}"),
+    };
+    let mut fake = Fake::new(fixture.path());
+    for different in &alternatives {
+        assert_ne!(expected.digest(), different.digest());
+        let error = Run::begin_admitted(
+            &cx,
+            &root,
+            different,
+            begin_opts(id(91)),
+            &cleanup(&cx),
+            &mut fake,
+            ticket.clone(),
+        )
+        .expect_err("a reservation for a different resolution must refuse");
+        assert!(error.to_string().contains("resolved invocation"));
+        assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+        assert_eq!(runs(&cx, &root), 0);
+        assert_eq!(
+            scalar(&cx, &root, "SELECT count(*) FROM run_attachments"),
+            0
+        );
+    }
+    assert!(matches!(
+        reserve_resolved(&cx, &root, key, digest(), id(92), &alternatives[0]).unwrap(),
+        Reservation::Recorded(_)
+    ));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &expected,
+        begin_opts(id(91)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .expect("original resolution admits exact run");
+    assert_eq!(run.id(), id(91));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("admitted"));
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+
+#[test]
+fn resolved_admission_migrates_legacy_rows_without_rebinding_them() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let legacy_key = admission_key(93);
+    let legacy = fresh(&cx, &root, legacy_key, id(93));
+    let store = Store::open(&cx, &root).unwrap();
+    store
+        .conn()
+        .execute_batch("ALTER TABLE workspace_admissions DROP COLUMN resolution_digest")
+        .unwrap();
+    drop(store);
+    assert!(matches!(
+        lookup_now(&cx, &root, legacy_key),
+        Observed::Verified(_, _)
+    ));
+    let bound_key = admission_key(94);
+    let expected = inv(owner());
+    let bound = match reserve_resolved(&cx, &root, bound_key, digest(), id(94), &expected).unwrap()
+    {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected fresh reservation: {other:?}"),
+    };
+    let reader = reader(&cx, &root);
+    let legacy_digest: Option<Vec<u8>> = reader
+        .conn()
+        .query_row(
+            "SELECT resolution_digest FROM workspace_admissions WHERE run_id=?1",
+            [legacy.run().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let bound_digest: Option<Vec<u8>> = reader
+        .conn()
+        .query_row(
+            "SELECT resolution_digest FROM workspace_admissions WHERE run_id=?1",
+            [bound.run().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(legacy_digest.is_none());
+    assert_eq!(
+        bound_digest.as_deref(),
+        Some(expected.digest().0.as_slice())
+    );
+}
 fn settled(cx: &EffectContext, root: &StateRoot, key: AdmissionKey, run: RunId, fake: &mut Fake) {
     let mut run = admitted(cx, root, key, run, fake);
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
