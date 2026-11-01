@@ -120,6 +120,29 @@ fn home_with_fake_fixture(root: &Path) -> PathBuf {
 }
 
 #[test]
+fn private_route_refuses_before_interpolation_or_child() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let home = home_with_fake_fixture(root.path());
+    let program = fake_colima(root.path(), "private", "exit 0");
+    let error = crate::with_test_effigy_home(&home, || {
+        super::process::run_private_detached_command(
+            root.path(),
+            &program.to_string_lossy(),
+            &compose_args(),
+            "workspace apply",
+            &secret_env(),
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .expect_err("private path must refuse")
+    });
+    assert!(error.to_string().contains(
+        "private workspace Compose is unavailable until the reviewed same-Env capability lands"
+    ));
+    assert!(observed(root.path(), "private").is_empty());
+    assert!(files_under(&home).is_empty());
+}
+
+#[test]
 fn ordinary_route_success_removes_the_file_and_regenerates_for_the_next_run() {
     let root = tempfile::tempdir().expect("fixture root");
     let home = home_with_fake_fixture(root.path());

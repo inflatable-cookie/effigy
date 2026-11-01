@@ -192,72 +192,6 @@ pub(super) fn run_detached_command_with_env_until(
 
 /// Workspace-only detached invocation: no backend bytes enter retained logs,
 /// pipes or returned diagnostics. The caller supplies its existing deadline.
-#[cfg(unix)]
-pub(super) fn run_private_detached_command(
-    repo_root: &Path,
-    program: &str,
-    args: &[OsString],
-    label: &str,
-    env: &[(String, OsString)],
-    deadline: Instant,
-) -> Result<(), ContainerExecError> {
-    let private_error = |kind| ContainerExecError::Launch {
-        command: label.to_owned(),
-        error: std::io::Error::new(kind, "private workspace backend invocation unavailable"),
-    };
-    let args = compose_invocation_args(program.as_ref(), args, env)
-        .map_err(|_| private_error(std::io::ErrorKind::InvalidInput))?;
-    if Instant::now() >= deadline {
-        return Err(timeout_error(label));
-    }
-    let mut command = Command::new(resolve_host_cli_program(program));
-    command
-        .current_dir(repo_root)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    #[cfg(unix)]
-    unsafe {
-        // SAFETY: only setpgid runs between fork and exec; this group belongs to the child.
-        command
-            .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| private_error(error.kind()))?;
-    let timed_out = loop {
-        if Instant::now() >= deadline {
-            break true;
-        }
-        match private_child_exited(child.id()) {
-            Ok(true) => break false,
-            Ok(false) => thread::sleep(Duration::from_millis(20)),
-            Err(_) => {
-                let _ = settle_private_group(&mut child);
-                return Err(private_group_uncertain(label));
-            }
-        }
-    };
-    let status = settle_private_group(&mut child).map_err(|_| private_group_uncertain(label))?;
-    if timed_out {
-        return Err(timeout_error(label));
-    }
-    if !status.success() {
-        return Err(ContainerExecError::Failure {
-            command: label.to_owned(),
-            code: status.code(),
-            stdout: String::new(),
-            stderr: "[effigy] private workspace backend failed".into(),
-        });
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
 pub(super) fn run_private_detached_command(
     _repo_root: &Path,
     _program: &str,
@@ -266,9 +200,16 @@ pub(super) fn run_private_detached_command(
     _env: &[(String, OsString)],
     _deadline: Instant,
 ) -> Result<(), ContainerExecError> {
-    Err(private_group_uncertain(label))
+    Err(ContainerExecError::Launch {
+        command: label.to_owned(),
+        error: std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "private workspace Compose is unavailable until the reviewed same-Env capability lands",
+        ),
+    })
 }
 
+#[allow(dead_code, reason = "retained for #527 and ratchet lead 24c521ae")]
 fn private_group_uncertain(label: &str) -> ContainerExecError {
     ContainerExecError::Failure {
         command: label.to_owned(),
@@ -278,7 +219,9 @@ fn private_group_uncertain(label: &str) -> ContainerExecError {
     }
 }
 
+// Retained for the separately reviewed #527 path and ratchet lead 24c521ae.
 #[cfg(unix)]
+#[allow(dead_code)]
 fn private_child_exited(pid: u32) -> std::io::Result<bool> {
     // SAFETY: waitid writes siginfo; WNOWAIT keeps our direct child unreaped.
     let mut info: nix::libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -297,7 +240,9 @@ fn private_child_exited(pid: u32) -> std::io::Result<bool> {
     Ok(unsafe { info.si_pid() } != 0)
 }
 
+// Retained for the separately reviewed #527 path and ratchet lead 24c521ae.
 #[cfg(unix)]
+#[allow(dead_code)]
 fn settle_private_group(
     child: &mut std::process::Child,
 ) -> std::io::Result<std::process::ExitStatus> {
