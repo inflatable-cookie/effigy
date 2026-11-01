@@ -35,6 +35,15 @@ pub(in crate::runner) fn fixture_delay_final_revalidation(until: Instant) {
     fake_io::delay_final_revalidation(until);
 }
 
+/// Refuse the unqualified output capability before any workspace preparation
+/// or reserved admission. Removed only when the reviewed private entrypoints
+/// are wired at both production boundaries; no fixture exemption qualifies it.
+pub(in crate::runner) fn require_private_preparation_output() -> Result<(), RunError> {
+    Err(RunError::unavailable(
+        "workspace private preparation output is unavailable; no workspace apply was attempted",
+    ))
+}
+
 const PREPARATION_UNAVAILABLE: &str =
     "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted";
 

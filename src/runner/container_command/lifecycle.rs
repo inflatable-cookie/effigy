@@ -310,6 +310,10 @@ fn run_container_up_inner(
     {
         return Err(RunnerError::task_invocation("workspace activation requires detached persistent ownership; held/attached handoff is unavailable"));
     }
+    if workspace_prevalidation.is_some() {
+        crate::runner::workspace_client::container_up::require_private_preparation_output()
+            .map_err(|_| RunnerError::task_invocation("workspace private preparation output is unavailable; no preparation or workspace apply was attempted"))?;
+    }
     // `container up` is a Prepare path (contract 020): a checkout whose bundle
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.

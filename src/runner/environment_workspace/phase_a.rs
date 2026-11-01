@@ -60,6 +60,8 @@ pub(in crate::runner) fn apply(
     predecessor_observation: &mut dyn ReservedBackendObservation,
 ) -> Result<GuardedPhaseA, PhaseAFailure> {
     let before = PhaseAFailure::BeforeAdmission;
+    crate::runner::workspace_client::container_up::require_private_preparation_output()
+        .map_err(|error| before(EnvError::Kernel(error)))?;
     let plan = request.plan;
     let policy = plan.policy();
     let context = crate::runner::environment::context(&policy.repo_root)

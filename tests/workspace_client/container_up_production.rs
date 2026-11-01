@@ -716,3 +716,43 @@ fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sink
         // teardown. No settlement/recovery claim follows from this assertion.
     }
 }
+
+#[test]
+fn actual_cli_refuses_unqualified_private_preparation_before_any_prepare_or_apply() {
+    let fixture = BackendFixture::new();
+    let output = fixture
+        .command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(!output.status.success());
+    let public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        public.contains("workspace private preparation output is unavailable"),
+        "{public}"
+    );
+    assert!(
+        !fixture.project.join(".git/effigy-checkout-id").exists(),
+        "no checkout token minted"
+    );
+    assert!(
+        !fixture.project.join(".effigy").exists(),
+        "no generated/render/journal/log state"
+    );
+    assert!(
+        !fixture.fixture.path().join("applied").exists(),
+        "no compose apply"
+    );
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        0
+    );
+}
