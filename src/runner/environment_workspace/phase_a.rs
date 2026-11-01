@@ -210,7 +210,7 @@ fn apply_guarded(
         seal,
         preflight,
         || {
-            effigy_containers::exec::run_backend_invocation_until(
+            effigy_containers::exec::run_backend_invocation_private_until(
                 &policy.repo_root,
                 &program,
                 &args,
@@ -218,7 +218,6 @@ fn apply_guarded(
                 compose_env,
                 plan.deadline().at(),
             )
-            .map(|_| ())
             .map_err(|_| {
                 BackendError::Uncertain("workspace sealed apply outcome unavailable".into())
             })

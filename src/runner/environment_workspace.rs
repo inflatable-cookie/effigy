@@ -387,7 +387,7 @@ fn up_impl<'a>(
             sealed,
             &preflight,
             || {
-                effigy_containers::exec::run_backend_invocation_until(
+                effigy_containers::exec::run_backend_invocation_private_until(
                     &policy.repo_root,
                     &program,
                     &args,
@@ -395,7 +395,6 @@ fn up_impl<'a>(
                     compose_env,
                     until,
                 )
-                .map(|_| ())
                 .map_err(|_| {
                     BackendError::Uncertain("workspace frozen render apply unavailable".into())
                 })
