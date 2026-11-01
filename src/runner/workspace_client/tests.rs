@@ -1434,6 +1434,61 @@ fn guest_run_status_reaches_real_host_dispatch() {
     handle.join().expect("host thread");
 }
 
+#[test]
+fn run_status_refuses_stale_context_before_dial() {
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let before = guest.tree_digest();
+    let mut stale = published(&context);
+    stale.generation = GENERATION - 1;
+    let mut checkout = FakeCheckout::default();
+    let id = session_run().to_string();
+    let error = dispatch_in(
+        &parsed(&["run", "status", &id]),
+        &stale,
+        &mut guest,
+        &mut checkout,
+        &mut NoChannel,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .expect_err("stale status refuses");
+    assert!(error.to_string().contains("stale"), "{error}");
+    assert_eq!(guest.tree_digest(), before);
+}
+
+#[test]
+fn run_status_with_unissued_capability_never_reaches_observer() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let (client_side, host_side) = connection_pair();
+    let (served, handle) = serve_host(vec![host_side], calls.clone(), &[]);
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&Secret::new([0x91; 32])));
+    let mut checkout = FakeCheckout::default();
+    let mut opener = PeerChannel {
+        connections: vec![client_side],
+    };
+    let id = session_run().to_string();
+    dispatch_in(
+        &parsed(&["run", "status", &id]),
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .expect_err("unissued capability refuses");
+    drop(opener);
+    handle.join().expect("host thread");
+    assert!(calls.lock().expect("calls").observed.is_empty());
+    let served = served.lock().expect("served");
+    assert!(
+        served[0].is_err(),
+        "authentication must refuse before observation"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The pinned host identity, checked before anything is written (§8.11).
 // ---------------------------------------------------------------------------
