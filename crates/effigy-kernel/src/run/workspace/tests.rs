@@ -955,6 +955,10 @@ fn attachment_release_retry_compares_exact_durable_cause() {
         assert!(owner.release(&cx, &root, cause).is_err());
         assert!(fault::fired());
         fault::arm(None);
+        assert!(
+            owner.release(&cx, &root, cause).is_err(),
+            "an ordinary repeat must preserve the pending retry"
+        );
         let other = match cause {
             Release::Eof => Release::Detach,
             Release::Detach => Release::Eof,
@@ -1039,6 +1043,45 @@ fn attachment_release_retry_refuses_replaced_state_directory() {
         "a replacement state directory must refuse"
     );
     assert!(restored.is_ok(), "the retained original root may recover");
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn committed_owner_eof_retry_refuses_after_child_compacts_release_row() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    fault::arm_point(Point::RunAttachReleaseAfter, Fault::Eperm);
+    assert!(owner.release(&cx, &root, Release::Eof).is_err());
+    assert!(fault::fired());
+    fault::arm(None);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let result = owner.release_recoverable(&cx, &root, Release::Eof);
+    let counts = (
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM run_attachments WHERE state='released'",
+        ),
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM workspace_admissions WHERE state='closed'",
+        ),
+        scalar(&cx, &root, "SELECT count(*) FROM runs WHERE phase='closed'"),
+    );
+    assert!(
+        result.is_err(),
+        "a compacted release must remain unresolved"
+    );
+    assert_eq!(
+        counts,
+        (0, 1, 1),
+        "settlement removed the release row but retained the closed run and admission"
+    );
 }
 
 #[test]

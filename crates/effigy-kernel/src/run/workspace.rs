@@ -772,8 +772,10 @@ impl Attachment {
         if self.released {
             return Ok(());
         }
-        if self.pending_release.is_some_and(|pending| pending != cause) {
-            return Err(RunError::refused("an earlier release outcome is unsettled"));
+        if self.pending_release.is_some() {
+            return Err(RunError::refused(
+                "an earlier release outcome is unsettled; use the retained retry",
+            ));
         }
         self.pending_release = Some(cause);
         if let Err(error) = release_attachment(cx, root, self, cause, false) {
