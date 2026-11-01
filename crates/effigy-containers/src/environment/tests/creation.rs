@@ -1075,7 +1075,7 @@ fn target_observation_cancel_refuses_resume_and_keeps_cleanup_custody() {
 }
 
 #[test]
-fn target_observation_past_deadline_refuses_resume_and_keeps_cleanup_custody() {
+fn target_observation_past_parked_deadline_refuses_resume_and_keeps_cleanup_custody() {
     let fixture = home();
     let state = root(fixture.path());
     let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
@@ -1087,8 +1087,10 @@ fn target_observation_past_deadline_refuses_resume_and_keeps_cleanup_custody() {
         fake.inventories
             .push_back(verified(vec![row(PRIMARY, 'a')]));
     }
+    let mut observer_entered = false;
     let (error, parked) = parked
         .reacquire_target(&mut fake, |view, deadline, _| {
+            observer_entered = true;
             std::thread::sleep(
                 deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(50),
             );
@@ -1096,11 +1098,17 @@ fn target_observation_past_deadline_refuses_resume_and_keeps_cleanup_custody() {
             verified((view.facts().target.clone(), view.facts().platform.clone()))
         })
         .expect_err("expired observation refuses resume");
-    assert!(error.to_string().contains("deadline"));
-    assert_eq!(parked.session(), &session);
-    parked
+    let refused_for_deadline = error.to_string().contains("deadline");
+    let retained_session = parked.session() == &session;
+    let cleanup = parked
         .abort(&ctx, Wait::FailFast)
-        .expect("fresh cleanup settles exact owners");
+        .map_err(|(error, _)| error);
+    assert!(
+        observer_entered,
+        "the observer ran before the parked deadline"
+    );
+    assert!(refused_for_deadline && retained_session);
+    cleanup.expect("fresh cleanup settles exact owners");
 }
 
 #[test]
