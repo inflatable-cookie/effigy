@@ -113,7 +113,45 @@ pub(in crate::runner) fn up<'a>(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
+    up_impl(request, compose_env, None, publish)
+}
+
+/// The exact owner inputs used by the planned production path.
+pub(in crate::runner) struct PlannedWorkspaceUp<'a> {
+    pub(in crate::runner) plan:
+        &'a crate::runner::container_command::reserved_input::ReservedPublicationPlan,
+    pub(in crate::runner) decide: Box<
+        dyn FnOnce(std::time::Instant) -> Result<PublishInputs, effigy_kernel::run::RunError>
+            + Send,
+    >,
+    pub(in crate::runner) observation:
+        &'a mut dyn crate::runner::container_command::reserved_input::ReservedBackendObservation,
+}
+
+fn up_impl<'a>(
+    request: WorkspaceUpRequest<'_>,
+    compose_env: &[(String, std::ffi::OsString)],
+    planned: Option<PlannedWorkspaceUp<'_>>,
+    publish: impl FnOnce(
+        &mut WorkspaceActivation<'static>,
+    ) -> Result<WorkspacePublication<'a>, EnvError>,
+) -> Result<WorkspaceUp, WorkspaceUpError> {
     let policy = request.policy;
+    if let Some(planned) = &planned {
+        let frozen = planned.plan.policy();
+        if policy.repo_root != frozen.repo_root
+            || policy.project_name != frozen.project_name
+            || policy.primary_service != frozen.primary_service
+            || policy.compose_files != frozen.compose_files
+        {
+            return Err(WorkspaceUpError::Owner {
+                cause: Box::new(EnvError::Invalid(
+                    "planned workspace policy differs from its frozen plan".into(),
+                )),
+                cleanup: None,
+            });
+        }
+    }
     if crate::runner::workspace_command::operator_workspace_for_policy(&policy.repo_root, policy)
         .map_err(WorkspaceUpError::Preparation)?
         .is_none()
@@ -143,13 +181,19 @@ pub(in crate::runner) fn up<'a>(
             "workspace activation has no frozen render".into(),
         ))
     })?;
-    let backend = super::backend(&policy.repo_root, policy);
-    let until = match ctx.cx.operation().deadline() {
-        effigy_kernel::ctx::Deadline::At(until) => until,
-        effigy_kernel::ctx::Deadline::Open(_) => {
-            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
-        }
-    };
+    let backend = planned.as_ref().map_or_else(
+        || super::backend(&policy.repo_root, policy),
+        |planned| planned.plan.backend().clone(),
+    );
+    let until = planned.as_ref().map_or_else(
+        || match ctx.cx.operation().deadline() {
+            effigy_kernel::ctx::Deadline::At(until) => until,
+            effigy_kernel::ctx::Deadline::Open(_) => {
+                std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
+            }
+        },
+        |planned| planned.plan.deadline().at(),
+    );
     let mut preflight_request = Up {
         render: Some(&closure.closure),
         project: &policy.project_name,
@@ -170,23 +214,76 @@ pub(in crate::runner) fn up<'a>(
             error.to_string(),
         )))
     })?;
-    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
-        &ctx.cx,
-        ctx.root,
-        &closure.closure,
-        until,
-    )
-    .map_err(|error| owner_error(EnvError::Kernel(error)))?;
-    let mut activation = match WorkspaceActivation::begin(
-        &ctx,
-        &env,
-        request.inputs,
-        request.invocation,
-        request.options,
-        request.supervisor_id,
-    )
-    .map_err(owner_error)?
-    {
+    let owned_seal = if planned.is_none() {
+        Some(
+            effigy_kernel::objects::Objects::seal_for_preflight(
+                &ctx.cx,
+                ctx.root,
+                &closure.closure,
+                until,
+            )
+            .map_err(|error| owner_error(EnvError::Kernel(error)))?,
+        )
+    } else {
+        None
+    };
+    let sealed = match &planned {
+        Some(planned) => planned
+            .plan
+            .predecessor_seal()
+            .ok_or_else(|| {
+                owner_error(EnvError::Kernel(effigy_kernel::run::RunError::unavailable(
+                    "planned workspace has no retained preflight seal",
+                )))
+            })?
+            .receipt(),
+        None => owned_seal
+            .as_ref()
+            .expect("ordinary activation made its seal"),
+    };
+    if !sealed.matches(&closure.closure) {
+        return Err(owner_error(EnvError::Kernel(
+            effigy_kernel::run::RunError::refused(
+                "planned workspace retained seal differs from its render",
+            ),
+        )));
+    }
+    let is_planned = planned.is_some();
+    let (begin, before_apply) = match planned {
+        Some(planned) => (
+            WorkspaceActivation::begin_observing(
+                &ctx,
+                &env,
+                request.invocation,
+                request.options,
+                request.supervisor_id,
+                until,
+                planned.decide,
+            )
+            .map_err(owner_error)?,
+            Some((planned.plan, planned.observation)),
+        ),
+        None => (
+            WorkspaceActivation::begin(
+                &ctx,
+                &env,
+                request.inputs,
+                request.invocation,
+                request.options,
+                request.supervisor_id,
+            )
+            .map_err(owner_error)?,
+            None,
+        ),
+    };
+    let mut activation = match begin {
+        WorkspaceBegin::Attach(_) if is_planned => {
+            return Err(owner_error(EnvError::Kernel(
+                effigy_kernel::run::RunError::unavailable(
+                    "planned workspace attach has no plan-matched custody proof",
+                ),
+            )));
+        }
         WorkspaceBegin::Attach(session) => return Ok(WorkspaceUp::Attached(session)),
         WorkspaceBegin::Activate(activation) => activation,
     };
@@ -195,7 +292,21 @@ pub(in crate::runner) fn up<'a>(
     );
     let mut creation = None;
     let result = (|| {
-        let backend = super::backend(&policy.repo_root, policy);
+        if let Some((plan, observation)) = before_apply {
+            let inputs = activation.reservation().inputs().ok_or_else(|| {
+                EnvError::Invalid("planned workspace decision has no frozen inputs".into())
+            })?;
+            if *inputs != plan.publish_inputs(inputs.artifact.clone(), inputs.target.clone())? {
+                return Err(EnvError::Invalid(
+                    "workspace decision differs from its frozen plan".into(),
+                ));
+            }
+            crate::runner::container_command::reserved_input::recheck_live_predecessor(
+                plan,
+                observation,
+            )?;
+            plan.deadline().remaining()?;
+        }
         let (program, args) = backend
             .compose_invocation(&effigy_containers::compose::compose_up_args(policy))
             .map_err(EnvError::Backend)?;
@@ -209,7 +320,7 @@ pub(in crate::runner) fn up<'a>(
                 primary_service: &policy.primary_service,
                 compose_files: &policy.compose_files,
             },
-            &sealed,
+            sealed,
             &preflight,
             || {
                 effigy_containers::exec::run_backend_invocation_until(
@@ -312,6 +423,26 @@ pub(in crate::runner) fn up_prepared<'a>(
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
     up(request, compose_env, |activation| {
+        let input = observe(activation)?;
+        crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
+            activation, input,
+        )
+    })
+}
+
+/// Run prepared publication with a retained plan and gated observations.
+pub(in crate::runner) fn up_prepared_planned<'a>(
+    request: WorkspaceUpRequest<'_>,
+    compose_env: &[(String, std::ffi::OsString)],
+    planned: PlannedWorkspaceUp<'_>,
+    observe: impl FnOnce(
+        &mut WorkspaceActivation<'static>,
+    ) -> Result<
+        crate::runner::workspace_command::provisioning::reserved_guest::ReservedGuestInput<'a>,
+        EnvError,
+    >,
+) -> Result<WorkspaceUp, WorkspaceUpError> {
+    up_impl(request, compose_env, Some(planned), |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,
