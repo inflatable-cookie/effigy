@@ -5221,6 +5221,27 @@ fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
     assert!(
         matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["outcome"]["workload"]["Failed"]["code"] == 7)
     );
+    drop(poll);
+    let mut wrong_grants = GrantBook::new();
+    let mut wrong_binding = binding(session);
+    wrong_binding.session.generation = Generation::new(99);
+    wrong_grants.issue(
+        capability(),
+        wrong_binding,
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let wrong_grant = wrong_grants.authenticate(&capability()).unwrap();
+    let response = host.answer(
+        &cx,
+        &observe_context(),
+        &root,
+        wrong_grant,
+        &request(session, observe(id, run_id), 100),
+        &mut attachment,
+        &mut streams,
+    );
+    assert!(matches!(response.outcome, ResponseOutcome::Refused(_)));
     assert!(host.dispatcher.admission.tickets.is_empty());
     assert_eq!(host.dispatcher.resolver.calls, 0);
 }

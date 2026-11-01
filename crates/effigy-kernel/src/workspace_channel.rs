@@ -3441,6 +3441,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             let session = grant.session();
             match &request.body {
                 RequestBody::Observe(body) => {
+                    body.check()?;
                     if body.query.is_some() && !self.observe_query_v1 {
                         return Err(Refusal::forbidden(
                             "observe_query_v1 is unsupported on this connection; use an independent host CLI",
