@@ -226,25 +226,11 @@ pub(in crate::runner) fn run<'a, E: IntegrationEffects>(
         plan,
         creation,
     };
-    // Recheck the independent integration clock after reacquisition too: a slow
-    // final read cannot publish a generation after its integration budget ended.
-    if std::time::Instant::now() >= integration_until {
-        return Err(IntegratedFailure::Guarded {
-            cause: EnvError::Kernel(RunError::unavailable("integration budget exhausted")),
-            owner: Box::new(phase),
-            bound: Some(Box::new(bound)),
-            effects: Some(Box::new(effects)),
+    let revalidated =
+        revalidate_for_publication(integration_until, phase.plan.deadline().at(), || {
+            bound.revalidate(&mut phase.activation, phase.backend.as_mut())
         });
-    }
-    if let Err(cause) = bound.revalidate(&mut phase.activation, phase.backend.as_mut()) {
-        return Err(IntegratedFailure::Guarded {
-            cause,
-            owner: Box::new(phase),
-            bound: Some(Box::new(bound)),
-            effects: Some(Box::new(effects)),
-        });
-    }
-    if let Err(cause) = phase.plan.deadline().remaining() {
+    if let Err(cause) = revalidated {
         return Err(IntegratedFailure::Guarded {
             cause,
             owner: Box::new(phase),
@@ -259,5 +245,59 @@ pub(in crate::runner) fn run<'a, E: IntegrationEffects>(
             cause,
             effects: Box::new(effects),
         }),
+    }
+}
+
+/// The final read spends BOTH pinned budgets. Check again when it returns,
+/// immediately before the first publication effect; a slow read grants no time.
+fn revalidate_for_publication(
+    integration_until: std::time::Instant,
+    reservation_until: std::time::Instant,
+    revalidate: impl FnOnce() -> Result<(), EnvError>,
+) -> Result<(), EnvError> {
+    let check = || {
+        if std::time::Instant::now() >= integration_until {
+            Err(EnvError::Kernel(RunError::unavailable(
+                "integration budget exhausted",
+            )))
+        } else if std::time::Instant::now() >= reservation_until {
+            Err(EnvError::Kernel(RunError::unavailable(
+                "workspace reservation deadline expired",
+            )))
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    revalidate()?;
+    check()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn final_revalidation_cannot_publish_after_integration_budget_with_live_reservation() {
+        use std::time::{Duration, Instant};
+        let integration = Instant::now() + Duration::from_millis(20);
+        let reservation = Instant::now() + Duration::from_secs(30);
+        let called = std::cell::Cell::new(false);
+        let result = revalidate_for_publication(integration, reservation, || {
+            called.set(true);
+            std::thread::sleep(
+                integration.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
+            );
+            Ok(())
+        });
+        assert!(called.get(), "the actual revalidation was in flight");
+        assert!(
+            Instant::now() < reservation,
+            "independent reservation is still live"
+        );
+        assert!(result
+            .expect_err("post-read budget fence")
+            .to_string()
+            .contains("integration budget exhausted"));
+        revalidate_for_publication(reservation, reservation, || Ok(())).expect("live budgets");
     }
 }

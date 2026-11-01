@@ -42,10 +42,20 @@ struct Config {
     machine: String,
     architecture: String,
     libc: String,
+    #[serde(default)]
+    fail_handoff: bool,
+    #[serde(default)]
+    fail_adoption_cleanup: bool,
 }
 
 pub(super) fn configured() -> bool {
     std::env::var_os(CONFIG).is_some()
+}
+pub(super) fn fail_handoff() -> bool {
+    configured() && config().is_ok_and(|config| config.fail_handoff)
+}
+pub(super) fn fail_adoption_cleanup() -> bool {
+    configured() && config().is_ok_and(|config| config.fail_adoption_cleanup)
 }
 fn failure() -> RunnerError {
     RunnerError::task_invocation("workspace fake I/O unavailable")

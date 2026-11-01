@@ -19,9 +19,10 @@ use crate::runner::environment::workspace::{
     integrated::{self, IntegratedFailure},
     phase_a::PhaseARequest,
 };
+use crate::runner::workspace_client::serving::OwnedWorkspaceChannel;
 use crate::runner::workspace_client::serving_host::{self, ContainerStartupReport};
 use crate::runner::workspace_client::supervisor::{
-    ServiceAdoptFailure, ServiceOwner, ServingHandoff,
+    ChannelOwner, RetirementCause, ServiceAdoptFailure, ServiceOwner, ServingHandoff,
 };
 use crate::runner::workspace_command::provisioning::reserved_guest::BoundReservedGuest;
 
@@ -125,16 +126,22 @@ pub(super) fn activate_with(
         }
     };
     let report = effects.startup_report();
+    #[cfg(feature = "workspace-serving-fixture")]
+    let mut owner = owner;
+    #[cfg(feature = "workspace-serving-fixture")]
+    if super::fake_io::fail_handoff() {
+        owner.channel.launch.stop();
+    }
     let handoff = match ServingHandoff::committed(owner, &obligation) {
         Ok(handoff) => handoff,
         Err((_error, mut owner)) => {
             owner.channel.launch.stop();
-            return retain_unqualified(
+            return Err(retire_selected(
                 session,
                 host_run,
-                (owner, effects),
-                "workspace selected handoff refused; exact owner retained",
-            );
+                SelectedCustody::Unadopted(Box::new((*owner).into()), Box::new(effects)),
+                "workspace selected handoff refused",
+            ));
         }
     };
     let service = match ServiceOwner::adopt(handoff) {
@@ -144,24 +151,24 @@ pub(super) fn activate_with(
             mut owner,
         }) => {
             owner.channel.launch.stop();
-            return retain_unqualified(
+            return Err(retire_selected(
                 session,
                 host_run,
-                (owner, effects),
-                "workspace channel adoption refused; exact owner retained",
-            );
+                SelectedCustody::Unadopted(owner, Box::new(effects)),
+                "workspace channel adoption refused",
+            ));
         }
         Err(ServiceAdoptFailure::After {
             error: _,
             mut owner,
         }) => {
             owner.stop();
-            return retain_unqualified(
+            return Err(retire_selected(
                 session,
                 host_run,
-                (owner, effects),
-                "workspace service adoption refused; exact owner retained",
-            );
+                SelectedCustody::Adopted(owner, Box::new(effects)),
+                "workspace service adoption refused",
+            ));
         }
     };
     Ok(ActivatedContainer {
@@ -171,19 +178,81 @@ pub(super) fn activate_with(
     })
 }
 
-/// This is a named fail-closed fallback for unresolved adoption custody, not a
-/// settlement claim. Keep the original owner and handles in this control loop.
-fn retain_unqualified<T>(
+/// Both states own the original SessionSupervisor; conversion creates no
+/// replacement session, key, grant book or run.
+enum SelectedCustody {
+    Unadopted(Box<OwnedWorkspaceChannel<'static>>, Box<WorkspaceUpEffects>),
+    Adopted(Box<ChannelOwner<'static>>, Box<WorkspaceUpEffects>),
+}
+impl SelectedCustody {
+    fn session(&self) -> effigy_kernel::id::RunId {
+        match self {
+            Self::Unadopted(owner, _) => owner.session.run(),
+            Self::Adopted(owner, _) => owner.session().run(),
+        }
+    }
+    fn settle(self, cleanup: &effigy_kernel::ctx::CleanupContext) -> Result<(), (RunError, Self)> {
+        match self {
+            Self::Unadopted(mut owner, effects) => {
+                owner.channel.launch.stop();
+                match owner
+                    .supervisor
+                    .settle_recoverable(cleanup, &mut effigy_containers::environment::EnvSettlement)
+                {
+                    Ok(_) => Ok(()),
+                    Err((error, retained)) => {
+                        owner.supervisor = *retained;
+                        Err((error, Self::Unadopted(owner, effects)))
+                    }
+                }
+            }
+            Self::Adopted(owner, effects) => match owner.settle_with_recoverable(
+                RetirementCause::Stopped,
+                cleanup,
+                &mut effigy_containers::environment::EnvSettlement,
+            ) {
+                Ok(_) => Ok(()),
+                Err((error, owner)) => Err((error, Self::Adopted(owner, effects))),
+            },
+        }
+    }
+}
+
+/// Retire the same selected owner once. A failed cleanup keeps its exact slot
+/// and handles; only an explicit stop or one owner-loss transition retries with
+/// fresh cleanup authority. No control result is ignored as a recovery claim.
+fn retire_selected(
     session: &mut EngineSession,
     run: &mut Run<'_>,
-    custody: T,
-    message: &'static str,
-) -> Result<ActivatedContainer, RunError> {
-    session.refused_message(effigy_kernel::human::Category::Unavailable, message);
+    mut custody: SelectedCustody,
+    primary: &'static str,
+) -> RunError {
+    let mut cleanup = serving_host::cleanup_budget();
+    #[cfg(feature = "workspace-serving-fixture")]
+    if super::fake_io::fail_adoption_cleanup() {
+        cleanup = crate::runner::task_engine::cleanup_context(std::time::Duration::ZERO);
+    }
+    let mut owner_loss_handled = false;
+    let mut previously_failed = false;
     loop {
-        let _held = &custody;
-        let _ = session.control(run, &[]);
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let original = custody.session();
+        match custody.settle(&cleanup) {
+            Ok(()) => {
+                return RunError::unavailable(if previously_failed {
+                    format!("{primary}; exact selected cleanup recovered (session_run={original})")
+                } else {
+                    format!("{primary}; selected cleanup settled (session_run={original})")
+                })
+            }
+            Err((_cleanup_error, retained)) => {
+                custody = retained;
+                previously_failed = true;
+                session.refused_message(effigy_kernel::human::Category::Unavailable,
+                    format!("{primary}; cleanup failed; exact selected owner retained (supervisor_run={}, session_run={original}); request stop to retry cleanup", run.id()));
+                serving_host::await_cleanup_recovery(session, run, &mut owner_loss_handled);
+                cleanup = serving_host::cleanup_budget();
+            }
+        }
     }
 }
 

@@ -8,11 +8,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
-- Detached workspace hosts refuse detach before their committed startup
-  acknowledgement. Container-up supervisor requests accept command intent
-  only; serialized seals, backend evidence and credentials are rejected.
-  Container-mode `up` refuses before preparation while bounded Phase-A custody
-  is unavailable, rather than falling through to ordinary reconciliation.
+- Container-mode `up` validates checkout and backend identity before ordinary
+  preparation, then hands declarative prepared-input fingerprints to its
+  detached host. That host retains one seal and activation owner across
+  gate-free integrations and revalidation before publication. Serialized seals,
+  backend evidence and session credentials are rejected as startup intent.
+  Detach requires the committed startup acknowledgement. The production-shaped
+  fake-backend proof does not qualify a native backend.
 - Workspace startup refusal preserves primary and cleanup errors. A settlement
   error retains the stopped serving owner until explicit recovery or an
   owner-loss transition retries with a fresh cleanup budget.

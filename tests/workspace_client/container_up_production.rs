@@ -375,3 +375,95 @@ fn actual_cli_fake_backend_reaches_committed_workspace() {
     );
     fixture.assert_settled();
 }
+
+#[test]
+fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() {
+    let fixture = BackendFixture::new();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.config).expect("config"))
+            .expect("config JSON");
+    config["fail_handoff"] = true.into();
+    config["fail_adoption_cleanup"] = true.into();
+    std::fs::write(
+        &fixture.config,
+        serde_json::to_vec(&config).expect("fault configuration"),
+    )
+    .expect("fault input");
+    let output = fixture
+        .command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(
+        !output.status.success(),
+        "a failed handoff must not acknowledge Serving"
+    );
+    let message = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        message.contains("workspace selected handoff refused"),
+        "{message}"
+    );
+    assert!(message.contains("cleanup failed"), "{message}");
+    assert!(
+        message.contains("exact selected owner retained"),
+        "{message}"
+    );
+    // The original owning CLI pipe closes after its refusal. That single
+    // owner-loss transition must retry the same owner with a fresh budget.
+    fixture.assert_settled();
+    let connection = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let sessions: i64 = connection
+        .query_row("SELECT count(*) FROM workspace_session_runs", [], |row| {
+            row.get(0)
+        })
+        .expect("session owners");
+    assert_eq!(
+        sessions, 1,
+        "one original SessionSupervisor, no replacement owner"
+    );
+    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_json::from_slice(
+        &std::fs::read(fixture.fixture.path().join("guest-files.json")).expect("staged guest data"),
+    )
+    .expect("guest map");
+    let document = files
+        .values()
+        .filter_map(|bytes| {
+            serde_json::from_slice::<effigy_kernel::workspace_session::WorkspaceContextDocument>(
+                bytes,
+            )
+            .ok()
+        })
+        .next()
+        .expect("actual selected document");
+    assert!(
+        message.contains(&document.session.run_id),
+        "the refusal must retain the exact published session ID"
+    );
+    let port: u16 = document
+        .locator
+        .endpoint
+        .strip_prefix("effigy-host:")
+        .expect("locator")
+        .parse()
+        .expect("port");
+    assert!(
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            Duration::from_millis(200)
+        )
+        .is_err(),
+        "retired listener must be unavailable"
+    );
+    assert!(
+        !fixture
+            .fixture
+            .path()
+            .join("forced-fixture-cleanup")
+            .exists(),
+        "forced teardown cannot be recovery evidence"
+    );
+}

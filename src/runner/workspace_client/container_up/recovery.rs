@@ -58,6 +58,17 @@ pub(super) fn cleanup<'a, E: IntegrationEffects>(
             bound,
             effects,
         } => {
+            if effects.is_some() {
+                // Releasing the exact guard under cleanup authority is an
+                // A-owned capability. Until that reviewed seam is available,
+                // keep EVERY handle and journal entry; do not settle either run.
+                return Err(IntegratedFailure::Guarded {
+                    cause,
+                    owner,
+                    bound,
+                    effects,
+                });
+            }
             let GuardedPhaseA {
                 activation,
                 context,
