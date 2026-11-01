@@ -1131,6 +1131,12 @@ fn owner_attachment(run: RunId) -> AttachmentId {
     AttachmentId::derived(&material)
 }
 
+/// The existing owner attachment identity for a run. This derives an ID;
+/// it does not grant attachment or control authority.
+pub fn owner_attachment_id(run: RunId) -> AttachmentId {
+    owner_attachment(run)
+}
+
 /// Both records are writes to a session's journal: host authority and Mutate
 /// only. No guest placement and no Observe-only context can write one.
 fn mutations_only(cx: &EffectContext, what: &str) -> Result<(), RunError> {

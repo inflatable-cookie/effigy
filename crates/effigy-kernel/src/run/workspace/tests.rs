@@ -706,6 +706,8 @@ fn workspace_admission_one_run_id_belongs_to_one_key() {
     // The run reports the session that admitted it, so no attachment can be
     // attributed to the session that lost the collision.
     let owner_attachment = resume_owner(&cx, &root, first.session, id(1)).expect("owner");
+    assert_eq!(owner_attachment.id(), owner_attachment_id(id(1)));
+    assert_ne!(owner_attachment.id(), owner_attachment_id(id(2)));
     assert_eq!(owner_attachment.session(), first.session);
     assert!(resume_owner(&cx, &root, second.session, id(1)).is_err());
     assert!(attach_secondary(

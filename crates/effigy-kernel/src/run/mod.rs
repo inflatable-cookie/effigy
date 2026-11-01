@@ -66,10 +66,10 @@ pub use attachments::{
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
 pub use workspace::{
-    attach_secondary, lookup, reserve_resolved, resume_owner, resume_secondary,
-    workspace_managed_token, AdmissionKey, AdmissionTicket, Attachment, AttachmentId, Chunk,
-    Client, Gap, InvalidHexId, RecordedOutcome, Recovered, Release, RequestId, Reservation,
-    Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
+    attach_secondary, lookup, owner_attachment_id, reserve_resolved, resume_owner,
+    resume_secondary, workspace_managed_token, AdmissionKey, AdmissionTicket, Attachment,
+    AttachmentId, Chunk, Client, Gap, InvalidHexId, RecordedOutcome, Recovered, Release, RequestId,
+    Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
 };
 mod workspace;
 pub(crate) use settle::settle_interrupted_wait;
