@@ -64,6 +64,10 @@ impl CreatorImage {
     }
 
     fn verify_process(&self, expected: &ProcessIdentity) -> io::Result<()> {
+        // Check both our retained descriptor and the path again around the
+        // child observation. These checks cannot close a path replacement
+        // race or prove which image macOS mapped at exec.
+        self.launch_path()?;
         if ident::process_identity(expected.pid).verified() != Some(expected) {
             return Err(io::Error::other(
                 "helper process identity unavailable or changed",
@@ -75,6 +79,7 @@ impl CreatorImage {
         {
             return Err(io::Error::other("helper image or process identity changed"));
         }
+        self.launch_path()?;
         Ok(())
     }
 }
@@ -151,5 +156,19 @@ mod tests {
             error.to_string(),
             "workspace helper image identity unsupported on this platform"
         );
+    }
+
+    #[test]
+    fn creator_snapshot_changed_refuses_before_child_observation() {
+        let mut image = CreatorImage::capture().expect("capture executable");
+        let identity = ident::process_identity(std::process::id())
+            .verified()
+            .cloned()
+            .expect("current process identity");
+        image.identity.size = image.identity.size.wrapping_add(1);
+        let error = image
+            .verify_process(&identity)
+            .expect_err("changed snapshot");
+        assert_eq!(error.to_string(), "creator image changed");
     }
 }
