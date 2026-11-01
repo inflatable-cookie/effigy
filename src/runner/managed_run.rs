@@ -21,12 +21,12 @@ mod settlement;
 mod tui;
 mod wire;
 
+#[cfg(test)]
+pub(in crate::runner) use client::start_reserved_with_executable;
+#[cfg(all(test, feature = "workspace-serving-fixture"))]
+pub(in crate::runner) use client::take_reserved_handoff_observation;
 pub(in crate::runner) use client::{
     attach_text, detach, start, start_reserved, ClientStart, Started,
-};
-#[cfg(test)]
-pub(in crate::runner) use client::{
-    start_reserved_with_executable, take_reserved_handoff_observation,
 };
 #[cfg(test)]
 pub(in crate::runner) use control::wait_views;

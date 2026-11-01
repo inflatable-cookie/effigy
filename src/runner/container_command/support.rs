@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+pub(in crate::runner) mod workspace_private;
+
 /// Workspace preparation never forwards a step's raw error. Steps with known
 /// direct-output sinks remain refused until they have a private adapter.
 #[derive(Debug, Clone, Copy)]
