@@ -1732,3 +1732,94 @@ fn an_expired_preflight_seal_opens_no_state_root_and_stages_nothing() {
         }
     });
 }
+
+/// The 2026-11-01 frozen-Compose-input ruling: the closure owns every Compose
+/// input, including a generated one, and the sealed tree must hold its exact
+/// bytes. A gap refuses by name before anything is hashed or applied.
+#[test]
+fn a_compose_input_missing_from_the_frozen_closure_refuses_by_name() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-compose-input-closure-").expect("fixture");
+    let render_path = fixture.path().join("objects/render");
+    let sealed_root = fixture.path().join("staging/preflight-token");
+    fs::create_dir_all(sealed_root.join("checkout/.effigy/runtime/compose")).expect("sealed root");
+    let generated = "checkout/.effigy/runtime/compose/one.generated.compose.yml";
+    fs::write(sealed_root.join(generated), b"services: {}\n").expect("sealed input");
+    fs::write(sealed_root.join("checkout/compose.yml"), b"services: {}\n").expect("sealed input");
+
+    // The closure carries only the checked-in input, not the generated one.
+    let mut frozen = std::collections::BTreeMap::new();
+    frozen.insert(
+        "checkout/compose.yml".to_string(),
+        b"services: {}\n".to_vec(),
+    );
+    let compose_files = vec![
+        render_path.join("checkout/compose.yml"),
+        render_path.join(generated),
+    ];
+    let error = super::verified_compose_inputs(
+        &frozen,
+        &compose_files,
+        render_path.as_path(),
+        sealed_root.as_path(),
+    )
+    .expect_err("a generated input the closure does not carry must refuse");
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("workspace-compose-input-outside-render-closure")
+            && text.contains("one.generated.compose.yml"),
+        "{text}"
+    );
+}
+
+/// With the generated input frozen, the apply's Compose input list is exactly the
+/// closure's Compose files, and each one is read from the sealed tree verbatim.
+#[test]
+fn the_apply_compose_input_list_equals_the_frozen_closure() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-compose-input-equals-").expect("fixture");
+    let render_path = fixture.path().join("objects/render");
+    let sealed_root = fixture.path().join("staging/preflight-token");
+    let generated = "checkout/.effigy/runtime/compose/one.generated.compose.yml";
+    let checked_in = "checkout/compose.yml";
+    let bytes = b"services:\n  app:\n    image: example:one\n";
+    for relative in [checked_in, generated] {
+        let path = sealed_root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).expect("sealed dir");
+        fs::write(&path, bytes).expect("sealed input");
+    }
+    let mut frozen = std::collections::BTreeMap::new();
+    for relative in [checked_in, generated] {
+        frozen.insert(relative.to_string(), bytes.to_vec());
+    }
+    let compose_files = vec![render_path.join(checked_in), render_path.join(generated)];
+    let selected = super::verified_compose_inputs(
+        &frozen,
+        &compose_files,
+        render_path.as_path(),
+        sealed_root.as_path(),
+    )
+    .expect("the closure carries every Compose input");
+    assert_eq!(
+        selected,
+        vec![sealed_root.join(checked_in), sealed_root.join(generated)],
+        "every input the apply passes is a frozen, sealed file"
+    );
+    for path in &selected {
+        assert_eq!(fs::read(path).expect("sealed bytes"), bytes);
+    }
+
+    // One byte rewritten in the sealed tree is not the frozen image.
+    fs::write(sealed_root.join(generated), b"services: {}\n").expect("rewrite");
+    let error = super::verified_compose_inputs(
+        &frozen,
+        &compose_files,
+        render_path.as_path(),
+        sealed_root.as_path(),
+    )
+    .expect_err("a rewritten input must refuse");
+    assert!(
+        format!("{error:?}").contains("workspace-compose-input-closure-bytes-differ"),
+        "{error:?}"
+    );
+}

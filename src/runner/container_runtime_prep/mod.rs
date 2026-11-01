@@ -1200,20 +1200,70 @@ pub(in crate::runner) fn seal_render_for_preflight(
             ) => return Err(BoundedReadRefusal::Unavailable(reason)),
         };
     let mut policy = policy.clone();
-    for file in &mut policy.compose_files {
-        let Ok(relative) = file.strip_prefix(&render.path) else {
-            return Err(BoundedReadRefusal::Unavailable(
-                "a Compose input is outside the render's closure".into(),
-            ));
-        };
-        *file = sealed_root.join(relative);
-    }
+    policy.compose_files = verified_compose_inputs(
+        render.closure.files(),
+        &policy.compose_files,
+        render.path.as_path(),
+        sealed_root.as_path(),
+    )?;
     live("after sealing the render")?;
     Ok(SealedRender {
         receipt: sealed,
         policy,
         root: sealed_root,
     })
+}
+
+/// Verify that the frozen closure owns every Compose input the apply will pass,
+/// then return those inputs pointed at the sealed private tree.
+///
+/// The 2026-11-01 Supervisor ruling freezes `checkout/.effigy/runtime/compose/
+/// <name>.compose.yml` in the closure with the rest of the render, so a generated
+/// input is not a special case: an input missing from the closure, an input
+/// outside the rendered checkout, an absent sealed file and a sealed file whose
+/// bytes differ all refuse by name. Nothing is hashed or applied from a path the
+/// closure does not vouch for.
+fn verified_compose_inputs(
+    frozen: &std::collections::BTreeMap<String, Vec<u8>>,
+    compose_files: &[std::path::PathBuf],
+    render_path: &Path,
+    sealed_root: &Path,
+) -> Result<Vec<std::path::PathBuf>, BoundedReadRefusal> {
+    let mut selected = Vec::with_capacity(compose_files.len());
+    for file in compose_files {
+        let Ok(relative) = file.strip_prefix(render_path) else {
+            return Err(BoundedReadRefusal::Unavailable(format!(
+                "workspace-compose-input-outside-render-closure: `{}` is not under the rendered \
+                 checkout, so the frozen closure cannot carry it",
+                file.display()
+            )));
+        };
+        let name = relative.to_string_lossy().replace('\\', "/");
+        let Some(frozen_bytes) = frozen.get(name.as_str()) else {
+            return Err(BoundedReadRefusal::Unavailable(format!(
+                "workspace-compose-input-outside-render-closure: `{name}` is not part of the \
+                 frozen closure, so the preflight cannot hash verified bytes (owner: the render \
+                 must freeze every Compose input the apply reads)"
+            )));
+        };
+        // The render is published by the reconcile that follows this preflight, so
+        // its own path is not materialised yet: the bytes Compose will read come
+        // from the sealed tree, and they must be the frozen ones verbatim.
+        let sealed_path = sealed_root.join(relative);
+        let sealed_bytes = std::fs::read(sealed_path.as_path()).map_err(|error| {
+            BoundedReadRefusal::Unavailable(format!(
+                "workspace-compose-input-unreadable: `{name}` is not in the sealed tree: {error}"
+            ))
+        })?;
+        if sealed_bytes != *frozen_bytes {
+            return Err(BoundedReadRefusal::Unavailable(format!(
+                "workspace-compose-input-closure-bytes-differ: `{name}` in the sealed tree is not \
+                 the byte image the frozen closure holds"
+            )));
+        }
+        selected.push(sealed_path);
+    }
+    Ok(selected)
 }
 
 /// The service -> config-hash map one rendered policy produces.
