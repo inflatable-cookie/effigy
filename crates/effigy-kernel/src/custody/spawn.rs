@@ -184,7 +184,11 @@ pub(crate) fn isolates_session(terminal: &Terminal, stdin_is_terminal: bool) -> 
     match terminal {
         Terminal::Foreground => false,
         Terminal::Inherit { .. } => !stdin_is_terminal,
-        Terminal::None | Terminal::Discard | Terminal::Pipe | Terminal::Styled { .. } | Terminal::Pty => true,
+        Terminal::None
+        | Terminal::Discard
+        | Terminal::Pipe
+        | Terminal::Styled { .. }
+        | Terminal::Pty => true,
     }
 }
 
