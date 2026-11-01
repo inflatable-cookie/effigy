@@ -481,6 +481,144 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
     }
 }
 
+#[cfg(feature = "fault-injection")]
+struct LiveAdmitter<'a> {
+    root: &'a StateRoot,
+    runs: Vec<Run<'a>>,
+}
+#[cfg(feature = "fault-injection")]
+impl Admission for LiveAdmitter<'_> {
+    fn admit(
+        &mut self,
+        cx: &EffectContext,
+        ticket: &AdmissionTicket,
+        resolved: &ResolvedInvocation,
+    ) -> Result<(), Refusal> {
+        let run = Run::begin_admitted(
+            cx,
+            self.root,
+            resolved,
+            BeginOpts {
+                id: ticket.run(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next_argv(),
+                custody: None,
+            },
+            &cleanup(cx),
+            &mut NoEffects,
+            ticket.clone(),
+        )
+        .map_err(refusal_from)?;
+        self.runs.push(run);
+        Ok(())
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn owner_detach_release_fault_retains_exact_handle_and_reports_unknown() {
+    use crate::fault::{self, Point};
+    for (point, still_attached) in [
+        (Point::RunAttachReleaseBefore, true),
+        (Point::RunAttachReleaseAfter, false),
+    ] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-owner-detach-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[174]),
+            ),
+        );
+        let live = RunId::new(7, [174; 10]).expect("run id");
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body("build")),
+                        2,
+                    )),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Attach(AttachBody {
+                            run: live,
+                            streams: vec![StreamKind::Stdout],
+                            cursor: None,
+                            cursors: None,
+                        }),
+                        1,
+                    )),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Detach(RunBody { run: live }),
+                        3,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("detach uncertainty");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired(), "release fault must fire");
+        fault::arm(None);
+        let handle = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("exact owner retained");
+        assert_eq!(handle.run(), live);
+        assert_eq!(handle.client(), Client::Owner);
+        assert_eq!(
+            handle.attached(&cx, &root).expect("durable owner row"),
+            still_attached
+        );
+        assert!(written_frames(&pipe.inner).iter().any(|frame| matches!(frame,
+            Frame::Response(Response { id, outcome: ResponseOutcome::Refused(refusal), .. }) if *id == RequestId::new([3;16]) && refusal.code == RefusalCode::Unknown)));
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .expect("requests");
+        assert_eq!(
+            requests, 0,
+            "uncertain detach must not fabricate an EOF stop"
+        );
+        drop(reader);
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects)
+                .expect("test-owned run cleanup");
+        }
+    }
+}
+
 /// A run admitted through the kernel's own reservation, so attachment and
 /// control proofs act on a live owner.
 fn admitted_run<'a>(
