@@ -33,7 +33,8 @@ pub fn run_command_capture_allow_failure(
 ) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
     let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
-    let args = compose_invocation_args(&resolved_program, &borrowed, &[])?;
+    let invocation = compose_invocation_args(&resolved_program, &borrowed, &[])?;
+    let args = invocation.args;
     let mut command = Command::new(&resolved_program);
     command
         .current_dir(repo_root)
@@ -62,7 +63,8 @@ pub(super) fn run_command_capture_os_with_env(
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
-    let args = compose_invocation_args(&resolved_program, args, env)?;
+    let invocation = compose_invocation_args(&resolved_program, args, env)?;
+    let args = invocation.args;
     let mut command = Command::new(&resolved_program);
     command.current_dir(repo_root).args(&args);
     for (key, value) in env {
@@ -99,7 +101,7 @@ pub(super) fn run_command_capture_os_with_env_until(
     // An expired deadline never spawns a child: it reports the same timeout an
     // observed one does instead of buying the invocation fresh time.
     let reported_timeout = remaining_until_deadline(deadline, label)?;
-    let child =
+    let (child, _interpolation) =
         spawn_capture_child_with_env(repo_root, program, args, false, env).map_err(|error| {
             ContainerExecError::Launch {
                 command: format!("{program} {}", format_args(args)),
@@ -211,7 +213,7 @@ pub(super) fn run_private_detached_command(
     let mut command = Command::new(resolve_host_cli_program(program));
     command
         .current_dir(repo_root)
-        .args(&args)
+        .args(&args.args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -357,7 +359,8 @@ fn run_detached_command_controlled(
         stop_requested,
         deadline,
     } = control;
-    let args = compose_invocation_args(program.as_ref(), args, env)?;
+    let invocation = compose_invocation_args(program.as_ref(), args, env)?;
+    let args = invocation.args;
     let record = DetachedOutputRecord::for_invocation(repo_root, &args).map_err(|error| {
         ContainerExecError::Launch {
             command: label.to_owned(),
@@ -724,7 +727,7 @@ fn compose_invocation_args(
     program: &OsStr,
     args: &[impl AsRef<OsStr>],
     env: &[(String, OsString)],
-) -> Result<Vec<OsString>, ContainerExecError> {
+) -> Result<crate::policy::render::ComposeInvocation, ContainerExecError> {
     let owned = args
         .iter()
         .map(|argument| argument.as_ref().to_os_string())
@@ -1047,7 +1050,7 @@ fn spawn_and_supervise_capture_with_env(
     reported_timeout: Duration,
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
-    let child =
+    let (child, _interpolation) =
         spawn_capture_child_with_env(repo_root, program, args, false, env).map_err(|error| {
             ContainerExecError::Launch {
                 command: format!("{program} {}", args.join(" ")),
@@ -1244,7 +1247,7 @@ fn spawn_capture_child(
     args: &[impl AsRef<std::ffi::OsStr>],
     input: bool,
 ) -> Result<std::process::Child, std::io::Error> {
-    spawn_capture_child_with_env(repo_root, program, args, input, &[])
+    spawn_capture_child_with_env(repo_root, program, args, input, &[]).map(|(child, _)| child)
 }
 
 fn spawn_capture_child_with_env(
@@ -1253,7 +1256,13 @@ fn spawn_capture_child_with_env(
     args: &[impl AsRef<std::ffi::OsStr>],
     input: bool,
     env: &[(String, OsString)],
-) -> Result<std::process::Child, std::io::Error> {
+) -> Result<
+    (
+        std::process::Child,
+        Option<crate::policy::render::InterpolationFile>,
+    ),
+    std::io::Error,
+> {
     // Private timing seam: simulates a slow fork/exec at the spawn boundary so
     // a test can prove the supervision deadline is not rebased after spawn.
     // Always zero in production and unset in every other test thread.
@@ -1262,8 +1271,9 @@ fn spawn_capture_child_with_env(
         thread::sleep(delay);
     }
     let resolved_program = resolve_host_cli_program(program);
-    let args = compose_invocation_args(&resolved_program, args, env)
+    let invocation = compose_invocation_args(&resolved_program, args, env)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let args = invocation.args;
     let mut command = Command::new(&resolved_program);
     for (key, value) in env {
         command.env(key, value);
@@ -1286,7 +1296,8 @@ fn spawn_capture_child_with_env(
         command
             .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
-    command.spawn()
+    let child = command.spawn()?;
+    Ok((child, invocation.interpolation))
 }
 
 #[cfg(test)]
@@ -1297,8 +1308,9 @@ fn spawn_stream_child(
 ) -> Result<std::process::Child, std::io::Error> {
     let resolved_program = resolve_host_cli_program(program);
     let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
-    let args = compose_invocation_args(&resolved_program, &borrowed, &[])
+    let invocation = compose_invocation_args(&resolved_program, &borrowed, &[])
         .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let args = invocation.args;
     let mut command = Command::new(&resolved_program);
     command
         .current_dir(repo_root)
