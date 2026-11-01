@@ -127,8 +127,8 @@ impl MemoryGuard {
         let input = child.stdin.take();
         let output = child.stdout.take();
         let identity = ident::process_identity(child.id()).verified().cloned();
-        // Install EOF ownership immediately: every later error drops the
-        // writer and waits for this exact child, never an arbitrary pid.
+        // Install EOF ownership immediately. Recoverable startup returns this
+        // exact child and its pipes on any subsequent error.
         let mut guard = Self {
             child,
             input,
