@@ -7696,7 +7696,7 @@ fn custody_survives_the_activation_clients_eof() {
                 .unwrap();
             let lease = launch.publish(&supervisor).unwrap().lease().clone();
             launch.serve(&supervisor).unwrap();
-            let ticket = match run::reserve(
+            let ticket = match run::reserve_resolved(
                 &fixture.cx,
                 &fixture.root,
                 run::AdmissionKey {
@@ -7705,6 +7705,7 @@ fn custody_survives_the_activation_clients_eof() {
                 },
                 Digest::of(b"secondary task"),
                 run_id(82),
+                &inv(task("secondary-task"), "secondary-task"),
             )
             .unwrap()
             {

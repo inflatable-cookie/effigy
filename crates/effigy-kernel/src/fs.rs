@@ -499,6 +499,18 @@ impl DirFd {
     ) -> Result<Self, FsError> {
         self.prepare_child_mode(cx, name, 0o755)
     }
+    /// Prepare a source-owned directory whose contents must stay private.
+    /// Existing operator-owned directories are tightened through the opened
+    /// descriptor, never by following a pathname.
+    pub fn prepare_private_child(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+    ) -> Result<Self, FsError> {
+        let child = self.prepare_child_mode(cx, name, DIR_MODE)?;
+        child.chmod(DIR_MODE)?;
+        Ok(child)
+    }
     /// Remove one prepared child tree below this verified directory. Prepare
     /// and Mutate only; descriptor-relative, bounded, and never follows a link.
     pub fn remove_prepared_tree(

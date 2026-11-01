@@ -813,7 +813,11 @@ fn own_managed_run(
     let pane_feedback = owner.payload.front == Front::Tui;
     let preflight = context.preflight;
     let selection = context.selection;
-    let token = generate_managed_run_token();
+    let token = owner
+        .session
+        .admission()
+        .map(|ticket| effigy_kernel::run::workspace_managed_token(ticket.run()))
+        .unwrap_or_else(generate_managed_run_token);
     // Anything that fails before admission is the supervisor's refusal: the
     // client reports it, and nothing ran.
     let inputs = (|| -> Result<_, RunnerError> {

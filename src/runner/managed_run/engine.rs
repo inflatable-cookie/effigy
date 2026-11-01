@@ -283,6 +283,33 @@ pub(in crate::runner) fn own<T>(
     } = owner;
     let ansi_front = matches!(payload.front, super::wire::Front::Tui);
     let _front = crate::runner::managed_color::enter(ansi_front);
+    let workspace_admission = match session.admission().cloned() {
+        Some(ticket) => {
+            let snapshot = payload
+                .workspace_resolution
+                .as_ref()
+                .and_then(|resolution| {
+                    effigy_kernel::id::ResolvedInvocation::decode(&resolution.invocation).ok()
+                })
+                .and_then(|resolved| {
+                    resolved
+                        .spec()
+                        .provenance
+                        .get("workspace:catalog-snapshot")
+                        .cloned()
+                });
+            let Some(snapshot) = snapshot else {
+                let message = "reserved workspace catalog snapshot is unavailable";
+                session.refused(Category::Refused, message);
+                return Err(RunnerError::task_invocation(message));
+            };
+            Some(task_engine::WorkspaceAdmission {
+                ticket,
+                catalog_snapshot: Some(snapshot),
+            })
+        }
+        None => None,
+    };
     let mut run = match TaskRun::begin_detached(TaskRunRequest {
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
@@ -294,7 +321,7 @@ pub(in crate::runner) fn own<T>(
         args: &plan.args,
         key: None,
         admission: plan.admission,
-        workspace_admission: session.admission().cloned(),
+        workspace_admission,
         cwd: Some(&plan.cwd),
     }) {
         Ok(run) => run,
