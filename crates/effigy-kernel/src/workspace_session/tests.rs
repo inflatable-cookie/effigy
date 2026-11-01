@@ -1468,6 +1468,71 @@ fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
 }
 
 #[test]
+fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = pending_environment(&cx, &root);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "workspace_session::tests::a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can", "--nocapture"])
+        .env("EFFIGY_RESERVED_OWNER_RECOVERY_TEST_HOME", fixture.path())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    let ready = loop {
+        line.clear();
+        match output.read_line(&mut line) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) if line.contains("effigy-reserved-owner-ready") => break true,
+            _ => {}
+        }
+    };
+    let _ = child.kill();
+    child
+        .wait()
+        .expect("reap exactly the child this test started");
+    assert!(ready, "child admitted the reserved run");
+    // The historical schema allowed a bound Env run with no owner identity.
+    // Removing it here models that legacy row; it grants no death evidence.
+    Store::open(&cx, &root)
+        .unwrap()
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET owner_identity=NULL WHERE run_id=?1",
+                [run_id(27).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let result = crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(27),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(result, Err(RunError::Unavailable(ref message)) if message.contains("owner identity") && message.contains("recoverable")),
+        "missing identity cannot prove death"
+    );
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(27).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "admitted", "refusal must not settle the run");
+}
+
+#[test]
 fn staging_freezes_one_successor_identity_for_the_workspace_owner() {
     let cx = context();
     let fixture = home();
