@@ -70,6 +70,41 @@ fn owned_apply_never_runs_after_the_original_deadline() {
 }
 
 #[test]
+fn owned_apply_effect_context_expires_at_earlier_request_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut request = request(&render);
+    request.deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = request.deadline;
+    let mut entered = false;
+    let result = env_run.create_with_owned(&mut fake, &selection(), request, |_, effect, until| {
+        entered = true;
+        assert_eq!(until, deadline);
+        assert!(matches!(effect.operation().deadline(), effigy_kernel::ctx::Deadline::At(actual) if actual == deadline));
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(effect.operation().check("private apply").is_err());
+        assert!(ctx.cx.operation().check("parent still live").is_ok());
+        Err(BackendError::Uncertain("timed out while applying".into()))
+    });
+    assert!(
+        entered,
+        "the callback must enter before testing in-flight expiry"
+    );
+    assert!(matches!(
+        result,
+        Err(EnvError::Backend(BackendError::Uncertain(_)))
+    ));
+    env_run.finish(false).unwrap();
+}
+
+#[test]
 fn owned_apply_uncertainty_never_replays_the_callback() {
     let fixture = home();
     let state = root(fixture.path());

@@ -1514,7 +1514,8 @@ impl<'r> EnvRun<'r> {
         let outcome = match fault("EnvBackendBefore") {
             Err(error) => Err(BackendError::NotStarted(error.to_string())),
             Ok(()) => {
-                let outcome = apply(&mut self.run, &self.cx, request.deadline);
+                let effect = self.cx.child_until(request.deadline);
+                let outcome = apply(&mut self.run, &effect, request.deadline);
                 match (outcome, fault("EnvBackendAfter")) {
                     (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
                     (outcome, _) => outcome,
