@@ -60,8 +60,20 @@ pub struct WorkspaceIntegrationOutcome {
 impl WorkspaceIntegrationOutcome {
     /// Restore attempted steps from the durable journal after interruption.
     /// The journal reader must fail closed on unknown or malformed records.
-    pub fn from_attempted(attempted: Vec<WorkspaceIntegrationStep>) -> Self {
-        Self { attempted }
+    pub fn from_attempted(attempted: Vec<WorkspaceIntegrationStep>) -> Result<Self, &'static str> {
+        let indices: Vec<_> = attempted
+            .iter()
+            .map(|step| {
+                STEPS
+                    .iter()
+                    .position(|candidate| candidate == step)
+                    .unwrap()
+            })
+            .collect();
+        if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("invalid integration journal order");
+        }
+        Ok(Self { attempted })
     }
 }
 
@@ -131,7 +143,9 @@ pub fn unwind_workspace_integrations<A: WorkspaceIntegrationAdapter>(
     while let Some(step) = outcome.attempted.pop() {
         if Instant::now() >= deadline
             || adapter.unwind(step, deadline).is_err()
+            || Instant::now() >= deadline
             || adapter.clear_step(step).is_err()
+            || Instant::now() >= deadline
         {
             unsettled.push(step);
         }

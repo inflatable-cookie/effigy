@@ -216,7 +216,8 @@ fn every_interrupted_effect_reconciles_to_identical_fake_runtime_and_routes() {
             &mut WorkspaceIntegrationOutcome::default()
         )
         .is_err());
-        let mut recovered = WorkspaceIntegrationOutcome::from_attempted(state.attempted.clone());
+        let mut recovered =
+            WorkspaceIntegrationOutcome::from_attempted(state.attempted.clone()).unwrap();
         run_workspace_integrations(
             &mut RecoveryFake {
                 state: &mut state,
@@ -327,7 +328,8 @@ fn partial_fake_effect_with_expired_cleanup_retains_custody_until_absent() {
 fn recovered_partial_cleanup_preserves_reverse_order_after_rerun() {
     let mut f = fake();
     let mut outcome =
-        WorkspaceIntegrationOutcome::from_attempted(vec![WorkspaceIntegrationStep::Secrets]);
+        WorkspaceIntegrationOutcome::from_attempted(vec![WorkspaceIntegrationStep::Secrets])
+            .unwrap();
     f.fail = Some(WorkspaceIntegrationStep::Routes);
     assert!(run_workspace_integrations(&mut f, &mut outcome).is_err());
     assert!(unwind_workspace_integrations(
@@ -410,4 +412,124 @@ fn final_effect_overshoot_refuses_before_handoff() {
         Instant::now() + Duration::from_secs(1)
     )
     .is_ok());
+}
+
+struct MidBudget {
+    deadline: Instant,
+    ran: Vec<WorkspaceIntegrationStep>,
+    undone: Vec<WorkspaceIntegrationStep>,
+}
+impl WorkspaceIntegrationAdapter for MidBudget {
+    type Error = &'static str;
+    fn integration_deadline(&self) -> Instant {
+        self.deadline
+    }
+    fn record_step(
+        &mut self,
+        step: WorkspaceIntegrationStep,
+        completed: bool,
+    ) -> Result<(), Self::Error> {
+        if step == WorkspaceIntegrationStep::Permissions && !completed {
+            while Instant::now() < self.deadline {
+                std::thread::yield_now();
+            }
+        }
+        Ok(())
+    }
+    fn clear_step(&mut self, _: WorkspaceIntegrationStep) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn reconcile(&mut self, step: WorkspaceIntegrationStep, _: Instant) -> Result<(), Self::Error> {
+        self.ran.push(step);
+        Ok(())
+    }
+    fn unwind(&mut self, step: WorkspaceIntegrationStep, _: Instant) -> Result<(), Self::Error> {
+        self.undone.push(step);
+        Ok(())
+    }
+}
+#[test]
+fn budget_expiry_before_later_step_refuses_and_unwinds_attempts() {
+    let mut adapter = MidBudget {
+        deadline: Instant::now() + Duration::from_millis(5),
+        ran: vec![],
+        undone: vec![],
+    };
+    let mut outcome = WorkspaceIntegrationOutcome::default();
+    assert!(matches!(
+        run_workspace_integrations(&mut adapter, &mut outcome),
+        Err(IntegrationFailure::IntegrationBudgetExhausted)
+    ));
+    assert_eq!(adapter.ran, vec![WorkspaceIntegrationStep::Readiness]);
+    assert!(unwind_workspace_integrations(
+        &mut adapter,
+        &mut outcome,
+        Instant::now() + Duration::from_secs(1)
+    )
+    .is_ok());
+    assert_eq!(
+        adapter.undone,
+        vec![
+            WorkspaceIntegrationStep::Permissions,
+            WorkspaceIntegrationStep::Readiness
+        ]
+    );
+}
+
+#[test]
+fn malformed_recovery_order_is_refused() {
+    assert!(WorkspaceIntegrationOutcome::from_attempted(vec![
+        WorkspaceIntegrationStep::Routes,
+        WorkspaceIntegrationStep::Secrets
+    ])
+    .is_err());
+    assert!(WorkspaceIntegrationOutcome::from_attempted(vec![
+        WorkspaceIntegrationStep::Secrets,
+        WorkspaceIntegrationStep::Secrets
+    ])
+    .is_err());
+}
+
+struct SlowUnwind {
+    deadline: Instant,
+    clears: usize,
+}
+impl WorkspaceIntegrationAdapter for SlowUnwind {
+    type Error = ();
+    fn integration_deadline(&self) -> Instant {
+        self.deadline
+    }
+    fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), ()> {
+        Ok(())
+    }
+    fn clear_step(&mut self, _: WorkspaceIntegrationStep) -> Result<(), ()> {
+        self.clears += 1;
+        Ok(())
+    }
+    fn reconcile(&mut self, _: WorkspaceIntegrationStep, _: Instant) -> Result<(), ()> {
+        Ok(())
+    }
+    fn unwind(&mut self, _: WorkspaceIntegrationStep, deadline: Instant) -> Result<(), ()> {
+        while Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        Ok(())
+    }
+}
+#[test]
+fn cleanup_overshoot_does_not_clear_attempt() {
+    let mut adapter = SlowUnwind {
+        deadline: Instant::now() + Duration::from_secs(1),
+        clears: 0,
+    };
+    let mut outcome =
+        WorkspaceIntegrationOutcome::from_attempted(vec![WorkspaceIntegrationStep::Secrets])
+            .unwrap();
+    assert!(unwind_workspace_integrations(
+        &mut adapter,
+        &mut outcome,
+        Instant::now() + Duration::from_millis(5)
+    )
+    .is_err());
+    assert_eq!(adapter.clears, 0);
 }
