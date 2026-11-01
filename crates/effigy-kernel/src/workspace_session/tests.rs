@@ -1541,6 +1541,47 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(249));
+    let run = admit_activation(&cx, &root, &reservation, run_id(250));
+    let mut parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+        .unwrap();
+    assert_eq!(
+        parked
+            .integration_snapshot(&session)
+            .unwrap()
+            .get(&Step::Routes),
+        Some(&State::Completed)
+    );
+    parked.expire_for_test();
+    let error = parked
+        .record_integration_step(&mut session, &cx, Step::Secrets, State::Attempted)
+        .unwrap_err();
+    assert!(error.to_string().contains("deadline expired"));
+    let fresh = cleanup(&cx);
+    let cleanup_effects = fresh.operation().effects().unwrap();
+    parked
+        .record_integration_step(&mut session, &cleanup_effects, Step::Routes, State::Cleared)
+        .unwrap();
+    assert!(parked.integration_snapshot(&session).unwrap().is_empty());
+    parked.settle(&fresh, &mut adapter()).unwrap();
+    session.settle(&fresh, &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn parked_resume_requires_matching_observed_creator_and_target_facts() {
     let fixture = home();
     let cx = context().patience(Duration::from_secs(120));
