@@ -3427,8 +3427,7 @@ fn retained_output_resumes_at_the_negotiated_cursor() {
     terminal_session_row(&cx, &root);
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
-    let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observation(), &root, capability());
+    let _owner = live_admission(&cx, &observation(), &root, calls.clone());
     captured_stdout(&root, run, 0, b"hello");
 
     let first = RequestId::new([2; 16]);
@@ -3508,7 +3507,7 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
-    admit_over_channel(&mut server, &cx, &observe, &root, capability());
+    let _owner = live_admission(&cx, &observe, &root, calls.clone());
     // The client consumed 40 bytes, and the log has rotated to 100: the range it
     // never saw is gone and must be reported, not skipped silently.
     captured_stdout(&root, run, 100, b"current");
@@ -3525,6 +3524,12 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
         .expect("the peer's bounded reads");
     // Setup is complete: admission, retained bytes and all wire frames exist.
     // Start the publication budget at this step gate, not before fixture I/O.
+    host_side
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded reader read");
+    host_side
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded reader write");
     let observe = observation();
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
     custody
@@ -3536,6 +3541,7 @@ fn a_rotated_prefix_is_reported_as_a_bounded_gap_not_as_complete_output() {
         )
         .expect("the run's terminal opens");
     let output = std::thread::scope(|scope| {
+        let _close = CloseOwnerWrite(client.try_clone().expect("owner shutdown guard"));
         let serving = scope.spawn(|| {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
@@ -4755,13 +4761,13 @@ fn a_run_with_no_terminal_owner_refuses_input_and_attach() {
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let run = RunId::new(1, [9; 10]).expect("run id");
     let mut server = terminal_server(&root, calls.clone(), &[9], capability());
+    let _owner = live_admission(&cx, &observe, &root, calls.clone());
     // The session owns no terminal for anything yet.
     let mut custody = TerminalCustody::new(terminal_session(), observe.clone(), root.clone());
 
     let attach = RequestId::new([2; 16]);
     let frames = {
         let mut frames = terminal_hello(capability());
-        frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
         frames
     };
