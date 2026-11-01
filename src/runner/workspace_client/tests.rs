@@ -264,14 +264,12 @@ impl ChannelOpener for RefusingChannel {
     }
 }
 
+fn argv(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_owned()).collect()
+}
+
 fn parsed(words: &[&str]) -> Command {
-    parse_command(
-        words
-            .iter()
-            .map(|word| (*word).to_owned())
-            .collect::<Vec<_>>(),
-    )
-    .expect("a parsable command")
+    parse_command(argv(words)).expect("a parsable command")
 }
 
 #[test]
@@ -284,6 +282,7 @@ fn a_pinned_task_list_is_read_from_the_context_without_a_channel() {
 
     let rendered = dispatch_in(
         &parsed(&["tasks"]),
+        &argv(&["tasks"]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -309,6 +308,7 @@ fn a_stale_generation_refuses_before_any_read() {
 
     let error = dispatch_in(
         &parsed(&["tasks"]),
+        &argv(&["tasks"]),
         &stale,
         &mut guest,
         &mut checkout,
@@ -508,6 +508,7 @@ fn a_context_whose_locator_is_not_a_qualified_alias_refuses_before_the_connectio
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -541,6 +542,7 @@ fn a_host_refusal_returns_an_error_and_never_falls_back() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -570,6 +572,7 @@ fn a_version_mismatch_refuses_before_the_connection() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -601,6 +604,7 @@ fn an_identity_mismatch_refuses_before_the_connection() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &mismatched,
         &mut guest,
         &mut checkout,
@@ -1109,6 +1113,7 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
 
     let rendered = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1177,6 +1182,7 @@ fn a_wrong_capability_refuses_before_any_effect() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1322,6 +1328,7 @@ fn an_observation_reaches_the_hosts_observe_engine() {
 
     let rendered = dispatch_in(
         &parsed(&["doctor"]),
+        &argv(&["doctor"]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1422,6 +1429,7 @@ fn guest_run_status_reaches_real_host_dispatch() {
     let run_id = id.to_string();
     let output = dispatch_in(
         &parsed(&["run", "status", &run_id]),
+        &argv(&["run", "status", &run_id]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1446,6 +1454,7 @@ fn run_status_refuses_stale_context_before_dial() {
     let id = session_run().to_string();
     let error = dispatch_in(
         &parsed(&["run", "status", &id]),
+        &argv(&["run", "status", &id]),
         &stale,
         &mut guest,
         &mut checkout,
@@ -1472,6 +1481,7 @@ fn run_status_with_unissued_capability_never_reaches_observer() {
     let id = session_run().to_string();
     dispatch_in(
         &parsed(&["run", "status", &id]),
+        &argv(&["run", "status", &id]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1514,6 +1524,7 @@ fn an_unusable_pinned_locator_refuses_as_unavailable() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1567,6 +1578,7 @@ fn a_mispinned_peer_refuses_the_guest_dispatch_before_any_effect() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guarded,
         &mut checkout,
@@ -5151,6 +5163,7 @@ fn level_one_dispatch_never_reopens_after_unknown_or_uses_guest_fallback() {
     let mut opener = CountingOpener { opened: 0 };
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -5197,6 +5210,7 @@ fn level_one_hidden_dispatch_refuses_while_limited_probe_entry_keeps_existing_by
     ] {
         let error = dispatch_in(
             &command,
+            &[],
             &published(&context),
             &mut ReadForbidden,
             &mut checkout,
@@ -5544,14 +5558,20 @@ enum LevelOnePostwriteReply {
         method: host::Method,
         outcome: host::ResponseOutcome,
     },
-    RequestAttachment { run: RunId, cursor: u64, client: effigy_kernel::run::Client, wrong_id: bool },
+    RequestAttachment {
+        run: RunId,
+        cursor: u64,
+        client: effigy_kernel::run::Client,
+        wrong_id: bool,
+    },
 }
 
 fn level_one_postwrite_peer_exchange(
     reply: LevelOnePostwriteReply,
 ) -> (Intent, Result<ChannelOutcome, ChannelError>, Option<RunId>) {
     let method = match &reply {
-        LevelOnePostwriteReply::UnreadableAttach | LevelOnePostwriteReply::RequestAttachment { .. } => host::Method::Attach,
+        LevelOnePostwriteReply::UnreadableAttach
+        | LevelOnePostwriteReply::RequestAttachment { .. } => host::Method::Attach,
         LevelOnePostwriteReply::Typed { method, .. } => *method,
         _ => host::Method::Invoke,
     };
@@ -5650,9 +5670,16 @@ fn level_one_postwrite_peer_exchange(
                 id: request.id,
                 outcome,
             }),
-            LevelOnePostwriteReply::RequestAttachment { run, cursor, client, wrong_id } => Frame::Response(host::Response {
+            LevelOnePostwriteReply::RequestAttachment {
+                run,
+                cursor,
+                client,
+                wrong_id,
+            } => Frame::Response(host::Response {
                 id: request.id,
-                outcome: level_one_request_attachment_reply(request.id, run, cursor, client, wrong_id),
+                outcome: level_one_request_attachment_reply(
+                    request.id, run, cursor, client, wrong_id,
+                ),
             }),
             LevelOnePostwriteReply::UnreadableAttach => Frame::Response(host::Response {
                 id: request.id,
@@ -5822,22 +5849,46 @@ fn level_one_wrong_same_id_outcome_payload_is_unknown() {
     }
 }
 
-fn level_one_request_attachment_reply(id: RequestId, run: RunId, cursor: u64, client: effigy_kernel::run::Client, wrong_id: bool) -> host::ResponseOutcome {
+fn level_one_request_attachment_reply(
+    id: RequestId,
+    run: RunId,
+    cursor: u64,
+    client: effigy_kernel::run::Client,
+    wrong_id: bool,
+) -> host::ResponseOutcome {
     let mut attachment = *id.bytes();
-    if wrong_id { attachment[0] ^= 1; }
-    host::ResponseOutcome::Observed(serde_json::to_value(host::AttachView {
-        attachment: effigy_kernel::run::AttachmentId::new(attachment), run, client, cursor,
-    }).unwrap())
+    if wrong_id {
+        attachment[0] ^= 1;
+    }
+    host::ResponseOutcome::Observed(
+        serde_json::to_value(host::AttachView {
+            attachment: effigy_kernel::run::AttachmentId::new(attachment),
+            run,
+            client,
+            cursor,
+        })
+        .unwrap(),
+    )
 }
 
 #[test]
 fn level_one_secondary_attachment_wrong_identity_is_unknown() {
-    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Secondary, wrong_id: true });
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment {
+        run: session_run(),
+        cursor: 0,
+        client: effigy_kernel::run::Client::Secondary,
+        wrong_id: true,
+    });
 }
 
 #[test]
 fn level_one_nonadmitting_connection_cannot_accept_owner_role() {
-    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Owner, wrong_id: false });
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment {
+        run: session_run(),
+        cursor: 0,
+        client: effigy_kernel::run::Client::Owner,
+        wrong_id: false,
+    });
 }
 
 #[test]
@@ -5846,33 +5897,178 @@ fn level_one_valid_method_outcome_matrix_and_definitive_refusals_stay_sendable()
     let mut cases = vec![
         typed(host::Method::Invoke, level_one_accepted_reply()),
         typed(host::Method::Invoke, level_one_completed_reply()),
-        typed(host::Method::Observe, host::ResponseOutcome::Observed(serde_json::json!({"observed":true}))),
-        LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Secondary, wrong_id: false },
-        typed(host::Method::Cancel, host::ResponseOutcome::Observed(serde_json::Value::Null)),
-        typed(host::Method::Detach, host::ResponseOutcome::Observed(serde_json::Value::Null)),
+        typed(
+            host::Method::Observe,
+            host::ResponseOutcome::Observed(serde_json::json!({"observed":true})),
+        ),
+        LevelOnePostwriteReply::RequestAttachment {
+            run: session_run(),
+            cursor: 0,
+            client: effigy_kernel::run::Client::Secondary,
+            wrong_id: false,
+        },
+        typed(
+            host::Method::Cancel,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
+        typed(
+            host::Method::Detach,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
     ];
-    for method in [host::Method::Invoke, host::Method::Observe, host::Method::Attach, host::Method::Cancel, host::Method::Detach] {
-        cases.push(typed(method, host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal"))));
+    for method in [
+        host::Method::Invoke,
+        host::Method::Observe,
+        host::Method::Attach,
+        host::Method::Cancel,
+        host::Method::Detach,
+    ] {
+        cases.push(typed(
+            method,
+            host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal")),
+        ));
     }
     for reply in cases {
         let (intent, outcome, _) = level_one_postwrite_peer_exchange(reply.clone());
         let response = match reply {
             LevelOnePostwriteReply::Typed { outcome, .. } => outcome,
-            LevelOnePostwriteReply::RequestAttachment { run, cursor, client, wrong_id } => level_one_request_attachment_reply(intent.id(), run, cursor, client, wrong_id),
+            LevelOnePostwriteReply::RequestAttachment {
+                run,
+                cursor,
+                client,
+                wrong_id,
+            } => level_one_request_attachment_reply(intent.id(), run, cursor, client, wrong_id),
             _ => panic!("positive matrix has only typed responses"),
         };
         match &response {
-            host::ResponseOutcome::Refused(_) => assert!(matches!(outcome, Err(ChannelError::Refused { code: "forbidden", .. }))),
+            host::ResponseOutcome::Refused(_) => assert!(matches!(
+                outcome,
+                Err(ChannelError::Refused {
+                    code: "forbidden",
+                    ..
+                })
+            )),
             _ => assert!(outcome.is_ok(), "{response:?}: {outcome:?}"),
         }
         let mut transport = MuteTransport::answering_negotiation();
         level_one_append_response(&mut transport, &intent, response);
         let written = transport.written.clone();
         let mut replay = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
-        replay.authenticate(GuestAuth::Capability(capability())).unwrap();
+        replay
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
         let before = written.lock().unwrap().len();
         let replayed = replay.send(&intent.clone());
-        assert!(!matches!(replayed, Err(ChannelError::Unknown { .. })), "valid answer fenced replay");
+        assert!(
+            !matches!(replayed, Err(ChannelError::Unknown { .. })),
+            "valid answer fenced replay"
+        );
         assert!(written.lock().unwrap().len() > before);
+    }
+}
+
+#[test]
+fn level_one_dispatch_uses_explicit_frozen_arguments_and_checkout_relative_cwd() {
+    struct Capture(Arc<Mutex<Vec<RequestBody>>>);
+    impl ChannelRequest for Capture {
+        fn authenticate(&mut self, _: GuestAuth) -> Result<(), ChannelError> {
+            Ok(())
+        }
+        fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+            self.0.lock().unwrap().push(intent.body.clone());
+            Ok(match intent.body {
+                RequestBody::Invoke(_) => ChannelOutcome::Accepted {
+                    run: RunId::new(1, [41; 10]).unwrap(),
+                    placement: RunPlacement::Host,
+                },
+                _ => ChannelOutcome::Observed(serde_json::json!({"observed":true})),
+            })
+        }
+        fn detach(&mut self, _: RunId) -> Result<(), ChannelError> {
+            panic!("argument construction does not detach")
+        }
+    }
+    impl ChannelOpener for Capture {
+        fn open(
+            &mut self,
+            _: &VerifiedWorkspaceContext,
+            _: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            Ok(Box::new(Self(self.0.clone())))
+        }
+    }
+    // Request construction only; guest_run_status_reaches_real_host_dispatch
+    // separately verifies these explicit args are parsed by the real observer.
+    let operation = argv(&[
+        "--json",
+        "doctor",
+        "nested/build",
+        "--",
+        "two words",
+        "literal;$()",
+    ]);
+    let task_tail = argv(&["--", "two words", "literal;$()"]);
+    let cases = [
+        (
+            parse_command(operation.clone()).unwrap(),
+            operation.clone(),
+            true,
+        ),
+        (
+            Command::Task(effigy_cli::TaskInvocation {
+                name: "build".into(),
+                args: task_tail.clone(),
+            }),
+            task_tail.clone(),
+            false,
+        ),
+    ];
+    for (command, supplied, observed) in cases {
+        let context = workspace_document(Some(session_run()), None);
+        let mut guest = FakeGuest::new();
+        publish(&mut guest, &context, Some(&capability()));
+        let mut checkout = FakeCheckout::default();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut channel = Capture(captured.clone());
+        dispatch_in(
+            &command,
+            &supplied,
+            &published(&context),
+            &mut guest,
+            &mut checkout,
+            &mut channel,
+            Path::new("/workspace/nested"),
+        )
+        .unwrap();
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        if observed {
+            let RequestBody::Observe(body) = &captured[0] else {
+                panic!("Observe query");
+            };
+            let query = body.query.as_ref().unwrap();
+            assert_eq!(query.args, operation);
+            assert_eq!(query.cwd, "nested");
+            assert_eq!(query.output, ChannelOutputMode::Json);
+        } else {
+            let RequestBody::Invoke(body) = &captured[0] else {
+                panic!("task invocation");
+            };
+            assert_eq!(body.args, task_tail);
+            assert_eq!(body.cwd, "nested");
+            assert_eq!(body.selector, Selector::Task("build".into()));
+        }
+        assert_eq!(checkout.reads, 0);
+    }
+}
+
+#[test]
+fn level_one_pinned_or_refused_commands_do_not_capture_process_arguments() {
+    for command in [
+        Command::Version,
+        parsed(&["tasks"]),
+        Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity),
+    ] {
+        assert!(invocation_args(&command).unwrap().is_empty());
     }
 }

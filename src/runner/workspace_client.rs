@@ -1579,9 +1579,12 @@ impl Transport for BoxedTransport {
 ///
 /// A local read is answered from the pinned context. Everything else crosses
 /// the one channel; a refusal is returned as an error and never retried
-/// against guest state or a guest engine.
+/// against guest state or a guest engine. `args` is the CLI entry's frozen
+/// request argument array: a task's tail, or a built-in's full argv. This seam
+/// never reads arguments from its own process.
 pub(crate) fn dispatch_in(
     cmd: &Command,
+    args: &[String],
     published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     checkout: &mut dyn CheckoutReader,
@@ -1596,7 +1599,7 @@ pub(crate) fn dispatch_in(
             let body = RequestBody::Observe(ObserveBody {
                 query: Some(channel::ObserveQuery {
                     cwd: checkout_relative(&published.document.paths, cwd)?,
-                    args: invocation_args(cmd)?,
+                    args: args.to_vec(),
                     output: if wants_json {
                         ChannelOutputMode::Json
                     } else {
@@ -1614,7 +1617,7 @@ pub(crate) fn dispatch_in(
                 selector,
                 cwd: checkout_relative(&published.document.paths, cwd)?,
                 target,
-                args: invocation_args(cmd)?,
+                args: args.to_vec(),
                 output: if wants_json {
                     ChannelOutputMode::Json
                 } else {
@@ -1704,6 +1707,12 @@ fn ask_host(
 /// arguments the operator typed, which the host re-parses against its own
 /// records (§8.11).
 fn invocation_args(cmd: &Command) -> Result<Vec<String>, RunnerError> {
+    if !matches!(
+        classify(cmd),
+        GuestOperation::Observe { .. } | GuestOperation::Invoke { .. }
+    ) {
+        return Ok(Vec::new());
+    }
     if let Command::Task(task) = cmd {
         return Ok(task.args.clone());
     }
@@ -1909,7 +1918,17 @@ pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>,
         backend: published.document.backend.clone(),
         budget: CHANNEL_OPEN_BUDGET,
     };
-    dispatch_in(cmd, &published, &mut guest, &mut checkout, &mut opener, cwd).map(Some)
+    let args = invocation_args(cmd)?;
+    dispatch_in(
+        cmd,
+        &args,
+        &published,
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        cwd,
+    )
+    .map(Some)
 }
 
 /// A container-mode guest never runs the host engines locally, so a raw
