@@ -28,9 +28,13 @@ During v0.x, MINOR bumps may include breaking changes.
   files are not removed automatically: they carry no lock, so no invocation can
   prove they are idle. The first invocation reports how many it left. Development
   builds may have left such artifacts. Once no pre-fix build is running, delete
-  `$EFFIGY_HOME/compose-env/<16 hex>.env` by hand. A crash can leave a
-  `compose-` file until the next invocation sweeps it. This does not mean no
-  durable secret copies exist.
+  `$EFFIGY_HOME/compose-env/<16 hex>.env` by hand. A crash leaves its `compose-`
+  file in place: no invocation removes it automatically, and the next invocation
+  reports how many such files remain. A free file lock does not prove the Compose
+  group closed, so the sweep no longer removes them. Removing a `compose-` file by
+  hand is safe once no Effigy process is running. Interpolation file removal
+  refuses an occupied quarantine name and never replaces it, so a removal no
+  longer clobbers a file. This does not mean no durable secret copies exist.
 
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.

@@ -307,20 +307,37 @@ Effigy ownership:
   names that inode
 - the invocation keeps the file until the Compose child that reads it has been
   reaped, on success, failure, timeout, kill and spawn failure; removal first
-  moves the name to a quarantine name and unlinks only the inode it created,
-  and a name that another inode took is restored without overwrite and reported
-  as unknown; a name already gone, or a quarantine that vanishes after the
-  move, is never reported as confirmed removal. A failed write whose removal
-  also fails returns the write error with the cleanup state named as unknown
-- before each creation a sweep removes only `compose-` files whose exclusive
-  lock it can take (no live holder) and never follows a symlink or removes a
-  hard-linked, non-regular, foreign-owned or unrecognised name. A legacy
-  `<16 hex>.env` file from an earlier development build carries no lock and
-  cannot be proven idle, so it is never removed, whatever its age; the sweep
-  reports how many such names it left, once per process. Removing legacy files
-  is an operator decision, not something the sweep does
-- a crash leaves its `compose-` file until the next invocation's sweep; it does
-  not claim that every secret copy is erased
+  moves the name to a quarantine name by a no-replace rename (`renameatx_np`
+  with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux) and
+  unlinks only the inode it created. An occupied quarantine name is refused with
+  nothing moved. A platform without a no-replace rename refuses removal before
+  anything moves, with no replacing fallback. A name that another inode took is
+  restored without overwrite and reported as unknown; a name already gone, or a
+  quarantine that vanishes after the move, is never reported as confirmed
+  removal. A failed write whose removal also fails returns the write error with
+  the cleanup state named as unknown
+- before each creation a sweep removes nothing. It counts `compose-` files,
+  quarantine names left by an interrupted removal, and legacy `<16 hex>.env`
+  files, and reports the count once per process; each stays in place. A free
+  file lock does not prove that the Compose group behind a file has closed, so
+  removal waits for a durable binding between file, invocation and group. The
+  layout never follows a symlink or removes a hard-linked, non-regular,
+  foreign-owned or unrecognised name
+- a crash leaves its `compose-` file in place until an operator or a later
+  durable-binding sweep removes it; it does not claim that every secret copy is
+  erased
+- threat model, ruled by Tom on 2026-11-01: cooperative directory locking for
+  every Effigy writer and sweep. A non-cooperating same-user process that swaps
+  an entry after its stat can cause deletion of a foreign entry before any check
+  runs, and that deletion is not guaranteed to be detected. A no-replace rename
+  does not close that stat-to-unlink window. The per-file lock is the only
+  cooperative protocol the code implements today; the directory lock is not yet
+  implemented
+- limits of this slice: a removal that fails still consumes its owner, so
+  `remove(self)` and `Drop` do not retain the file for retry; there is no
+  durable attempt or group binding and no caller-drop Unknown lifecycle.
+  Discard stays refused. These belong to the retained-lifecycle follow-up, #534,
+  which depends on #532 and #533
 - a value both readers can take literally stays unquoted, and anything
   else is double quoted with `\`, `"`, newlines and `$` escaped so Compose
   substitutes it literally and the container's copy keeps its value; a
