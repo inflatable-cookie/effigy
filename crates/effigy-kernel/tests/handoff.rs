@@ -96,9 +96,17 @@ fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
     .unwrap()
 }
 
-fn spec(home: &Path, script: &str) -> ProcessSpec {
+/// The payload reads the handoff slot itself instead of asking a shell to
+/// redirect a two-digit descriptor: dash rejects `<&11` as "Bad fd number" and
+/// cannot run `exec 11<&0` either, so the proof must not depend on a shell
+/// (effigy#520).
+fn spec(home: &Path) -> ProcessSpec {
     ProcessSpec {
-        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        argv: vec![
+            fixture().into_os_string(),
+            "handoff-reader".into(),
+            "handoff.out".into(),
+        ],
         cwd: home.into(),
         env: BTreeMap::new(),
         grace: Duration::from_millis(25),
@@ -172,7 +180,7 @@ fn a_handoff_reader_already_at_the_slot_survives_exec() {
     let home = home();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let mut run = foreground_begin(&cx, &root);
-    let mut process = spec(home.path(), "cat <&11 > handoff.out");
+    let mut process = spec(home.path());
     process.lifetime = Lifetime::Finite(Duration::from_secs(10));
     let mut child =
         Custody::spawn_foreground_with_handoff(&mut run, process, &cx, true, Some(reader)).unwrap();

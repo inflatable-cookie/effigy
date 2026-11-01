@@ -676,9 +676,12 @@ mod tests {
         assert_eq!(reader.as_raw_fd(), effigy_kernel::custody::HANDOFF_FD);
 
         // The child's own `cat` reads the slot after exec: if the flag were
-        // left set, the descriptor would be gone and the read would fail.
-        let mut command = std::process::Command::new("/bin/sh");
-        command.arg("-c").arg("cat <&11");
+        // left set, the descriptor would be gone and the read would fail. It
+        // opens `/dev/fd/11` rather than using a shell redirect, because dash
+        // rejects a two-digit descriptor in `<&11` ("Bad fd number") and cannot
+        // run `exec 11<&0` either (effigy#520).
+        let mut command = std::process::Command::new("/bin/cat");
+        command.arg("/dev/fd/11");
         grant_command_with(&mut command, reader);
         let output = command.output().expect("run the granted child");
         let frame = String::from_utf8_lossy(&output.stdout).into_owned();

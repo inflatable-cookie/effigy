@@ -222,6 +222,21 @@ fn main() {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    if entry == "handoff-reader" {
+        // Read the one-shot handoff slot directly. A shell cannot name a
+        // two-digit descriptor: dash rejects `cat <&11` ("Bad fd number", exit 2)
+        // and even `exec 11<&0`, so the fixture is the reader (effigy#520).
+        use std::io::Read as _;
+        use std::os::fd::FromRawFd as _;
+        let out = Path::new(args.get(1).expect("handoff output path"));
+        // SAFETY: the custody spawn placed the caller's one-shot reader at slot
+        // 11 and cleared the slot's CLOEXEC flag before exec.
+        let mut reader = unsafe { std::fs::File::from_raw_fd(HANDOFF_FD) };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read the handoff");
+        std::fs::write(out, bytes).expect("write the handoff payload");
+        return;
+    }
     if entry == "anchor-no-children" {
         let mut status = 0;
         // SAFETY: WNOHANG observes only this disposable workload's children;
