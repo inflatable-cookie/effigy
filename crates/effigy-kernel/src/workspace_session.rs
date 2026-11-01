@@ -2892,6 +2892,13 @@ impl WorkspaceActivationReservation {
                 ActivationReservationState::Cancelled => return Ok(stored),
                 ActivationReservationState::Reserved => {}
             }
+            if let Some(session) = stored.session.as_ref() {
+                if run::workspace_integrations_unsettled(txn.conn(), session, stored.id)? {
+                    return Err(RunError::refused(
+                        "integration effects unsettled; re-run up",
+                    ));
+                }
+            }
             if let Some(run) = stored.environment_run {
                 if run_needs_settlement(txn.conn(), run, true)? {
                     return Err(RunError::from(ActivationRefusal::RunStillLive));
