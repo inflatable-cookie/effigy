@@ -130,6 +130,10 @@ pub(crate) struct DisposableActivation {
     /// survive until an explicit stop or owner-loss transition retries cleanup.
     #[serde(default)]
     pub(crate) fail_refusal_cleanup: bool,
+    /// Model a real journalled external file whose cleanup observation stays
+    /// Unknown until the fixture explicitly permits its removal.
+    #[serde(default)]
+    pub(crate) unknown_refusal_cleanup: bool,
     /// Attempt a competing second owner for this session inside the same
     /// process, so the kernel's one-serving-owner fence is exercised.
     #[serde(default)]
@@ -319,12 +323,26 @@ impl ServingHost {
 pub(crate) struct ServingSettlement;
 
 impl SettlementAdapter for ServingSettlement {
-    fn observe(&mut self, _: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<Fence> {
+    fn observe(
+        &mut self,
+        effect: &Effect,
+        _: &effigy_kernel::ctx::CleanupContext,
+    ) -> Observed<Fence> {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if let Some(observed) = super::serving_fixture::cleanup_probe_observe(effect) {
+            return observed;
+        }
+        let _ = effect;
         Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
             "a workspace serving host has no adapter effects".into(),
         ))
     }
-    fn release(&mut self, _: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<()> {
+    fn release(&mut self, effect: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<()> {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if let Some(observed) = super::serving_fixture::cleanup_probe_release(effect) {
+            return observed;
+        }
+        let _ = effect;
         Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
             "a workspace serving host has no adapter effects".into(),
         ))
@@ -783,7 +801,7 @@ where
             Ok(retired) => {
                 if !retired.complete() {
                     return RunError::unavailable(format!(
-                        "{primary}; session {session_run} cleanup incomplete; re-run down",
+                        "{primary}; session cleanup incomplete (session_run={session_run}); re-run down",
                     ));
                 }
                 return match previous_failure {

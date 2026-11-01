@@ -165,6 +165,22 @@ mounts = ["prepared:/workspace/prepared:ro"]
     );
 }
 
+fn cleanup_request(fixture: &effigy_test_support::Fixture, unknown: bool) -> serde_json::Value {
+    let state = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&state).expect("state");
+    std::fs::create_dir_all(&project).expect("project");
+    let digest = effigy_kernel::id::Digest::of(project.to_string_lossy().as_bytes());
+    let checkout: Vec<u8> = digest.0.iter().copied().take(16).collect();
+    serde_json::json!({
+        "schema":"effigy.workspace-serving.v1", "state_home":state,
+        "project_path":project, "checkout":checkout, "environment":"cleanup-proof", "profile":"default",
+        "activation":{"kind":"Disposable", "supervisor_id":"cleanup-proof", "capability":super::CAPABILITY,
+            "tls_budget_ms":1000, "omit_selection_record":true,
+            "fail_refusal_cleanup":!unknown, "unknown_refusal_cleanup":unknown},
+    })
+}
+
 #[test]
 fn refused_service_retains_exact_cleanup_custody_until_explicit_stop() {
     use effigy_kernel::run::Phase;
@@ -172,16 +188,7 @@ fn refused_service_retains_exact_cleanup_custody_until_explicit_stop() {
     let fixture = effigy_test_support::Fixture::new("workspace-refusal-cleanup").expect("fixture");
     let state = fixture.path().join("state");
     let project = fixture.path().join("project");
-    std::fs::create_dir_all(&state).expect("state");
-    std::fs::create_dir_all(&project).expect("project");
-    let digest = effigy_kernel::id::Digest::of(project.to_string_lossy().as_bytes());
-    let checkout: Vec<u8> = digest.0.iter().copied().take(16).collect();
-    let request = serde_json::json!({
-        "schema":"effigy.workspace-serving.v1", "state_home":state,
-        "project_path":project, "checkout":checkout, "environment":"cleanup-proof", "profile":"default",
-        "activation":{"kind":"Disposable", "supervisor_id":"cleanup-proof", "capability":super::CAPABILITY,
-            "tls_budget_ms":1000, "omit_selection_record":true, "fail_refusal_cleanup":true},
-    });
+    let request = cleanup_request(&fixture, false);
     let mut probe = effigy::workspace_serving_fixture::start_refused_host_probe(
         &request.to_string(),
         std::path::Path::new(env!("CARGO_BIN_EXE_effigy")),
@@ -255,5 +262,97 @@ fn refused_service_retains_exact_cleanup_custody_until_explicit_stop() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err());
+    super::settle_fixture(&fixture);
+}
+
+#[test]
+fn unknown_cleanup_retains_same_session_until_verified_explicit_recovery() {
+    use effigy_kernel::observe::Observed;
+    use effigy_kernel::run::Phase;
+    use std::time::{Duration, Instant};
+    let fixture = effigy_test_support::Fixture::new("workspace-unknown-cleanup").expect("fixture");
+    let request = cleanup_request(&fixture, true);
+    let state = fixture.path().join("state");
+    let project = fixture.path().join("project");
+    let resource = state.join("cleanup-probe");
+    let release = state.join("cleanup-probe-release");
+    let mut probe = effigy::workspace_serving_fixture::start_refused_host_probe(
+        &request.to_string(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_effigy")),
+    )
+    .expect("same detached host");
+    let host_run = probe.run();
+    let error = probe.await_refusal().expect("Unknown cleanup refusal");
+    let session_run = error
+        .split("session_run=")
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .expect("exact session run")
+        .parse()
+        .expect("session identity");
+    let effect = super::effects();
+    let observe = super::observation();
+    let root = super::state_root(&effect, &state, &project);
+    let summary =
+        super::read_summary(&observe, &root, session_run).expect("original session journal");
+    if summary.phase == Phase::Closed {
+        // Failing-first cleanup of this test-owned fake file is not a release
+        // receipt and is never represented as successful session cleanup.
+        drop(probe);
+        std::fs::remove_file(&resource).expect("remove fake residue after reproduced defect");
+        super::settle_fixture(&fixture);
+        panic!("Unknown adapter cleanup incorrectly closed original session {session_run} (cleanup={:?}) and discarded exact custody", summary.cleanup_complete);
+    }
+    assert!(
+        error.contains("cleanup failed") && error.contains("exact owner retained"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("private-cleanup-bytes-6f82c9"),
+        "untrusted cleanup diagnostic escaped"
+    );
+    assert!(error.contains("key_held=false serving=false"), "{error}");
+    assert!(resource.is_file(), "Unknown resource silently removed");
+    let reader = match effigy_kernel::store::Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    if let Observed::Verified(effects, _) = effigy_kernel::run::effects(&reader, session_run) {
+        assert!(
+            effects.iter().all(|effect| !effect
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("private-cleanup-bytes-6f82c9")),
+            "untrusted diagnostic recorded as evidence"
+        );
+    }
+    drop(reader);
+    std::fs::write(&release, b"explicit fake backend release permitted")
+        .expect("allow actual fake-file cleanup");
+    assert!(
+        resource.is_file(),
+        "recovery must wait for the original owner's control request"
+    );
+    probe.stop().expect("stop original exact host");
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        if [host_run, session_run].into_iter().all(|run| {
+            super::read_summary(&observe, &root, run).is_some_and(|summary| {
+                summary.phase == Phase::Closed && summary.cleanup_complete == Some(true)
+            })
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "Unknown cleanup did not recover exact original IDs"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !resource.exists(),
+        "fake backend resource not actually cleaned"
+    );
     super::settle_fixture(&fixture);
 }

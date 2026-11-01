@@ -421,6 +421,22 @@ pub(crate) fn activate<'r>(
         effigy_kernel::supervise::Placement::Detached,
     )?;
     let mut supervisor = SessionSupervisor::adopt(session_run, &disposable.supervisor_id)?;
+    if disposable.unknown_refusal_cleanup {
+        let probe = request.state_home.join("cleanup-probe");
+        let release = request.state_home.join("cleanup-probe-release");
+        let payload = serde_json::json!({"probe":probe,"release":release});
+        let target = supervisor.fence().clone();
+        let ticket = supervisor.intend(effigy_kernel::run::EffectSpec {
+            target,
+            kind: "workspace-fixture-cleanup-probe".into(),
+            payload: payload.clone(),
+            settlement: effigy_kernel::run::Settlement::Release(serde_json::json!({})),
+            required: false,
+        })?;
+        std::fs::write(&probe, b"fixture-owned resource")
+            .map_err(|_| RunError::unavailable("cleanup fixture resource could not be created"))?;
+        supervisor.applied(&ticket, payload)?;
+    }
 
     // The session's own listener and key, launched under that run's custody.
     let budget = Duration::from_millis(disposable.tls_budget_ms.clamp(1, 5_000));
@@ -502,4 +518,65 @@ pub(crate) fn activate<'r>(
         service.stop();
     }
     Ok(service)
+}
+
+// This fake adapter performs actual fixture-file observation and removal. It
+// is never compiled into a product build or represented as native evidence.
+pub(crate) const CLEANUP_DIAGNOSTIC: &str = "private-cleanup-bytes-6f82c9";
+
+pub(crate) fn cleanup_probe_observe(
+    effect: &effigy_kernel::run::Effect,
+) -> Option<Observed<Fence>> {
+    if effect.spec.kind != "workspace-fixture-cleanup-probe" {
+        return None;
+    }
+    let probe = effect
+        .spec
+        .payload
+        .get("probe")
+        .and_then(|value| value.as_str())
+        .map(std::path::Path::new);
+    let release = effect
+        .spec
+        .payload
+        .get("release")
+        .and_then(|value| value.as_str())
+        .map(std::path::Path::new);
+    Some(match (probe, release) {
+        (Some(probe), Some(release)) if release.is_file() && probe.is_file() => {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        (Some(probe), _) if matches!(probe.try_exists(), Ok(false)) => {
+            Observed::Absent(effigy_kernel::observe::AbsenceProof::NoFile {
+                name: "fixture cleanup resource".into(),
+            })
+        }
+        _ => Observed::Unknown(UnknownReason::Inconsistent(CLEANUP_DIAGNOSTIC.into())),
+    })
+}
+
+pub(crate) fn cleanup_probe_release(effect: &effigy_kernel::run::Effect) -> Option<Observed<()>> {
+    if effect.spec.kind != "workspace-fixture-cleanup-probe" {
+        return None;
+    }
+    let probe = effect
+        .spec
+        .payload
+        .get("probe")
+        .and_then(|value| value.as_str())
+        .map(std::path::Path::new);
+    let release = effect
+        .spec
+        .payload
+        .get("release")
+        .and_then(|value| value.as_str())
+        .map(std::path::Path::new);
+    Some(match (probe, release) {
+        (Some(probe), Some(release))
+            if release.is_file() && std::fs::remove_file(probe).is_ok() =>
+        {
+            Observed::Verified((), evidence())
+        }
+        _ => Observed::Unknown(UnknownReason::Inconsistent(CLEANUP_DIAGNOSTIC.into())),
+    })
 }
