@@ -237,7 +237,7 @@ mod tests {
         let partial = run.has_partial_checkout_backup();
         let backup_identity = run.partial_checkout_backup_identity();
         let effect_refused = run.can_effect().is_err();
-        let custody_refused = run.verify_custody().is_err();
+        let custody_refusal = run.verify_custody().err().map(|error| error.to_string());
         let retry = run.enable_custody(&plan);
         let same_sentinel = run.sentinel.as_ref().map(|lease| lease.identity.clone());
         let same_backup = run.partial_checkout_backup_identity();
@@ -262,8 +262,10 @@ mod tests {
         );
         assert!(effect_refused, "partial startup must not allow effects");
         assert!(
-            custody_refused,
-            "partial backup must independently refuse custody verification"
+            custody_refusal
+                .as_deref()
+                .is_some_and(|error| error.contains("checkout backup startup remains unsettled")),
+            "partial backup must independently refuse custody verification: {custody_refusal:?}"
         );
         assert!(
             retry.is_err(),
@@ -297,6 +299,7 @@ mod tests {
     fn backup_start_fault_retains_partial_owner_with_same_sentinel() {
         for point in [
             crate::fault::Point::WorkspaceBackupAfterSpawn,
+            crate::fault::Point::WorkspaceBackupAfterConfig,
             crate::fault::Point::WorkspaceBackupAfterAck,
         ] {
             check_backup_start_fault(point);

@@ -157,6 +157,9 @@ impl MemoryGuard {
                 &config,
                 guard.cx.child(Duration::from_secs(30)).operation(),
             )?;
+            if purpose == MemoryPurpose::CheckoutLease {
+                crate::fault_point!(WorkspaceBackupAfterConfig)?;
+            }
             guard.ack()?;
             if purpose == MemoryPurpose::CheckoutLease {
                 crate::fault_point!(WorkspaceBackupAfterAck)?;

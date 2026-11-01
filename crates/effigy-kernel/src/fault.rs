@@ -69,6 +69,7 @@ points! {
     LifecycleCommit,
     LifecycleAfter,
     WorkspaceBackupAfterSpawn,
+    WorkspaceBackupAfterConfig,
     WorkspaceBackupAfterAck,
     SentinelBeforeSettle,
     SentinelAfterSettle,
