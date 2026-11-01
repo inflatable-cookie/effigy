@@ -51,34 +51,38 @@ impl Drop for Reservation {
 #[cfg(test)]
 mod tests {
     use super::Capacity;
-    use std::sync::{Arc, Barrier};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
-    fn concurrent_workspace_capacity_reservation_has_one_owner() {
+    fn concurrent_capacity_contenders_hold_reservations_until_observed() {
         let capacity = Capacity::default();
-        let start = Arc::new(Barrier::new(3));
-        let held = Arc::new(Barrier::new(3));
+        let (results, observations) = mpsc::channel();
         let mut threads = Vec::new();
+        let mut releases = Vec::new();
         for _ in 0..2 {
             let capacity = capacity.clone();
-            let start = start.clone();
-            let held = held.clone();
+            let results = results.clone();
+            let (release, wait) = mpsc::channel::<()>();
+            releases.push(release);
             threads.push(std::thread::spawn(move || {
-                start.wait();
                 let reservation = capacity.reserve();
                 let accepted = reservation.is_ok();
-                held.wait();
+                results.send(accepted).unwrap();
+                let _ = wait.recv_timeout(Duration::from_secs(5));
                 drop(reservation);
-                accepted
             }));
         }
-        start.wait();
-        held.wait();
-        let accepted = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .filter(|accepted| *accepted)
-            .count();
+        let outcomes: Vec<_> = (0..2)
+            .map(|_| observations.recv_timeout(Duration::from_secs(5)).unwrap())
+            .collect();
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let accepted = outcomes.into_iter().filter(|accepted| *accepted).count();
         assert_eq!(accepted, 1, "capacity must have exactly one owner");
     }
 
