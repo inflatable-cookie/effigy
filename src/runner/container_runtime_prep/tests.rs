@@ -1604,6 +1604,67 @@ impl super::PredecessorBackend for FixturePredecessor {
     }
 }
 
+// Run the real backend with an explicit argv: canonical observations below use
+// the unmodified apply prefix, independently of the preflight argument adapter.
+fn capture_compose_argv(
+    root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: Vec<OsString>,
+) -> Vec<u8> {
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        root,
+        policy,
+        args,
+        effigy_containers::ContainerAction::Status,
+        "hash equivalence proof",
+    )
+    .unwrap();
+    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+        std::time::Instant::now(),
+        std::time::Instant::now() + Duration::from_secs(30),
+        64 * 1024,
+        16 * 1024,
+    );
+    let output = budget
+        .run_command(
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
+            None,
+            &[],
+            crate::runner::exec_command::BoundedCommandPhase::WorkspacePreparation,
+        )
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+#[test]
+fn frozen_compose_expansion_refuses_unsealed_reads_and_temporary_environment_values() {
+    let names = vec!["checkout/compose.yml".to_owned()];
+    let files = [(
+        names[0].clone(),
+        b"services:\n  app:\n    env_file: ../unsealed.env\n".to_vec(),
+    )]
+    .into();
+    assert!(super::verify_frozen_compose_reads(&files, &names)
+        .unwrap_err()
+        .to_string()
+        .contains("frozen closure"));
+    let private = Path::new("/private-seal");
+    let model = serde_json::to_vec(&serde_json::json!({"services":{"app":{"environment":{"LITERAL":"/private-seal/not-a-mount"}}}})).unwrap();
+    assert!(
+        super::canonical_compose_model(&model, private, Path::new("/canonical-object"))
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported temporary-root reference")
+    );
+}
+
 /// The required proof: the production adapter, an unpublished frozen render, a
 /// deterministic live predecessor whose Compose config hash matches, and the
 /// environment's fenced publisher promoting the exact seal it retained.
@@ -1620,7 +1681,7 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
     fs::create_dir_all(checkout.join(".git")).expect("git directory");
     fs::write(
         checkout.join("effigy.toml"),
-        "[containers]\ndefault = \"one\"\n[containers.one]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+        "[containers]\ndefault = \"one\"\n[containers.one]\nprimary_service = \"app\"\n[containers.one.services.app]\ncatalog = \"nginx\"\n",
     )
     .expect("manifest");
     fs::write(
@@ -1629,12 +1690,75 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
     )
     .expect("compose file");
     effigy_containers::with_test_effigy_home(&home, || {
-        let policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        let mut policy = effigy_containers::load_container_policy(&checkout, None).expect("policy");
+        // Add frozen dependencies to the real generated catalog render. No
+        // canonical file is written: the kernel seal/publisher owns all I/O.
+        let render = policy.render.as_mut().unwrap();
+        let old_path = render.path.clone();
+        let first_name = policy.compose_files[0]
+            .strip_prefix(&old_path)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let directory = Path::new(&first_name).parent().unwrap();
+        let mut files = render.closure.files().clone();
+        let mut document: serde_yaml::Value = serde_yaml::from_slice(&files[&first_name]).unwrap();
+        document["services"]["app"]["env_file"] =
+            serde_yaml::to_value(["./fixtures/app.env"]).unwrap();
+        document["services"]["app"]["extends"] = serde_yaml::to_value(
+            serde_json::json!({"file":"./fixtures/base.yml","service":"base"}),
+        )
+        .unwrap();
+        files.insert(
+            first_name.clone(),
+            serde_yaml::to_string(&document).unwrap().into_bytes(),
+        );
+        files.insert(
+            directory.join("fixtures/app.env").to_str().unwrap().into(),
+            b"FROZEN_ENV=from-sealed-file\n".to_vec(),
+        );
+        files.insert(directory.join("fixtures/base.yml").to_str().unwrap().into(), b"services:\n  base:\n    build:\n      context: ./build\n      dockerfile: Dockerfile\n".to_vec());
+        files.insert(
+            directory
+                .join("fixtures/build/Dockerfile")
+                .to_str()
+                .unwrap()
+                .into(),
+            b"FROM scratch\n".to_vec(),
+        );
+        render.closure = effigy_kernel::objects::Closure::new(files).unwrap();
+        render.path = old_path.parent().unwrap().join(render.closure.digest());
+        for file in &mut policy.compose_files {
+            *file = render.path.join(file.strip_prefix(&old_path).unwrap());
+        }
+
         let sealed = super::seal_render_for_preflight(
             &policy,
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .expect("sealed");
+        assert!(
+            !policy.render.as_ref().unwrap().path.exists(),
+            "preflight publishes no canonical input"
+        );
+        let expired = super::compose_service_config_hashes(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() - Duration::from_millis(1),
+        )
+        .unwrap_err();
+        assert!(expired.to_string().contains("deadline"), "{expired}");
+        let preflight_config: serde_json::Value = serde_json::from_slice(
+            &super::compose_config_output(
+                &checkout,
+                sealed.policy(),
+                &["config", "--format", "json"],
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+            )
+            .expect("private effective configuration"),
+        )
+        .unwrap();
         let project = policy.project_name.clone();
         let id = "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4";
         let hashes = super::compose_service_config_hashes(
@@ -1644,6 +1768,21 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
         )
         .expect("real Compose hashes the unpublished private closure");
         let config_hash = hashes.get("app").expect("app hash").as_str();
+        let naive_hashes = super::parse_service_config_hashes(&capture_compose_argv(
+            &checkout,
+            sealed.policy(),
+            effigy_containers::compose::compose_args(sealed.policy(), ["config", "--hash", "*"]),
+        ))
+        .unwrap();
+        assert_ne!(
+            hashes, naive_hashes,
+            "the fixture must expose root-dependent hashes, not merely equal input bytes"
+        );
+        assert!(
+            !policy.render.as_ref().unwrap().path.exists(),
+            "project-directory anchoring must not publish or create a canonical tree"
+        );
+
         let checkout_path = checkout
             .canonicalize()
             .unwrap_or_else(|_| checkout.clone())
@@ -1667,6 +1806,23 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
                 .into_iter()
                 .collect(),
         };
+
+        let matching_inspect = live.inspect.clone();
+        let mut wrong_root: serde_json::Value = serde_json::from_slice(&live.inspect).unwrap();
+        wrong_root[0]["Config"]["Labels"]["com.docker.compose.config-hash"] =
+            naive_hashes["app"].clone().into();
+        live.inspect = serde_json::to_vec(&wrong_root).unwrap();
+        let wrong = super::observed_predecessor_compatibility_with(
+            &checkout,
+            sealed.policy(),
+            std::time::Instant::now() + Duration::from_secs(30),
+            &mut live,
+        );
+        assert!(
+            matches!(wrong, effigy_kernel::observe::Observed::Unknown(_)),
+            "a live hash computed at the wrong root cannot protect the actual apply: {wrong:?}"
+        );
+        live.inspect = matching_inspect;
 
         let observed = super::observed_predecessor_compatibility_with(
             &checkout,
@@ -1694,6 +1850,85 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
                 .map(|_| ())
         })
         .expect("the gated publisher accepts the adapter's seal");
+        // The unmodified canonical policy is the one whose -f list the actual
+        // apply passes. Compare effective configuration and hashes from that
+        // default project directory, not a second private-tree computation.
+        let apply_argv = effigy_containers::compose::compose_up_args(&policy);
+        let apply_prefix = &apply_argv[..apply_argv.len() - 4];
+        assert_eq!(apply_argv[1], "--project-directory");
+        let (preflight_argv, _) =
+            super::compose_config_args(sealed.policy(), &["config", "--hash", "*"]).unwrap();
+        assert_eq!(
+            preflight_argv[2], apply_argv[2],
+            "final preflight hashing and actual apply anchor to the same explicit directory"
+        );
+        println!(
+            "actual_apply_argv={}",
+            serde_json::to_string(
+                &apply_argv
+                    .iter()
+                    .map(|value| value.to_string_lossy())
+                    .collect::<Vec<_>>()
+            )
+            .unwrap()
+        );
+
+        let mut config_argv = apply_prefix.to_vec();
+        config_argv.extend(["config", "--format", "json"].map(OsString::from));
+        let mut hash_argv = apply_prefix.to_vec();
+        hash_argv.extend(["config", "--hash", "*"].map(OsString::from));
+        let canonical_config: serde_json::Value =
+            serde_json::from_slice(&capture_compose_argv(&checkout, &policy, config_argv)).unwrap();
+        let canonical_hashes = super::parse_service_config_hashes(&capture_compose_argv(
+            &checkout,
+            &policy,
+            hash_argv.clone(),
+        ))
+        .unwrap();
+        assert_eq!(
+            &apply_argv[..apply_argv.len() - 4],
+            &hash_argv[..hash_argv.len() - 3],
+            "hashing uses the actual apply's ordered -f/project prefix"
+        );
+        assert_eq!(
+            canonical_config["services"]["app"]["environment"]["FROZEN_ENV"],
+            "from-sealed-file"
+        );
+        let build = canonical_config["services"]["app"]["build"]["context"]
+            .as_str()
+            .unwrap();
+        assert!(Path::new(build).starts_with(&policy.render.as_ref().unwrap().path));
+        assert!(!canonical_config["services"]["app"]
+            .as_object()
+            .unwrap()
+            .contains_key("extends"));
+        assert!(!canonical_config["services"]["app"]
+            .as_object()
+            .unwrap()
+            .contains_key("env_file"));
+        let mount_source = canonical_config["services"]["app"]["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|mount| mount["target"] == "/etc/nginx/conf.d/default.conf")
+            .unwrap()["source"]
+            .as_str()
+            .unwrap();
+        assert!(
+            std::path::Path::new(mount_source).starts_with(&policy.render.as_ref().unwrap().path),
+            "this fixture must exercise a relative reference to a frozen closure asset"
+        );
+        assert_eq!(preflight_config, canonical_config, "private preflight and actual apply must resolve every path to the same effective configuration");
+        println!(
+            "preflight_hashes={} canonical_apply_hashes={}",
+            serde_json::to_string(&hashes).unwrap(),
+            serde_json::to_string(&canonical_hashes).unwrap()
+        );
+        assert_eq!(
+            hashes, canonical_hashes,
+            "the predecessor guard must protect the canonical apply hash"
+        );
+
         assert_eq!(
             effigy_kernel::objects::Objects::resolve(
                 &ctx.observe(),

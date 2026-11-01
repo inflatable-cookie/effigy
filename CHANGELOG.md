@@ -69,7 +69,31 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
 
-- Reserved workspace publication inputs are built from verified observations only. A pre-apply plan freezes the admitted backend/profile, the observed `effigy-host` alias addresses and the environment materialisation the decision and the published context share, and refuses to re-render over a live predecessor whose record published another Compose closure; a post-apply observation re-verifies the exact container and refuses a fresh target outright (no owner proves which run created a container, so a re-observed target is the only publishable one until a backend creation receipt exists), takes the image platform from the backend's own image inspect and the loader family from the image root, authenticates the pinned artifact against its producer receipt, and never attributes a fresh target to this run. An unreadable backend record, an unobserved alias address (including a Colima profile that names no gateway and a profile that is not a small regular file), a target bound to another profile on the same engine, a live predecessor whose own Compose config hash differs from the render's (a stored record digest is not live evidence, a backend that cannot report `compose config --hash` refuses, and the gated recheck re-observes against the retained preflight seal and requires the exact preflight facts so a container that appeared, disappeared or was replaced in between refuses; the predecessor hash and the one apply's desired publication both come from that single kernel preflight seal — the frozen render is verified into a private `staging/preflight-<token>/<digest>` tree inside the deadline with no gate and no desired-state change, the receipt is retained by the plan, and only the environment's gated publisher promotes those bytes, and a fresh target stays refused until a backend creation receipt exists), a container the decision did not freeze, a guest that disagrees with its image, an unprovable C library, a tampered artifact and unverified emulation all refuse before any selection switch or credential. One absolute deadline bounds planning, the observation, the artifact digest and every staged guest command; an observation that outlives it is a timeout refusal, never a panic, every blocking local read on the publication path — the operator-workspace resolution and manifest composition, the alias render and source closure with its pins, the admitted backend record, the Colima profile's gateway, and the artifact's version, receipt and digest sidecars — runs on a bounded worker, so a stalled read cannot hold a publication past its deadline, and the published probe is owned by the input so a caller's publication callback borrows nothing that dies with it. The enrolment secret is 32 OS-random bytes in canonical 64-hex form.
+- Reserved workspace publication inputs are built from verified observations.
+  The pre-apply plan freezes the admitted backend/profile, observed `effigy-host`
+  alias, source snapshots and environment materialisation. An unknown successor
+  reserves `TargetEvidence::Absent` for first-up or authorized non-live config
+  recreation; post-apply attribution requires the creation journal to name this
+  activation and its exact new full container ID. Attached IDs are never
+  attributed as created, and an `Observed` target must retain its exact old ID.
+  Missing, ambiguous, stale or foreign creator evidence refuses publication.
+- Live predecessor compatibility uses its exact full ID and observed Compose
+  config hash, not the environment record's historical digest. Preflight reads a
+  verified private kernel seal and anchors relative path resolution to the
+  canonical apply project directory; the gated recheck requires the exact same
+  predecessor facts immediately before the one apply. Unsupported/unknown hash
+  comparisons refuse. Only the fenced publisher promotes the retained seal.
+- Reserved publication preserves one absolute deadline across planning, backend
+  and profile reads, manifest/source closure, artifact authentication, probes and
+  guest staging. Blocking local reads use bounded workers; expiry is Unknown or
+  a timeout refusal. The post-apply builder checks full container/boot identity,
+  complete backend/profile, image platform and loader, artifact receipt and
+  digest, and immutable source pins before a selector switch or credential.
+  Unknown aliases, raced identities, platform disagreement, tampering and
+  unverified emulation refuse. The probe is owned by the input; the enrolment
+  secret is 32 OS-random bytes rendered as canonical 64-hex. The creator receipt
+  does not establish guest-session publication or native backend qualification.
+
 - An emulated image (one built for another machine type) still cannot publish a reserved workspace: no owner observes emulation qualification, so execution is claimed only for this host's own machine type and the input builder refuses the rest instead of guessing. A reserved publication also refuses to download a guest artifact inside its deadline; the host must already hold a current one.
 
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.

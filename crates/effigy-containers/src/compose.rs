@@ -120,7 +120,22 @@ pub fn normalize_compose_command_args(
 /// not one: it keeps a changed Dockerfile built). Compose recreates exactly
 /// the services whose rendered configuration changed.
 pub fn compose_up_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
-    compose_args(policy, ["up", "-d", "--build", "--remove-orphans"])
+    let mut args = compose_args(policy, ["up", "-d", "--build", "--remove-orphans"]);
+    if let Some(directory) = policy
+        .compose_files
+        .first()
+        .and_then(|file| file.parent())
+        .filter(|_| policy.render.is_some())
+    {
+        args.splice(
+            1..1,
+            [
+                OsString::from("--project-directory"),
+                directory.as_os_str().to_owned(),
+            ],
+        );
+    }
+    args
 }
 
 /// Resolve the final program and arguments for a compose invocation.

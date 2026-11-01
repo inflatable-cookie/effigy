@@ -3254,11 +3254,12 @@ invokes **under the activation gate immediately before the one Compose apply**: 
 re-observes and requires the *exact* frozen facts, so two individually valid
 observations of different containers, a container that appeared, and a container
 that disappeared all refuse. The pre-decision read alone cannot see any of that.
-The intended hash needs the frozen closure at its final content-addressed path
-before the one apply publishes it, and the preflight must not put it there: the only
+The intended hash must describe the canonical apply paths before publication,
+and the preflight must not materialize them there: the only
 owners that materialize a render (`policy::render::prepare`/`prepare_resolved`)
 acquire `Gate(Env)` — which the gated recheck cannot do — publish desired state, and
-run on a fixed budget rather than the publication's one deadline. The kernel owner is
+run on a fixed budget rather than the publication's one deadline.
+
 The frozen closure owns every Compose input, including
 `checkout/.effigy/runtime/compose/one.generated.compose.yml` under the render
 root. The preflight checks the exact apply file list against the closure and
@@ -3266,18 +3267,24 @@ refuses missing or differing bytes before hashing; generated files have no
 second seal or publication authority (Supervisor under Tom's standing delegation,
 2026-11-01; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 
+The kernel owner is
 `Objects::seal_for_preflight(cx, root, closure, deadline) -> SealedPreflight`: it
 verifies the frozen closure into one private `staging/preflight-<token>/<digest>`
 tree (`O_EXCL`, 0600, kernel closure verifier) inside the deadline, takes no gate
 and writes nothing canonical; only `Objects::publish_sealed_desired` under
 `Gate(Env)` promotes it, re-verifying the tree first. The reserved preflight seals
-the plan's render, points its Compose inputs at that private tree, and hashes the
-exact bytes the apply will publish; the receipt's tree is read-only for this
-purpose and a wrong or altered tree can only cause a refusal, never an unsafe
-publication. Ownership
-resolution (canonicalization plus the scope-token read) is bounded by the
-deadline;
-and it renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
+the plan's render and reads its Compose inputs and literal env/extends dependencies
+from that verified private tree. Compose expands the model; only known filesystem
+path fields are projected from the private root to the canonical root in memory.
+The final model hash and the actual apply use the same explicit
+`--project-directory`, derived from the frozen ordered file inventory. An
+unsealed file dependency, unsupported include context or unexpected private-root
+value refuses equivalence. Both observations share the absolute deadline and
+aggregate capture budget; the model is never another seal or apply input. The
+receipt's tree is read-only for this purpose, and a wrong or altered tree can
+only cause a refusal, never an unsafe publication. Ownership resolution
+(canonicalization plus the scope-token read) is bounded by the deadline.
+The plan also renders the `effigy-host` alias into the *same* `EffectiveContainerPolicy`
 the apply and the decision take, then freezes the `GuestContextInputs`
 materialisation the decision and the published context share.
 `ReservedPublicationPlan::publish_inputs` fills the decision's `guest`,

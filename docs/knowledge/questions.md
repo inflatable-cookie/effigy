@@ -883,5 +883,12 @@ qualification gates.
 `052` §8.11 carries the current #506 detail: the answered render-preflight seal
 (`Objects::seal_for_preflight` -> retained `SealedPreflight` -> the one apply
 promoting it through `EnvRun::publish_sealed_desired` under `Gate(Env)`) and the
-fresh-target creator refusal that stays until the merged #510 receipt is bound.
+creator adapter that reads #510's journal-bound exact-new-ID receipt. Unknown
+successors reserve `Absent`, including authorized non-live config recreation;
+only a receipt naming the current activation's exact new ID permits attribution.
+An attached ID is never attributed as created, and an `Observed` target retains
+its exact old identity. Missing, ambiguous or foreign evidence still refuses.
+The remaining gate is production lifecycle integration and native qualification
+under #452, rather than a missing creator receipt; the receipt alone proves no
+guest-session publication.
 
