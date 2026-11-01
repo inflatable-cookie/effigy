@@ -1296,9 +1296,11 @@ re-entries keep their own routing.
 
 Every target names its `outcome`: `passed` when the suite ran and succeeded,
 `failed` when it reported a failure, `cancelled` when the operator stopped the
-interactive run before the suite reported a result, and `not_started` when the
-suite never ran. Only `passed` sets `success`; `cancelled` and `not_started`
-carry no success and no suite exit code in `code`. A cancelled interactive run
+run before the suite reported a result, and `not_started` when the suite never
+ran. Only `passed` sets `success` to `true`. Interactive cancellation and
+`not_started` targets have `code: null`; noninteractive cancellation retains
+the runner's recorded code, for example `130` for SIGINT. Use `outcome` to
+distinguish cancellation from a suite's own failure. A cancelled interactive run
 exits `130`, the interrupted convention a QA-group member records as
 `cancelled`; the group then closes its durable kernel run the same way, so
 `effigy run status` reports `cancelled` rather than a failed check.
