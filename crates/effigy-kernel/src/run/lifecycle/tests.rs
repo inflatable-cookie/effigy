@@ -47,10 +47,8 @@ fn layered_recovery_child() {
         )
         .unwrap_or_else(|(error, _)| panic!("claim failed: {error}"));
         let plan = LifecyclePlan {
-            executable: crate::supervise::Executable::capture(
-                &crate::fixture::custody_fixture(),
-            )
-            .unwrap(),
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
             placement: crate::supervise::Placement::Detached,
         };
         crate::fault::arm_from_env();
@@ -213,8 +211,7 @@ impl Drop for LayeredHome {
                 {
                     Some(helpers) if !helpers.is_empty() => {
                         let deadline = Instant::now() + Duration::from_secs(35);
-                        while !helpers.iter().all(layered_helper_gone)
-                            && Instant::now() < deadline
+                        while !helpers.iter().all(layered_helper_gone) && Instant::now() < deadline
                         {
                             std::thread::sleep(Duration::from_millis(20));
                         }
@@ -381,8 +378,8 @@ fn layered_helper_identities(log: &str) -> Result<Vec<ProcessIdentity>, serde_js
 fn old_helpers_wait_for_config_and_exit_on_eof() {
     use std::process::{Command, Stdio};
 
-    let binary = std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY")
-        .expect("name the older Effigy executable");
+    let binary =
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
     for entry in ["__kernel-sentinel", "__kernel-supervise"] {
         let mut home = LayeredHome::new();
         let mut command = Command::new(&binary);
@@ -425,8 +422,8 @@ fn diagnose_old_sentinel_before_config() {
     use std::io::Read;
     use std::process::{Command, Stdio};
 
-    let binary = std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY")
-        .expect("name the older Effigy executable");
+    let binary =
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
     let mut home = LayeredHome::new();
     let log_path = home.path().join("stderr.log");
     let log = std::fs::File::create(&log_path).unwrap();
@@ -612,10 +609,9 @@ fn layered_workspace_sentinel_dead_owner_recovery() {
                         |row| row.get(0),
                     )
                     .map_err(|error| error.to_string())?;
-                let recorded: ProcessIdentity = serde_json::from_str(
-                    recorded.as_deref().ok_or("owner identity not recorded")?,
-                )
-                .map_err(|error| error.to_string())?;
+                let recorded: ProcessIdentity =
+                    serde_json::from_str(recorded.as_deref().ok_or("owner identity not recorded")?)
+                        .map_err(|error| error.to_string())?;
                 if recorded != actual {
                     return Err("recorded owner identity differs from stopped process".into());
                 }
@@ -664,7 +660,10 @@ fn layered_workspace_sentinel_dead_owner_recovery() {
         let log_text = match std::fs::read_to_string(&log) {
             Ok(text) => text,
             Err(error) => {
-                panic!("{point:?}: helper identity log unavailable ({error}); fixture {:?} retained", home.path());
+                panic!(
+                    "{point:?}: helper identity log unavailable ({error}); fixture {:?} retained",
+                    home.path()
+                );
             }
         };
         let helpers = match layered_helper_identities(&log_text) {
@@ -689,8 +688,8 @@ fn layered_workspace_sentinel_dead_owner_recovery() {
         if !helpers.iter().all(layered_helper_gone) {
             panic!("{point:?}: helper custody remains live or unknown; fixture {:?} retained, identities {helpers:?}", home.path());
         }
-        let (owner_identity, checkout_fence) = evidence
-            .unwrap_or_else(|error| panic!("{point:?}: pre-kill evidence failed: {error}"));
+        let (owner_identity, checkout_fence) =
+            evidence.unwrap_or_else(|error| panic!("{point:?}: pre-kill evidence failed: {error}"));
         assert!(
             kill.is_ok(),
             "{point:?}: could not signal exact owned process: {kill:?}"
@@ -1130,8 +1129,7 @@ fn check_workspace_sentinel_interruption(deadline: bool) {
         .partial_sentinel
         .as_ref()
         .map(|partial| partial.child_id());
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     let logged: Vec<ProcessIdentity> = std::fs::read_to_string(helper_log)
         .unwrap()
         .lines()
@@ -1201,8 +1199,7 @@ fn enabling_existing_custody_does_not_spawn_a_second_sentinel() {
         Err(error) => Err(error),
     };
     let same = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     if let Ok(contents) = &logged {
         for line in contents.lines() {
             if let Ok(child) = serde_json::from_str::<ProcessIdentity>(line) {
@@ -1245,16 +1242,14 @@ fn cancelled_registration_keeps_the_exact_sentinel_for_cleanup() {
         placement: crate::supervise::Placement::Detached,
     };
     let lease =
-        crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next())
-            .unwrap();
+        crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next()).unwrap();
     let identity = lease.identity.clone();
     cx.operation()
         .cancel_token()
         .cancel(crate::ctx::StopCause::Requested);
     let result = run.register_lifecycle(lease, &plan);
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     reap_test_child(&identity);
     assert!(result.is_err());
     assert_eq!(
@@ -1288,8 +1283,7 @@ fn failed_registration_and_close_keep_the_exact_sentinel_lease() {
         placement: crate::supervise::Placement::Detached,
     };
     let lease =
-        crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next())
-            .unwrap();
+        crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next()).unwrap();
     let identity = lease.identity.clone();
     let before_count = Arc::new(AtomicUsize::new(0));
     let close_count = Arc::new(AtomicUsize::new(0));
@@ -1316,8 +1310,7 @@ fn failed_registration_and_close_keep_the_exact_sentinel_lease() {
     crate::fault::hook(None);
     crate::fault::arm(None);
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     // The failing-first implementation can lose the Child handle. Reap
     // only this test's exact recorded child before making assertions.
     reap_test_child(&identity);
@@ -1385,8 +1378,7 @@ fn check_backup_start_fault(point: crate::fault::Point) {
     let gate = Gate::probe(&cx.operation().observe().unwrap(), &root, &owner);
     let start_count = starts.load(Ordering::SeqCst);
     crate::fault::hook(None);
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     let cleanup_failed = cleanup.is_err();
     assert!(enabled.is_err());
     assert!(fired, "the backup startup fault must fire: {point:?}");
@@ -1526,8 +1518,7 @@ fn after_commit_fault_preserves_same_env_sentinel_for_readback() {
         .unwrap();
     let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
     let poisoned = run.can_effect().is_err();
-    let cleanup =
-        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+    let cleanup = run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
     assert!(enabled.is_err());
     assert!(fired, "the post-commit lifecycle fault must fire");
     assert!(exact.is_some());
