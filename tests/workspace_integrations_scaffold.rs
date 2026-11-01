@@ -572,9 +572,11 @@ impl WorkspaceIntegrationAdapter for LateClear {
 }
 #[test]
 fn late_completed_clear_refuses_then_reconciles_safely() {
-    let cleanup_deadline = Instant::now() + Duration::from_millis(5);
+    // Allow ample scheduling time to enter clear_step, which waits until the
+    // deadline itself. The assertions below verify that clear actually ran.
+    let cleanup_deadline = Instant::now() + Duration::from_secs(2);
     let mut adapter = LateClear {
-        integration_deadline: Instant::now() + Duration::from_secs(1),
+        integration_deadline: Instant::now() + Duration::from_secs(60),
         cleanup_deadline,
         journal_has_attempt: true,
         effect_present: true,
