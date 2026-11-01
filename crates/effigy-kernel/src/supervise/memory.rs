@@ -140,6 +140,8 @@ impl MemoryGuard {
             Ok((child, closure, config))
         })()
         .map_err(|error| (error, None))?;
+        #[cfg(all(test, feature = "fault-injection"))]
+        crate::fault::note_helper(child.id());
         let input = child.stdin.take();
         let output = child.stdout.take();
         let identity = ident::process_identity(child.id()).verified().cloned();

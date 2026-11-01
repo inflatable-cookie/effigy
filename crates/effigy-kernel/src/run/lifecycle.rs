@@ -226,6 +226,444 @@ mod tests {
     };
     use std::time::{Duration, Instant};
 
+    const RECOVERY_CHILD: &str = "run::lifecycle::tests::layered_recovery_child";
+
+    fn layered_owner() -> ResourceId {
+        let checkout = layered_checkout();
+        ResourceId::environment(checkout, "layered-sentinel-recovery").unwrap()
+    }
+
+    fn layered_checkout() -> crate::id::CheckoutId {
+        crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16])
+    }
+
+    #[test]
+    #[ignore]
+    fn layered_recovery_child() {
+        let Some(home) = std::env::var_os("EFFIGY_LAYERED_RECOVERY_HOME") else {
+            return;
+        };
+        let mode = std::env::var("EFFIGY_LAYERED_RECOVERY_MODE").unwrap();
+        let home = std::path::Path::new(&home);
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let owner = layered_owner();
+        let mut fake = super::super::tests::Fake::new(home);
+        if mode == "owner" {
+            let reservation = crate::workspace_session::WorkspaceActivationReservation::reserve(
+                &cx,
+                &root,
+                &owner,
+                Wait::FailFast,
+            )
+            .unwrap();
+            let mut run = Run::begin_claimed_recoverable(
+                &cx,
+                &root,
+                &super::super::tests::inv(owner),
+                super::super::tests::opts(1),
+                || Ok(super::super::tests::cleanup(&cx)),
+                &mut fake,
+                reservation.claim().unwrap(),
+            )
+            .unwrap_or_else(|(error, _)| panic!("claim failed: {error}"));
+            let plan = LifecyclePlan {
+                executable: crate::supervise::Executable::capture(
+                    &crate::fixture::custody_fixture(),
+                )
+                .unwrap(),
+                placement: crate::supervise::Placement::Detached,
+            };
+            crate::fault::arm_from_env();
+            let result = run.enable_workspace_custody(&plan);
+            panic!("owner fault did not kill process: {result:?}");
+        }
+        assert_eq!(mode, "recover");
+        crate::fault::arm_from_env();
+        let before = Store::open(&cx, &root).unwrap();
+        let record = journal::run(before.conn(), super::super::tests::id(1)).unwrap();
+        eprintln!("pre-recovery phase: {:?}", record.phase);
+        assert!(
+            journal::effects(before.conn(), super::super::tests::id(1))
+                .unwrap()
+                .is_empty(),
+            "this test does not cover external integration effects"
+        );
+        drop(before);
+        super::super::settle::settle_interrupted_wait(
+            &cx,
+            &root,
+            (&owner, super::super::tests::id(1)),
+            super::super::tests::next(),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+            Wait::Until(Instant::now() + Duration::from_secs(20)),
+        )
+        .expect("actual dead-owner settlement");
+        let reservation = {
+            let observed = Store::read(&cx.operation().observe().unwrap(), &root);
+            let reader = observed.verified().expect("journal reobservation");
+            assert!(
+                matches!(
+                    super::super::status(
+                        &cx.operation().observe().unwrap(),
+                        &root,
+                        reader,
+                        super::super::tests::id(1),
+                        super::super::tests::next()
+                    ),
+                    Observed::Verified(super::super::RunStatus::Closed { complete: true, .. }, _)
+                ),
+                "closed and complete is required"
+            );
+            crate::workspace_session::WorkspaceActivationReservation::recover(reader, &owner)
+                .verified()
+                .cloned()
+                .flatten()
+                .expect("retained reservation")
+        };
+        reservation
+            .cancel(&cx, &root, Wait::FailFast)
+            .expect("cancel after settlement");
+        let next = crate::workspace_session::WorkspaceActivationReservation::reserve(
+            &cx,
+            &root,
+            &owner,
+            Wait::FailFast,
+        )
+        .expect("fresh reservation");
+        let mut run = Run::begin_claimed_recoverable(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(2),
+            || Ok(super::super::tests::cleanup(&cx)),
+            &mut fake,
+            next.claim().unwrap(),
+        )
+        .unwrap_or_else(|(error, _)| panic!("fresh admission failed: {error}"));
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        run.enable_workspace_custody(&plan)
+            .expect("fresh sentinel and checkout backup startup");
+        assert!(run.sentinel.is_some(), "fresh sentinel must be retained");
+        run.verify_custody().expect("fresh checkout fence");
+        run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake)
+            .unwrap_or_else(|(error, _)| panic!("fresh cleanup failed: {error}"));
+        next.cancel(&cx, &root, Wait::FailFast)
+            .expect("fresh reservation cleanup");
+        let final_store = Store::open(&cx, &root).unwrap();
+        let active: i64 = final_store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM runs WHERE owner=?1 AND phase<>'closed'",
+                [layered_owner().name().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let reservations: i64 = final_store.conn().query_row("SELECT count(*) FROM workspace_activation_reservations WHERE environment=?1 AND state='reserved'", [layered_owner().name().to_string()], |row| row.get(0)).unwrap();
+        let custody: i64 = final_store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM workspace_session_custody",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            (active, reservations, custody),
+            (0, 0, 0),
+            "no open run, reservation or session custody may remain"
+        );
+        drop(final_store);
+        let final_read = Store::read(&cx.operation().observe().unwrap(), &root);
+        let reader = final_read.verified().expect("final journal reobservation");
+        for id in [super::super::tests::id(1), super::super::tests::id(2)] {
+            assert!(
+                matches!(
+                    super::super::status(
+                        &cx.operation().observe().unwrap(),
+                        &root,
+                        reader,
+                        id,
+                        super::super::tests::next()
+                    ),
+                    Observed::Verified(super::super::RunStatus::Closed { complete: true, .. }, _)
+                ),
+                "both exact runs must be closed complete"
+            );
+        }
+    }
+
+    fn wait_layered_child(
+        child: &mut std::process::Child,
+        limit: Duration,
+    ) -> std::io::Result<std::process::ExitStatus> {
+        let deadline = Instant::now() + limit;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                child.kill()?;
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "owned fixture child timed out",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn layered_helper_gone(identity: &ProcessIdentity) -> bool {
+        match crate::ident::process_identity(identity.pid) {
+            Observed::Absent(_) => true,
+            Observed::Verified(current, _) if current != *identity => true,
+            Observed::Verified(_, _) => matches!(
+                crate::ident::process_state(identity.pid),
+                Observed::Verified(crate::ident::ProcessState::Zombie, _)
+            ),
+            Observed::Unknown(_) => false,
+        }
+    }
+
+    fn layered_helper_identities(log: &str) -> Result<Vec<ProcessIdentity>, serde_json::Error> {
+        log.lines().map(serde_json::from_str).collect()
+    }
+
+    #[test]
+    fn layered_workspace_sentinel_dead_owner_recovery() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::{Command, Stdio};
+        for point in [
+            crate::fault::Point::WorkspaceSentinelAfterSpawn,
+            crate::fault::Point::WorkspaceSentinelPartialConfig,
+            crate::fault::Point::WorkspaceSentinelAfterConfig,
+            crate::fault::Point::WorkspaceSentinelAfterAck,
+        ] {
+            let home = effigy_test_support::short_tempdir("lr-").unwrap();
+            let log = home.path().join("helpers.jsonl");
+            let mut owner = Command::new(std::env::current_exe().unwrap())
+                .args([RECOVERY_CHILD, "--exact", "--ignored", "--test-threads=1"])
+                .env("EFFIGY_LAYERED_RECOVERY_HOME", home.path())
+                .env("EFFIGY_LAYERED_RECOVERY_MODE", "owner")
+                .env("EFFIGY_KERNEL_TEST_HELPERS", &log)
+                .env(
+                    "EFFIGY_KERNEL_TEST_FAULT",
+                    crate::fault::env_spec(point, 0, crate::fault::Fault::Stall),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let stopped = loop {
+                if matches!(
+                    crate::ident::process_state(owner.id()),
+                    Observed::Verified(crate::ident::ProcessState::Stopped, _)
+                ) {
+                    break true;
+                }
+                if Instant::now() >= deadline || matches!(owner.try_wait(), Ok(Some(_))) {
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            let evidence =
+                (|| -> Result<(ProcessIdentity, crate::gate::CheckoutFenceIdentity), String> {
+                    if !stopped {
+                        return Err("owner did not stop at the fault".into());
+                    }
+                    let actual = crate::ident::process_identity(owner.id())
+                        .verified()
+                        .cloned()
+                        .ok_or("owner identity unavailable")?;
+                    let cx = super::super::tests::context();
+                    let root =
+                        StateRoot::effects(&cx, home.path()).map_err(|error| error.to_string())?;
+                    let store = Store::open(&cx, &root).map_err(|error| error.to_string())?;
+                    let recorded: Option<String> = store
+                        .conn()
+                        .query_row(
+                            "SELECT owner_identity FROM runs WHERE run_id=?1",
+                            [super::super::tests::id(1).to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let recorded: ProcessIdentity = serde_json::from_str(
+                        recorded.as_deref().ok_or("owner identity not recorded")?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    if recorded != actual {
+                        return Err("recorded owner identity differs from stopped process".into());
+                    }
+                    let binding: (String, Option<String>) = store.conn().query_row("SELECT state,environment_run FROM workspace_activation_reservations WHERE environment=?1", [layered_owner().name().to_string()], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|error| error.to_string())?;
+                    if binding
+                        != (
+                            "reserved".into(),
+                            Some(super::super::tests::id(1).to_string()),
+                        )
+                    {
+                        return Err(format!("reservation binding differs: {binding:?}"));
+                    }
+                    let probe = Gate::probe(
+                        &cx.operation()
+                            .observe()
+                            .map_err(|error| format!("{error:?}"))?,
+                        &root,
+                        &layered_owner(),
+                    );
+                    let token = crate::store::token(&layered_checkout());
+                    let checkout_fence = Gate::checkout_fence_identity(
+                        &cx.operation()
+                            .observe()
+                            .map_err(|error| format!("{error:?}"))?,
+                        &root,
+                        &token,
+                    )
+                    .verified()
+                    .copied()
+                    .ok_or("checkout fence identity unavailable")?;
+                    match probe {
+                        Observed::Verified(crate::gate::GateState::Held(holder), _)
+                            if holder.verified().is_some_and(|holder| {
+                                holder.pid == actual.pid
+                                    && holder.run.as_deref()
+                                        == Some(super::super::tests::id(1).to_string().as_str())
+                            }) =>
+                        {
+                            Ok((actual, checkout_fence))
+                        }
+                        other => Err(format!("exact stopped owner gate not observed: {other:?}")),
+                    }
+                })();
+            let kill = owner.kill();
+            let owner_status = wait_layered_child(&mut owner, Duration::from_secs(40));
+            let log_text = match std::fs::read_to_string(&log) {
+                Ok(text) => text,
+                Err(error) => {
+                    let path = home.keep();
+                    panic!("{point:?}: helper identity log unavailable ({error}); retained fixture {path:?}");
+                }
+            };
+            let helpers = match layered_helper_identities(&log_text) {
+                Ok(helpers) => helpers,
+                Err(error) => {
+                    let path = home.keep();
+                    panic!(
+                        "{point:?}: invalid helper identity ({error}); retained fixture {path:?}"
+                    );
+                }
+            };
+            if helpers.is_empty() {
+                let path = home.keep();
+                panic!("{point:?}: no verified helper identity; retained fixture {path:?}");
+            }
+            let deadline = Instant::now() + Duration::from_secs(40);
+            while !helpers.iter().all(layered_helper_gone) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if !helpers.iter().all(layered_helper_gone) {
+                let path = home.keep();
+                panic!("{point:?}: helper custody remains live or unknown; retained fixture {path:?}, identities {helpers:?}");
+            }
+            let (owner_identity, checkout_fence) = evidence
+                .unwrap_or_else(|error| panic!("{point:?}: pre-kill evidence failed: {error}"));
+            assert!(
+                kill.is_ok(),
+                "{point:?}: could not signal exact owned process: {kill:?}"
+            );
+            assert!(
+                matches!(owner_status, Ok(status) if status.signal() == Some(libc::SIGKILL)),
+                "{point:?}: owner was not killed at the requested boundary"
+            );
+            assert_eq!(
+                helpers.len(),
+                1,
+                "{point:?}: exact helper identity is required"
+            );
+            let cx = super::super::tests::context();
+            let root = StateRoot::effects(&cx, home.path()).unwrap();
+            assert!(
+                matches!(
+                    Gate::probe(&cx.operation().observe().unwrap(), &root, &layered_owner()),
+                    Observed::Verified(crate::gate::GateState::Free, _)
+                ),
+                "{point:?}: owner gate not free"
+            );
+            drop(root);
+            let mut recovery = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    RECOVERY_CHILD,
+                    "--exact",
+                    "--ignored",
+                    "--test-threads=1",
+                    "--nocapture",
+                ])
+                .env("EFFIGY_LAYERED_RECOVERY_HOME", home.path())
+                .env("EFFIGY_LAYERED_RECOVERY_MODE", "recover")
+                .env("EFFIGY_KERNEL_TEST_HELPERS", &log)
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let recovered = wait_layered_child(&mut recovery, Duration::from_secs(45));
+            let all_log = match std::fs::read_to_string(&log) {
+                Ok(text) => text,
+                Err(error) => {
+                    let path = home.keep();
+                    panic!("{point:?}: fresh helper log unavailable ({error}); retained fixture {path:?}");
+                }
+            };
+            let all_helpers = match layered_helper_identities(&all_log) {
+                Ok(helpers) => helpers,
+                Err(error) => {
+                    let path = home.keep();
+                    panic!("{point:?}: invalid fresh helper identity ({error}); retained fixture {path:?}");
+                }
+            };
+            let deadline = Instant::now() + Duration::from_secs(40);
+            while !all_helpers.iter().all(layered_helper_gone) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if !all_helpers.iter().all(layered_helper_gone) {
+                let path = home.keep();
+                panic!("{point:?}: fresh helper custody remains live or unknown; retained fixture {path:?}, identities {all_helpers:?}");
+            }
+            if all_helpers.len() != 3 {
+                let path = home.keep();
+                panic!("{point:?}: expected old sentinel, fresh sentinel and fresh backup identities; observed {all_helpers:?}, recovery {recovered:?}; retained fixture {path:?}");
+            }
+            assert_eq!(
+                all_helpers.first(),
+                helpers.first(),
+                "{point:?}: original sentinel identity must remain accounted for"
+            );
+            assert!(
+                matches!(recovered, Ok(status) if status.success()),
+                "{point:?}: real recovery or fresh start failed: {recovered:?}"
+            );
+            let root = StateRoot::effects(&cx, home.path()).unwrap();
+            assert!(
+                matches!(
+                    Gate::probe(&cx.operation().observe().unwrap(), &root, &layered_owner()),
+                    Observed::Verified(crate::gate::GateState::Free, _)
+                ),
+                "{point:?}: owner gate stranded after recovery"
+            );
+            let token = crate::store::token(&layered_checkout());
+            let retirement =
+                Gate::checkout_retirement(&cx, &root, &token, checkout_fence, Wait::FailFast)
+                    .expect("exact checkout fence must have no remaining shared custody");
+            drop(retirement);
+            eprintln!("{point:?}: stopped owner {:?} and reserved gate verified, exact owner killed, original helper {:?} exited, recovery entry and fresh Env sentinel/backup startup and settlement succeeded; all helpers {:?} exited", owner_identity, helpers[0], all_helpers);
+        }
+    }
+
     fn reap_test_child(identity: &ProcessIdentity) {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
