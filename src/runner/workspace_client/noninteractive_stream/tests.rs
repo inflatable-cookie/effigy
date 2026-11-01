@@ -1091,3 +1091,25 @@ fn the_credential_is_presented_only_by_the_first_request() {
         "the first request presents the credential once"
     );
 }
+
+#[test]
+fn json_nonzero_preserves_outcome_and_exit_status() {
+    let result = report(
+        json!({"workload": {"Failed": {"code": 3}}}),
+        ExitStatus {
+            code: Some(3),
+            signal: None,
+        },
+        &Delivered::default(),
+        true,
+    );
+    match result {
+        Err(RunnerError::RunSettledJson { code, output }) => {
+            assert_eq!(code, 3);
+            let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(value["status"]["code"], 3);
+            assert_eq!(value["outcome"]["workload"]["Failed"]["code"], 3);
+        }
+        other => panic!("expected settled JSON failure: {other:?}"),
+    }
+}

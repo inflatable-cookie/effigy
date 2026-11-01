@@ -931,7 +931,7 @@ fn report(
         ));
     }
     if wants_json {
-        return Ok(serde_json::json!({
+        let output = serde_json::json!({
             "schema": "effigy.workspace-client.v1",
             "outcome": outcome,
             "status": {
@@ -939,7 +939,18 @@ fn report(
                 "signal": status.signal,
             },
         })
-        .to_string());
+        .to_string();
+        return match (status.code, status.signal) {
+            (Some(0), _) => Ok(output),
+            (Some(code), _) => Err(RunnerError::RunSettledJson { code, output }),
+            (None, Some(signal)) => Err(RunnerError::RunSettledJson {
+                code: 128 + signal,
+                output,
+            }),
+            (None, None) => Err(RunnerError::task_invocation(
+                "the workspace host recorded no terminal status for this run",
+            )),
+        };
     }
     match (status.code, status.signal) {
         // The command already wrote its output. Exit with its own status and

@@ -274,6 +274,10 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             }
         }
         Err(err) => {
+            if let crate::runner::RunnerError::RunSettledJson { code, ref output } = err {
+                emit_json_envelope_success(context.command_kind, context.command_name, output);
+                std::process::exit(code);
+            }
             if let crate::runner::RunnerError::RunSettled { code } = err {
                 // An attached or followed run already wrote its output; exit
                 // with that run's own result and add nothing.

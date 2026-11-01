@@ -80,6 +80,10 @@ pub enum RunnerError {
     RunSettled {
         code: i32,
     },
+    RunSettledJson {
+        code: i32,
+        output: String,
+    },
     /// A `--run-id` key already names this run: the invocation attaches to
     /// it instead of starting another.
     RunKeyExists {
@@ -277,7 +281,9 @@ impl RunnerError {
     /// task's gate is held by a live run, otherwise 1.
     pub fn process_exit_code(&self) -> i32 {
         match self {
-            RunnerError::RunSettled { code } | RunnerError::RunControl { code, .. } => *code,
+            RunnerError::RunSettled { code }
+            | RunnerError::RunSettledJson { code, .. }
+            | RunnerError::RunControl { code, .. } => *code,
             RunnerError::TaskCommandFailure {
                 code: Some(code), ..
             } if (1..=255).contains(code) => *code,
@@ -351,6 +357,7 @@ impl RunnerError {
             | RunnerError::ContainerRuntimePolicy { .. }
             | RunnerError::GatewayRouteShape { .. }
             | RunnerError::RunSettled { .. }
+            | RunnerError::RunSettledJson { .. }
             | RunnerError::RunKeyExists { .. }
             | RunnerError::AdmissionRefused { .. }
             | RunnerError::TaskLockConflict(_)
@@ -603,7 +610,9 @@ impl RunnerError {
     // Effigy preserves is the launched child's status.
     pub fn task_exit_status(&self) -> Option<i32> {
         match self {
-            RunnerError::RunSettled { code } | RunnerError::RunControl { code, .. } => Some(*code),
+            RunnerError::RunSettled { code }
+            | RunnerError::RunSettledJson { code, .. }
+            | RunnerError::RunControl { code, .. } => Some(*code),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { rendered } => Some(
                 serde_json::from_str::<serde_json::Value>(rendered)
