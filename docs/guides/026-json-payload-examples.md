@@ -1276,6 +1276,7 @@ re-entries keep their own routing.
       "cargo_env_match": "prefix-aware",
       "command": "bun x vitest run user-service",
       "success": false,
+      "outcome": "failed",
       "code": 1,
       "duration_ms": 893
     }
@@ -1292,6 +1293,17 @@ re-entries keep their own routing.
   }
 }
 ```
+
+Every target names its `outcome`: `passed` when the suite ran and succeeded,
+`failed` when it reported a failure, `cancelled` when the operator stopped the
+run before the suite reported a result, and `not_started` when the suite never
+ran. Only `passed` sets `success` to `true`. Interactive cancellation and
+`not_started` targets have `code: null`; noninteractive cancellation retains
+the runner's recorded code, for example `130` for SIGINT. Use `outcome` to
+distinguish cancellation from a suite's own failure. A cancelled interactive run
+exits `130`, the interrupted convention a QA-group member records as
+`cancelled`; the group then closes its durable kernel run the same way, so
+`effigy run status` reports `cancelled` rather than a failed check.
 
 ## Setup, Bootstrap, and Config
 

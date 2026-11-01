@@ -863,9 +863,18 @@ run = "exit 130"
     assert_eq!(record["members"][0]["state"], "failed");
     assert_eq!(record["members"][0]["exit_code"], 7);
     assert_eq!(record["members"][1]["state"], "not_started");
+    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+    let view = read_kernel_run_view(root.as_path(), &run_id);
+    assert_eq!(
+        view["state"], "failed",
+        "an ordinary member failure still closes as failed: {view}"
+    );
+    assert_eq!(view["exit_code"], 1);
 
     // Exit 130 classifies as cancellation for the member and the group, and
-    // still stops later members.
+    // still stops later members. The group's durable run closeout records the
+    // same outcome the group ledger does, so `run status` and the group record
+    // never disagree about a cancelled run.
     let run_dir =
         run_group_and_capture(root.as_path(), &["tasks", "qa-group", "run", "interrupted"]);
     let record: Value = read_run_record(&run_dir);
@@ -873,17 +882,141 @@ run = "exit 130"
     assert_eq!(record["members"][0]["state"], "cancelled");
     assert_eq!(record["members"][0]["exit_code"], 130);
     assert_eq!(record["members"][1]["state"], "not_started");
+    let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+    let view = read_kernel_run_view(root.as_path(), &run_id);
+    assert_eq!(
+        view["state"], "cancelled",
+        "the durable run closeout agrees with the cancelled group: {view}"
+    );
+}
+
+/// A builtin test whose suite reports an interrupted-looking status on its own
+/// is a failed member in every durable view: the member ledger, the group
+/// outcome, the member log and the kernel run closeout all say failed, never
+/// cancelled. Only a stop the run records makes a suite a cancellation.
+#[test]
+fn a_builtin_test_suite_failure_stays_failed_in_every_durable_view() {
+    for code in [130, 143] {
+        let root = temp_execution_workspace("qa-groups-builtin-test-own-status");
+        write_manifest(
+            &root,
+            &format!(
+                r#"
+[qa.groups.cancels]
+lifecycle = "maintained"
+purpose = "A builtin test run that is not cancelled"
+scope_policy = "advisory"
+proof_limits = ["none"]
+members = [
+  {{ id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["nothing"] }},
+  {{ id = "after", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] }},
+]
+
+[tasks.ok]
+run = "echo member-ok"
+
+[tasks.suitecheck]
+run = '"$QA_TEST_BIN" test'
+
+[test.suites.interrupted]
+run = "exit {code}"
+"#
+            ),
+        );
+
+        let run_dir = run_group_and_capture_with_env(
+            root.as_path(),
+            &["tasks", "qa-group", "run", "cancels"],
+            &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
+        );
+        let record: Value = read_run_record(&run_dir);
+        assert_eq!(record["outcome"], "failed");
+        assert_eq!(record["members"][0]["state"], "failed");
+        assert_eq!(record["members"][0]["exit_code"], 1);
+        assert_eq!(record["members"][1]["state"], "not_started");
+
+        // The member log keeps the running suite's own status, never a
+        // cancellation the run never recorded.
+        let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
+        assert!(
+            log.contains(&format!("exit={code}")),
+            "the member log keeps the suite's own status: {log}"
+        );
+        assert!(
+            !log.contains("cancelled"),
+            "an ordinary suite status is not a cancellation: {log}"
+        );
+
+        let run_id = record["run_id"].as_str().expect("group run id").to_owned();
+        let view = read_kernel_run_view(root.as_path(), &run_id);
+        assert_eq!(
+            view["state"], "failed",
+            "the run closeout agrees with the failed member: {view}"
+        );
+    }
+}
+
+/// The suite sends a real interrupt to its invoking builtin, which must stop
+/// its waiting child and publish the same cancellation through every view.
+#[test]
+fn a_stopped_builtin_reaches_the_group_ledger_and_run_view() {
+    for json in [false, true] {
+        let root = temp_execution_workspace("qa-groups-stopped-builtin");
+        let flags = if json { "--json" } else { "" };
+        write_manifest(
+            &root,
+            &format!(
+                r#"
+[qa.groups.stopped]
+lifecycle = "maintained"
+purpose = "Actual builtin cancellation"
+scope_policy = "advisory"
+proof_limits = ["Private fixture only"]
+members = [{{ id = "test", kind = "test", surface = "published", task = "suitecheck", args = [], targets = ["workspace:root"], limits = ["Private fixture"] }}]
+[tasks.suitecheck]
+run = 'echo $$ > builtin-pid; exec "$QA_TEST_BIN" {flags} test'
+[test.suites.waiting]
+run = 'kill -INT "$(cat builtin-pid)"; exec sleep 60'
+"#
+            ),
+        );
+        let run_dir = run_group_and_capture_with_env(
+            &root,
+            &["tasks", "qa-group", "run", "stopped"],
+            &[("QA_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))],
+        );
+        let record = read_run_record(&run_dir);
+        assert_eq!(record["outcome"], "cancelled", "{record}");
+        assert_eq!(record["members"][0]["state"], "cancelled");
+        assert_eq!(record["members"][0]["exit_code"], 130);
+        let log = fs::read_to_string(run_dir.join("members/test.log")).expect("member log");
+        assert!(log.contains("cancelled"), "{log}");
+        if json {
+            assert!(log.contains("\"success\": false"), "{log}");
+            assert!(log.contains("\"outcome\": \"cancelled\""), "{log}");
+        }
+        let view = read_kernel_run_view(&root, record["run_id"].as_str().expect("run id"));
+        assert_eq!(view["state"], "cancelled", "{view}");
+    }
 }
 
 /// Run the group through the compiled binary, tolerate its failing exit, and
 /// return the finalized run directory.
 fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
+    run_group_and_capture_with_env(root, args, &[])
+}
+
+/// The same run with extra environment for the group's own child processes.
+fn run_group_and_capture_with_env(root: &Path, args: &[&str], envs: &[(&str, &str)]) -> PathBuf {
     let mut command = fixture_command(root);
     command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
     }
     command.env("NO_COLOR", "1");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
     let output = command.output().expect("run group");
     assert!(!output.status.success(), "expected a failing group run");
     let reports = root.join(".effigy/reports/qa-groups");
@@ -893,6 +1026,22 @@ fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
         .collect();
     runs.sort_by_key(|path| fs::metadata(path).unwrap().modified().unwrap());
     runs.pop().expect("one finalized run")
+}
+
+/// The durable kernel run record for `run_id`, read through the surface an
+/// operator uses, so a test proves the persisted view rather than a file
+/// layout.
+fn read_kernel_run_view(root: &Path, run_id: &str) -> Value {
+    let output = run_effigy(root, &["--json", "run", "status", run_id]);
+    assert!(
+        output.status.success(),
+        "effigy run status {run_id}: {:?} | stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: Value =
+        serde_json::from_slice(&output.stdout).expect("run status is one JSON document");
+    envelope["result"]["run"].clone()
 }
 
 fn read_run_record(run_dir: &Path) -> Value {

@@ -90,6 +90,17 @@ fn managed_tui_startup_visibility_production_pty() {
     wait_for_pid_to_exit(&controlled.path().join("first.pid"));
     session.assert_terminal_restored();
 
+    // A suite that passed before the operator stopped the session keeps its
+    // pass; the suite the stop ended is a stop, never a pass.
+    let stopped_after_pass = FixtureWorkspace::new();
+    let mut session = PtySession::spawn("controlled-stop-after-pass", stopped_after_pass.path());
+    session.wait_for_or_panic("slow [running]");
+    wait_for_path(&stopped_after_pass.path().join("fast.done"));
+    fs::write(stopped_after_pass.path().join("stop.requested"), "stop")
+        .expect("request owner stop after a pass");
+    session.finish_successfully();
+    session.assert_terminal_restored();
+
     let empty = FixtureWorkspace::new();
     let mut session = PtySession::spawn("empty", empty.path());
     session.finish_successfully();
@@ -150,13 +161,24 @@ fn run_child_case(case: &str, root: &Path) {
                 root,
                 30_000,
             )];
-            super::run_multiprocess_tui(
+            let outcome = super::run_multiprocess_tui(
                 root.to_path_buf(),
                 processes,
                 Vec::new(),
                 MultiProcessTuiOptions::default(),
             )
             .unwrap_or_else(|error| panic!("cancelled before first child starts: {error}"));
+            // The child never started, so the session records no result for
+            // it: a stop before an attempt is not a failure and not a pass.
+            assert!(outcome.stopped_by_user);
+            assert_eq!(
+                outcome.entries,
+                vec![super::SessionEntry {
+                    name: "first".to_owned(),
+                    state: super::SessionEntryState::NotStarted,
+                }],
+                "a cancelled attempt that never started is not started"
+            );
         }
         "normal" => {
             let processes = vec![
@@ -241,10 +263,66 @@ fn run_child_case(case: &str, root: &Path) {
             )
             .expect("controlled TUI stop");
             assert!(outcome.stopped_by_user);
-            assert!(outcome
-                .non_zero_exits
-                .iter()
-                .any(|(name, _)| name == "failed"));
+            assert!(
+                outcome.entries.contains(&super::SessionEntry {
+                    name: "failed".to_owned(),
+                    state: super::SessionEntryState::Failed {
+                        detail: "exit=7".to_owned()
+                    },
+                }),
+                "a failed entry keeps its own exit: {:?}",
+                outcome.entries
+            );
+            assert!(
+                outcome.entries.iter().any(|entry| entry.name == "first"
+                    && matches!(entry.state, super::SessionEntryState::Stopped { .. })),
+                "a stopped entry is a stop, never a pass: {:?}",
+                outcome.entries
+            );
+        }
+        "controlled-stop-after-pass" => {
+            let fast = ProcessSpec {
+                name: "fast".to_owned(),
+                run: format!("touch {}; exit 0", shell_quote(&root.join("fast.done"))),
+                cwd: root.to_path_buf(),
+                start_after_ms: 0,
+                shutdown_on_exit: false,
+                pty: false,
+                env: Default::default(),
+            };
+            let slow = fixture_process("slow", &root.join("slow.pid"), "slow-output", root, 0);
+            let poll = |_: &dyn super::SessionProcesses| Ok(root.join("stop.requested").exists());
+            let none = |_: &dyn super::SessionProcesses| Ok(());
+            let control = super::MultiProcessTuiControl {
+                poll: &poll,
+                before_shutdown: &none,
+                after_shutdown: &none,
+            };
+            let outcome = super::run_multiprocess_tui_with_control(
+                root.to_path_buf(),
+                vec![fast, slow],
+                Vec::new(),
+                MultiProcessTuiOptions::default(),
+                Some(&control),
+            )
+            .expect("controlled TUI stop after a pass");
+            assert!(outcome.stopped_by_user);
+            assert_eq!(
+                outcome
+                    .entries
+                    .iter()
+                    .find(|entry| entry.name == "fast")
+                    .map(|entry| &entry.state),
+                Some(&super::SessionEntryState::Passed),
+                "a suite that finished before the stop keeps its pass: {:?}",
+                outcome.entries
+            );
+            assert!(
+                outcome.entries.iter().any(|entry| entry.name == "slow"
+                    && matches!(entry.state, super::SessionEntryState::Stopped { .. })),
+                "the suite the stop ended is a stop, never a pass: {:?}",
+                outcome.entries
+            );
         }
         "empty" => assert!(matches!(
             super::run_multiprocess_tui(
@@ -307,7 +385,6 @@ fn run_blocking_baseline(root: &Path) {
     let cleanup = lifecycle::shutdown_and_render_summary(
         &mut runtime.terminal,
         runtime.supervisor.as_ref(),
-        std::mem::take(&mut runtime.state.observed_non_zero),
         &runtime.state.logs,
         &runtime.state.process_started_at,
         &runtime.diagnostics,
@@ -612,6 +689,17 @@ fn terminal_modes(fd: i32) -> libc::tcflag_t {
     assert_eq!(result, 0, "read PTY terminal attributes");
     // SAFETY: the successful tcgetattr call initialized state.
     unsafe { state.assume_init() }.c_lflag & MODE_MASK
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("timed out waiting for {}", path.display());
 }
 
 fn wait_for_pid_to_exit(pid_path: &Path) {

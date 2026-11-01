@@ -3050,6 +3050,13 @@ lane's, not this contract's.
 This subsection is separable. Without it, a direct terminal gets local reads
 only, and host access needs a terminal opened through Effigy.
 
+Status: the session-enrolment request, per-client capability storage and the
+generation/container binding are implemented at the kernel and runner seam
+(§8.3, §8.11). The credential-minting Prepare step is not: the production
+activation caller that would install it is unmerged, and no production mint
+site exists yet (§8.11). A guest therefore reports host access unavailable with
+the missing credential named, and local reads keep working.
+
 ### 8.9 Binary provisioning
 
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
@@ -3086,13 +3093,25 @@ only, and host access needs a terminal opened through Effigy.
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
-- No consumer-time build: Prepare consumes bytes a release download or an
-  explicit `effigy workspace:linux:artifact` already produced, and otherwise
-  refuses naming that command. It never discovers a checkout to build from and
-  never writes a host source pointer at consumer runtime.
+- No consumer-time build: Prepare never builds or writes a host source pointer.
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE` defaults to `auto`. It discovers a
+  local Effigy checkout and accepts its produced artifact when the file, active
+  version and target receipt match; install identity is computed afterwards,
+  not used as this freshness predicate. Publication authenticates the bytes.
+  Otherwise `auto` enters the release acquisition path only when the cache
+  already has a file with the current active version and release install
+  identity; without that cache it refuses with the explicit build/download
+  commands. That path verifies the receipt/digest and may download replacement
+  bytes if verification fails. `download` skips local discovery and enters
+  release acquisition even with no cache, reusing a verified current cache
+  before downloading. `local` refuses a stale/missing artifact in a discovered
+  checkout; if no checkout is discovered, it reaches the same current-cache
+  predicate as `auto`. It is not an unconditional local-only switch.
 - No run-time build or download: task, exec and terminal entry never fetch
-  or compile Effigy or look for a sibling checkout. A contributor's explicit
-  Prepare may build the artifact and record the same digest receipt.
+  or compile Effigy or look for a sibling checkout. A contributor produces the
+  artifact with the explicit `effigy workspace:linux:artifact` task, which
+  records the same digest receipt; Prepare itself never builds one, even when a
+  sibling checkout is present, and consumes only a produced artifact.
 - A version or protocol mismatch between client, context and server refuses
   before any effect, naming the host re-prepare command. Guest artifact
   installation never replaces the live executable under an active run.
@@ -3201,10 +3220,11 @@ identity or staged before pinned qualification. Recovery re-reads the exact
 Pending obligation under an actual Env guard; unknown target/listener evidence
 switches nothing, while a settled failed successor can be abandoned without
 restoring its predecessor. Its typed source boundary supplies no default locator
-or successful publication fallback. The workspace-client owner installs the
-serialized CLI/serving consumer after this producer, moving the already-adopted
-supervisor, exact session/listener and original Arc effect/observe contexts and
-root together; it owns final serving E2E and durable custody close. Legacy local
+or successful publication fallback. The merged CLI/serving consumer in
+`workspace_client/supervisor.rs` takes the already-adopted supervisor, exact
+session/listener and original Arc effect/observe contexts and root together.
+`ServingHandoff` and `ServiceOwner` retain and settle that custody; the production
+activation caller and final serving E2E remain outstanding. Legacy local
 preparation remains separate from that reserved authority path. Native Colima,
 Docker Desktop and Linux Docker identity/reachability qualification is still
 required at the candidate gate.
@@ -3295,7 +3315,8 @@ input and the guest remain in one process, so the durable owner #507 launches ca
 plan, freeze, apply once, observe and publish without moving a live handle across
 a process boundary. Rootless Linux and Apple Containers remain unqualified.
 
-**Qualified TLS locator — #483 (A).** Proposed context and guest transport seams:
+**Qualified TLS locator — #483 (A).** Historical context and guest transport
+signature sketch; the merged adapter and its paths are described below:
 
 ```rust
 // src/runner/workspace_client/context.rs — #482
@@ -3385,8 +3406,10 @@ unqualified transport means zero Hello, authentication, enrolment and credential
 is never recreated under an old locator; the next activation uses a new session, generation, endpoint and pin. Superseded live
 sessions keep their own listener and holders until their own settlement.
 
-Proposed #483 host handoff: `BackendSelection` names the backend/profile; `ContainerIdentity` the host-bound container/boot.
-Modules own the following types:
+Historical #483 host handoff sketch: `BackendSelection` names the backend/profile;
+`ContainerIdentity` the host-bound container/boot. These proposed signatures are
+not a current module inventory; the merged `workspace_transport` adapter is
+specified above:
 
 ```rust
 // crates/effigy-containers/src/workspace_channel.rs
@@ -3461,7 +3484,7 @@ returns the actual acknowledged session identity; the host cannot fill it into a
 and writes active(E), session mapping and Borrow. Generic publication cannot bypass an uncommitted reservation. E and S are
 separate resources' generations; never derive either from the other.
 
-Proposed `effigy.workspace-context.v2` publishes `session: {run_id, generation}` from `ActivationPlan::session()`, qualified
+The implemented `effigy.workspace-context.v2` publishes `session: {run_id, generation}` from `ActivationPlan::session()`, qualified
 locator, immutable context/artifact identity and generation-bound credential selection. It replaces bare `session_run_id`;
 incompatible schemas refuse with re-prepare guidance. Absent/incomplete session or locator permits local reads only, host
 `unavailable`. Never overwrite immutable objects or retarget a live predecessor's selected bytes.
@@ -3552,9 +3575,12 @@ session, not a latch: `SessionLaunch::serve`/`serving`/`liveness` take the sessi
 settled session has no callable locator, and the session's gate stays with its run so settlement releases it for the successor. The launch
 registers itself with the run: settlement (or an un-settled drop) closes the listener and wipes the key, so custody never outlives the session. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
 `Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
-or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
-host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
-is what they call.
+or unsettled successor refuses `successor_running` rather than being revoked around.
+The typed container activation wrapper in `environment/reconcile.rs` and runner
+producer/recovery driver in `environment_workspace.rs` are implemented and call
+this kernel seam. `up_prepared` feeds `prepare_reserved_guest`, and
+`recover_selection` re-reads the Pending obligation under Env before completing
+selection. Their production activation caller remains outstanding.
 
 Order: journal intent → stage/verify immutable objects → return/store `SelectionReceipt` → `commit_selection` → switch →
 acknowledge. The typed wrapper journals before guest I/O, validates/stores the immutable complete receipt (changed retries refuse)
@@ -3598,9 +3624,14 @@ refuse merely because session and target are live when the listener is establish
 stays Pending and refuses). Session-owned listener/key custody is implemented in `workspace_session/serving.rs`:
 `SessionLaunch` holds the `ServingKey` and a bound `ChannelListener` for the session's durable lifetime, `ChannelBound` (the only
 value naming a locator) is produced only by `SessionLaunch::publish` from a bound, qualified listener, `ServingLease` is the
-endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake liveness check. Transport, the server key's
-generation and TLS verification remain #483; ownership transfer over a real supervisor pipe remains #452's glue. Appendix B adds
-no normative requirements or implementation claims to this compact seam.
+endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake
+liveness check. The merged `workspace_transport` adapter implements transport,
+server-key generation and TLS verification: `qualification::prepare_channel`
+binds its listener/key through `SessionTlsListener::bind` and transfers them to
+`SessionLaunch`. The merged `workspace_client/supervisor.rs` owns the serving
+handoff and retirement seam; production activation and native end-to-end
+qualification remain outstanding. Appendix B adds no normative requirements or
+implementation claims to this compact seam.
 
 **Glue and proofs.** #452 owns `src/runner/workspace_client.rs` integration only: read context → observe guest → verify
 context/artifact/session → open qualified TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity and
@@ -3620,20 +3651,23 @@ Reconnect reads current → observes/verifies → opens/checks pin → Hello/hel
 id/digest. A changed session/context returns `StaleContext` without replay; invalid identity/pin refuses before auth. An
 indeterminate outcome returns `Unknown`; no reconnect outcome admits anew.
 
-#482 owns identity, context and publication in `workspace_client/{identity,context}.rs`,
-`workspace_command/provisioning.rs`, kernel `workspace_session.rs` and
-`run/attachments.rs`, with container `environment/reconcile.rs` for typed handoff.
-#483 owns guest `transport.rs`, host `workspace_command/channel.rs`, container
-`workspace_channel.rs` and kernel `workspace_channel.rs` for pin-before-Hello.
-Serialize edits to shared kernel/session, provisioning and reconcile files;
-#452 consumes these seams after their independent code review and targeted proofs.
+The merged identity/context/publication implementation is in
+`workspace_client/{identity,context_v2}.rs`, `workspace_command/provisioning.rs`,
+`environment_workspace.rs`, kernel `workspace_session.rs` and `run/attachments.rs`,
+with container `environment/reconcile.rs` for typed activation. The merged TLS
+adapter is `workspace_transport/`; the kernel wire protocol is
+`workspace_channel.rs`. `workspace_client.rs`, `workspace_client/serving.rs` and
+`workspace_client/supervisor.rs` consume those seams. Their existence does not
+supply the missing production activation caller or qualify a native backend.
 
 Code-first tasks must prove crash families around staging/receipt/commit/selection (including kill just after commit, partial
 switch, third-value refusal and lost acknowledgement), concurrent attach-or-activate, the fresh Linux bootstrap, independent
 listener loss and mispinned-peer zero credential/Hello bytes. Each backend needs its bounded local fixture test plus a recorded
-native identity/dial/observe/invoke/reconnect qualification. Proposed selectors above are not implemented or run here. #452's 239
-fake tests are non-evidence for production identity, TLS or publication. Design-only scope changes no runtime and weakens none of
-#452's stop conditions.
+native identity/dial/observe/invoke/reconnect qualification. The bounded channel
+selectors listed above are implemented; they do not supply native qualification.
+#452's 239 fake tests are non-evidence for production identity, TLS or publication.
+The historical design sketches above are not additional implementation or
+qualification evidence.
 
 #### Implemented: the client glue (effigy#452)
 
@@ -3655,10 +3689,14 @@ no run, no resolution and no second credential.
   mounted checkout. They open no connection, hold no capability and write
   nothing.
 - **Host authority.** Everything else becomes one channel request: `observe`
-  for a live read (`doctor`, run and container status, logs, hosts, scope) and
-  `invoke` for anything with authority (tasks, `container down` and the rest of
-  the container lifecycle, the workspace entry, stores, delivery). The method
-  label grants nothing — the host decides the effect class from its own policy.
+  for a live read and `invoke` for anything with authority. The method label
+  grants nothing — the host decides the effect class from its own policy. The
+  merged dispatcher (`workspace_client/host_dispatch.rs`) serves host-target
+  `runs:list` and `runs:status` observations and admits a declared host-placed
+  task run a reservation can carry; every other observation, a selector that
+  routes to a host built-in, a shared-lock task and an engine-internal run
+  refuse by name with the host command, so `doctor`, `container …` status/logs,
+  hosts, scope and the rest of the container lifecycle still run on the host.
   The body carries a selector, the checkout-relative cwd, the host target, the
   operator's own arguments and the output mode; it carries no plan, executable,
   entry point or state root.
@@ -3688,23 +3726,17 @@ no run, no resolution and no second credential.
   …) and a transport failure is reported as unavailable/`unknown`, never as a
   success or a refusal. Neither becomes a different claim on the way out.
 
-Three facts the merged lanes do not give a guest are refused for rather than
-guessed at. Each refusal names what is missing; none of them falls back:
-
-- **The container identity.** `context::GuestWorkspace::probe_container_identity`
-  is the host's Prepare probe. Nothing in the guest observes its own container
-  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
-  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
-  refuses host access and leaves local reads working.
-- **The transport.** Every context published today carries
-  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
-  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
-  a backend with no qualified transport.
-- **The session generation.** A direct terminal must present
-  `workspace_channel::EnrolRequest::session_generation`, and the published
-  context names only `session_run_id`. `enrolment_session` refuses instead of
-  presenting a generation nobody published (§8.8: a missing credential leaves
-  local reads working and reports host access unavailable).
+Three facts this section once recorded as unavailable to a guest are bound by
+the *Bound (merged implementation)* block below: `ProcGuestIdentity` observes
+the container itself, the pinned TLS adapter is the transport, and the strict v2 document
+publishes `session { run_id, generation }`. What a merged head still does not
+give a guest is a *production* activation: no production caller of
+`up_prepared` publishes a qualified locator, the host dispatcher is constructed
+through the merged serving seam but has no production activation caller, and
+no native backend identity/dial/invoke qualification is
+recorded. A guest therefore keeps its local reads and reports host authority
+unavailable, naming the missing fact, rather than falling back to guest state or
+guest execution.
 
 Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
 pinned read and its stability, hybrid detection writing nothing, the dispatch
@@ -3714,8 +3746,9 @@ generation, capability, unqualified channel) before any effect, the host's real
 admission record, a repeated intent answered from that record, and a secondary
 terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
 and lane B's `test:kernel:workspace` own the wire and session halves. The
-transport, the guest container observation and the published session
-generation remain their own tasks.
+transport, independent guest observation and v2 session generation are merged
+and bound as described above. These source/fixture proofs do not establish the
+missing production activation or native backend qualification.
 
 **Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
 consumes what a prepared channel was waiting for. `ServingOwner` holds the
@@ -3759,7 +3792,7 @@ ServingOwner::adopt_owned(
 With #482 and #504 merged, two adapters are this task's own work rather than
 another lane's.
 
-*Bound (this branch):*
+*Bound (merged implementation):*
 
 - **Guest-local reads over the one strict canonical document.**
   `workspace_client::context::LocalReadSource` is the narrow view a local read
@@ -3840,18 +3873,25 @@ another lane's.
   exists yet (the activation caller is still #482-owned); the focused fixtures mint a
   canonical secret.
 
-*Remaining binding:*
+*Bound (production dispatcher):*
 
-- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
-  now supplies every fact `channel::Server::new` needs, so the remaining work is the
-  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
-  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
-  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
-  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
-  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
-  no kernel or lane module changes are needed.
+- **The production server and dispatcher adapter are built from the validated serving
+  facts.** `host_dispatch::HostDispatch` re-resolves `InvocationBody` from host records
+  (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
+  `managed_run::start_reserved` with the exact ticket, serves `runs:list`/`runs:status`
+  on the host `ObserveContext`, and refuses every operation it does not serve.
+  `host_dispatch::production_server` composes it into `channel::Server`, and
+  `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
-**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+*Remaining:*
+
+- **The production activation caller.** `environment::workspace::up_prepared` still has
+  only test call sites, so nothing in a released command prepares a guest context and
+  a qualified locator yet. The wider Observe surface (every observation beyond
+  `runs:list`/`runs:status`), the guest-side entry for non-task invocations and native
+  backend qualification remain unmerged.
+
+**Guest entry (v2, bound).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a
 second seam:
 
@@ -3931,7 +3971,8 @@ crash or a stopped listener before the close keeps the row, so a successor still
 finds the recorded owner and settles or refuses instead of silently dropping
 authority, and a settled session is never an owner.
 
-**Desired successor absence (owner ruling, 2026-10-31).**
+**Desired successor absence (Supervisor under Tom’s standing delegation, 2026-10-31;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).**
 `TargetEvidence::Absent { project, backend }` means that the desired successor
 identity is unknown before apply, for a fresh project or an authorized recreation
 of a non-live predecessor. It does not assert that the project inventory is empty.
@@ -3939,8 +3980,14 @@ Binding still requires a full ID absent before apply, attributed to this exact
 activation run, with matching project/backend. `Observed` retains its exact old-ID
 requirement. A live protected predecessor cannot be recreated; #506's compatibility
 check and gated recheck must permit replacement and establish that no live session
-is attached to that predecessor. This clarifies target evidence without changing
-#509's kernel fence. No workspace-session publication may bypass its reserved
+is attached to that predecessor. The unmerged #506 integration retains the
+activation's own owned artifact, alias and boxed probe and its one absolute
+deadline; its gated reobserve is an independent fresh backend read under that same
+deadline, fenced to the exact ID, never a pass-through of an earlier observation,
+and it fails closed as `Unknown` when the evidence is unknown, changed or missing
+(Supervisor under Tom’s standing delegation, 2026-11-01;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)). This records
+the reobserve requirement without changing #509's kernel fence. No workspace-session publication may bypass its reserved
 `Absent` successor and the remaining staging/serving/commit gates.
 
 ### 8.12 Gate-scoped creation inference (effigy#510)
@@ -3949,7 +3996,7 @@ The v0.15 receipt is a complete before/after full-ID project inventory differenc
 under the exclusive `Gate(Env)`, not an engine create response. Another checkout,
 project or stale generation must never be adopted. A same-user engine actor
 creating identically labelled containers inside the gate window is outside this
-narrowed guarantee (Tom, 2026-10-31; Q-017).
+narrowed guarantee: Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation); Q-017.
 
 Resolve each frozen service's image-inspect ID before activation and recheck
 under the gate, after apply and before target binding, including attached services.
@@ -3968,15 +4015,16 @@ Receipts name the actual backend capability for each service:
   container. Independent reference-resolution observations still detect moves
   during this activation. A tag moved X→Y before activation may leave a running
   container on X with the same reference/config hash; that move is undetectable
-  on this engine, so the receipt never claims the old container runs Y (owner
-  ruling, 2026-10-31).
+  on this engine, so the receipt never claims the old container runs Y
+  (Supervisor under Tom’s standing delegation, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 - `digest_reference`: the same exact repository/digest reference is immutable;
   its image-inspect resolution is still recorded and rechecked.
 
-Observed tag moves refuse. A same-user engine actor retagging and restoring a tag
-inside the gate is explicitly excluded, alongside forged identical labels (owner
-ruling, 2026-10-31). The gate excludes competing Effigy activations, not foreign
-same-user engine activity. These capability rules replace the reference-only
+Observed tag moves refuse. Same-user retag/restore inside the gate is excluded
+by the Supervisor under Tom’s standing delegation, 2026-10-31; forged
+identical labels are excluded by the Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation)
+([Q-017 and amendments](../questions.md#q-017-workspace-client-and-operator-feedback-at-v015)).
+The gate excludes competing Effigy activations, not foreign same-user engine activity. These capability rules replace the reference-only
 Colima refusal; Docker still requires its container image ID.
 
 The observations verify every row's exact full ID, Compose project/service,
@@ -4000,7 +4048,8 @@ exactly one verified workspace row must remain. The complete new-ID difference
 must equal the required creations plus that one workspace replacement, if any.
 No extra service or foreign ID is adopted. Zero-change re-up stays attached.
 This replaces the image-reference-only prediction that refused routine workspace
-configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
+configuration changes (Supervisor under Tom’s standing delegation, 2026-10-31;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).
 Container-attested image IDs must match their reference lookups before and after
 apply. For reference-only predecessors, those lookups prove reference stability,
 not the old container's actual image; attached rows use the scoped reference/config-hash
@@ -4026,8 +4075,12 @@ generation. Retry reads this result without another apply. The publication owner
 rechecks that inventory under the gate and refuses a stale reservation before
 binding; the reserved-input boundary reobserves target/platform and the binding
 adapter rechecks the complete project/image inventory immediately before
-`bind_target`. Only this run's created workspace ID can satisfy an absent target;
-a caller-supplied creator run ID is never authority. Attached IDs remain attached.
+`bind_target`. Each of those rechecks is an independent fresh backend read on the
+activation's one absolute deadline, fenced to the exact full ID; none reuses an
+earlier observation, and unknown, changed or missing evidence refuses as `Unknown`
+(Supervisor under Tom’s standing delegation, 2026-11-01;
+[Q-017 amendments](../questions.md#workspace-activation-amendments)).
+Only this run's created workspace ID can satisfy an absent target; a caller-supplied creator run ID is never authority. Attached IDs remain attached.
 Missing attribution is Unknown, not proof of no creator. The original activation
 deadline bounds the final observation callback and the pinned backend runs the
 ordinary Compose apply.
@@ -4037,7 +4090,12 @@ VM directory and compares them byte for byte. Its second authorized window must
 prove positive creator attribution and real current-generation reserved `Absent`
 successor binding for fresh and same-image config-replacement phases. It must
 assert that ordinary `EnvRun.activate(&[])` refuses under that reservation;
-reserved Active is available only through the #506/#512 commit/serving route. It must record each new ID and creating run, preserve
+reserved Active is available only through the merged
+`WorkspaceActivationReservation::commit_selection` /
+`EnvRun::commit_activation` transaction and the guest/serving receipts that name
+it (§8.11). The production activation caller (#506) and the native guest
+workspace-session E2E (#512) are separate, unmerged work. It must record each
+new ID and creating run, preserve
 the non-live predecessor rule, and clean only its exact-owned IDs/directories.
 This **does NOT prove guest workspace-session commit/publication**. Native guest
 artifact/locator/serving E2E on Colima, Docker Desktop and Linux Docker belongs to
@@ -5486,8 +5544,7 @@ generation while P's context remains selected.
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
 
-**Creator attribution ruling (Tom, 2026-10-31, amended after the #510 design
-review).** Never adopt a container created by another checkout, project or
+**Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation), amended after the #510 design review.** Never adopt a container created by another checkout, project or
 stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
 Compose apply and exact full-ID inventories before and after it. Only an ID
 new in that window, with the complete expected created set and exact managed,
@@ -5501,8 +5558,8 @@ that can create an identically labelled container inside the gate window is
 **explicitly outside this v0.15 threat model**: same-user access already permits
 reading the render and replacing the binary or vault material. The ID-set
 difference is gate-scoped attribution under that stated limit, not proof that
-the engine returned the created IDs. This supersedes the earlier 2026-10-31
-engine-create-only ruling and the rejection of Option C; it does not permit
+the engine returned the created IDs. This supersedes the earlier 2026-10-30
+engine-create-only operator ruling and the rejection of Option C; it does not permit
 label-only, timestamp-only or unbounded post-apply guessing.
 
 | Window | What the guest resolves | Recovery |

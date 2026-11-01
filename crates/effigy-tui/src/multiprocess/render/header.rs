@@ -59,6 +59,7 @@ pub(super) fn render_tabs(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ba
             let style = match exit_states.get(name) {
                 Some(ProcessExitState::Success) => Style::default().fg(Color::Green),
                 Some(ProcessExitState::Failure) => Style::default().fg(Color::Red),
+                Some(ProcessExitState::Stopped) => Style::default().fg(EFFIGY_MUTED),
                 None => {
                     if name == "shell" && shell_capture_mode && idx == active_index {
                         Style::default()

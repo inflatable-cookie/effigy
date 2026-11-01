@@ -642,7 +642,7 @@ an already-running profile is a no-op and won't pick up new flags.
 ## Related Guides
 
 - [`063-container-system-guide.md`](063-container-system-guide.md) — runtime
-  compose layout under `.effigy/runtime/compose/`.
+  Compose, host ports and backend selection.
 - [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
   — how workspaces compose with systems and containers.
 - [`067-catalog-services-reference.md`](067-catalog-services-reference.md) —

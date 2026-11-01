@@ -52,7 +52,7 @@ pub(super) fn render_builtin_test_results_json(
         )>>();
     let mut failures = results
         .iter()
-        .filter(|result| !result.success)
+        .filter(|result| !result.success())
         .map(|result| {
             json!({
                 "target": result.name,
@@ -139,7 +139,8 @@ pub(super) fn render_builtin_test_results_json(
                 "teardown_steps": teardown_steps,
                 "teardown_policy": teardown_policy,
                 "command": result.command,
-                "success": result.success,
+                "success": result.success(),
+                "outcome": result.outcome.as_str(),
                 "code": result.code,
             })
         })

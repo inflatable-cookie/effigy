@@ -80,17 +80,21 @@ pub(super) fn run_fallback_route<'a>(
                     &preflight.invocation_cwd,
                 ),
             };
+            // The builtin's own outcome is carried into the runner's error
+            // before the run closes: a cancellation the builtin reported must
+            // not become a failed run.
+            let outcome = outcome.map_err(RunnerError::from);
             if let Some(run) = suite_run {
                 let workload = match &outcome {
                     Ok(Some(_)) => WorkloadOutcome::Succeeded,
                     Ok(None) => WorkloadOutcome::NotStarted,
-                    Err(_) => WorkloadOutcome::Failed { code: 1 },
+                    Err(error) => error.workload_outcome(),
                 };
                 for warning in run.close(workload) {
                     eprintln!("warning: {}: {warning}", preflight.selector.task_name);
                 }
             }
-            match outcome.map_err(RunnerError::from)? {
+            match outcome? {
                 Some(output) => Ok(result::output(output)),
                 // The built-in declined at run time; the same order continues.
                 None => run_fallback_route(

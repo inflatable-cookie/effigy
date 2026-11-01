@@ -492,7 +492,9 @@ During v0.x, MINOR bumps may include breaking changes.
   A request id is looked up and reserved before any engine is asked to admit
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
-  No transport, guest client or command surface is wired to it yet.
+  No production activation caller or native backend qualification is wired to it
+  yet; the pinned TLS transport, the guest client and the guest dispatch are
+  merged (contract 052 §8.11).
 - The workspace channel binds one attachment's streams to its terminal
   (contract 052 §8.11). Output sequence numbers are one series per stream id
   shared by every kind on it, so a stream's stdout and stderr no longer restart
@@ -647,6 +649,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Clarify workspace artifact source selection, the separate dev and workspace
+  session runs, and the implemented workspace seams and outstanding production
+  activation and native qualification requirements.
+
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and
@@ -655,8 +661,10 @@ During v0.x, MINOR bumps may include breaking changes.
   gates and journals; a host refusal is returned as an error and never falls
   back to guest state or a guest engine. `effigy skill run --stdio passthrough`
   is refused in a guest because it would run a task without host authority.
-  Until a guest transport, a guest-local container observation and a published
-  session generation land, host authority reports itself unavailable with the
+  The guest transport, the guest-local container observation and the published
+  session generation are merged; what remains missing is the production
+  activation caller that publishes a qualified locator and the recorded native
+  backend qualification, so host authority reports itself unavailable with the
   specific missing fact named, and local reads keep working.
 
 - **The workspace channel checks its pinned host identity before it speaks.**
@@ -1171,6 +1179,29 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- An interactive `effigy test` run that the operator stops can no longer report
+  a terminated suite as passed or as a failed check. The supervised session
+  records how each attempt ended — its own result, or a stop the session
+  caused — and that record is the one outcome authority: a suite that finished
+  keeps its own result, a suite the stop ended is `cancelled`, and a suite that
+  never started is `not_started`. `effigy.test.results.v1` targets carry
+  `outcome` (`passed`, `failed`, `cancelled`, `not_started`) beside the
+  unchanged `success` and `code` fields, the text results name the same state,
+  and a cancelled run exits `130`. A run the operator stopped is cancelled even
+  when the stop arrived before any suite started, while a suite that reported
+  its own failure keeps that failure: a cancellation is the run's own record,
+  never a suite's exit status. An ordinary `130` or `143` exit is therefore a
+  failure, in a terminal or without one; a suite that died from a signal no
+  stop sends (`SIGSEGV`, `SIGABRT`) is a failure too. Only a suite the run that
+  owns it recorded as stopped is `cancelled`, and that attempt's own child run
+  closes as `cancelled` while a failed attempt closes with the code it
+  reported. A nested helper invocation keeps its own exit code instead of
+  collapsing to `1`, and a run's closeout uses that error's own outcome, so a
+  cancelled `effigy test` closes its run as `cancelled` instead of `failed` and
+  its step is recorded `Cancelled` with code `130`; a cancelled QA-group run
+  closes its durable kernel run the same way. The session summary no longer
+  renders a signal-terminated process as `OK`.
 
 - Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 

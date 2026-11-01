@@ -183,10 +183,7 @@ pub(in crate::runner) fn run_standard_task(
 fn workload_for_result(result: &Result<String, RunnerError>) -> WorkloadOutcome {
     match result {
         Ok(_) => WorkloadOutcome::Succeeded,
-        Err(RunnerError::TaskCommandFailure {
-            code: Some(code), ..
-        }) if *code != 0 => crate::runner::task_engine::workload_for_exit(*code),
-        Err(_) => WorkloadOutcome::Failed { code: 1 },
+        Err(error) => error.workload_outcome(),
     }
 }
 

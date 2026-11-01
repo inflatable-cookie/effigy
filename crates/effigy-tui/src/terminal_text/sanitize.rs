@@ -14,7 +14,3 @@ pub fn sanitize_log_text(raw: &str) -> String {
         })
         .collect()
 }
-
-pub fn is_expected_shutdown_diagnostic(diagnostic: &str) -> bool {
-    matches!(diagnostic, "signal=15" | "signal=9")
-}

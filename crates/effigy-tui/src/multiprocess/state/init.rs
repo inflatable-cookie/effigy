@@ -47,7 +47,6 @@ impl SessionState {
             show_options: false,
             options_index: 0,
             footer_message: None,
-            observed_non_zero: HashMap::new(),
             exit_states: HashMap::new(),
             startup_states,
             entry_waits: HashMap::new(),
