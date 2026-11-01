@@ -139,6 +139,17 @@ impl TestCreatorImage {
     pub(crate) fn verify(&self, identity: &ProcessIdentity) -> io::Result<()> {
         self.0.verify_process(identity)
     }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn capture_fixture_path(path: &Path) -> io::Result<Self> {
+        let file = File::open(path)?;
+        let identity = ImageIdentity::from_metadata(&file.metadata()?)?;
+        Ok(Self(CreatorImage {
+            file,
+            launch_path: path.to_owned(),
+            identity,
+        }))
+    }
 }
 
 #[cfg(test)]

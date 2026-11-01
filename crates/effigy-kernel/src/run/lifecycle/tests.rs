@@ -420,9 +420,9 @@ fn macos_live_child_image_is_path_evidence_not_mapped_image_proof() {
         .stderr(Stdio::null());
     let mut other = LayeredChild::spawn(&mut other_command, home.path()).expect("different child");
     let other_identity = other.identity.clone().expect("different child identity");
-    assert!(
-        image.verify(&other_identity).is_err(),
-        "different image must refuse"
+    assert_eq!(
+        image.verify(&other_identity).unwrap_err().to_string(),
+        "helper image or process identity changed"
     );
     other.kill().expect("stop exact different child");
     other
@@ -430,6 +430,25 @@ fn macos_live_child_image_is_path_evidence_not_mapped_image_proof() {
         .expect("reap different child");
     // proc_pidpath plus stat observes a pathname, not the mapped image; an ABA
     // replacement between observation and exec remains an accepted limitation.
+    home.finish();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_creator_same_path_replacement_refuses() {
+    let mut home = LayeredHome::new();
+    let path = home.path().join("image");
+    let replacement = home.path().join("replacement");
+    std::fs::write(&path, b"original image").unwrap();
+    let image = crate::supervise::image_identity::TestCreatorImage::capture_fixture_path(&path)
+        .expect("capture fixture image");
+    std::fs::write(&replacement, b"replacement image").unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+    assert_eq!(
+        image.launch_path().unwrap_err().to_string(),
+        "creator image changed"
+    );
+    std::fs::remove_file(&path).unwrap();
     home.finish();
 }
 
