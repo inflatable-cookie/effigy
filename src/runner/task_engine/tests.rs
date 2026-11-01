@@ -1229,6 +1229,96 @@ fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
     assert!(warnings.is_empty(), "fixture session cleanup: {warnings:?}");
 }
 
+#[cfg(feature = "workspace-serving-fixture")]
+#[test]
+#[ignore = "requires a current binary from test:workspace:effigy-build"]
+fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
+    use effigy_kernel::run::{Reservation, Session};
+    use effigy_kernel::supervise::Executable;
+    use effigy_kernel::workspace_channel::{
+        InvocationBody, OutputMode, Resolver, Selector, Target,
+    };
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().unwrap();
+    let checkout = fixture.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let marker = checkout.join("ran");
+    std::fs::write(checkout.join("effigy.toml"), format!(
+        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", marker.display(), marker.display(),
+    )).unwrap();
+    let cx = kernel::effects();
+    let state = kernel::effects_root(&checkout).unwrap();
+    let identity = state.owning_directory().identity().unwrap();
+    let session_run = begin(&TaskTarget::for_catalog(
+        &checkout,
+        "session",
+        &catalog(&checkout, "", "", 0),
+    ))
+    .unwrap();
+    let session = Session {
+        run: session_run.id(),
+        generation: effigy_kernel::id::Generation::new(1),
+    };
+    let binary = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/effigy");
+    let executable = Executable::capture(&binary)
+        .expect("build current Effigy with test:workspace:effigy-build first");
+    let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
+        checkout.clone(),
+        state.clone(),
+    );
+    for (request_id, args) in [(80, vec![]), (81, vec!["admin".to_owned()])] {
+        let ticket = match reserve_ticket(&checkout, session, request_id, b"workspace profile") {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("fresh reservation: {other:?}"),
+        };
+        let expected_run = ticket.run();
+        let body = InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: args.clone(),
+            output: OutputMode::Text,
+        };
+        let resolved = dispatch.resolve(&cx, &body).unwrap();
+        let resolution = crate::runner::managed_run::WorkspaceResolution {
+            invocation: serde_json::to_vec(&resolved).unwrap(),
+            checkout: checkout.clone(),
+            identity,
+        };
+        let invocation = effigy_cli::TaskInvocation {
+            name: "build".into(),
+            args,
+        };
+        let mut started = crate::runner::managed_run::start_reserved_with_executable(
+            &checkout,
+            &invocation,
+            checkout.clone(),
+            ticket,
+            Some(resolution),
+            &executable,
+        )
+        .expect("reserved engine starts");
+        assert_eq!(started.run, expected_run);
+        assert_eq!(
+            started.client.run, expected_run,
+            "engine acknowledged the reserved run"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let observed = marker.exists();
+        started.client.close_input();
+        started
+            .client
+            .wait(cx.child(std::time::Duration::from_secs(30)).operation())
+            .expect("reap reserved supervisor");
+        assert!(observed, "reserved workload ran");
+        std::fs::remove_file(&marker).unwrap();
+    }
+    assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
+}
+
 #[test]
 fn reserved_child_receives_grant_at_handoff_fd() {
     use effigy_kernel::run::{Reservation, Session};
