@@ -188,9 +188,10 @@ drift checks remain in force. No VM recovery or broad cleanup is added.
 The builder remains detached after success or failure, preserving its cache
 volumes and completed artifacts for retry. Its original image may be unable to
 compile newer source; a failed build then remains a failure and grants no
-artifact identity. Both ordinary and bounded handoff continue through the same
-maintained task and retain their receipt, target, digest and freshness checks.
-There is no public-release fallback for an unpublished local identity.
+artifact identity. The maintained task and the consumer Prepare both keep their
+receipt, target, digest and freshness checks; Prepare itself consumes a produced
+artifact and never builds one (052 §8.9). There is no public-release fallback
+for an unpublished local identity.
 
 The maintained Linux builder uses the stable private Compose project base
 `effigy-artifact-builder-v1`, with the ordinary checkout/worktree scope suffix.
@@ -205,7 +206,8 @@ or ambiguous. A pre-label nerdctl container lacks the checkout/scope and oneoff
 labels; a named `compose run` can reproduce its native name and metadata, and
 the old admission does not record its native ID. That evidence cannot prove a
 non-oneoff association. Effigy therefore never adopts, executes in, relabels,
-stops or recreates that old builder during automatic artifact preparation.
+stops or recreates that old builder during an explicit
+`workspace:linux:artifact` build.
 No user reset or cleanup is required. Later operator cleanup is separate and
 optional. The new project uses separate named caches, so the first build may
 need image/dependency downloads and additional disk space; old caches remain.
@@ -214,8 +216,9 @@ A collision in the new project is not an empty project: missing, foreign,
 mixed or contradictory ownership evidence still refuses before activation or
 exec. No generic ownership check or ordinary application drift guard is
 relaxed. Private transport fixtures exercise the shipped declaration, the
-native legacy shape and named-oneoff counterexample, both automatic handoffs,
-repeat upgrades and failures; they do not attest live consumer recovery.
+native legacy shape and named-oneoff counterexample, the ordinary and bounded
+handoffs, repeat upgrades and failures; they do not attest live consumer
+recovery.
 
 ### Container-local TCP alias visibility
 

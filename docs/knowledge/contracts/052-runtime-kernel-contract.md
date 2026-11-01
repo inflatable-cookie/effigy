@@ -3610,23 +3610,16 @@ no run, no resolution and no second credential.
   …) and a transport failure is reported as unavailable/`unknown`, never as a
   success or a refusal. Neither becomes a different claim on the way out.
 
-Three facts the merged lanes do not give a guest are refused for rather than
-guessed at. Each refusal names what is missing; none of them falls back:
-
-- **The container identity.** `context::GuestWorkspace::probe_container_identity`
-  is the host's Prepare probe. Nothing in the guest observes its own container
-  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
-  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
-  refuses host access and leaves local reads working.
-- **The transport.** Every context published today carries
-  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
-  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
-  a backend with no qualified transport.
-- **The session generation.** A direct terminal must present
-  `workspace_channel::EnrolRequest::session_generation`, and the published
-  context names only `session_run_id`. `enrolment_session` refuses instead of
-  presenting a generation nobody published (§8.8: a missing credential leaves
-  local reads working and reports host access unavailable).
+Three facts this section once recorded as unavailable to a guest are bound by
+the bullets under **Bound** below: `ProcGuestIdentity` observes the container
+itself, the pinned TLS adapter is the transport, and the strict v2 document
+publishes `session { run_id, generation }`. What a merged head still does not
+give a guest is a *production* activation: no production caller of
+`up_prepared` publishes a qualified locator, the host dispatcher is constructed
+only by fixtures, and no native backend identity/dial/invoke qualification is
+recorded. A guest therefore keeps its local reads and reports host authority
+unavailable, naming the missing fact, rather than falling back to guest state or
+guest execution.
 
 Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
 pinned read and its stability, hybrid detection writing nothing, the dispatch
@@ -3959,7 +3952,12 @@ VM directory and compares them byte for byte. Its second authorized window must
 prove positive creator attribution and real current-generation reserved `Absent`
 successor binding for fresh and same-image config-replacement phases. It must
 assert that ordinary `EnvRun.activate(&[])` refuses under that reservation;
-reserved Active is available only through the #506/#512 commit/serving route. It must record each new ID and creating run, preserve
+reserved Active is available only through the merged
+`WorkspaceActivationReservation::commit_selection` /
+`EnvRun::commit_activation` transaction and the guest/serving receipts that name
+it (§8.11). The production activation caller (#506) and the native guest
+workspace-session E2E (#512) are separate, unmerged work. It must record each
+new ID and creating run, preserve
 the non-live predecessor rule, and clean only its exact-owned IDs/directories.
 This **does NOT prove guest workspace-session commit/publication**. Native guest
 artifact/locator/serving E2E on Colima, Docker Desktop and Linux Docker belongs to

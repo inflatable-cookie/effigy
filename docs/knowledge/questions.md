@@ -225,8 +225,15 @@ container mode. We shouldn't need a `*:tui` selector at all."
   everything it starts (environment `up`, host processes, nested Effigy
   work), with no tab or child prompts and no persisted sealed credential.
 
-Implementation is planned in the v0.15 environment lane (the
-environment-owned host-process and unified-session work after effigy#235).
+Implementation is in the v0.15 environment lane. Host-process sidecars are
+adopted as environment-owned detached kernel runs (contract 053 §8.1,
+effigy#320), and the managed dev session is the workspace session run, whose
+kernel and runner seam — session custody, the host authority channel, the guest
+client and the serving owner — is implemented (contract 052 §8.3, §8.7,
+§8.11). What this answer still waits on is the production activation caller that
+publishes a guest context and a qualified locator, plus native backend
+qualification; until that lands, a container-mode terminal keeps local reads
+only (052 §8.11).
 
 ## Q-008 — Program fallback (for example oxide → cargo)
 

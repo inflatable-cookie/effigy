@@ -2,8 +2,10 @@
 
 Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
-`data_from` data claim, retire as a transition, the workspace session run and
-its host authority channel are later work (§9).
+`data_from` data claim and retire as a transition are later work (§9). The
+workspace session run and its host authority channel are implemented at the
+kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
+caller and native backend qualification are not.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
@@ -139,8 +141,11 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   invents a later receipt. `created_by(project, full_id)` reads that journal;
   missing evidence is Unknown, never a global NoCreator claim. Bare Active
   publication refuses a reserved generation, including its claiming run; the
-  sanctioned reserved Active route is #506/#512's full commit with guest/serving
-  receipts. #510's native target-binding proof does NOT prove guest workspace-session
+  sanctioned reserved Active route is the merged `commit_selection`/
+  `commit_activation` transaction with guest/serving receipts (052 §8.11), while
+  the production activation caller (#506) and native guest E2E (#512) stay
+  separate, unmerged work. #510's native target-binding proof does NOT prove
+  guest workspace-session
   commit/publication. Retained records
   remain readable after settle (effigy#510, 052 §8.12).
 - **Settlement budget.** Settlement is bounded on its own clock: admission
@@ -375,7 +380,10 @@ a projection, never authority (effigy#458).
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
-- The workspace session run and host authority channel (052 §8.3, §8.7).
+- The production workspace activation caller, the wider guest Observe surface
+  beyond `runs:list` and `runs:status`, and native backend qualification (052
+  §8.11, §8.12). The workspace session run and its host authority channel are
+  themselves implemented at the kernel and runner seam, not pending here.
 
 ## 10. Proofs
 

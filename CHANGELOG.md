@@ -489,7 +489,9 @@ During v0.x, MINOR bumps may include breaking changes.
   A request id is looked up and reserved before any engine is asked to admit
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
-  No transport, guest client or command surface is wired to it yet.
+  No production activation caller or native backend qualification is wired to it
+  yet; the pinned TLS transport, the guest client and the guest dispatch are
+  merged (§8.11, §8.12).
 - The workspace channel binds one attachment's streams to its terminal
   (contract 052 §8.11). Output sequence numbers are one series per stream id
   shared by every kind on it, so a stream's stdout and stderr no longer restart
@@ -652,8 +654,10 @@ During v0.x, MINOR bumps may include breaking changes.
   gates and journals; a host refusal is returned as an error and never falls
   back to guest state or a guest engine. `effigy skill run --stdio passthrough`
   is refused in a guest because it would run a task without host authority.
-  Until a guest transport, a guest-local container observation and a published
-  session generation land, host authority reports itself unavailable with the
+  The guest transport, the guest-local container observation and the published
+  session generation are merged; what remains missing is the production
+  activation caller that publishes a qualified locator and the recorded native
+  backend qualification, so host authority reports itself unavailable with the
   specific missing fact named, and local reads keep working.
 
 - **The workspace channel checks its pinned host identity before it speaks.**
