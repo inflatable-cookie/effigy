@@ -1541,6 +1541,200 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+#[cfg(feature = "fault-injection")]
+fn session_supervisor_retries_after_durable_close_without_replaying_effects() {
+    struct CountRelease(usize);
+    impl SettlementAdapter for CountRelease {
+        fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            self.0 += 1;
+            Observed::Verified((), evidence())
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            panic!("fixture uses release")
+        }
+    }
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
+    let spec = EffectSpec {
+        target: session.fence().clone(),
+        kind: "fixture:release-once".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        let seq: i64 = txn.conn().query_row("SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1", [run_id(240).to_string()], |row| row.get(0))?;
+        txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'applied',?7)", rusqlite::params![run_id(240).to_string(), seq, seq.to_string(), spec.kind, serde_json::to_string(&spec)?, serde_json::to_string(&spec.settlement)?, txn.now()])?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    let mut adapter = CountRelease(0);
+    let first_cleanup = cleanup(&cx);
+    let cancel = first_cleanup.operation().cancel_token().clone();
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point == crate::fault::Point::SettleCloseAfter {
+            cancel.cancel(StopCause::Requested);
+        }
+    })));
+    crate::fault::arm_point(
+        crate::fault::Point::SettleCloseAfter,
+        crate::fault::Fault::Eperm,
+    );
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&first_cleanup, &mut adapter)
+        .expect_err("fault lands after durable close");
+    crate::fault::hook(None);
+    crate::fault::arm(None);
+    assert!(!error.to_string().is_empty());
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='incomplete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect_err("inconsistent durable close retains custody");
+    assert!(error.to_string().contains("closed outcome is inconsistent"));
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='complete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let outcome = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect("same owner finishes durable close");
+    assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
+    assert_eq!(adapter.0, 1, "retry must not replay released effects");
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn session_supervisor_retains_exact_slot_on_unknown_cleanup() {
+    struct UnknownRelease;
+    impl SettlementAdapter for UnknownRelease {
+        fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            Observed::Unknown(UnknownReason::Injected)
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            Observed::Unknown(UnknownReason::Injected)
+        }
+    }
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let release_action = releases.clone();
+    session.on_settle(move || {
+        release_action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let fence = session.fence().clone();
+    let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
+    let spec = EffectSpec {
+        target: fence.clone(),
+        kind: "fixture:uncertain-cleanup".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        let seq: i64 = txn.conn().query_row("SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1", [run_id(246).to_string()], |row| row.get(0))?;
+        txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'applied',?7)", rusqlite::params![run_id(246).to_string(), seq, seq.to_string(), spec.kind, serde_json::to_string(&spec)?, serde_json::to_string(&spec.settlement)?, txn.now()])?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut UnknownRelease)
+        .expect_err("unknown cleanup must retain the exact supervisor");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(246).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "stopping");
+    let custody: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM workspace_session_custody WHERE run_id=?1",
+            [run_id(246).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(custody, 1);
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let slot = session_run_gate(reader.conn(), &fence.resource, run_id(246)).unwrap();
+    drop(reader);
+    assert!(Gate::acquire(&cx, &root, &[slot], Wait::FailFast).is_err());
+    supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter())
+        .expect("same owner retries cleanup");
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "fixture:uncertain-environment-cleanup".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit.applied(&ticket, serde_json::Value::Null).unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let (error, custody) = parked
+        .settle(&cleanup(&cx), &mut UnknownRelease)
+        .expect_err("unknown environment cleanup retains its guarded run");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let crate::run::WorkspaceCleanupCustody::Guarded(owner) = custody else {
+        panic!("retain reacquired Env gate")
+    };
+    assert!(Gate::acquire(&cx, &root, &[environment()], Wait::FailFast).is_err());
+    owner
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("same environment owner retries cleanup");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
 fn parked_integration_owner_death_preserves_reservation_and_journal() {
     use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
     use effigy_test_support::process::FixtureCommandExt;

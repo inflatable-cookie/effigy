@@ -141,6 +141,15 @@ pub(super) fn compact_machine_closed(
     }
 }
 impl Run<'_> {
+    fn finish_workspace_custody(&mut self, cleanup: &CleanupContext) -> Result<(), RunError> {
+        self.close_checkout_custody_recoverable(cleanup)?;
+        if let Some(sentinel) = self.sentinel.as_mut() {
+            sentinel.close(cleanup)?;
+        }
+        self.sentinel.take();
+        Ok(())
+    }
+
     pub(super) fn settle_inner(
         &mut self,
         cleanup: &CleanupContext,
@@ -159,12 +168,73 @@ impl Run<'_> {
         adapter: &mut impl SettlementAdapter,
         successor: Option<(RunId, Generation)>,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering_with_policy(cleanup, adapter, successor, false)
+    }
+
+    /// Workspace custody cannot be discarded while cleanup is unresolved.
+    pub(super) fn settle_workspace_inner(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering_with_policy(cleanup, adapter, None, true)
+    }
+
+    fn settle_recovering_with_policy(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        successor: Option<(RunId, Generation)>,
+        retain_incomplete: bool,
+    ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
         if !self.holds_owner_gate()? {
             return Err(RunError::broken("a settle without its owner gate"));
         }
         crate::fault_point!(SettleBefore)?;
         let record = journal::run(self.store.conn(), self.id)?;
+        if retain_incomplete && record.phase == Phase::Closed {
+            let (cleanup_outcome, closed_at): (Option<String>, Option<i64>) =
+                self.store.conn().query_row(
+                    "SELECT cleanup_outcome,closed_at FROM runs WHERE run_id=?1",
+                    [self.id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+            let effects = journal::effects(self.store.conn(), self.id)?;
+            let custody: i64 = self.store.conn().query_row(
+                "SELECT count(*) FROM workspace_session_custody WHERE run_id=?1",
+                [self.id.to_string()],
+                |row| row.get(0),
+            )?;
+            if record.owner != self.owner.resource.name().to_string()
+                || record.generation != self.owner.generation
+                || cleanup_outcome.as_deref() != Some("complete")
+                || closed_at.is_none()
+                || record.workload.is_none()
+                || custody != 0
+                || effects.iter().any(|effect| !effect.state.terminal())
+            {
+                return Err(RunError::unavailable(
+                    "workspace closed outcome is inconsistent; reservation remains recoverable",
+                ));
+            }
+            self.finish_workspace_custody(cleanup)?;
+            if self.root.is_machine()
+                && self.owner.resource.kind() != crate::id::ResourceKind::Gateway
+            {
+                self.closed_effects = Some(effects.clone());
+                self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                    txn.conn().execute("DELETE FROM runs WHERE run_id=?1 AND phase='closed' AND cleanup_outcome='complete'", [self.id.to_string()])?;
+                    Ok::<_, RunError>(())
+                })?;
+            }
+            return outcome(
+                self.id,
+                &self.next,
+                record.workload.expect("verified workload"),
+                effects,
+            );
+        }
         let workload = record.workload.unwrap_or(WorkloadOutcome::Interrupted);
         let machine = self.root.is_machine();
         let batch = self.machine_lifecycle();
@@ -333,12 +403,35 @@ impl Run<'_> {
             }
         }
         let complete = effects.iter().all(|e| e.state.terminal());
+        if retain_incomplete && !complete {
+            // Machine batches defer their individual writes until close. Keep
+            // those dispositions durable even though this owner remains live.
+            if !dispositions.is_empty() {
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        for (sequence, (state, reason)) in &dispositions {
+                            journal::write_effect(
+                                txn,
+                                self.id,
+                                *sequence,
+                                *state,
+                                None,
+                                reason.as_deref(),
+                            )?;
+                        }
+                        Ok::<_, RunError>(())
+                    })?;
+            }
+            return Err(RunError::unavailable(
+                "integration effects unsettled; re-run up",
+            ));
+        }
         // A non-gateway sentinel needs the closed row as positive evidence
         // until it has observed EOF and exited. Gateway has its own bounded
         // completion fact in the resource row.
         let delete_after_sentinel = machine
             && complete
-            && self.sentinel.is_some()
+            && (self.sentinel.is_some() || retain_incomplete)
             && self.owner.resource.kind() != crate::id::ResourceKind::Gateway;
         // The close write keeps the store's own two-minute window, so a busy
         // store delays it rather than losing the run's outcome. A write that
@@ -402,9 +495,13 @@ impl Run<'_> {
         }
         // K4: only Run closes the owner-only sentinel writer, after the Closed
         // transaction and while its owner gate is still held.
-        self.close_checkout_custody(cleanup)?;
-        if let Some(mut sentinel) = self.sentinel.take() {
-            sentinel.close(cleanup)?;
+        if retain_incomplete {
+            self.finish_workspace_custody(cleanup)?;
+        } else {
+            self.close_checkout_custody(cleanup)?;
+            if let Some(mut sentinel) = self.sentinel.take() {
+                sentinel.close(cleanup)?;
+            }
         }
         if delete_after_sentinel {
             self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
