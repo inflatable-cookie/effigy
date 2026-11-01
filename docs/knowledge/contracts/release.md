@@ -92,6 +92,17 @@ identity named after the repository, gates in `certify`, one `tag` target and no
 artifacts. A project keeps working unchanged; it grows identities, artifacts or
 targets only when it needs them.
 
+## Workspace and gateway diagnostic disposition before v0.15 freeze
+
+Before freeze, obtain Tom's decision on security lead `8d767d55`: existing gateway
+daemon logs can contain raw diagnostics and pre-existing permissive log files
+or searchable directories can expose them to other local users. New-file mode
+0600 does not repair legacy files and is not global sanitization. Workspace
+Phase A apply and workspace preparation separately require qualified private or
+discarded output before their production path is accepted. A fake-backend proof
+is not a native gateway or release qualification; keep the existing review and
+native gates in force.
+
 ## Governing v0.15 direction — 2026-10-18
 
 Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`

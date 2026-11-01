@@ -5,7 +5,8 @@ and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim and retire as a transition are later work (§9). The
 workspace session run and its host authority channel are implemented at the
 kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
-caller and native backend qualification are not.
+caller remains under development on the unmerged #512 branch; native backend
+qualification remains outstanding.
 
 For v0.15, workspace Level 1 forwards non-interactive commands only;
 guest PTY, attach, reconnect and detach acknowledgement are deferred to
@@ -364,6 +365,15 @@ transition refuses `HostAuthorityRequired` before touching state (R1), and
 the record reads as kept on the host. Reading it through the host authority
 channel waits for that channel (052 §8.3).
 
+**Operator ruling (Tom, 2026-11-01):** v0.15 requires Level 1 of
+[052 §8.6](052-runtime-kernel-contract.md#86-coverage); unsupported Level 2
+guest operations refuse by name. Channel or identity failure never permits
+guest-state mutation, local fallback or resending an indeterminate request
+after `Unknown`. An independently invoked host CLI is not a guest retry and
+remains subject to the owning engine's session/reservation, canonical-gate,
+custody and authorization checks. The session-aware down and reserved
+outside-gate ordering in §3 remain mandatory.
+
 ### 8.1 Host sidecars (adopted)
 
 Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
@@ -446,10 +456,17 @@ a projection, never authority (effigy#458).
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
-- The production workspace activation caller, the wider guest Observe surface
-  beyond `runs:list` and `runs:status`, and native backend qualification (052
-  §8.11, §8.12). The workspace session run and its host authority channel are
-  themselves implemented at the kernel and runner seam, not pending here.
+- The #512 workspace activation caller has an unmerged production-orchestration
+  implementation and a prior fake-backend end-to-end result. It is currently
+  guarded before preparation/admission until private-output runner and
+  workspace-preparation paths are qualified and connected; review of cleanup-only
+  guarded unwind and the integration-budget recheck after observation remains
+  required. This evidence does not qualify a real backend. Remaining Level 1
+  command and Observe coverage beyond `runs:list`, including run-specific
+  `runs:status`, and native backend qualification remain outstanding
+  (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
+  v0.15. The session run and channel are implemented as kernel and runner
+  seams; those seams do not qualify the production caller or a backend.
 
 ## 10. Proofs
 
@@ -484,3 +501,35 @@ missing/deleted checkout and large-store migration proofs in 052 §12.6. The
 selectors above and touched gateway selectors must cover the new store paths
 and fenced cross-store receipt boundaries. Phase 1 runs only `qa:docs`; no
 runtime recovery or migration proof is claimed by this amendment.
+
+## 11. Future detached-owner journal boundary
+
+The Supervisor's 2026-11-01 Level 1 ruling in 052 §8.7 requires lifecycle E to
+introduce a v2 owner-claim journal boundary, including read-only v1 observation,
+a verified, transactionally consistent adjacent 0600 SQLite backup including
+committed WAL state, atomic idempotent migration, explicit old-writer refusal and
+tested backup restoration for supported rollback. A crash before commit leaves
+valid v1; after commit it leaves valid v2 and the verified v1 backup. Detached
+acknowledgement, client-claim and release-cause tombstones cannot expire while
+any related owner, claim or operation is live, unresolved or Unknown; only then
+may the N-day policy apply. Missing legacy evidence is Unknown. Rollback requires
+quiescence and identity/ownership checks, and refuses potential post-backup data
+loss or orphaned resources absent explicit operator-authorized recovery. The migration, data-loss review and backup/restore review remain
+future work and do not qualify the current workspace activation caller.
+
+## 12. Gateway diagnostic disposition before v0.15 freeze
+
+The ordinary gateway startup path can write raw daemon stdout and stderr to
+gateway logs, including diagnostic URLs or other secret-bearing upstream text.
+New gateway log files are created with mode 0600, but reopening a pre-existing
+0644 file does not tighten it; legacy directory and ancestor permissions can
+permit other local users to read those files. New mode 0700 directories do not
+repair existing directories. These facts do not establish global sanitization or
+private permissions for every existing gateway installation. The v0.14.1 writer
+already emitted raw output with umask-dependent modes; the current new-file mode
+is an improvement, not a migration of old files.
+
+Security lead `8d767d55` requires Tom's disposition before v0.15 freeze. This is
+separate from the release-blocking requirement for private or discarded output
+on workspace Phase A apply and preparation. No native gateway qualification or
+release acceptance follows from the present source audit.

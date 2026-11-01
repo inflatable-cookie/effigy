@@ -748,37 +748,28 @@ During v0.x, MINOR bumps may include breaking changes.
   documented rather than papered over, so Effigy makes no absolute
   no-recycled-PGID guarantee there (leads `0453e055`, `b013f65a`).
 
+- Workspace-client command coverage is staged: v0.15 requires the Level 1
+  surface in [contract 052 §8.6](docs/knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
+  Shared-lock task admission, pause, gateway/config/install/release over the
+  channel and the remaining command matrix follow after v0.15. Unsupported
+  guest requests refuse by name with guidance to invoke the host CLI
+  independently; an unknown request is not retried locally or resent. This
+  decision does not claim that the remaining production path or native backend
+  qualifications have passed.
+
 - Clarify workspace artifact source selection, the separate dev and workspace
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.
 
-- **Kernel custody keeps its helpers inside its own group and session, and no
-  anchor outlives its group.** A workload group that owes the caller no terminal
-  now gets a session of its own, so a nested task session or a harness censusing
-  the session it started sees one custody group as another session rather than
-  as helper rows it cannot account for. `Foreground` routes and `Inherit` routes
-  whose stdin is a terminal keep the caller's session, because a terminal can
-  only be handed to a group of its own session. After go, a group anchor watches
-  the kernel's membership of the group it is in: it stays while any workload
-  member is live, and once a round positively resolves that the group has no live
-  member it retires itself within a bounded deadline instead of waiting for an
-  owner that may have been killed, whose checkout may be gone, or whose volume may
-  be unmounted. Positive resolution means every row was observed live or as a
-  zombie. A listed row unreadable at its state or identity read may have forked a
-  descendant a snapshot cannot see, so it is `unproven`, the anchor stays alive as
-  the group's evidence, and the observing path reports the named state `unproven
-  group closure`. Repeated snapshots are best effort, never a proof. Identity rules
-  are unchanged: nonce, PID generation, PGID membership and fail-closed signals
-  are exactly as strict, and nothing is ever signalled to close an anchor.
-
-- **A container-mode guest runs Effigy through its published context and the one
-  host channel.** Static reads (`effigy tasks`, the pinned identity and the
-  pinned sources) are answered locally from the immutable context generation and
-  never open a connection or write anything. Every command with host authority
-  is classified and sent as one typed channel request that the host re-resolves,
-  gates and journals; a host refusal is returned as an error and never falls
-  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
-  is refused in a guest because it would run a task without host authority.
+- **Workspace-client host-channel coverage is staged for v0.15.** The required
+  design serves static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) locally from the immutable context generation, without
+  opening a connection or writing. Level 1 requires typed channel requests
+  that the host re-resolves, gates and journals; unsupported guest commands must
+  refuse by name. Neither path may fall back to guest state or a guest engine.
+  Guest `effigy skill run --stdio passthrough` must refuse because it would run
+  a task without host authority. This is a release requirement, not a claim that
+  all Level 1 routes are implemented or qualified.
   The guest transport, the guest-local container observation and the published
   session generation are merged; what remains missing is the production
   activation caller that publishes a qualified locator and the recorded native
@@ -788,10 +779,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **The workspace channel checks its pinned host identity before it speaks.**
   A guest client compares the server identity the context pinned against the
   identity its transport verified before writing a single byte, so a mispinned
-  peer receives no hello, version, digest or capability. A connection that dies
-  before answering is replayed under the same request id, an attach is resumed
-  by that id at the cursor the client actually consumed, and a gap never
-  advances it.
+  peer receives no hello, version, digest or capability. The v0.15 policy requires
+  a connection that dies before answering to report `Unknown` without resending
+  or running locally; full policy enforcement remains in progress. An attachment
+  may reconnect at its consumed cursor, and a gap never advances it.
 
 - **The frozen workspace activation hands its channel to a serving owner.** The
   environment's committed session run, listener, key and advertised locator

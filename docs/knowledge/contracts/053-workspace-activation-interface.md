@@ -142,3 +142,6 @@ unissued-capability and failure controls. This fake is not native
 qualification. Colima, Docker Desktop and Linux full-session gates each need
 an explicit exact-SHA Supervisor GO. Keep the merge hold and independent
 inherited-plus-delta reviews.
+
+Run-specific `runs:status` is in progress in #512; the existing `runs:list`
+seam does not establish that capability or production activation qualification.

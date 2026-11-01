@@ -141,3 +141,18 @@ fn checkout_overrides_refuse_before_local_reads_or_host_requests() {
         assert!(!diagnostic.contains("private"));
     }
 }
+
+#[test]
+fn task_runtime_checkout_override_refuses_without_echoing_path() {
+    let command = parse(&["--repo", "/private/secret", "dev"]);
+    assert_eq!(
+        unsupported(&command),
+        Some("workspace command does not accept a checkout override")
+    );
+    let task_argument = parse(&["dev", "--repo", "/private/secret"]);
+    assert_eq!(
+        unsupported(&task_argument),
+        None,
+        "post-selector arguments belong to the task"
+    );
+}

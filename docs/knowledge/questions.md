@@ -237,6 +237,14 @@ for implementation and coverage limits; this does not make the managed dev run
 the workspace session or claim the intended terminal relationship is wired in
 production.
 
+**Operator ruling (Tom, 2026-11-01):** Level 1 includes managed `dev`
+admission and controls, attach/detach/reconnect and terminal input/resize
+through the selected workspace session as specified by [052 §8.6–§8.7](contracts/052-runtime-kernel-contract.md#86-coverage).
+Shared-lock tasks and pause are Level 2. This stages command coverage without
+changing the one-dev-session requirement, child ownership, host/guest TUI
+relationship or security gates; implemented seams are not qualified production
+behavior.
+
 ## Q-008 — Program fallback (for example oxide → cargo)
 
 Status: answered
@@ -607,12 +615,16 @@ Asked: 2026-10-27
 Answered: 2026-10-27 by Tom
 Owners: Queue lanes `v015-workspace-client` and `operator-feedback`; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)
 
-Full container-mode workspace-client coverage remains a v0.15 release gate:
-Acowtancy and CBS must pass the lane's coverage matrix, and the authenticated
-host channel must be qualified on Colima, Docker Desktop and Linux Docker
-Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
-orders this work after Q-011 simplification; it does not waive the release
-criterion.
+**Operator ruling (Tom, 2026-11-01):** v0.15 requires the Level 1
+workspace-client surface in [052 §8.6](contracts/052-runtime-kernel-contract.md#86-coverage).
+Level 2 and the rest of the former full command matrix follow after v0.15;
+unsupported operations refuse by name and point to an independently invoked
+host CLI. This narrows command coverage only. Acowtancy and CBS must qualify
+the Level 1 user flows, and positive full workspace-session publication and
+the authenticated host channel remain required on Colima, Docker Desktop and
+Linux Docker Engine. Hybrid mode provisions no guest Effigy. The native,
+guest-identity, pinned TLS, credential-secrecy, exact-run/generation, custody
+and no-fallback/`Unknown` gates remain unchanged.
 
 Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation):
 the creator-attribution amendment keeps the workspace client in v0.15 with the
