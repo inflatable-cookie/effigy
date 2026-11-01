@@ -8,6 +8,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Compose interpolation files for the VM-hosted Colima backend are per
+  invocation: a fresh random name, `O_EXCL|O_NOFOLLOW`, mode 0600 inside a
+  verified 0700 `$EFFIGY_HOME/compose-env/` directory, removed when the Compose
+  child is reaped. The v0.15 development line reused content-named
+  `$EFFIGY_HOME/compose-env/<digest>.env` files that carried explicit
+  environment values, possibly secrets, and never pruned them; that exposure
+  was introduced and fixed in this development line. The first invocation
+  sweeps legacy `<16 hex>.env` files it can verify as this user's regular,
+  single-link files older than one hour, and prints one line when it removes
+  any. A crash can leave a file until the next invocation sweeps it, and a
+  legacy file from a still-running pre-fix process past that hour is not
+  provably idle; it is the documented limitation. Development builds may have
+  left such artifacts: after upgrading, check `$EFFIGY_HOME/compose-env/`.
+  This does not mean no durable secret copies exist.
+
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.
 

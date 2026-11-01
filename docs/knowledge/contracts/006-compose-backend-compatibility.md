@@ -295,10 +295,29 @@ Effigy ownership:
 - only the plan's forwarded secret values travel in the file; the shared
   invocation transform in `policy::render` (reached by attached, detached,
   `config`, `ps`, `logs`, `restart` and shared-service invocations) writes them
-  to `<effigy home>/compose-env/<content>.env` (0600 inside a 0700 directory)
+  to a per-invocation file `<effigy home>/compose-env/compose-<32 hex>.env`
   and inserts `--env-file` after the Compose subcommand
-- the name is the digest of the contents, so an unchanged plan names the same
-  file; a value both readers can take literally stays unquoted, and anything
+- every invocation that needs interpolation writes its own file: the name is
+  fresh random bytes, never derived from the contents, so nothing is reused.
+  The file is created `O_EXCL|O_NOFOLLOW` with mode 0600 and a single link,
+  inside `compose-env` verified through descriptor-relative no-follow opens as
+  the operator's own 0700 directory (an owned directory with other bits is
+  repaired to 0700; a foreign or symlinked one is refused). The value is written
+  only after the invocation holds the file's shared lock and the name still
+  names that inode
+- the invocation keeps the file until the Compose child that reads it has been
+  reaped, on success, failure, timeout, kill and spawn failure; removal first
+  moves the name to a quarantine name and unlinks only the inode it created,
+  and a name that another inode took is restored without overwrite and reported
+  as unknown
+- before each creation a sweep removes only `compose-` files whose exclusive
+  lock it can take (no live holder) and legacy `<16 hex>.env` files from earlier
+  development builds older than one hour; it never follows a symlink or removes
+  a hard-linked, non-regular, foreign-owned or unrecognised name, and it prints
+  one non-secret line when it removes files. A crash leaves its file until the
+  next invocation's sweep; a legacy file from an old-format process that
+  outlives the one-hour grace is the documented limitation
+- a value both readers can take literally stays unquoted, and anything
   else is double quoted with `\`, `"`, newlines and `$` escaped so Compose
   substitutes it literally and the container's copy keeps its value; a
   non-identifier name, a non-UTF-8 value or a carriage return refuses before
@@ -309,9 +328,8 @@ Effigy ownership:
 - Compose's default `.env` lookup is the first Compose file's directory, which
   inside a generation is the object directory and never holds one, so naming
   this file drops no interpolation the invocation had
-- nothing prunes the directory: the name is content-addressed, so an unchanged
-  plan reuses one file and a changed one adds one more; deleting the directory
-  by hand costs only a rewrite of the current plan's file
+- deleting the directory by hand is harmless to a finished invocation; a live
+  one that has not yet read its file fails with its own error
 
 Target compatibility cases:
 
