@@ -1541,6 +1541,114 @@ fn parked_reservation_reacquires_only_before_its_original_deadline() {
 }
 
 #[test]
+fn parked_integration_owner_death_preserves_reservation_and_journal() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    use effigy_test_support::process::FixtureCommandExt;
+    const CHILD_HOME: &str = "EFFIGY_INTEGRATION_DEATH_CHILD_HOME";
+    const CHILD_STAGE: &str = "EFFIGY_INTEGRATION_DEATH_CHILD_STAGE";
+    if let Some(path) = std::env::var_os(CHILD_HOME) {
+        let stage: u8 = std::env::var(CHILD_STAGE).unwrap().parse().unwrap();
+        let cx = context().patience(Duration::from_secs(120));
+        let root = StateRoot::effects(&cx, std::path::Path::new(&path)).unwrap();
+        let reservation = decided(&cx, &root, &environment());
+        let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(241));
+        let run = admit_activation(&cx, &root, &reservation, run_id(242));
+        let parked = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+            .unwrap();
+        parked
+            .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+            .unwrap();
+        if stage >= 1 {
+            std::fs::write(
+                std::path::Path::new(&path).join("fixture-effect"),
+                b"same inputs",
+            )
+            .unwrap();
+        }
+        if stage >= 2 {
+            parked
+                .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+                .unwrap();
+        }
+        if stage >= 3 {
+            parked
+                .record_integration_step(&mut session, &cx, Step::Routes, State::Cleared)
+                .unwrap();
+        }
+        std::fs::write(std::path::Path::new(&path).join("ready"), b"ready").unwrap();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        panic!("parent should terminate the exact fixture owner");
+    }
+    for stage in 0..4 {
+        let fixture = home();
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "workspace_session::tests::parked_integration_owner_death_preserves_reservation_and_journal", "--nocapture"])
+            .env(CHILD_HOME, fixture.path()).env(CHILD_STAGE, stage.to_string())
+            .stdin(std::process::Stdio::piped()).stdout(output).spawn_owned().unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        let marker = fixture.path().join("ready");
+        while !marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let ready = marker.exists();
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+        }
+        child.wait().unwrap();
+        assert!(ready, "fixture owner did not reach stage {stage}");
+        let cx = context().patience(Duration::from_secs(120));
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let reader = read_journal(&cx, &root);
+        let reservation = match WorkspaceActivationReservation::recover(&reader, &environment()) {
+            Observed::Verified(Some(reservation), _) => reservation,
+            other => panic!("reservation missing after owner death: {other:?}"),
+        };
+        assert_eq!(reservation.state(), ActivationReservationState::Reserved);
+        assert_eq!(reservation.record().environment_run, Some(run_id(242)));
+        let mut stmt = reader.conn().prepare("SELECT target FROM events WHERE run_id=?1 AND kind='kernel:workspace-integration-step' ORDER BY seq").unwrap();
+        let payloads: Vec<String> = stmt
+            .query_map([run_id(241).to_string()], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let states: Vec<String> = payloads
+            .iter()
+            .map(|value| {
+                let spec: EffectSpec = serde_json::from_str(value).unwrap();
+                spec.payload["state"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        let expected = match stage {
+            0 | 1 => vec!["attempted"],
+            2 => vec!["attempted", "completed"],
+            _ => vec!["attempted", "completed", "cleared"],
+        };
+        assert_eq!(states, expected);
+        assert_eq!(fixture.path().join("fixture-effect").exists(), stage >= 1);
+        drop(stmt);
+        drop(reader);
+        let error = Run::begin(
+            &cx,
+            &root,
+            &inv(environment(), "environment:down"),
+            opts(run_id(243)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect_err("a dead owner does not silently admit a second activation");
+        assert!(error
+            .to_string()
+            .contains("reserved by a workspace activation"));
+    }
+}
+
+#[test]
 fn parked_integration_cleanup_survives_session_context_expiry_and_cancel() {
     use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
     for expired in [true, false] {
