@@ -517,11 +517,13 @@ impl Admission for LiveAdmitter<'_> {
 
 #[test]
 #[cfg(feature = "fault-injection")]
-fn owner_detach_release_fault_retains_exact_handle_and_reports_unknown() {
+fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
     use crate::fault::{self, Point};
-    for (point, still_attached) in [
-        (Point::RunAttachReleaseBefore, true),
-        (Point::RunAttachReleaseAfter, false),
+    for (point, still_attached, detach) in [
+        (Point::RunAttachReleaseBefore, true, true),
+        (Point::RunAttachReleaseAfter, false, true),
+        (Point::RunAttachReleaseBefore, true, false),
+        (Point::RunAttachReleaseAfter, false, false),
     ] {
         let (_fixture, cx, root, session) = journal("effigy-channel-owner-detach-fault");
         let mut grants = GrantBook::new();
@@ -547,34 +549,34 @@ fn owner_detach_release_fault_retains_exact_handle_and_reports_unknown() {
             ),
         );
         let live = RunId::new(7, [174; 10]).expect("run id");
+        let mut frames = vec![
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Invoke(invocation_body("build")),
+                2,
+            )),
+            Frame::Request(request(
+                session,
+                RequestBody::Attach(AttachBody {
+                    run: live,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                }),
+                1,
+            )),
+        ];
+        if detach {
+            frames.push(Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                3,
+            )));
+        }
         let mut pipe = ArmReleaseOnAttach {
-            inner: Pipe::new(
-                stream(&[
-                    Frame::Hello(hello()),
-                    Frame::Authenticate(capability()),
-                    Frame::Request(request(
-                        session,
-                        RequestBody::Invoke(invocation_body("build")),
-                        2,
-                    )),
-                    Frame::Request(request(
-                        session,
-                        RequestBody::Attach(AttachBody {
-                            run: live,
-                            streams: vec![StreamKind::Stdout],
-                            cursor: None,
-                            cursors: None,
-                        }),
-                        1,
-                    )),
-                    Frame::Request(request(
-                        session,
-                        RequestBody::Detach(RunBody { run: live }),
-                        3,
-                    )),
-                ]),
-                peer(),
-            ),
+            inner: Pipe::new(stream(&frames), peer()),
             point,
         };
         let error = host
@@ -593,8 +595,10 @@ fn owner_detach_release_fault_retains_exact_handle_and_reports_unknown() {
             handle.attached(&cx, &root).expect("durable owner row"),
             still_attached
         );
-        assert!(written_frames(&pipe.inner).iter().any(|frame| matches!(frame,
-            Frame::Response(Response { id, outcome: ResponseOutcome::Refused(refusal), .. }) if *id == RequestId::new([3;16]) && refusal.code == RefusalCode::Unknown)));
+        if detach {
+            assert!(written_frames(&pipe.inner).iter().any(|frame| matches!(frame,
+                Frame::Response(Response { id, outcome: ResponseOutcome::Refused(refusal), .. }) if *id == RequestId::new([3;16]) && refusal.code == RefusalCode::Unknown)));
+        }
         let reader = match Store::read(&observe_context(), &root) {
             Observed::Verified(reader, _) => reader,
             other => panic!("journal unavailable: {other:?}"),
@@ -608,8 +612,9 @@ fn owner_detach_release_fault_retains_exact_handle_and_reports_unknown() {
             )
             .expect("requests");
         assert_eq!(
-            requests, 0,
-            "uncertain detach must not fabricate an EOF stop"
+            requests,
+            i64::from(!detach && !still_attached),
+            "only a committed EOF queues a stop"
         );
         drop(reader);
         for run in host.dispatcher.admission.runs.drain(..) {
