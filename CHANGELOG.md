@@ -1243,10 +1243,18 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 
 - Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
-  label from effective mounts across compose overlays, including long syntax,
-  resolved bind sources and JSON escaping. It refuses above a conservative
-  3900-byte budget before apply; this bounds metadata but does not reduce a
-  consumer's configured mounts or guarantee that workload can run.
+  label from recognized explicit primary-service bind and volume mounts across
+  compose overlays, including resolved bind sources and JSON escaping. It
+  models nerdctl v2.3.1's `Type`, `Source`, `Destination`, `Mode`, `RW`, and
+  `Propagation` row shape, plus the label key and JSON delimiters. A sanitized
+  21-row structure fixture matches the observed 3630 bytes. Preflight adds a
+  2% reserve rounded up and refuses at the guarded 3900-byte budget. Unsupported
+  volume syntax, known unmodelled service mount inputs and referenced
+  top-level named-volume options refuse before apply. The estimate does not
+  inspect image metadata for implicit `VOLUME` entries and the measured reserve
+  is not a universal runtime bound. Docker backends keep their existing
+  behavior; this guard does not consolidate mounts or make a consumer whose
+  declared mounts exceed the budget runnable.
 - Keep the workspace alias override and canonical environment identity in frozen
   publication inputs. Enrolment credentials use the reserved environment
   generation independently of the guest context generation.

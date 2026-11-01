@@ -1093,9 +1093,12 @@ primary_service = "app"
     }
 
     assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(error
-        .to_string()
-        .contains("estimated nerdctl/mounts label size"));
+    assert!(
+        error
+            .to_string()
+            .contains("estimated nerdctl/mounts label size"),
+        "unexpected refusal: {error}"
+    );
     assert!(error
         .to_string()
         .contains("reduce optional mounts or workspace isolation mounts"));
@@ -1109,6 +1112,89 @@ primary_service = "app"
     with_test_compose_backend(ComposeBackend::Docker, || {
         crate::validate_compose_backend_runtime(&root, &policy)
             .expect("Docker backend must not inherit nerdctl label limit");
+    });
+}
+
+#[test]
+fn validate_compose_backend_runtime_refuses_unmodelled_mount_inputs_for_colima_only() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("colima-unmodelled-mount-input");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example.invalid/synthetic\n",
+    )
+    .expect("compose");
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    let overlay = root.join("infra/dev/compose.overlay.yml");
+    policy.compose_files.push(overlay.clone());
+
+    let refuse = |content: &str| {
+        fs::write(&overlay, content).expect("write synthetic Compose overlay");
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        }
+        let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            crate::validate_compose_backend_runtime(&root, &policy)
+        });
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        }
+        result.expect_err("unmodelled mount input must refuse before apply")
+    };
+
+    let malformed_entry = refuse("services:\n  app:\n    volumes:\n      - 42\n");
+
+    let inherited_mounts = refuse("services:\n  app:\n    extends:\n      service: base\n");
+    let configured_volume = refuse(
+        "services:\n  app:\n    volumes:\n      - cache:/workspace/cache\nvolumes:\n  cache:\n    name: unmodelled-volume-name\n",
+    );
+    assert!(malformed_entry.to_string().contains("volumes[1]"));
+    assert!(malformed_entry
+        .to_string()
+        .contains("paths and values are omitted"));
+
+    let unsupported_option = refuse(
+        "services:\n  app:\n    volumes:\n      - type: bind\n        source: /private/mount/DO_NOT_PRINT\n        target: /workspace/cache\n        read_only: true\n        bind:\n          propagation: rshared\n",
+    );
+    assert!(unsupported_option
+        .to_string()
+        .contains("unmodelled fields or options"));
+    assert!(!unsupported_option
+        .to_string()
+        .contains("/private/mount/DO_NOT_PRINT"));
+
+    let tmpfs_contribution = refuse("services:\n  app:\n    tmpfs:\n      - /workspace/cache\n");
+
+    assert!(tmpfs_contribution
+        .to_string()
+        .contains("unmodelled mount input `tmpfs`"));
+    assert!(inherited_mounts
+        .to_string()
+        .contains("unmodelled mount input `extends`"));
+    assert!(configured_volume
+        .to_string()
+        .contains("primary service mounts a named volume with unmodelled top-level options"));
+
+    with_test_compose_backend(ComposeBackend::Docker, || {
+        crate::validate_compose_backend_runtime(&root, &policy)
+            .expect("Docker must not inherit Colima mount-budget refusals");
     });
 }
 

@@ -88,7 +88,7 @@ fn validate_compose_backend_mount_budget(
     let Some(estimate) = estimate_primary_service_mount_label_size(policy)? else {
         return Ok(());
     };
-    if nerdctl_mounts_label_fits(estimate.total_bytes) {
+    if nerdctl_mounts_label_fits(estimate.guarded_bytes) {
         return Ok(());
     }
     let heaviest = estimate
@@ -100,10 +100,12 @@ fn validate_compose_backend_mount_budget(
         .collect::<Vec<_>>()
         .join(", ");
     Err(ContainerPolicyError::TaskInvocation(format!(
-        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated nerdctl/mounts label size of {} bytes across {} effective mounts, exceeding the conservative {}-byte preflight budget (containerd label limit: 4096 bytes); reduce optional mounts or workspace isolation mounts. Largest contributors (paths omitted): {}",
+        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated nerdctl/mounts label size of {} bytes plus a 2% reserve ({} bytes) = {} bytes across {} effective mounts, exceeding the conservative {}-byte preflight budget (containerd label limit: 4096 bytes); reduce optional mounts or workspace isolation mounts. Largest contributors (paths omitted): {}",
         policy.name,
         policy.primary_service,
         estimate.total_bytes,
+        estimate.safety_margin_bytes,
+        estimate.guarded_bytes,
         estimate.entries.len(),
         NERDCTL_MOUNTS_LABEL_BUDGET_BYTES,
         heaviest
@@ -122,6 +124,8 @@ fn is_colima_temp_root_path(path: &Path) -> bool {
 #[derive(Debug)]
 struct PrimaryServiceMountEstimate {
     total_bytes: usize,
+    safety_margin_bytes: usize,
+    guarded_bytes: usize,
     entries: Vec<MountBudgetEntry>,
 }
 
@@ -136,35 +140,127 @@ fn estimate_primary_service_mount_label_size(
 ) -> Result<Option<PrimaryServiceMountEstimate>, ContainerPolicyError> {
     // Compose applies -f overlays in order and merges service volumes by
     // container target. Match that identity here so a replaced earlier mount
-    // is not counted as if nerdctl received both entries.
+    // is not counted as if nerdctl received both entries. Every explicit
+    // mount input must be modelled; silently skipping one could undercount.
     let mut effective = std::collections::BTreeMap::<String, EffectiveMount>::new();
-    for compose_file in &policy.compose_files {
+    let mut unmodelled_named_volumes = std::collections::BTreeMap::<String, usize>::new();
+    for (file_index, compose_file) in policy.compose_files.iter().enumerate() {
         let content = policy.read_compose(compose_file)?;
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "failed to parse compose file {} while estimating nerdctl mount budget: {error}",
-                compose_file.display()
-            ))
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|_| {
+            mount_budget_refusal(policy, file_index, "Compose input is not valid YAML")
         })?;
-        let Some(volumes) = parsed
-            .get("services")
-            .and_then(serde_yaml::Value::as_mapping)
-            .and_then(|services| {
-                services.get(serde_yaml::Value::String(policy.primary_service.clone()))
-            })
-            .and_then(serde_yaml::Value::as_mapping)
-            .and_then(|service| service.get(serde_yaml::Value::String("volumes".to_owned())))
-            .and_then(serde_yaml::Value::as_sequence)
+        let Some(document) = parsed.as_mapping() else {
+            return Err(mount_budget_refusal(
+                policy,
+                file_index,
+                "Compose document is not a mapping",
+            ));
+        };
+
+        // Named-volume options can change the backing source path. Recognize
+        // defaults and Effigy's generated aliases; defer unsupported
+        // definitions until we know if the primary service mounts them.
+        if let Some(volume_definitions) =
+            document.get(serde_yaml::Value::String("volumes".to_owned()))
+        {
+            let Some(volume_definitions) = volume_definitions.as_mapping() else {
+                return Err(mount_budget_refusal(
+                    policy,
+                    file_index,
+                    "top-level `volumes` is not a mapping",
+                ));
+            };
+            for (name, definition) in volume_definitions {
+                let Some(name) = name.as_str() else {
+                    return Err(mount_budget_refusal(
+                        policy,
+                        file_index,
+                        "a top-level volume definition has an unmodelled key",
+                    ));
+                };
+                if !is_modelled_named_volume_definition(name, definition) {
+                    unmodelled_named_volumes
+                        .entry(name.to_owned())
+                        .or_insert(file_index);
+                }
+            }
+        }
+
+        let Some(services_value) = document.get(serde_yaml::Value::String("services".to_owned()))
         else {
             continue;
         };
-        for value in volumes {
-            if let Some(mount) = parse_effective_mount(
+        let Some(services) = services_value.as_mapping() else {
+            return Err(mount_budget_refusal(
+                policy,
+                file_index,
+                "the services table is not a mapping",
+            ));
+        };
+        let Some(service_value) =
+            services.get(serde_yaml::Value::String(policy.primary_service.clone()))
+        else {
+            continue;
+        };
+        let Some(service) = service_value.as_mapping() else {
+            return Err(mount_budget_refusal(
+                policy,
+                file_index,
+                "the primary service definition is not a mapping",
+            ));
+        };
+
+        // These Compose fields can add mounts outside service.volumes. Their
+        // nerdctl serialization is not modelled here, so refuse the Colima
+        // fallback rather than counting only the explicit volume list.
+        for field in ["extends", "tmpfs", "configs", "secrets", "volumes_from"] {
+            if service.contains_key(serde_yaml::Value::String(field.to_owned())) {
+                return Err(mount_budget_refusal(
+                    policy,
+                    file_index,
+                    &format!("primary service has unmodelled mount input `{field}`"),
+                ));
+            }
+        }
+
+        let Some(volumes_value) = service.get(serde_yaml::Value::String("volumes".to_owned()))
+        else {
+            continue;
+        };
+        let Some(volumes) = volumes_value.as_sequence() else {
+            return Err(mount_budget_refusal(
+                policy,
+                file_index,
+                "primary service `volumes` is not a sequence",
+            ));
+        };
+        for (mount_index, value) in volumes.iter().enumerate() {
+            let mount = parse_effective_mount(
                 value,
                 compose_file.parent().unwrap_or(Path::new(".")),
                 &policy.project_name,
-            ) {
-                effective.insert(mount.target.clone(), mount);
+            )
+            .map_err(|reason| {
+                mount_budget_refusal(
+                    policy,
+                    file_index,
+                    &format!(
+                        "primary service `volumes[{}]` has {reason}",
+                        mount_index + 1
+                    ),
+                )
+            })?;
+            effective.insert(mount.target.clone(), mount);
+        }
+    }
+    for mount in effective.values() {
+        if let Some(name) = &mount.named_volume_source {
+            if let Some(file_index) = unmodelled_named_volumes.get(name) {
+                return Err(mount_budget_refusal(
+                    policy,
+                    *file_index,
+                    "primary service mounts a named volume with unmodelled top-level options",
+                ));
             }
         }
     }
@@ -183,10 +279,41 @@ fn estimate_primary_service_mount_label_size(
     // nerdctl v2.3.1 stores compact JSON for []mount.Mount under
     // `nerdctl/mounts`; include the key and the JSON array punctuation.
     let total_bytes = nerdctl_mounts_label_size(&entries);
+    let safety_margin_bytes = nerdctl_mounts_safety_margin(total_bytes);
     Ok(Some(PrimaryServiceMountEstimate {
         total_bytes,
+        safety_margin_bytes,
+        guarded_bytes: total_bytes.saturating_add(safety_margin_bytes),
         entries,
     }))
+}
+
+fn is_modelled_named_volume_definition(name: &str, definition: &serde_yaml::Value) -> bool {
+    if definition.is_null() {
+        return true;
+    }
+    let Some(options) = definition.as_mapping() else {
+        return false;
+    };
+    options.iter().all(|(key, value)| match key.as_str() {
+        Some("driver") => value.as_str() == Some("local"),
+        Some("name") => value.as_str() == Some(name),
+        Some("labels") => value.as_mapping().is_some(),
+        _ => false,
+    })
+}
+
+fn mount_budget_refusal(
+    policy: &EffectiveContainerPolicy,
+    file_index: usize,
+    detail: &str,
+) -> ContainerPolicyError {
+    ContainerPolicyError::TaskInvocation(format!(
+        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an unmodelled mount input in Compose input #{}: {detail}; use only short-form bind/volume mounts or long-form `type: bind|volume` with `source`, `target`, and `read_only`, or remove the unsupported input. Mount paths and values are omitted",
+        policy.name,
+        policy.primary_service,
+        file_index + 1,
+    ))
 }
 
 #[derive(Debug)]
@@ -195,52 +322,96 @@ struct EffectiveMount {
     target: String,
     kind: String,
     read_only: bool,
+    named_volume_source: Option<String>,
 }
 
 fn parse_effective_mount(
     value: &serde_yaml::Value,
     compose_dir: &Path,
     project_name: &str,
-) -> Option<EffectiveMount> {
+) -> Result<EffectiveMount, &'static str> {
     let (source, target, kind, read_only) = if let Some(raw) = value.as_str() {
-        let mut parts = raw.splitn(3, ':');
-        let first = parts.next()?.trim();
-        let second = parts.next().map(str::trim);
-        let mode = parts.next().unwrap_or("");
-        let (source, target) = match second {
-            Some(target) => (first, target),
-            None => ("", first),
-        };
-        let kind =
-            if source.starts_with('/') || source.starts_with("./") || source.starts_with("../") {
+        let parts = raw.split(':').collect::<Vec<_>>();
+        if parts.len() > 3 {
+            return Err("short-form syntax contains an ambiguous colon");
+        }
+        if parts.len() == 1 {
+            ("", parts[0].trim(), "volume", false)
+        } else {
+            let source = parts[0].trim();
+            let target = parts[1].trim();
+            let mode = parts.get(2).copied().unwrap_or("").trim();
+            let mode_parts = if mode.is_empty() {
+                Vec::new()
+            } else {
+                mode.split(',').collect::<Vec<_>>()
+            };
+            if mode_parts.len() > 1 || mode_parts.iter().any(|part| !matches!(*part, "ro" | "rw")) {
+                return Err("short-form mount mode has unmodelled options");
+            }
+            let kind = if source.is_empty() {
+                "volume"
+            } else if source.starts_with('/')
+                || source.starts_with("./")
+                || source.starts_with("../")
+            {
                 "bind"
             } else {
                 "volume"
             };
-        (
-            source,
-            target,
-            kind,
-            mode.split(',').any(|part| part == "ro"),
-        )
-    } else {
-        let mapping = value.as_mapping()?;
+            (source, target, kind, mode_parts.contains(&"ro"))
+        }
+    } else if let Some(mapping) = value.as_mapping() {
+        for key in mapping.keys() {
+            let Some(name) = key.as_str() else {
+                return Err("long-form mount has an unmodelled field");
+            };
+            if !matches!(name, "type" | "source" | "target" | "read_only") {
+                return Err("long-form mount has unmodelled fields or options");
+            }
+        }
         let get = |name: &str| mapping.get(serde_yaml::Value::String(name.to_owned()));
-        let source = get("source")
+        let kind = match get("type") {
+            None => "volume",
+            Some(value) => value
+                .as_str()
+                .ok_or("long-form mount type is not a string")?,
+        };
+        if !matches!(kind, "bind" | "volume") {
+            return Err("long-form mount type is not a supported bind or volume");
+        }
+        let source = match get("source") {
+            None => "",
+            Some(value) => value
+                .as_str()
+                .ok_or("long-form mount source is not a string")?,
+        };
+        let target = get("target")
             .and_then(serde_yaml::Value::as_str)
-            .unwrap_or("");
-        let target = get("target")?.as_str()?;
-        let kind = get("type")
-            .and_then(serde_yaml::Value::as_str)
-            .unwrap_or("volume");
-        let read_only = get("read_only")
-            .and_then(serde_yaml::Value::as_bool)
-            .unwrap_or(false);
+            .ok_or("long-form mount has no string target")?;
+        let read_only = match get("read_only") {
+            None => false,
+            Some(value) => value
+                .as_bool()
+                .ok_or("long-form mount `read_only` is not a boolean")?,
+        };
         (source, target, kind, read_only)
+    } else {
+        return Err("entry is neither short-form text nor a long-form mapping");
     };
-    if target.is_empty() {
-        return None;
+    if !target.starts_with('/') {
+        return Err("mount target is not an absolute guest path");
     }
+    if source.contains('$') || target.contains('$') {
+        return Err("mount path contains unresolved Compose interpolation");
+    }
+    if source.starts_with("~/") {
+        return Err("tilde-prefixed bind source is not modelled");
+    }
+    if kind == "bind" && source.is_empty() {
+        return Err("bind mount source is empty");
+    }
+    let named_volume_source = (kind == "volume" && !source.is_empty()).then(|| source.to_owned());
     // Compose/nerdctl materialize named and anonymous volumes as host binds
     // under containerd's volume store. Reserve the maximum documented source
     // identity width here; exact VM-local paths are unavailable pre-runtime.
@@ -267,28 +438,27 @@ fn parse_effective_mount(
             "bind",
         )
     };
-    Some(EffectiveMount {
+    Ok(EffectiveMount {
         source: resolved,
         target: target.to_owned(),
         kind: resolved_kind.to_owned(),
         read_only,
+        named_volume_source,
     })
 }
 
 fn nerdctl_mount_json_bytes(mount: &EffectiveMount) -> usize {
-    // containerd mount.Mount's JSON shape as used by nerdctl v2.3.1. Go's
-    // encoder also escapes HTML-sensitive characters; account for that so
-    // this Rust-side estimate cannot undercount those paths.
-    let options = if mount.read_only {
-        "[\"rbind\",\"rprivate\",\"ro\"]"
-    } else {
-        "[\"rbind\",\"rprivate\",\"rw\"]"
-    };
+    // nerdctl v2.3.1's `nerdctl/mounts` metadata serializes Type, Source,
+    // Destination, Mode, RW and Propagation. Go's encoder also escapes
+    // HTML-sensitive characters; account for that on both paths.
+    let mode = if mount.read_only { "ro" } else { "" };
+    let rw = !mount.read_only;
     let encoded = format!(
-        "{{\"Type\":{},\"Source\":{},\"Target\":{},\"Options\":{options}}}",
+        "{{\"Type\":{},\"Source\":{},\"Destination\":{},\"Mode\":{},\"RW\":{rw},\"Propagation\":\"\"}}",
         go_json_string(&mount.kind),
         go_json_string(&mount.source),
         go_json_string(&mount.target),
+        go_json_string(mode),
     );
     encoded.len()
 }
@@ -302,6 +472,10 @@ fn nerdctl_mounts_label_size(entries: &[MountBudgetEntry]) -> usize {
 
 fn nerdctl_mounts_label_fits(size: usize) -> bool {
     size < NERDCTL_MOUNTS_LABEL_BUDGET_BYTES
+}
+
+fn nerdctl_mounts_safety_margin(size: usize) -> usize {
+    size.div_ceil(50)
 }
 
 fn go_json_string(value: &str) -> String {
@@ -328,16 +502,55 @@ mod tests {
             target: "/workspace".to_owned(),
             kind: "bind".to_owned(),
             read_only: true,
+            named_volume_source: None,
         };
         let bytes = nerdctl_mount_json_bytes(&mount);
         let expected = format!(
-            "{{\"Type\":\"bind\",\"Source\":{},\"Target\":\"/workspace\",\"Options\":[\"rbind\",\"rprivate\",\"ro\"]}}",
-            go_json_string(&mount.source)
+            "{{\"Type\":\"bind\",\"Source\":{},\"Destination\":\"/workspace\",\"Mode\":\"ro\",\"RW\":false,\"Propagation\":\"\"}}",
+            go_json_string(&mount.source),
         );
         assert_eq!(bytes, expected.len());
         assert!(go_json_string(&mount.source).contains("\\u003c"));
         assert!(go_json_string(&mount.source).contains("\\u2028"));
         assert_eq!(nerdctl_mounts_label_size(&[]), "nerdctl/mounts".len() + 2);
+    }
+
+    #[test]
+    fn observed_nerdctl_shape_and_two_percent_reserve_match_r13_fixture() {
+        let source = format!("/{}", "s".repeat(61));
+        let target = format!("/{}", "d".repeat(27));
+        let writable = EffectiveMount {
+            source: source.clone(),
+            target: target.clone(),
+            kind: "bind".to_owned(),
+            read_only: false,
+            named_volume_source: None,
+        };
+        let read_only = EffectiveMount {
+            source,
+            target,
+            kind: "bind".to_owned(),
+            read_only: true,
+            named_volume_source: None,
+        };
+        assert_eq!(nerdctl_mount_json_bytes(&writable), 171);
+        assert_eq!(nerdctl_mount_json_bytes(&read_only), 174);
+
+        let entries = (0..20)
+            .map(|index| MountBudgetEntry {
+                ordinal: index + 1,
+                bytes: nerdctl_mount_json_bytes(&writable),
+            })
+            .chain(std::iter::once(MountBudgetEntry {
+                ordinal: 21,
+                bytes: nerdctl_mount_json_bytes(&read_only),
+            }))
+            .collect::<Vec<_>>();
+        let observed_fixture_bytes = nerdctl_mounts_label_size(&entries);
+        assert_eq!(observed_fixture_bytes, 3630);
+        let margin = nerdctl_mounts_safety_margin(observed_fixture_bytes);
+        assert_eq!(margin, 73);
+        assert_eq!(observed_fixture_bytes + margin, 3703);
     }
 
     #[test]

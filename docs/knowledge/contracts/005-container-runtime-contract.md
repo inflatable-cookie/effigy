@@ -32,16 +32,28 @@ This contract exists to keep one explicit runtime guarantee across those
 surfaces.
 
 For the Colima nerdctl compose fallback, runtime preflight estimates the
-`nerdctl/mounts` label from effective primary-service mounts in the ordered
-Compose files, including short and long volume syntax, bind-source resolution,
-and JSON escaping. It uses a conservative 3900-byte threshold below the
-4096-byte containerd label value limit. nerdctl owns the label format and
-runtime serialization; this estimate follows its documented v2.3.1
-`mount.Mount` JSON shape and is not a runtime oracle. The guard refuses before
-apply when the estimate exceeds its threshold and reports the largest guest
-mount targets. It does not consolidate mounts, relax workspace isolation or
-make a consumer whose declared mounts exceed the budget runnable. Real Colima
-qualification remains required.
+`nerdctl/mounts` label from recognized explicit primary-service bind and volume
+mounts in the ordered Compose files, including target-based overlay merging,
+bind-source resolution, and JSON escaping. Its nerdctl v2.3.1 row estimate
+uses `Type`, `Source`, `Destination`, `Mode`, `RW`, and `Propagation`, plus the
+array delimiters and `nerdctl/mounts` key. The sanitized r13 structure fixture
+measured 21 rows as 20 × 171 bytes plus one 174-byte read-only row; with 22
+array delimiter bytes and the 14-byte key, the modeled key-plus-value size is
+3630 bytes, matching the observed fixture. Preflight adds a 2% reserve rounded
+up, then refuses when the guarded estimate reaches the 3900-byte budget below
+the 4096-byte containerd label value limit. nerdctl owns the label format and
+runtime serialization; this estimate is not a runtime oracle or a universal
+guarantee. Unsupported volume syntax, known unmodelled service mount
+contributors (`extends`, `tmpfs`, `configs`, `secrets`, and `volumes_from`), and
+referenced top-level named-volume options that are not modelled refuse before
+apply with path-free diagnostics. Docker backends do not use this guard. The
+estimate does not inspect image metadata for implicit
+`VOLUME` entries or account for other runtime-created mounts. Variable modes,
+propagation, escaping, paths and nerdctl versions still need qualification, so
+the measured reserve does not establish a universal bound. The guard does not
+consolidate mounts, relax workspace isolation or make a consumer whose declared
+mounts exceed the budget runnable. Real Colima and consumer qualification
+remain required.
 
 ## Catalog paths in standard commands
 
