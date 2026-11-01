@@ -1081,8 +1081,31 @@ fn concurrent_recorded_admission_does_not_grant_the_loser_owner() {
             let owns = dispatcher
                 .admitted
                 .contains(&RunId::new(7, [178; 10]).unwrap());
+            let expected = RunId::new(7, [178; 10]).unwrap();
+            let attached = dispatcher.attach(
+                &cx,
+                &root,
+                session,
+                RequestId::new([8; 16]),
+                &AttachBody {
+                    run: expected,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                },
+            );
+            let secondary = attached
+                .as_ref()
+                .is_ok_and(|handle| handle.client() == Client::Secondary);
+            let denied = dispatcher
+                .detach(&cx, &root, session, &RunBody { run: expected })
+                .is_err();
+            let released = match attached {
+                Ok(mut handle) => handle.release(&cx, &root, Release::Eof).is_ok(),
+                Err(_) => false,
+            };
             let _ = done_tx.send(());
-            (reply, owns)
+            (reply, owns, secondary, denied, released)
         });
         (winner.join().unwrap(), loser.join().unwrap())
     });
@@ -1096,6 +1119,12 @@ fn concurrent_recorded_admission_does_not_grant_the_loser_owner() {
     assert!(
         !loser.1,
         "a recorded admission must not grant ownership to the loser"
+    );
+    assert!(loser.2, "the loser attaches only as secondary");
+    assert!(loser.3, "the loser cannot detach the owner");
+    assert!(
+        loser.4,
+        "the loser releases its own secondary before the winner finishes"
     );
 }
 
