@@ -94,6 +94,7 @@ impl GuestWorkspace for Guest {
 #[derive(Clone, Copy, Debug)]
 enum Fault {
     None,
+    LongObservationBudget,
     Identity,
     UnknownIdentity,
     Alias,
@@ -272,6 +273,12 @@ fn run(fault: Fault) -> usize {
     effigy_containers::with_test_effigy_home(&fixture.path().join("home"), || {
         let repo = fixture.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
+        // This producer requires explicit checkout-scoped ownership labels.
+        std::fs::write(
+            repo.join(".git/config"),
+            "[effigy]\n runtimeScope = ephemeral\n",
+        )
+        .unwrap();
         std::fs::write(
             repo.join("effigy.toml"),
             r#"
@@ -293,15 +300,61 @@ home = "/home/vscode"
 "#,
         )
         .unwrap();
-        let mut policy = crate::runner::test_support::effective_container_policy(
-            "dev",
-            "dev",
-            "app",
+        std::fs::write(
             repo.join("compose.yml"),
-        );
-        policy.repo_root = repo.clone();
+            "services:\n  app:\n    image: fixture:latest\n",
+        )
+        .unwrap();
+        let bin = fixture.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut test_path = bin.as_os_str().to_os_string();
+        test_path.push(":");
+        test_path.push(inherited_path);
+        let _environment = effigy_test_support::env::ScopedEnv::set_many(&[
+            ("PATH", test_path),
+            ("EFFIGY_COMPOSE_BACKEND", "docker".into()),
+            ("DOCKER_CONTEXT", "fixture-context".into()),
+        ]);
+        let mut policy = effigy_containers::prepare_container_policy(&repo, Some("dev")).unwrap();
         policy.workspace_user = Some("vscode".into());
         policy.workspace_home = Some("/home/vscode".into());
+        let mut labels = serde_json::Map::new();
+        for file in &policy.compose_files {
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(file).unwrap()).unwrap();
+            if let Some(mapping) = document
+                .get("services")
+                .and_then(|services| services.get("app"))
+                .and_then(|service| service.get("labels"))
+                .and_then(|value| value.as_mapping())
+            {
+                for (key, value) in mapping {
+                    let value = match value {
+                        serde_yaml::Value::String(value) => value.clone(),
+                        serde_yaml::Value::Bool(value) => value.to_string(),
+                        _ => continue,
+                    };
+                    labels.insert(key.as_str().unwrap().into(), value.into());
+                }
+            }
+        }
+        labels.insert(
+            "com.docker.compose.project".into(),
+            policy.project_name.clone().into(),
+        );
+        labels.insert("com.docker.compose.service".into(), "app".into());
+        labels.insert("com.docker.compose.oneoff".into(), "False".into());
+        let inspect = fixture.path().join("inspect.json");
+        let container_id = "a1".repeat(32);
+        std::fs::write(&inspect, serde_json::to_vec(&serde_json::json!([{
+            "Id":container_id, "Name":format!("/{}-app-1",policy.project_name), "Image":format!("sha256:{}","c".repeat(64)),
+            "State":{"Running":true}, "Config":{"Image":"fixture:latest","Labels":labels}
+        }])).unwrap()).unwrap();
+        let docker = bin.join("docker");
+        std::fs::write(&docker, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \" $* \" in\n *' image inspect '*) echo '[{{\"Id\":\"sha256:{}\"}}]' ;;\n *' ps '*) echo {} ;;\n *' inspect '*) cat '{}' ;;\nesac\n", fixture.path().join("docker.calls").display(), "c".repeat(64), "a1".repeat(32), inspect.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(docker, std::fs::Permissions::from_mode(0o755)).unwrap();
         if matches!(fault, Fault::Hybrid) {
             let text = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
             std::fs::write(
@@ -335,6 +388,12 @@ home = "/home/vscode"
             user: "vscode".into(),
             home: "/home/vscode".into(),
         };
+        let identity = WorkspaceContainerIdentity {
+            container_id: "a1".repeat(32),
+            vm_boot_id: "3a7c86df-0045-472e-b065-c1295816ab22".into(),
+            platform: "x86_64".into(),
+            libc: "gnu".into(),
+        };
         let inputs = PublishInputs {
             artifact: ArtifactEvidence::Unselected {
                 image_reference: "fixture".into(),
@@ -342,10 +401,13 @@ home = "/home/vscode"
             },
             selection: Digest::of(b"selection"),
             inputs_digest: Digest::of(b"inputs"),
-            target: TargetEvidence::Absent {
-                project: policy.project_name.clone(),
+            // Selection/staging fixtures start from an independently observed
+            // container; creation authority is proved by the #510 producer tests.
+            target: TargetEvidence::Observed(ContainerIdentity {
+                container_id: identity.container_id.clone(),
+                vm_boot_id: identity.vm_boot_id.clone(),
                 backend: "docker".into(),
-            },
+            }),
             platform: None,
             guest: Some(GuestContextInputs {
                 version: version.clone(),
@@ -361,12 +423,7 @@ home = "/home/vscode"
                 sources: vec![],
             }),
         };
-        let identity = WorkspaceContainerIdentity {
-            container_id: "a1".repeat(32),
-            vm_boot_id: "3a7c86df-0045-472e-b065-c1295816ab22".into(),
-            platform: "x86_64".into(),
-            libc: "gnu".into(),
-        };
+
         let mut guest = FakeGuest::new().with_container(identity.clone());
         // A predecessor inode and selectors are retained throughout staging failures.
         guest.put_file(BINARY_CURRENT_PATH, b"/predecessor", 0o644);
@@ -487,6 +544,15 @@ home = "/home/vscode"
             } else {
                 vec![]
             };
+            let reobserved_target = target.clone();
+            let reobserved_image = image.clone();
+            let reobserved_project = policy.project_name.clone();
+            let reobserved_object = object.clone();
+            let reobserved_version = version.clone();
+            let creating_run = activation.environment_mut().id();
+            let original_deadline = activation.environment_mut().observation_deadline(
+                std::time::Instant::now() + Duration::from_secs(24 * 60 * 60),
+            );
             Ok(ReservedGuestInput {
                 guest: Box::new(Guest(
                     shared.clone(),
@@ -495,6 +561,34 @@ home = "/home/vscode"
                     fired.clone(),
                 )),
                 artifact: &artifact,
+                reobserve: Box::new(move |deadline| {
+                    assert!(std::time::Instant::now() < deadline);
+                    assert!(
+                        deadline <= original_deadline,
+                        "callback exceeded the activation deadline"
+                    );
+                    Ok((
+                        Observed::Verified(
+                            vec![TargetCandidate {
+                                identity: reobserved_target.clone(),
+                                project: reobserved_project,
+                                created_by: Some(creating_run),
+                            }],
+                            evidence(),
+                        ),
+                        Observed::Verified(
+                            BoundPlatform {
+                                target: reobserved_target,
+                                platform: reobserved_image.clone(),
+                                artifact_platform: reobserved_image,
+                                artifact: reobserved_object,
+                                artifact_version: reobserved_version,
+                                execution_available: true,
+                            },
+                            evidence(),
+                        ),
+                    ))
+                }),
                 targets: Observed::Verified(
                     vec![TargetCandidate {
                         identity: target.clone(),
@@ -534,7 +628,11 @@ home = "/home/vscode"
                         "ab".repeat(32),
                     ))
                 }),
-                budget: Duration::from_secs(20),
+                budget: if matches!(fault, Fault::LongObservationBudget) {
+                    Duration::from_secs(24 * 60 * 60)
+                } else {
+                    Duration::from_secs(20)
+                },
             })
         };
         let result = match fault {
@@ -544,8 +642,21 @@ home = "/home/vscode"
             Fault::RecoveryDead | Fault::RecoveryUnknown => {
                 recover_fixture(request, observe, shared.clone(), 0, fault)
             }
-            _ => up_prepared(request, || Ok(()), observe),
+            _ => up_prepared(request, &[], observe),
         };
+        if matches!(fault, Fault::None | Fault::LongObservationBudget) {
+            let calls = std::fs::read_to_string(fixture.path().join("docker.calls")).unwrap();
+            let applies = calls
+                .lines()
+                .filter(|line| line.contains(" up -d "))
+                .collect::<Vec<_>>();
+            assert_eq!(applies.len(), 1, "one ordinary Compose apply");
+            assert!(applies[0].starts_with("--context fixture-context compose "));
+            assert!(applies[0].contains("--build --remove-orphans"));
+            for file in &policy.compose_files {
+                assert!(applies[0].contains(file.to_str().unwrap()));
+            }
+        }
         let mut guest = shared.borrow_mut();
         assert_eq!(guest.text("/predecessor").as_deref(), Some("old bytes"));
         if matches!(fault, Fault::Hybrid) {
@@ -556,7 +667,10 @@ home = "/home/vscode"
             assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
         } else if matches!(
             fault,
-            Fault::None | Fault::Recovery(_) | Fault::RecoveryUnknown
+            Fault::None
+                | Fault::LongObservationBudget
+                | Fault::Recovery(_)
+                | Fault::RecoveryUnknown
         ) {
             let WorkspaceUp::Selected(mut owner) = result.expect("selected") else {
                 panic!("selected owner")
@@ -753,6 +867,29 @@ fn recover_fixture<'a>(
     };
     let ctx = environment::context(&request.policy.repo_root).unwrap();
     let env = environment::env_ref(request.policy).unwrap();
+    let backend = environment::backend(&request.policy.repo_root, request.policy);
+    let closure = &request.policy.render.as_ref().unwrap().closure;
+    let prepare = Up {
+        render: Some(closure),
+        project: &request.policy.project_name,
+        backend: &backend,
+        retention: request.retention,
+        workdir: &request.policy.repo_root,
+        primary_service: &request.policy.primary_service,
+        compose_files: &request.policy.compose_files,
+    };
+    let preflight = effigy_containers::environment::CreationPreflight::observe(
+        backend.adapter().as_mut(),
+        prepare.creation_request(),
+    )
+    .map_err(|error| failure(EnvError::Invalid(error.to_string())))?;
+    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
+        &ctx.cx,
+        ctx.root,
+        closure,
+        Instant::now() + Duration::from_secs(20),
+    )
+    .map_err(|error| failure(EnvError::Kernel(error)))?;
     let WorkspaceBegin::Activate(mut activation) = WorkspaceActivation::begin(
         &ctx,
         &env,
@@ -790,13 +927,18 @@ fn recover_fixture<'a>(
     assert_eq!(before, shared.borrow().tree_digest());
     let backend = environment::backend(&request.policy.repo_root, request.policy);
     activation
-        .apply_with(
+        .apply_sealed_with(
             Up {
                 render: request.policy.render.as_ref().map(|render| &render.closure),
                 project: &request.policy.project_name,
                 backend: &backend,
                 retention: request.retention,
+                workdir: &request.policy.repo_root,
+                primary_service: &request.policy.primary_service,
+                compose_files: &request.policy.compose_files,
             },
+            &sealed,
+            &preflight,
             || Ok(()),
         )
         .map_err(failure)?;
@@ -835,6 +977,7 @@ fn recover_fixture<'a>(
             std::path::PathBuf::from("/workspace"),
         ),
         channel: publication.channel,
+        creation: None,
         effect: std::sync::Arc::new(ctx.cx.clone()),
         observe: std::sync::Arc::new(ctx.observe()),
         root: ctx.root,
@@ -931,4 +1074,9 @@ impl crate::runner::workspace_client::identity::GuestIdentity for IndependentIde
 #[test]
 fn workspace_reserved_hybrid_does_not_admit_stage_probe_or_mint() {
     run(Fault::Hybrid);
+}
+
+#[test]
+fn workspace_reserved_callback_keeps_the_original_activation_deadline() {
+    run(Fault::LongObservationBudget);
 }

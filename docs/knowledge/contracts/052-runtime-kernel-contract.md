@@ -3853,6 +3853,120 @@ crash or a stopped listener before the close keeps the row, so a successor still
 finds the recorded owner and settles or refuses instead of silently dropping
 authority, and a settled session is never an owner.
 
+**Desired successor absence (owner ruling, 2026-10-31).**
+`TargetEvidence::Absent { project, backend }` means that the desired successor
+identity is unknown before apply, for a fresh project or an authorized recreation
+of a non-live predecessor. It does not assert that the project inventory is empty.
+Binding still requires a full ID absent before apply, attributed to this exact
+activation run, with matching project/backend. `Observed` retains its exact old-ID
+requirement. A live protected predecessor cannot be recreated; #506's compatibility
+check and gated recheck must permit replacement and establish that no live session
+is attached to that predecessor. This clarifies target evidence without changing
+#509's kernel fence. No workspace-session publication may bypass its reserved
+`Absent` successor and the remaining staging/serving/commit gates.
+
+### 8.12 Gate-scoped creation inference (effigy#510)
+
+The v0.15 receipt is a complete before/after full-ID project inventory difference
+under the exclusive `Gate(Env)`, not an engine create response. Another checkout,
+project or stale generation must never be adopted. A same-user engine actor
+creating identically labelled containers inside the gate window is outside this
+narrowed guarantee (Tom, 2026-10-31; Q-017).
+
+Resolve each frozen service's image-inspect ID before activation and recheck
+under the gate, after apply and before target binding, including attached services.
+Receipts name the actual backend capability for each service:
+
+- `container_image_id`: the container's immutable `Image` ID matches the frozen
+  image-inspect resolution.
+- `reference_resolved_id`: only a new full ID created in this gate window may
+  infer the stable pre/post image-inspect resolution from a nerdctl reference.
+  Both container reference fields must equal the rendered reference after Docker's
+  familiar-name expansion. It is explicitly not a container-attested ID.
+- `attached_reference_config_hash`: an existing reference-only container records
+  its reference and `com.docker.compose.config-hash`, matched against Compose's
+  own `config --hash` over the ordered frozen files. Its image identity has
+  `resolved_id: null`: the tag's current lookup must never be attributed to that
+  container. Independent reference-resolution observations still detect moves
+  during this activation. A tag moved X→Y before activation may leave a running
+  container on X with the same reference/config hash; that move is undetectable
+  on this engine, so the receipt never claims the old container runs Y (owner
+  ruling, 2026-10-31).
+- `digest_reference`: the same exact repository/digest reference is immutable;
+  its image-inspect resolution is still recorded and rechecked.
+
+Observed tag moves refuse. A same-user engine actor retagging and restoring a tag
+inside the gate is explicitly excluded, alongside forged identical labels (owner
+ruling, 2026-10-31). The gate excludes competing Effigy activations, not foreign
+same-user engine activity. These capability rules replace the reference-only
+Colima refusal; Docker still requires its container image ID.
+
+The observations verify every row's exact full ID, Compose project/service,
+managed, scope and checkout labels and name. Docker's one-off flag must be false
+when supplied. Nerdctl may omit it only when the actual Compose project/service
+membership and name match and `nerdctl/name` plus the exact `nerdctl/networks`
+list corroborate the effective frozen network mode/names. Ordered Compose
+fragments merge network declarations before applying defaults; an extra-hosts-only
+override does not replace a custom network with default. Missing or ambiguous name/network
+corroboration refuses; no label is synthesized. Normal Compose apply, networks,
+volumes and cleanup remain unchanged.
+The post-apply service set must equal the frozen declared set; missing, extra,
+duplicate or foreign inventory rows refuse. Before apply, the expectation records
+missing services as requiring fresh IDs and non-workspace image-reference changes
+as requiring replacements of their exact old IDs. Other attached dependencies
+retain their exact IDs. The existing workspace service may retain its predecessor
+ID or replace it for any Compose recreation reason, including environment,
+mount and entrypoint changes at the same image reference. A replacement must be
+absent from the entire pre-apply ID set, its predecessor must disappear, and
+exactly one verified workspace row must remain. The complete new-ID difference
+must equal the required creations plus that one workspace replacement, if any.
+No extra service or foreign ID is adopted. Zero-change re-up stays attached.
+This replaces the image-reference-only prediction that refused routine workspace
+configuration changes (Effigy Supervisor's owner ruling, 2026-10-31).
+Container-attested image IDs must match their reference lookups before and after
+apply. For reference-only predecessors, those lookups prove reference stability,
+not the old container's actual image; attached rows use the scoped reference/config-hash
+capability above. Receipt schema v5 records scoped image capabilities, independent
+reference lookups, required new services and the workspace's pre-apply predecessor
+separately; earlier receipt schemas are not upgraded.
+Isolated journal-case reproduction uses `effigy test:focused:journal-heavy` with
+`-j 1`, retaining the covering selector's 600-second per-test budget. Image tag
+moves, unproved image identity, partial or failed apply, unknown
+journal state, expired deadlines, cancellation and gate loss grant no receipt.
+
+The sealed render records its exact Compose file inventory and order, backend
+ID and context in `inputs/environment.json`. Only those materialized files are
+Compose inputs; captured source fragments are not additional Compose documents.
+The owner verifies the checkout token, frozen metadata and input paths before
+apply. Ordinary unsealed container applies carry an explicit unproven outcome;
+they cannot mint this receipt. Missing managed/scope labels refuse workspace
+attribution, including environments configured to share runtime identity.
+
+The environment effect is `environment:gate-scoped-id-difference`. Its result
+retains the complete observed inventory and the reservation's environment
+generation. Retry reads this result without another apply. The publication owner
+rechecks that inventory under the gate and refuses a stale reservation before
+binding; the reserved-input boundary reobserves target/platform and the binding
+adapter rechecks the complete project/image inventory immediately before
+`bind_target`. Only this run's created workspace ID can satisfy an absent target;
+a caller-supplied creator run ID is never authority. Attached IDs remain attached.
+Missing attribution is Unknown, not proof of no creator. The original activation
+deadline bounds the final observation callback and the pinned backend runs the
+ordinary Compose apply.
+
+The opt-in native Colima fixture transports sealed Compose bytes to a private
+VM directory and compares them byte for byte. Its second authorized window must
+prove positive creator attribution and real current-generation reserved `Absent`
+successor binding for fresh and same-image config-replacement phases. It must
+assert that ordinary `EnvRun.activate(&[])` refuses under that reservation;
+reserved Active is available only through the #506/#512 commit/serving route. It must record each new ID and creating run, preserve
+the non-live predecessor rule, and clean only its exact-owned IDs/directories.
+This **does NOT prove guest workspace-session commit/publication**. Native guest
+artifact/locator/serving E2E on Colima, Docker Desktop and Linux Docker belongs to
+#512 after #506 and remains a hard v0.15 release gate. Historical native refusal
+packets remain historical. Fake adapters are not native qualification.
+
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
@@ -4558,8 +4672,8 @@ they are plans, and this section is a design, not evidence.
 
 | Candidate boundary | Draft idea (not a guarantee) | Proposed proof name (not evidence) |
 | --- | --- | --- |
-| Inputs, alias and target observed, before the decision | A frozen `PublishInputs` naming the artifact, the selection, the frozen policy/profile and `TargetEvidence` — `Observed` when a container exists, `Absent { project, backend }` on a fresh project — all re-observed under the decision's gate and recorded in the reservation. A changed input refuses; a changed or ambiguous target refuses rather than re-targeting. | `test:workspace:publish-inputs-freeze` |
-| The apply creates the target (fresh project) | `bind_target` records the container and boot the apply actually created in one fenced transaction under the held `Gate(Env)`; `Observed` targets must match it, `Absent` targets become bound here, zero or several candidate containers refuse `TargetAmbiguous`, and another activation's claim refuses `ClaimedByAnotherRun`. Every later step reads the bound target. | `test:workspace:fresh-target-binding` |
+| Inputs, alias and target observed, before the decision | A frozen `PublishInputs` naming the artifact, the selection, the frozen policy/profile and `TargetEvidence` — `Observed` when retaining the exact target, `Absent { project, backend }` for a fresh or authorized non-live replacement successor — all re-observed under the decision's gate and recorded in the reservation. A changed input refuses; a changed or ambiguous target refuses rather than re-targeting. | `test:workspace:publish-inputs-freeze` |
+| The apply creates the desired target (fresh or non-live replacement) | `bind_target` records the container and boot the apply actually created in one fenced transaction under the held `Gate(Env)`; `Observed` targets must match it, `Absent` targets become bound here, zero or several candidate containers refuse `TargetAmbiguous`, and another activation's claim refuses `ClaimedByAnotherRun`. Every later step reads the bound target. | `test:workspace:fresh-target-binding` |
 | Decide attach or reserve E | One gate-held transaction writes the reservation or nothing; a loser re-reads under the gate and attaches only to a live session whose full published evidence matches, else joins or is refused by name. E+1 is never allocated over an unresolved E. | `test:kernel:workspace:activation-decide` |
 | Freeze `{owner, run, S}`, admit the session | The frozen tuple is recovered idempotently; the exact run is recovered, never invented, and E is never confused with S; a dead run is never treated as live. P keeps its slot, listener and `Borrow`. | `test:workspace:admission-sequence` |
 | Claim the environment run and apply | The claimed run and each applied effect are recovered exactly, or the successor is settled before cancellation. `down`, reconcile and another decision are fenced by the reservation and by live holders. | `test:workspace:interrupted-admission` |
@@ -4677,12 +4791,13 @@ section has run.
    Observed<RecreateRisk>` (proposed, containers lane A2). `Verified(would
    recreate)` while a live predecessor's generation names that container refuses
    with the down/hold guidance and publishes nothing; `Unknown` refuses too, and
-   the reservation is cancelled. The only path that recreates is an explicit
-   operator `down`, which already refuses under R4 while a holder is live.
+   the reservation is cancelled. Under the normative 2026-10-31 successor
+   ruling, #506 compatibility and gated rechecks may also permit recreation of
+   a non-live predecessor; a live protected predecessor remains forbidden.
 5. **Frozen identity, TLS and pin-before-credential evidence.** `PublishInputs`
    (proposed, C1) gains the frozen input digest and `TargetEvidence` — an
-   observed container and boot, or `Absent` with the project and backend for a
-   fresh project — and the decision re-observes both under its gate, recording
+   retained container and boot, or `Absent` with project/backend for an unknown
+   fresh or authorized non-live replacement successor — re-observed under the gate, recording
    them in the reservation. The apply then binds the target it created
    (`bind_target`), which is the only way an `Absent` decision becomes
    observable and the only target any later step may use; a different or
@@ -4721,10 +4836,9 @@ pub struct PublishInputs<'a> {
     /// The frozen policy, profile and backend the render was made from: the same
     /// artifact and selection are not enough evidence on their own.
     pub inputs_digest: &'a Digest,
-    /// What the decision knows about the target. A fresh project has no
-    /// container yet, so an observed identity cannot be required before the
-    /// apply that creates it: absence is its own evidence, recorded with the
-    /// project and backend it names.
+    /// What the decision knows about the desired successor. Its identity may
+    /// be unknown before a fresh apply or an authorized non-live recreation;
+    /// Absent records project/backend and requires this run's new ID.
     pub target: TargetEvidence,
     /// What it knows about the image platform that selects the artifact. Same
     /// shape, same reason: a fresh project's image platform is read after the
@@ -4737,7 +4851,7 @@ pub enum TargetEvidence {
     /// Reobserved under the decision's gate. Any later observation that differs
     /// refuses; the activation never re-targets a live publication.
     Observed(ContainerIdentity), // { container_id, vm_boot_id, backend }
-    /// A project with no container yet: the activation must create and bind the
+    /// An unknown desired successor: the activation must create and bind the
     /// target after its apply, and may only publish the target it bound.
     Absent { project: String, backend: BackendId },
 }
@@ -4760,7 +4874,7 @@ impl WorkspaceActivationReservation {
     /// or reserve/recover E. The decision and the reservation are one write, so
     /// two callers that resolved `Absent` cannot reserve two generations. The
     /// reservation records `PublishInputs` — including `TargetEvidence::Absent`
-    /// when the project has no container yet — so the decision is durable before
+    /// when the desired successor is unknown — so the decision is durable before
     /// anything is applied.
     pub fn decide(
         cx: &EffectContext, root: &StateRoot, environment: &ResourceId,
@@ -5299,8 +5413,9 @@ review).** Never adopt a container created by another checkout, project or
 stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
 Compose apply and exact full-ID inventories before and after it. Only an ID
 new in that window, with the complete expected created set and exact managed,
-project, service, checkout/scope, generation and immutable-image evidence, may
-bind a fresh target. Missing, extra, ambiguous, changed or unreadable evidence
+project, service, checkout/scope, generation and the image-capability evidence
+defined in §8.12, may bind a fresh target. Newly created reference-only rows infer
+only the stable gate-scoped resolution; attached rows never gain a creator receipt. Missing, extra, ambiguous, changed or unreadable evidence
 refuses publication; attached/reused containers never receive a new creator
 receipt. Recheck preflight identity under the gate and keep the complete-set
 decision and its journal evidence tied to that activation. A same-user actor

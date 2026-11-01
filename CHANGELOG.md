@@ -233,6 +233,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Project container inventories refuse incomplete, duplicate or replaced full-ID
+  inspect answers. Docker and Colima adapters also expose inventory and image
+  inspection under one caller deadline; expired reads launch no engine process.
 - **A workspace session's custody can live in a detached process.** A serving
   host supervisor starts before the session run is adopted or the listener
   exists, performs the activation in its own process, announces the committed
@@ -286,6 +289,34 @@ During v0.x, MINOR bumps may include breaking changes.
   process-local registry.
 
 - Add the pinned TLS workspace-channel adapter, session-owned listener custody and fail-closed backend qualification handoff for container-mode workspace integrations.
+
+- **Workspace creation uses a complete gate-scoped ID difference.** The
+  environment's one frozen Compose apply journals
+  `environment:gate-scoped-id-difference`. Full before/after inventories must
+  match the frozen project, service and checkout ownership labels and immutable
+  image identities; attached IDs stay attached. The inference excludes concurrent
+  Effigy activations through the environment gate. A same-user actor forging
+  identical labels inside that window is outside v0.15's guarantee. Unreadable or
+  incomplete evidence produces no receipt, and retries never reapply or fabricate
+  attribution from a later inventory. Missing journal evidence is Unknown.
+  Newly created Colima containers may carry explicit reference/resolved-ID
+  evidence with matching references and stable pre/post resolution. Attached
+  reference-only rows instead report reference and matching rendered config hash,
+  with no resolved container-image ID: a pre-window tag move is undetectable there.
+  Partial extra-hosts overrides preserve custom service networks. Digest-pinned references
+  remain explicit. Missing nerdctl one-off labels require matching Compose
+  membership, name and frozen network evidence. Same-user retag/restore inside
+  the gate is excluded; detected tag moves refuse.
+  Workspace attribution requires a sealed render with explicit managed, scope
+  and checkout labels; ordinary unsealed applies provide no creation receipt.
+  Docker observations and apply plans pin the recorded context or endpoint.
+  The pre-apply expectation distinguishes required fresh services, verified
+  dependency image-reference replacements and the workspace predecessor. Workspace
+  environment, mount and entrypoint edits may recreate at the same image reference:
+  exactly one new workspace ID replaces the absent predecessor, while unchanged
+  services stay attached and extra/foreign IDs refuse. The v5 receipt records
+  image capabilities and the workspace predecessor separately from required
+  creations; container-up JSON exposes the image-identity evidence.
 
 - **A workspace activation is decided, selected and served by one owner.**
   `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers

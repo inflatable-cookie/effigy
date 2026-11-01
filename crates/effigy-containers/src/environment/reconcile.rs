@@ -40,11 +40,12 @@ use serde_json::{json, Value};
 use super::backend::{BackendError, BackendSelection};
 use super::record::{EngineRecord, EnvRecord, EnvState};
 
-/// Journal kind of a backend apply. The stack outlives the run by design;
-/// the record's promotion, not settle, says whether it was applied.
-pub const APPLY_EFFECT: &str = "environment:apply";
 /// Journal kind of a backend stop. Reported, never replayed (D3).
 pub const STOP_EFFECT: &str = "environment:stop";
+
+/// The phase one apply (and the create it reports) runs in, in the operator's
+/// own words.
+const APPLY_PHASE: &str = "reconciling the backend";
 
 /// How long a transition waits for `Gate(Env)` held by another one.
 pub const GATE_WAIT: Duration = Duration::from_secs(600);
@@ -758,6 +759,80 @@ impl<'r> EnvRun<'r> {
     }
 
     /// Publishes the environment's render as the object it points at.
+    pub(super) fn verify_compose_inputs(
+        &self,
+        closure: &Closure,
+        files: &[std::path::PathBuf],
+        workdir: &std::path::Path,
+    ) -> Result<(), EnvError> {
+        let expected_checkout = self
+            .env
+            .checkout
+            .token()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let actual_checkout = effigy_core::worktree_scope::checkout_token(workdir)
+            .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        if actual_checkout.as_deref() != Some(expected_checkout.as_str()) {
+            return Err(EnvError::Invalid(
+                "Compose workdir belongs to another checkout".into(),
+            ));
+        }
+        let object = match Objects::resolve(
+            &self
+                .cx
+                .operation()
+                .observe()
+                .map_err(|_| EnvError::Invalid("cannot observe sealed render".into()))?,
+            self.root,
+            &self.env.resource,
+            effigy_kernel::objects::Role::Desired,
+        ) {
+            Observed::Verified(object, _) if object.closure.digest() == closure.digest() => object,
+            _ => {
+                return Err(EnvError::Invalid(
+                    "sealed desired render is unavailable".into(),
+                ))
+            }
+        };
+        let metadata = closure
+            .files()
+            .get("inputs/environment.json")
+            .ok_or_else(|| {
+                EnvError::Invalid("sealed render has no Compose input inventory".into())
+            })?;
+        let metadata: serde_json::Value = serde_json::from_slice(metadata)
+            .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        let names: Vec<String> =
+            serde_json::from_value(metadata.get("compose_files").cloned().ok_or_else(|| {
+                EnvError::Invalid("sealed render has no Compose input inventory".into())
+            })?)
+            .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        if names.is_empty()
+            || names.iter().any(|name| !closure.files().contains_key(name))
+            || files
+                != names
+                    .iter()
+                    .map(|name| object.path.join(name))
+                    .collect::<Vec<_>>()
+        {
+            return Err(EnvError::Invalid(
+                "Compose input paths or order differ from the sealed closure".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn publish_sealed_desired(
+        &mut self,
+        sealed: &effigy_kernel::objects::SealedPreflight,
+        closure: &Closure,
+    ) -> Result<String, EnvError> {
+        let result = Objects::publish_sealed_desired(&mut self.run, sealed, closure);
+        self.kernel(result)
+    }
+
     pub fn publish_desired(&mut self, closure: &Closure) -> Result<String, EnvError> {
         self.phase("publishing the desired render", None);
         let result = Objects::publish_desired(&mut self.run, closure);
@@ -896,27 +971,214 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
-    /// The one backend apply: journals the intent under a permit, then runs
-    /// `effect` (K3, R4).
-    pub fn apply_with(
+    /// Journal one ordinary Compose apply and its complete gate-scoped ID
+    /// difference. An incomplete observation produces no attribution receipt.
+    pub fn create_with(
         &mut self,
+        backend: &mut dyn super::backend::EnvironmentBackend,
         selection: &BackendSelection,
-        project: &str,
-        effect: impl FnOnce() -> Result<(), BackendError>,
-    ) -> Result<(), EnvError> {
+        request: super::creation::CreationRequest<'_>,
+        apply: impl FnOnce() -> Result<(), BackendError>,
+    ) -> Result<super::creation::CreationOutcome, EnvError> {
+        use super::creation::{self, RecordedCreation};
+        let mut request = request;
+        if let Deadline::At(deadline) = self.cx.operation().deadline() {
+            request.deadline = request.deadline.min(deadline);
+        }
+        let env = self.env.name.clone();
+        self.settle_interrupted_holders()?;
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        if let Some(outcome) = self.journalled_creation()? {
+            return Ok(outcome);
+        }
         let payload = json!({
             "engine": selection.engine.as_str(),
             "context": selection.context,
-            "project": project,
+            "project": request.project,
+            "primary_service": request.primary_service,
         });
-        self.transition(
-            APPLY_EFFECT,
-            "reconciling the backend",
+        let mut transition_permit = permit(&mut self.run, None).map_err(|error| {
+            self.failed = true;
+            EnvError::from_run(&env, error)
+        })?;
+        let event = backend_event(&payload);
+        let spec = EffectSpec {
+            target: transition_permit.fence().clone(),
+            kind: creation::CREATE_EFFECT.to_owned(),
             payload,
-            Settlement::Retain,
-            None,
-            effect,
-        )
+            settlement: Settlement::Retain,
+            required: true,
+        };
+        let ticket = match transition_permit.intend(spec) {
+            Ok(ticket) => {
+                self.transitioned = true;
+                self.phase(APPLY_PHASE, None);
+                self.progress.event(event);
+                ticket
+            }
+            Err(error) => {
+                self.failed = true;
+                return Err(EnvError::from_run(&env, error));
+            }
+        };
+        // Both observations and the one apply run inside this EnvRun's gate.
+        // An incomplete window can never mint an attribution receipt.
+        let window = if request.required {
+            creation::CreationWindow::open(backend, request)
+        } else {
+            Err(super::CreationRefusal::Unknown(
+                "ordinary apply requested no sealed workspace attribution".into(),
+            ))
+        };
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        if Instant::now() >= request.deadline {
+            self.failed = true;
+            return Err(EnvError::Backend(BackendError::NotStarted(
+                "apply deadline expired during pre-observation".into(),
+            )));
+        }
+        if request.required {
+            if let Err(reason) = &window {
+                let message = reason.to_string();
+                let recorded = self.run.failed(
+                    &ticket,
+                    AbsenceProof::NoFile {
+                        name: message.clone(),
+                    },
+                );
+                self.kernel(recorded)?;
+                self.failed = true;
+                return Err(EnvError::Backend(BackendError::NotStarted(message)));
+            }
+        }
+        let outcome = match fault("EnvBackendBefore") {
+            Err(error) => Err(BackendError::NotStarted(error.to_string())),
+            Ok(()) => {
+                let outcome = apply();
+                match (outcome, fault("EnvBackendAfter")) {
+                    (Ok(()), Err(error)) => Err(BackendError::Uncertain(error.to_string())),
+                    (outcome, _) => outcome,
+                }
+            }
+        };
+        self.phase(APPLY_PHASE, None);
+        if let Err(error) = outcome {
+            self.progress.event(match &error {
+                BackendError::NotStarted(message) => {
+                    format!("the backend was never contacted: {message}")
+                }
+                BackendError::Uncertain(message) => {
+                    format!("the backend's answer is unproven: {message}")
+                }
+            });
+            let recorded = match &error {
+                BackendError::NotStarted(message) => self.run.failed(
+                    &ticket,
+                    AbsenceProof::NoFile {
+                        name: message.clone(),
+                    },
+                ),
+                BackendError::Uncertain(message) => self
+                    .run
+                    .unknown(&ticket, UnknownReason::Inconsistent(message.clone())),
+            };
+            if let Err(error) = recorded {
+                self.failed = true;
+                return Err(EnvError::from_run(&env, error));
+            }
+            self.failed = true;
+            return Err(EnvError::Backend(error));
+        }
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        let record = match window.and_then(|window| window.close(backend, request)) {
+            Ok(creation::InventoryDifference {
+                expected_created,
+                workspace_predecessor,
+                image_identities,
+                reference_resolutions,
+                compose_files,
+                created,
+                attached,
+                observed,
+            }) => RecordedCreation::Attributed(Box::new(creation::AttributedCreation {
+                engine: selection.engine.as_str().to_owned(),
+                context: selection.context.clone(),
+                project: request.project.to_owned(),
+                primary_service: request.primary_service.to_owned(),
+                generation: self.fence().generation.get(),
+                observed,
+                workdir: request.workdir.to_path_buf(),
+                expected_created,
+                workspace_predecessor,
+                image_identities,
+                reference_resolutions,
+                compose_files,
+                created,
+                attached,
+            })),
+            Err(reason) if request.required => {
+                let message = reason.to_string();
+                let recorded = self
+                    .run
+                    .unknown(&ticket, UnknownReason::Inconsistent(message.clone()));
+                self.kernel(recorded)?;
+                self.failed = true;
+                return Err(EnvError::Backend(BackendError::Uncertain(message)));
+            }
+            Err(reason) => RecordedCreation::Unproven {
+                project: request.project.to_owned(),
+                reason: reason.to_string(),
+            },
+        };
+        let recorded = creation::stored(record.clone())
+            .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        let written = self
+            .run
+            .applied(&ticket, recorded)
+            .and_then(|()| self.run.completed(&ticket, RequiredObligation::Applied));
+        if let Err(error) = written {
+            self.failed = true;
+            return Err(EnvError::from_run(&env, error));
+        }
+        Ok(creation::outcome(&self.env.resource, self.run.id(), record))
+    }
+
+    /// The record this run already journalled, or nothing. A retry of one
+    /// activation never runs a second apply, and a create without an applied
+    /// result stays unproven rather than being re-invented from the engine.
+    fn journalled_creation(
+        &mut self,
+    ) -> Result<Option<super::creation::CreationOutcome>, EnvError> {
+        use super::creation;
+        use effigy_kernel::run::EffectState;
+        let journalled = self.kernel(self.run.effects())?;
+        let Some(existing) = journalled
+            .into_iter()
+            .find(|effect| effect.spec.kind == creation::CREATE_EFFECT)
+        else {
+            return Ok(None);
+        };
+        match (existing.state, existing.receipt) {
+            // A retained effect is an applied one whose settlement only recorded
+            // that the stack outlives the run.
+            (EffectState::Applied | EffectState::Retained, Some(receipt)) => {
+                let stored = creation::decode_stored(&receipt).map_err(EnvError::Invalid)?;
+                Ok(Some(creation::outcome(
+                    &self.env.resource,
+                    self.run.id(),
+                    stored.record().clone(),
+                )))
+            }
+            (state, _) => Err(EnvError::Backend(BackendError::Uncertain(format!(
+                "this activation's create effect is {} and has no authenticated result; the next \
+                 activation reconciles it instead of attributing a container this run never \
+                 recorded creating",
+                state.label()
+            )))),
+        }
     }
 
     /// The one backend stop: journalled under a permit, then published
@@ -1208,6 +1470,54 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
+    /// Preserve the caller's one absolute budget across external observations.
+    pub fn observation_deadline(&self, requested: Instant) -> Instant {
+        match self.cx.operation().deadline() {
+            Deadline::At(original) => requested.min(original),
+            Deadline::Open(_) => requested,
+        }
+    }
+
+    /// Recheck the apply's journalled inventory under its exact claimed
+    /// reservation, before the caller binds a target. Missing evidence refuses.
+    pub fn recheck_creation(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        backend: &mut dyn super::backend::EnvironmentBackend,
+        deadline: Instant,
+    ) -> Result<super::CreationReceipt, EnvError> {
+        let deadline = self.observation_deadline(deadline);
+        if reservation.environment() != &self.fence().resource
+            || reservation.generation() != self.fence().generation
+        {
+            return Err(EnvError::Invalid(
+                "creation receipt targets a stale reservation generation".into(),
+            ));
+        }
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        let outcome = self.journalled_creation()?.ok_or_else(|| {
+            EnvError::Invalid("activation has no journalled apply inventory".into())
+        })?;
+        let receipt = outcome.receipt().ok_or_else(|| {
+            EnvError::Invalid("activation has no complete gate-scoped attribution".into())
+        })?;
+        if receipt.generation() != reservation.generation().get() || receipt.run() != self.id() {
+            return Err(EnvError::Invalid(
+                "creation receipt belongs to another activation".into(),
+            ));
+        }
+        receipt
+            .reobserve(backend, deadline)
+            .map_err(|error| EnvError::Backend(BackendError::Uncertain(error.to_string())))?;
+        let checked = permit(&mut self.run, None).map(|_| ());
+        self.kernel(checked)?;
+        // The journal's binding transaction checks the live gate and fence;
+        // callers must still bind within this EnvRun, never carry this result
+        // into a later owner.
+        Ok(receipt.clone())
+    }
+
     /// Bind only the apply inventory for this run's claimed activation. The
     /// caller cannot supply a different run or permit as authority.
     pub fn bind_target(
@@ -1215,6 +1525,84 @@ impl<'r> EnvRun<'r> {
         reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
         candidates: Observed<Vec<effigy_kernel::workspace_session::TargetCandidate>>,
     ) -> Result<effigy_kernel::workspace_session::ContainerIdentity, EnvError> {
+        let outcome = self
+            .journalled_creation()?
+            .ok_or_else(|| EnvError::Invalid("target has no journalled apply inventory".into()))?;
+        let receipt = outcome.receipt().ok_or_else(|| {
+            EnvError::Invalid("target has no complete gate-scoped apply inventory".into())
+        })?;
+        let selection =
+            match BackendSelection::from_metadata(&effigy_kernel::store::BackendMetadata {
+                engine: receipt.engine().into(),
+                context: receipt.context().into(),
+                source: "gate-scoped apply journal".into(),
+            }) {
+                Observed::Verified(selection, _) => selection,
+                _ => {
+                    return Err(EnvError::Invalid(
+                        "creation journal has an unavailable backend".into(),
+                    ))
+                }
+            };
+        let deadline = match self.cx.operation().deadline() {
+            Deadline::At(deadline) => deadline,
+            Deadline::Open(_) => Instant::now() + RUN_BUDGET,
+        };
+        self.bind_target_observing(
+            reservation,
+            candidates,
+            selection.adapter().as_mut(),
+            deadline,
+        )
+    }
+
+    /// The same binding with backend I/O injected for deterministic proofs.
+    /// Creation authority still comes only from this run's own journal.
+    pub fn bind_target_observing(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        candidates: Observed<Vec<effigy_kernel::workspace_session::TargetCandidate>>,
+        backend: &mut dyn super::backend::EnvironmentBackend,
+        deadline: Instant,
+    ) -> Result<effigy_kernel::workspace_session::ContainerIdentity, EnvError> {
+        let outcome = self
+            .journalled_creation()?
+            .ok_or_else(|| EnvError::Invalid("target has no journalled apply inventory".into()))?;
+        let receipt = outcome.receipt().ok_or_else(|| {
+            EnvError::Invalid("target has no complete gate-scoped apply inventory".into())
+        })?;
+        let candidates = match candidates {
+            Observed::Verified(mut candidates, evidence) if candidates.len() == 1 => {
+                let candidate = &mut candidates[0];
+                if candidate.project != receipt.project()
+                    || Some(candidate.identity.container_id.as_str()) != receipt.workspace_id()
+                {
+                    return Err(EnvError::Invalid(
+                        "target is not the workspace in the complete apply inventory".into(),
+                    ));
+                }
+                let created_here = receipt
+                    .created_by(&candidate.project, &candidate.identity.container_id)
+                    .is_some_and(|container| container.service() == receipt.primary_service());
+                candidate.created_by = created_here.then_some(self.id());
+                if matches!(
+                    reservation.inputs().map(|inputs| &inputs.target),
+                    Some(effigy_kernel::workspace_session::TargetEvidence::Absent { .. })
+                ) && !created_here
+                {
+                    return Err(EnvError::Invalid(
+                        "fresh target is not in this activation's created workspace ID set".into(),
+                    ));
+                }
+                Observed::Verified(candidates, evidence)
+            }
+            _ => {
+                return Err(EnvError::Invalid(
+                    "target inventory is unavailable or ambiguous".into(),
+                ))
+            }
+        };
+        self.recheck_creation(reservation, backend, deadline)?;
         let result = reservation.bind_target(&mut self.run, candidates);
         self.kernel(result)
     }
@@ -1514,7 +1902,7 @@ mod tests {
             selection: effigy_kernel::id::Digest::of(b"adapter selection"),
             inputs_digest: effigy_kernel::id::Digest::of(b"adapter inputs"),
             target: TargetEvidence::Absent {
-                project: "adapter".to_owned(),
+                project: super::super::tests::PROJECT.to_owned(),
                 backend: "colima".to_owned(),
             },
         };
@@ -1598,17 +1986,32 @@ mod tests {
             vm_boot_id: "boot-0001".into(),
             backend: "colima".into(),
         };
+        use super::super::tests::creation as creation_fixture;
+        let render = creation_fixture::render(&["workspace"]);
+        let mut row = creation_fixture::row("workspace", 'a');
+        row.id = target.container_id.clone();
+        let mut backend = creation_fixture::Fake::new(vec![], vec![row.clone()]);
+        run.create_with(
+            &mut backend,
+            &super::super::tests::selection(),
+            creation_fixture::request(&render),
+            || Ok(()),
+        )
+        .expect("journalled apply inventory");
+        let mut recheck = creation_fixture::Fake::new(vec![row.clone()], vec![row]);
         let creating_run = run.id();
-        run.bind_target(
+        run.bind_target_observing(
             &reservation,
             Observed::Verified(
                 vec![effigy_kernel::workspace_session::TargetCandidate {
                     identity: target.clone(),
-                    project: "adapter".into(),
+                    project: super::super::tests::PROJECT.into(),
                     created_by: Some(creating_run),
                 }],
                 evidence(),
             ),
+            &mut recheck,
+            Instant::now() + Duration::from_secs(5),
         )
         .expect("bound target");
         let platform = effigy_kernel::workspace_session::ImagePlatform {
@@ -1616,6 +2019,17 @@ mod tests {
             architecture: "arm64".into(),
             variant: "v8".into(),
             loader: effigy_kernel::workspace_session::LoaderFamily::Musl,
+        };
+        // The document names the machine type and loader family of the platform
+        // this test binds; a fixed spelling could only pass on one host.
+        let machine = match platform.architecture.as_str() {
+            "amd64" => "x86_64",
+            "arm64" => "aarch64",
+            other => panic!("fixture platform `{other}`"),
+        };
+        let libc = match platform.loader {
+            effigy_kernel::workspace_session::LoaderFamily::Gnu => "gnu",
+            effigy_kernel::workspace_session::LoaderFamily::Musl => "musl",
         };
         let binding = effigy_kernel::workspace_session::BoundPlatform {
             target: target.clone(),
@@ -1727,7 +2141,7 @@ mod tests {
             "schema": "effigy.workspace-context.v2",
             "protocol": 1, "host_user": "1000", "checkout_id": checkout().text(),
             "environment_resource": stack.resource.name().to_string(), "profile": "fixture",
-            "runtime": null, "vm_type": null, "routes": [], "platform": "x86_64", "libc": "gnu",
+            "runtime": null, "vm_type": null, "routes": [], "platform": machine, "libc": libc,
             "version": inputs.guest.as_ref().expect("guest").version,
             "paths": inputs.guest.as_ref().expect("guest").paths,
             "sources": inputs.guest.as_ref().expect("guest").sources,
@@ -1935,9 +2349,13 @@ mod tests {
             matches!(&holders, Observed::Verified(rows, _) if rows.len() == 1),
             "{holders:?}"
         );
-        let refused = run.apply_with(&super::super::tests::selection(), "acme-stack", || {
-            panic!("a refused transition never reaches the backend")
-        });
+        let mut backend = super::super::tests::Fake::new();
+        let refused = run.create_with(
+            &mut backend,
+            &super::super::tests::selection(),
+            super::super::tests::create_request(),
+            || panic!("a refused transition never reaches the backend"),
+        );
         assert!(
             matches!(refused, Err(EnvError::HeldBy { .. })),
             "{refused:?}"

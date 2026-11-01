@@ -169,17 +169,13 @@ pub(crate) fn metadata_to_record(policy: &EffectiveContainerPolicy) -> Option<Ba
     if exact.unknown.is_some() || matches!(exact.source, BackendSource::Recorded(_)) {
         return None;
     }
-    let context = if exact.id == BackendId::docker_compose() {
-        std::env::var("DOCKER_CONTEXT")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "default".to_owned())
-    } else {
-        policy.profile.clone()
-    };
+    let selected = crate::environment::select_backend(&policy.repo_root, policy);
+    if selected.engine != exact.id || selected.context.trim().is_empty() {
+        return None;
+    }
     Some(BackendMetadata {
         engine: exact.id.as_str().to_owned(),
-        context,
+        context: selected.context,
         source: exact.source.label(),
     })
 }
