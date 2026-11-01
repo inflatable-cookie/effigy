@@ -1609,6 +1609,9 @@ impl super::PredecessorBackend for FixturePredecessor {
 /// environment's fenced publisher promoting the exact seal it retained.
 #[test]
 fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes() {
+    // Hash offline with the host Compose CLI; native guest qualification is
+    // the integrated lifecycle gate, not this private-seal adapter proof.
+    let _backend = effigy_test_support::env::ScopedEnv::set("EFFIGY_COMPOSE_BACKEND", "docker");
     let fixture = effigy_test_support::Fixture::new("effigy-predecessor-live-").expect("fixture");
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
