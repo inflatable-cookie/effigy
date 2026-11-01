@@ -1869,6 +1869,71 @@ mod tests {
 
     #[cfg(feature = "fault-injection")]
     #[test]
+    fn ambiguous_env_transaction_retains_session_and_reservation() {
+        use effigy_kernel::gate::OwnerState;
+        use effigy_kernel::observe::Observed;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let env = env("workspace");
+        let options = options(53);
+        let session = options.id;
+        let mut adopted = false;
+        let mut armed = false;
+        let failure = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "SessionSupervisorAdoptAfter" {
+                    adopted = true;
+                }
+                if adopted && point == "BeginRecovered" {
+                    armed = true;
+                }
+                if armed && point == "StoreCommitAfter" {
+                    armed = false;
+                    return Err(std::io::Error::other("injected post-commit ambiguity"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options,
+                    "fixture-supervisor",
+                )
+            },
+        )
+        .expect_err("ambiguous Env transaction refuses");
+        let custody = failure.custody.expect("retain session and reservation");
+        let (error, custody) = custody
+            .retry(&ctx, Wait::FailFast)
+            .expect_err("bound Env admission needs recovery");
+        assert!(error
+            .to_string()
+            .contains("environment admission uncertain"));
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        let retained = matches!(
+            reader.run_owner_state(&ctx.observe(), &state, &session),
+            Observed::Verified(OwnerState::Held, _)
+        );
+        let reservation = WorkspaceActivationReservation::recover(&reader, &env.resource);
+        let bound = matches!(reservation, Observed::Verified(Some(ref reservation), _) if reservation.state() == effigy_kernel::workspace_session::ActivationReservationState::Reserved && reservation.record().environment_run.is_some());
+        drop(reader);
+        drop(custody);
+        assert!(
+            retained && bound,
+            "exact session remains held and claimed reservation recoverable"
+        );
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
     fn supervisor_adoption_failure_retains_raw_session_on_failed_cleanup() {
         use effigy_kernel::gate::OwnerState;
         use effigy_kernel::observe::Observed;
