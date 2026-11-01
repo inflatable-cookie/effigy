@@ -494,7 +494,13 @@ mod tests {
             gate,
             Observed::Verified(crate::gate::GateState::Held(_), _)
         ));
-        if let Err((_error, owner)) = cleanup {
+        if let Err((error, owner)) = cleanup {
+            assert!(
+                error
+                    .to_string()
+                    .contains("checkout backup cleanup remains unsettled"),
+                "partial cleanup must report a named unresolved outcome: {error}"
+            );
             assert!(
                 owner.has_partial_checkout_backup(),
                 "unknown cleanup must retain the same partial backup"
