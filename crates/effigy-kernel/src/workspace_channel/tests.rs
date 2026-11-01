@@ -604,6 +604,119 @@ impl Admission for LiveAdmitter<'_> {
     }
 }
 
+#[cfg(feature = "fault-injection")]
+struct ArmReleaseOnInvoke {
+    inner: Pipe,
+    point: crate::fault::Point,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmReleaseOnInvoke {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(
+            decode_frame(&bytes[4..]),
+            Ok(Frame::Response(Response {
+                outcome: ResponseOutcome::Accepted(_),
+                ..
+            }))
+        ) {
+            crate::fault::arm_point(self.point, crate::fault::Fault::Eperm);
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn pre_attach_eof_fault_retains_exact_owner_handle() {
+    use crate::fault::{self, Point};
+    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-pre-attach-eof-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[177]),
+            ),
+        );
+        let live = RunId::new(7, [177; 10]).unwrap();
+        let mut pipe = ArmReleaseOnInvoke {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body("build")),
+                        1,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("EOF cleanup is uncertain");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired());
+        fault::arm(None);
+        let retained = host.unsettled_attachment.as_ref().map(Attachment::run);
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        let retry = host.retry_cleanup(&fresh, &root);
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(reader);
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+        }
+        assert_eq!(
+            retained,
+            Some(live),
+            "the exact failed-release owner must remain held"
+        );
+        assert!(
+            retry.is_ok(),
+            "same owner cleanup should recover while the run is live"
+        );
+        assert_eq!(requests, 1, "retry must leave exactly one stop");
+    }
+}
+
 #[test]
 #[cfg(feature = "fault-injection")]
 fn owner_release_fault_retains_exact_handle_and_reports_unknown() {

@@ -2799,11 +2799,18 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 .is_err_and(|error| error.code == RefusalCode::Unavailable)
         {
             for run in self.dispatcher.admitted.clone() {
-                let cleanup = run::resume_owner(cx, root, self.fence.session, run)
-                    .and_then(|mut owner| owner.release(cx, root, Release::Eof));
-                if cleanup.is_err() {
-                    self.owner_cleanup_unsettled = true;
-                    return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                match run::resume_owner(cx, root, self.fence.session, run) {
+                    Ok(mut owner) => {
+                        if owner.release(cx, root, Release::Eof).is_err() {
+                            self.unsettled_attachment = Some(owner);
+                            self.owner_cleanup_unsettled = true;
+                            return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                        }
+                    }
+                    Err(_) => {
+                        self.owner_cleanup_unsettled = true;
+                        return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                    }
                 }
                 self.dispatcher.admitted.remove(&run);
             }
