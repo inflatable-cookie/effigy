@@ -170,4 +170,16 @@ impl Run<'_> {
             .as_ref()?
             .identity()
     }
+
+    /// The exact qualified backup this run retained, for tests that must stop
+    /// or reobserve that one incarnation and no other process.
+    #[cfg(all(test, feature = "fault-injection"))]
+    pub(super) fn checkout_backup_identity(&self) -> Option<crate::ident::ProcessIdentity> {
+        self.checkout_custody
+            .as_ref()?
+            .backup
+            .as_ref()?
+            .identity
+            .clone()
+    }
 }

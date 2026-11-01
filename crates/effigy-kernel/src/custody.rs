@@ -768,6 +768,44 @@ pub(crate) fn process_intent(
     })
 }
 
+/// Only a positively proven anchor may accompany a recorded receipt or a
+/// `go`: its generation, readable custody nonce, group membership and start
+/// order are all required. An absent anchor needs no proof because nothing
+/// claims its identity; an unproven one is retained as a pre-exec refusal.
+fn qualify_anchor(
+    receipt: &ProcessReceipt,
+    anchor: Option<&crate::ident::ProcessIdentity>,
+) -> Result<(), SpawnError> {
+    let Some(anchor) = anchor else {
+        return Ok(());
+    };
+    if !anchor::verified(receipt, anchor) {
+        return Err(SpawnError::Refused(
+            "anchor identity, nonce or group unproven".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The leader must still be the exact unreaped direct child the receipt
+/// recorded, and it must not have become a zombie, before the barrier opens.
+fn retained_leader(receipt: &ProcessReceipt) -> Result<(), SpawnError> {
+    use crate::ident::ProcessState;
+    let identity = crate::ident::process_identity(receipt.identity.pid);
+    let state = crate::ident::process_state(receipt.identity.pid);
+    if identity.verified() != Some(&receipt.identity)
+        || !matches!(
+            state,
+            Observed::Verified(ProcessState::Active | ProcessState::Stopped, _)
+        )
+    {
+        return Err(SpawnError::Refused(
+            "leader identity or state unproven before go".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl Custody {
     pub fn spawn_foreground(
         run: &mut crate::run::ForegroundRun,
@@ -1071,6 +1109,10 @@ impl Custody {
                 })
                 .transpose()?;
             crate::fault_point!(AnchorSpawn)?;
+            // No receipt, backup registration or go for an anchor this process
+            // cannot positively prove. The child is still behind its barrier,
+            // so a refusal is a pre-exec reaping, not an unknown workload.
+            qualify_anchor(&receipt, anchor.as_ref())?;
             let record = ProcessRecord {
                 process: receipt.clone(),
                 anchor: anchor.clone(),
@@ -1096,6 +1138,11 @@ impl Custody {
             if let Some(gate) = gate {
                 gate.before_go(&receipt)?;
             }
+            // The barrier has not opened yet: re-prove the exact leader and
+            // anchor under the same ownership before `go`, so a death or a
+            // replacement in the register/gate window cannot reach exec.
+            retained_leader(&receipt)?;
+            qualify_anchor(&receipt, anchor.as_ref())?;
             let (stdout, stderr, terminal) = pending.take_streams();
             let stdin = pending.take_input();
             let logs = if matches!(spec.terminal, Terminal::Discard) {
