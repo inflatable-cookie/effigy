@@ -4280,12 +4280,13 @@ fn stale_input_and_resize_are_refused_through_the_channel_loop() {
         let mut frames = terminal_hello(capability());
         frames.push(terminal_invoke(RequestId::new([1; 16])));
         frames.push(terminal_attach(attach, run, None));
-        frames.push(typed(attach, 0, b"abcdefgh"));
-        // A resize is really sent, on the same live connection.
-        frames.push(sized(attach, 1, 50, 120));
+        frames.push(sized(attach, 0, 24, 80));
         frames
     };
-    let (client, host_side) = live_connection(&frames);
+    let (mut client, host_side) = live_connection(&frames);
+    client
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded response read");
     host_side
         .set_write_timeout(Some(Duration::from_secs(30)))
         .expect("bounded owner write");
@@ -4295,25 +4296,52 @@ fn stale_input_and_resize_are_refused_through_the_channel_loop() {
             let mut transport = PeerTransport::new(host_side);
             server.serve(&mut transport, &cx, &observe, &root, &mut custody)
         });
+        wait_until("valid resize to reach the writer", || {
+            sizes(&log) == vec![size(24, 80)]
+        });
+        use std::io::Write as _;
+        client
+            .write_all(&framed(&[typed(attach, 1, b"abcdefgh")]))
+            .expect("send owner input");
         wait_until("the first chunk to land", || written(&log) == b"abcd");
         wait_until("the released row to retire the writer", || {
             log.lock().expect("pty log").retired == 1
         });
-        std::thread::sleep(Duration::from_millis(50));
+        client
+            .write_all(&framed(&[sized(attach, 2, 50, 120)]))
+            .expect("send resize after release");
+        let result = serving.join().expect("the serving thread");
+        let mut wire = Vec::new();
+        std::io::Read::read_to_end(&mut client, &mut wire).expect("read stale refusal");
+        assert!(matches!(
+            result,
+            Err(host::Refusal {
+                code: host::RefusalCode::InvalidRequest,
+                ..
+            }) | Err(host::Refusal {
+                code: host::RefusalCode::Unknown,
+                ..
+            })
+        ));
+        assert!(decoded(&wire).iter().any(|frame| matches!(
+            frame,
+            host::Frame::Refuse(host::Refusal {
+                code: host::RefusalCode::InvalidRequest,
+                ..
+            })
+        )));
         assert_eq!(
             written(&log),
             b"abcd",
             "the work queued on the released row never landed"
         );
         assert!(
-            sizes(&log).is_empty(),
-            "the resize sent on the released row was never applied: {:?}",
+            sizes(&log) == vec![size(24, 80)],
+            "only the valid resize was applied: {:?}",
             sizes(&log)
         );
         let _ = client.shutdown(std::net::Shutdown::Write);
         drop(client);
-        // The kernel's own end-of-stream release finds the row already released.
-        let _ = serving.join().expect("the serving thread");
     });
 }
 
@@ -4327,14 +4355,16 @@ fn the_serving_owner_refuses_stale_input_and_resize() {
             frames.push(terminal_invoke(RequestId::new([1; 16])));
             let attach = RequestId::new([2; 16]);
             frames.push(terminal_attach(attach, run, None));
-            frames.push(typed(attach, 0, b"abcdefgh"));
-            frames.push(sized(attach, 1, 50, 120));
+            frames.push(sized(attach, 0, 24, 80));
             frames
         };
         // Only the typing connection has to stay live: its frames are consumed
         // and the host then blocks on the quiet socket while the writer's pump
         // finishes.
-        let (typing_client, typing_host) = live_connection(&typing);
+        let (mut typing_client, typing_host) = live_connection(&typing);
+        typing_client
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("bounded response read");
         let acceptor = PeerAccept {
             connections: VecDeque::from(vec![TestTransport::Peer(PeerTransport::new(typing_host))]),
         };
@@ -4376,24 +4406,43 @@ fn the_serving_owner_refuses_stale_input_and_resize() {
         std::thread::scope(|scope| {
             let _close = CloseOwnerWrite(typing_client.try_clone().expect("owner shutdown guard"));
             let serving = scope.spawn(|| owner.serve_pending(&mut terminals));
+            wait_until("valid resize to reach the writer", || {
+                sizes(&log) == vec![size(24, 80)]
+            });
+            use std::io::Write as _;
+            typing_client
+                .write_all(&framed(&[typed(RequestId::new([2; 16]), 1, b"abcdefgh")]))
+                .expect("send owner input");
             wait_until("the first chunk to land", || written(&log) == b"abcd");
             wait_until("the released row to retire the writer", || {
                 log.lock().expect("pty log").retired == 1
             });
-            std::thread::sleep(Duration::from_millis(50));
+            typing_client
+                .write_all(&framed(&[sized(RequestId::new([2; 16]), 2, 50, 120)]))
+                .expect("send resize after release");
+            let result = serving.join().expect("the serving thread");
+            let mut wire = Vec::new();
+            std::io::Read::read_to_end(&mut typing_client, &mut wire).expect("read stale refusal");
+            assert!(result.is_err());
+            assert!(decoded(&wire).iter().any(|frame| matches!(
+                frame,
+                host::Frame::Refuse(host::Refusal {
+                    code: host::RefusalCode::InvalidRequest,
+                    ..
+                })
+            )));
             assert_eq!(
                 written(&log),
                 b"abcd",
                 "the work queued on the released row never landed"
             );
             assert!(
-                sizes(&log).is_empty(),
-                "the resize sent on the released row was never applied: {:?}",
+                sizes(&log) == vec![size(24, 80)],
+                "only the valid resize was applied: {:?}",
                 sizes(&log)
             );
             let _ = typing_client.shutdown(std::net::Shutdown::Write);
             drop(typing_client);
-            let _ = serving.join().expect("the serving thread");
         });
     });
 }
@@ -4673,6 +4722,27 @@ fn two_independent_terminals_and_capabilities_never_cross() {
     wait_until("each terminal's own writer", || {
         written(&first_log) == b"b" && written(&second_log) == b"c"
     });
+
+    let first_owner =
+        run::resume_owner(&cx, &root, terminal_session(), first_run).expect("first owner");
+    let second_owner =
+        run::resume_owner(&cx, &root, terminal_session(), second_run).expect("second owner");
+    assert_eq!(
+        first_custody
+            .input(&second_owner, b"crossed")
+            .expect_err("second owner is foreign to first custody")
+            .code,
+        host::RefusalCode::Unavailable
+    );
+    assert_eq!(
+        second_custody
+            .input(&first_owner, b"crossed")
+            .expect_err("first owner is foreign to second custody")
+            .code,
+        host::RefusalCode::Unavailable
+    );
+    assert_eq!(written(&first_log), b"b");
+    assert_eq!(written(&second_log), b"c");
 
     let other_run = RunId::new(1, [11; 10]).expect("run id");
     let _third_owner = live_admission_named(
