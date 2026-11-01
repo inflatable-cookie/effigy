@@ -491,10 +491,8 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     };
     session.admitted(&mut run)?;
     session.active();
-    let watch = session.owner_watch().ok();
-
     // The activation runs here, in the process that will keep it.
-    let mut service = match request.activation.clone() {
+    match request.activation.clone() {
         Activation::Disposable(disposable) => {
             #[cfg(not(feature = "workspace-serving-fixture"))]
             let activated: Result<ServiceOwner<'_>, RunError> = {
@@ -508,7 +506,7 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             #[cfg(feature = "workspace-serving-fixture")]
             let activated =
                 super::serving_fixture::activate(&cx, &observe, &root, &request, &disposable);
-            match activated {
+            let service = match activated {
                 Ok(service) => service,
                 Err(error) => {
                     let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
@@ -516,10 +514,11 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                     session.refused_message(error.category(), error.to_string());
                     return Err(error);
                 }
-            }
+            };
+            serve_activated(session, run, &root, service)
         }
         Activation::ContainerUp { request: input } => {
-            match super::container_up::activate(&request, input) {
+            let service = match super::container_up::activate(&request, input) {
                 Ok(service) => service,
                 Err(error) => {
                     let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
@@ -527,10 +526,28 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                     session.refused_message(error.category(), error.to_string());
                     return Err(error);
                 }
-            }
+            };
+            serve_activated(session, run, &root, service)
         }
-    };
+    }
+}
 
+/// Both production and disposable dispatchers retain the same custody loop.
+fn serve_activated<Ad, Rs, Ob, Id>(
+    mut session: EngineSession,
+    mut run: Run<'_>,
+    root: &StateRoot,
+    mut service: ServiceOwner<'_, Ad, Rs, Ob, Id>,
+) -> Result<(), RunError>
+where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
+    let observe = observation();
+    let watch = session.owner_watch().ok();
+    let mut adapter = ServingSettlement;
     // The switch must be a durable fact of the session's own run: the host reads
     // it back from the journal and refuses to serve anything else, so no
     // activation can announce a session it never switched.

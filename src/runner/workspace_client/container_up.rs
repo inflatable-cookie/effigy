@@ -46,52 +46,79 @@ impl ContainerUpRequest {
     }
 }
 
-/// Runs inside the detached serving process. The retained plan contains the
-/// exact preflight seal and pins its backend and single absolute deadline.
-/// Until the parked integration adapter is available, refuse before apply;
-/// the ordinary reconciler is not an alternate activation owner.
+/// Observe identity before any preparation or mount/secret effect. The worker
+/// is read-only, so timeout cannot leave an abandoned mutator behind.
+fn validate_identity(host: &ServingHostRequest, until: Instant) -> Result<(), RunError> {
+    use crate::runner::workspace_command::provisioning::bounded_publication_read;
+    let host = host.clone();
+    bounded_publication_read("workspace-startup-identity", until, move || {
+        let unavailable = || {
+            crate::runner::error::RunnerError::task_invocation(
+                "workspace checkout/backend identity observation unavailable",
+            )
+        };
+        let token = effigy_core::worktree_scope::checkout_token(&host.project_path)
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        let expected: String = host
+            .checkout
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if token != expected {
+            return Err(crate::runner::error::RunnerError::task_invocation(
+                "workspace activation checkout differs from its host",
+            ));
+        }
+        let kind = match effigy_core::worktree_scope::scope_kind(&host.project_path)
+            .map_err(|_| unavailable())?
+        {
+            Some(effigy_core::worktree_scope::ScopeKind::LinkedWorktree) => {
+                effigy_kernel::id::CheckoutKind::LinkedWorktree
+            }
+            Some(effigy_core::worktree_scope::ScopeKind::EphemeralClone) => {
+                effigy_kernel::id::CheckoutKind::EphemeralClone
+            }
+            None => effigy_kernel::id::CheckoutKind::Primary,
+        };
+        let environment = effigy_containers::environment::EnvRef::new(
+            effigy_kernel::id::CheckoutId::new(kind, host.checkout),
+            &host.environment,
+        )
+        .map_err(|_| unavailable())?;
+        let observe = crate::runner::task_engine::observe_context(
+            until.saturating_duration_since(Instant::now()),
+        );
+        let location = effigy_kernel::location::CheckoutLocation {
+            root: effigy_core::worktree_scope::checkout_root(&host.project_path),
+        };
+        let root_observed = effigy_kernel::root::StateRoot::checkout_observe(&observe, &location);
+        let root = root_observed.verified().ok_or_else(unavailable)?;
+        let record_observed =
+            effigy_containers::environment::EnvRecord::read(&observe, root, &environment.resource);
+        let record = record_observed.verified().ok_or_else(unavailable)?;
+        let selected = record.recorded_backend().ok_or_else(unavailable)?;
+        if selected.context != host.profile {
+            return Err(crate::runner::error::RunnerError::task_invocation(
+                "workspace activation backend profile differs from its host",
+            ));
+        }
+        Ok(())
+    })
+    .map_err(|error| RunError::unavailable(error.to_string()))
+}
+
+/// Refuse unsupported Phase-A custody before invoking mutating preparation.
+/// No plan, seal or run is reconstructed, and no ordinary reconcile fallback
+/// can turn this missing capability into an activation acknowledgement.
 pub(crate) fn activate(
     host: &ServingHostRequest,
     request: ContainerUpRequest,
 ) -> Result<ServiceOwner<'static>, RunError> {
     let until = request.deadline(host)?;
-    let preparation = crate::runner::container_command::lifecycle::prepare_workspace_up(
-        &host.project_path,
-        &request.environment,
-    )
-    .map_err(|error| RunError::step_failed("workspace container preparation", error))?;
-    // Legacy preparation helpers do not all accept a deadline yet. This
-    // refuses late completion; it does not prove interruptible preparation.
-    let policy = &preparation.policy;
-    let environment = crate::runner::environment::env_ref(policy)
-        .map_err(|error| RunError::step_failed("workspace checkout identity", error))?;
-    if environment.checkout.token() != &host.checkout {
-        return Err(RunError::refused(
-            "workspace activation checkout differs from its host",
-        ));
-    }
-    let deadline =
-        crate::runner::container_command::reserved_input::PublicationDeadline::new(until);
-    deadline
-        .remaining()
-        .map_err(|error| RunError::unavailable(error.to_string()))?;
-    let mut backend =
-        crate::runner::container_command::reserved_input::ContainerBackendObservation::prepare(
-            policy,
-        )
-        .map_err(|error| RunError::step_failed("workspace backend observation", error))?;
-    let retained = crate::runner::container_command::reserved_input::plan(
-        crate::runner::container_command::reserved_input::ReservedPlanRequest { policy, deadline },
-        &mut backend,
-    )
-    .map_err(|error| RunError::unavailable(error.to_string()))?
-    .ok_or_else(|| RunError::refused("hybrid environment has no workspace activation"))?;
-    retained
-        .deadline()
-        .remaining()
-        .map_err(|error| RunError::unavailable(error.to_string()))?;
+    validate_identity(host, until)?;
     Err(RunError::unavailable(
-        "workspace parked integration adapter is unavailable; no apply was attempted",
+        "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted",
     ))
 }
 
