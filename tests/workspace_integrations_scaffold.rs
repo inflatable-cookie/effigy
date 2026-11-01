@@ -533,3 +533,72 @@ fn cleanup_overshoot_does_not_clear_attempt() {
     .is_err());
     assert_eq!(adapter.clears, 0);
 }
+
+struct LateClear {
+    integration_deadline: Instant,
+    cleanup_deadline: Instant,
+    journal_has_attempt: bool,
+    effect_present: bool,
+    delay_clear: bool,
+}
+impl WorkspaceIntegrationAdapter for LateClear {
+    type Error = ();
+    fn integration_deadline(&self) -> Instant {
+        self.integration_deadline
+    }
+    fn record_step(&mut self, _: WorkspaceIntegrationStep, _: bool) -> Result<(), ()> {
+        self.journal_has_attempt = true;
+        Ok(())
+    }
+    fn clear_step(&mut self, _: WorkspaceIntegrationStep) -> Result<(), ()> {
+        if self.delay_clear {
+            while Instant::now() < self.cleanup_deadline {
+                std::thread::yield_now();
+            }
+        }
+        self.journal_has_attempt = false;
+        Ok(())
+    }
+    fn reconcile(&mut self, step: WorkspaceIntegrationStep, _: Instant) -> Result<(), ()> {
+        if step == WorkspaceIntegrationStep::Secrets {
+            self.effect_present = true;
+        }
+        Ok(())
+    }
+    fn unwind(&mut self, _: WorkspaceIntegrationStep, _: Instant) -> Result<(), ()> {
+        self.effect_present = false;
+        Ok(())
+    }
+}
+#[test]
+fn late_completed_clear_refuses_then_reconciles_safely() {
+    let cleanup_deadline = Instant::now() + Duration::from_millis(5);
+    let mut adapter = LateClear {
+        integration_deadline: Instant::now() + Duration::from_secs(1),
+        cleanup_deadline,
+        journal_has_attempt: true,
+        effect_present: true,
+        delay_clear: true,
+    };
+    let mut outcome =
+        WorkspaceIntegrationOutcome::from_attempted(vec![WorkspaceIntegrationStep::Secrets])
+            .unwrap();
+    assert_eq!(
+        unwind_workspace_integrations(&mut adapter, &mut outcome, cleanup_deadline),
+        Err("integration effects unsettled; re-run up")
+    );
+    assert!(!adapter.effect_present);
+    assert!(!adapter.journal_has_attempt); // Verified absence was durably cleared, but late.
+    adapter.delay_clear = false;
+    assert!(unwind_workspace_integrations(
+        &mut adapter,
+        &mut outcome,
+        Instant::now() + Duration::from_secs(1)
+    )
+    .is_ok());
+    // Simulate reloading the now-empty fake journal and rerunning integration.
+    let mut recovered = WorkspaceIntegrationOutcome::from_attempted(vec![]).unwrap();
+    assert!(run_workspace_integrations(&mut adapter, &mut recovered).is_ok());
+    assert!(adapter.effect_present);
+    assert!(adapter.journal_has_attempt);
+}
