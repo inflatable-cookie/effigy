@@ -83,6 +83,25 @@ pub(in crate::runner) fn workspace_task_target(
 }
 
 impl HostDispatch {
+    fn retain_started(
+        &mut self,
+        expected: RunId,
+        started: crate::runner::managed_run::Started,
+    ) -> Result<(), Refusal> {
+        let matches_ticket = started.run == expected && started.client.run == expected;
+        self.admitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(started);
+        if matches_ticket {
+            Ok(())
+        } else {
+            Err(Refusal::unknown(
+                "the host engine admitted a run that is not the reserved one",
+            ))
+        }
+    }
+
     pub(crate) fn new(host_checkout: PathBuf, root: StateRoot) -> Self {
         Self {
             host_checkout,
@@ -412,17 +431,7 @@ impl channel::Admission for HostDispatch {
             resolution,
         )
         .map_err(|error| Refusal::unavailable(error.to_string()))?;
-        let matches_ticket = started.run == ticket.run();
-        self.admitted
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(started);
-        if !matches_ticket {
-            return Err(Refusal::unknown(
-                "the host engine admitted a run that is not the reserved one",
-            ));
-        }
-        Ok(())
+        self.retain_started(ticket.run(), started)
     }
 }
 
@@ -564,6 +573,83 @@ pub(crate) fn host_checkout(serving: &super::ServingFacts) -> &Path {
 mod checkout_boundary_tests {
     use super::*;
     use effigy_kernel::workspace_channel::{Observer, OutputMode, Resolver};
+
+    #[test]
+    fn wrong_supervisor_admitted_run_retains_the_exact_child() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = effigy_test_support::Fixture::new("wrong-admission").expect("fixture");
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = StateRoot::effects(&cx, fixture.path()).expect("state");
+        let expected = RunId::new(7, [1; 10]).expect("ticket run");
+        let wrong = RunId::new(7, [2; 10]).expect("wrong run");
+        let fence = effigy_kernel::run::Fence {
+            resource: effigy_kernel::id::ResourceId::store(
+                effigy_kernel::id::Scope::Machine,
+                "test-owner",
+            )
+            .expect("resource"),
+            generation: effigy_kernel::id::Generation::new(1),
+        };
+        let event =
+            serde_json::to_vec(&effigy_kernel::supervise::Event::Admitted { run: wrong, fence })
+                .expect("event");
+        let bytes = event
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let script = fixture.path().join("wrong-admission.py");
+        std::fs::write(&script, format!("#!/usr/bin/env python3\nimport sys, struct\nr = sys.stdin.buffer\nn = struct.unpack('>I', r.read(4))[0]\nr.read(n)\nb = bytes.fromhex('{bytes}')\nsys.stdout.buffer.write(struct.pack('>I', len(b)) + b)\nsys.stdout.buffer.flush()\nr.read()\n")).expect("fixture script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("script mode");
+        let executable =
+            effigy_kernel::supervise::Executable::capture(&script).expect("executable");
+        let client = effigy_kernel::supervise::start_engine_at(
+            &cx,
+            &root,
+            effigy_kernel::supervise::EngineLaunch {
+                payload: vec![],
+                cwd: fixture.path().to_owned(),
+                env: vec![],
+                handoff: None,
+                admission: None,
+            },
+            &executable,
+            effigy_kernel::supervise::ClientMode::Owning,
+        )
+        .expect("child sent admission");
+        let acknowledged = client.run;
+        let started = crate::runner::managed_run::Started {
+            client,
+            run: expected,
+            root: root.clone(),
+        };
+        let mut dispatch = HostDispatch::new(fixture.path().to_owned(), root);
+        let result = dispatch.retain_started(expected, started);
+        let mut retained = dispatch.admitted.lock().expect("retained clients");
+        let retained_runs: Vec<_> = retained.iter().map(|owner| owner.client.run).collect();
+        for owner in retained.iter_mut() {
+            owner.client.close_input();
+        }
+        // The fixture emits no Closed event; wait still reaps each exact child.
+        let reaped: Vec<_> = retained
+            .iter_mut()
+            .map(|owner| {
+                owner
+                    .client
+                    .wait_recoverable(cx.operation())
+                    .err()
+                    .map(|error| error.kind())
+            })
+            .collect();
+        let refusal = result.expect_err("wrong child admission refuses");
+        assert_eq!(
+            refusal.code,
+            effigy_kernel::workspace_channel::RefusalCode::Unknown
+        );
+        assert_eq!(acknowledged, wrong);
+        assert_eq!(retained_runs, vec![wrong]);
+        assert_eq!(reaped, vec![Some(std::io::ErrorKind::UnexpectedEof)]);
+    }
 
     #[test]
     fn observe_refuses_expired_budget_and_status_without_run_identity() {
