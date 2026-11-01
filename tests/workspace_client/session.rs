@@ -665,6 +665,50 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
     }
 }
 
+#[test]
+fn peer_unavailable_refusal_does_not_forge_owner_eof() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut frames = authenticated(session.session());
+    frames.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    frames.push(Frame::Refuse(Refusal::unavailable("peer supplied")));
+    let result = server.serve(
+        &mut Pipe::new(&frames),
+        &host.cx,
+        &host.observe(),
+        &host.root,
+        &mut NoStreams,
+    );
+    let stops = host.stops(id(10));
+    let pending = server.cleanup_pending();
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert!(result.is_err());
+    assert!(
+        pending,
+        "peer refusal must preserve unresolved owner custody"
+    );
+    assert_eq!(stops, 0, "a peer refusal cannot forge EOF");
+}
+
 struct LoopbackTransport(std::net::TcpStream);
 impl Transport for LoopbackTransport {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {

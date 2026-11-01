@@ -828,7 +828,10 @@ fn pre_attach_detach_fault_retains_exact_owner_handle() {
         assert_eq!(error.code, RefusalCode::Unknown);
         assert!(fault::fired());
         fault::arm(None);
-        let retained = host.unsettled_attachment.as_ref().map(Attachment::run);
+        let retained = host
+            .unsettled_attachment
+            .as_ref()
+            .map(|handle| (handle.run(), handle.id(), handle.pending_release()));
         let fresh = cleanup(&cx).operation().effects().unwrap();
         let retry = host.retry_cleanup(&fresh, &root);
         let reader = match Store::read(&observe_context(), &root) {
@@ -849,12 +852,171 @@ fn pre_attach_detach_fault_retains_exact_owner_handle() {
         }
         assert_eq!(
             retained,
-            Some(live),
-            "the exact failed-detach owner must remain held"
+            Some((
+                live,
+                crate::run::owner_attachment_id(live),
+                Some(Release::Detach)
+            )),
+            "the exact failed-detach owner and cause must remain held"
         );
         assert!(retry.is_ok(), "same owner detach should recover while live");
         assert_eq!(requests, 0, "detach must not record an EOF stop");
     }
+}
+
+#[cfg(feature = "fault-injection")]
+struct MultiResolver;
+#[cfg(feature = "fault-injection")]
+impl super::Resolver for MultiResolver {
+    fn resolve(
+        &mut self,
+        _: &EffectContext,
+        body: &InvocationBody,
+    ) -> Result<ResolvedInvocation, Refusal> {
+        let Selector::Task(name) = &body.selector else {
+            return Err(Refusal::invalid("task required"));
+        };
+        Ok(invocation(task(name).resource()))
+    }
+}
+#[cfg(feature = "fault-injection")]
+struct ArmAfterTwoInvokes {
+    inner: Pipe,
+    accepted: usize,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmAfterTwoInvokes {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(
+            decode_frame(&bytes[4..]),
+            Ok(Frame::Response(Response {
+                outcome: ResponseOutcome::Accepted(_),
+                ..
+            }))
+        ) {
+            self.accepted += 1;
+            if self.accepted == 2 {
+                crate::fault::arm_point(
+                    crate::fault::Point::RunAttachReleaseBefore,
+                    crate::fault::Fault::Eperm,
+                );
+            }
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-multi-owner-eof");
+    let mut grants = GrantBook::new();
+    grants.issue(
+        capability(),
+        binding(session),
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        grants,
+        Dispatcher::new(
+            LiveAdmitter {
+                root: &root,
+                runs: vec![],
+            },
+            MultiResolver,
+            Observer::default(),
+            Ids::new(&[180, 181]),
+        ),
+    );
+    let mut pipe = ArmAfterTwoInvokes {
+        inner: Pipe::new(
+            stream(&[
+                Frame::Hello(hello()),
+                Frame::Authenticate(capability()),
+                Frame::Request(request(
+                    session,
+                    RequestBody::Invoke(invocation_body("first")),
+                    1,
+                )),
+                Frame::Request(request(
+                    session,
+                    RequestBody::Invoke(invocation_body("second")),
+                    2,
+                )),
+            ]),
+            peer(),
+        ),
+        accepted: 0,
+    };
+    let result = host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams);
+    let fired = crate::fault::fired();
+    crate::fault::arm(None);
+    let fresh = cleanup(&cx).operation().effects().unwrap();
+    let retry = host.retry_cleanup(&fresh, &root);
+    let fences = host
+        .dispatcher
+        .admission
+        .runs
+        .iter()
+        .map(|run| (run.id(), run.fence().clone()))
+        .collect::<Vec<_>>();
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    let requests: i64 = reader
+        .conn()
+        .query_row("SELECT count(*) FROM requests", [], |row| row.get(0))
+        .unwrap();
+    let actions = {
+        let mut statement = reader
+            .conn()
+            .prepare("SELECT action FROM requests")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| serde_json::from_str::<crate::run::Request>(&row.unwrap()).unwrap())
+            .collect::<Vec<_>>()
+    };
+    drop(reader);
+    for run in host.dispatcher.admission.runs.drain(..) {
+        run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+    }
+    assert!(
+        result.is_err() && fired,
+        "first EOF release fault must fire"
+    );
+    assert!(
+        retry.is_ok(),
+        "all original owner EOF releases should recover"
+    );
+    assert!(!host.cleanup_pending());
+    assert_eq!(requests, 2, "each admitted owner gets one stop");
+    assert!(
+        actions.iter().all(
+            |request| matches!(request.action, crate::run::RequestAction::Stop)
+                && fences
+                    .iter()
+                    .any(|(run, fence)| *run == request.run && fence == &request.expected)
+        ),
+        "each stop must name its exact original run and fence"
+    );
+    assert_ne!(
+        actions[0].run, actions[1].run,
+        "the stops belong to distinct runs"
+    );
 }
 
 #[test]
