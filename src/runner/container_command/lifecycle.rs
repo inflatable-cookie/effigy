@@ -301,10 +301,14 @@ fn run_container_up_inner(
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
+    crate::runner::workspace_client::container_up::require_supported_activation(repo_root, name)?;
     // `container up` is a Prepare path (contract 020): a checkout whose bundle
     // or catalog source is behind refreshes it first and this run continues on
     // the newly selected bytes. Guests keep the pins they were handed.
     prepare_sources_for_container_up(repo_root)?;
+    // Source refresh may have changed mode. Recheck before policy preparation,
+    // mount creation, secrets, handover or the ordinary reconciler can run.
+    crate::runner::workspace_client::container_up::require_supported_activation(repo_root, name)?;
 
     operation.stage = Some("preparation");
     let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;

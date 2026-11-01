@@ -172,3 +172,36 @@ fn container_up_changed_recorded_profile_refuses_before_preparation() {
     assert!(error.contains("identity observation unavailable"));
     assert!(!error.contains("BACKEND_SECRET_DO_NOT_EMIT"));
 }
+
+#[test]
+fn container_up_route_keeps_unrelated_hybrid_environment_on_ordinary_path() {
+    let fixture = effigy_test_support::Fixture::new("workspace-up-routing").expect("fixture");
+    std::fs::write(
+        fixture.path().join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+[containers.db]
+compose_file = "compose.yml"
+primary_service = "db"
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "app"
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+"#,
+    )
+    .expect("declaration");
+    require_supported_activation(fixture.path(), Some("db")).expect("hybrid route");
+    assert!(require_supported_activation(fixture.path(), Some("web"))
+        .expect_err("workspace route")
+        .to_string()
+        .contains(PREPARATION_UNAVAILABLE));
+    assert!(require_supported_activation(fixture.path(), None).is_err());
+    assert!(!fixture.path().join(".effigy").exists());
+}

@@ -11,6 +11,49 @@ use serde::{Deserialize, Serialize};
 use super::serving_host::ServingHostRequest;
 use super::supervisor::ServiceOwner;
 
+const PREPARATION_UNAVAILABLE: &str =
+    "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted";
+
+/// Public lifecycle routing must not fall through to the ordinary reconciler
+/// when the declaration requires a reserved workspace owner. Classification
+/// reads declarations only; it neither materializes policy nor refreshes sources.
+pub(crate) fn require_supported_activation(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+) -> Result<(), crate::runner::error::RunnerError> {
+    use crate::runner::error::RunnerError;
+    let repo_root = repo_root.to_path_buf();
+    let name = name.map(str::to_owned);
+    let declared = crate::runner::workspace_command::provisioning::bounded_publication_read(
+        "workspace-up-routing",
+        Instant::now() + Duration::from_secs(30),
+        move || {
+            let manifest = effigy_manifest::load_task_manifest(&repo_root.join("effigy.toml"))
+                .map_err(|_| {
+                    RunnerError::task_invocation("workspace activation declaration unavailable")
+                })?;
+            let selected = name.as_deref().or_else(|| {
+                manifest
+                    .containers
+                    .as_ref()
+                    .and_then(|config| config.default.as_deref())
+            });
+            effigy_containers::resolve_operator_workspace_for_container(&manifest, selected)
+                .map(|workspace| workspace.is_some())
+                .map_err(|_| {
+                    RunnerError::task_invocation(
+                        "workspace activation declaration is ambiguous or unavailable",
+                    )
+                })
+        },
+    )
+    .map_err(|_| RunnerError::task_invocation("workspace activation declaration unavailable"))?;
+    if declared {
+        return Err(RunnerError::task_invocation(PREPARATION_UNAVAILABLE));
+    }
+    Ok(())
+}
+
 /// The front end's intent. No credential or purported observation is accepted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,9 +160,7 @@ pub(crate) fn activate(
 ) -> Result<ServiceOwner<'static>, RunError> {
     let until = request.deadline(host)?;
     validate_identity(host, until)?;
-    Err(RunError::unavailable(
-        "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted",
-    ))
+    Err(RunError::unavailable(PREPARATION_UNAVAILABLE))
 }
 
 #[cfg(test)]

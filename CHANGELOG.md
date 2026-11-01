@@ -11,6 +11,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Detached workspace hosts refuse detach before their committed startup
   acknowledgement. Container-up supervisor requests accept command intent
   only; serialized seals, backend evidence and credentials are rejected.
+  Container-mode `up` refuses before preparation while bounded Phase-A custody
+  is unavailable, rather than falling through to ordinary reconciliation.
 
 - Build reserved workspace successor attribution from the activation's exact-ID
   creation journal with the same publication deadline.
