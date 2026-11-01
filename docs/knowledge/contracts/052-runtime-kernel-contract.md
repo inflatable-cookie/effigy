@@ -3050,6 +3050,13 @@ lane's, not this contract's.
 This subsection is separable. Without it, a direct terminal gets local reads
 only, and host access needs a terminal opened through Effigy.
 
+Status: the session-enrolment request, per-client capability storage and the
+generation/container binding are implemented at the kernel and runner seam
+(§8.3, §8.11). The credential-minting Prepare step is not: the production
+activation caller that would install it is unmerged, and no production mint
+site exists yet (§8.11). A guest therefore reports host access unavailable with
+the missing credential named, and local reads keep working.
+
 ### 8.9 Binary provisioning
 
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
@@ -3091,8 +3098,10 @@ only, and host access needs a terminal opened through Effigy.
   refuses naming that command. It never discovers a checkout to build from and
   never writes a host source pointer at consumer runtime.
 - No run-time build or download: task, exec and terminal entry never fetch
-  or compile Effigy or look for a sibling checkout. A contributor's explicit
-  Prepare may build the artifact and record the same digest receipt.
+  or compile Effigy or look for a sibling checkout. A contributor produces the
+  artifact with the explicit `effigy workspace:linux:artifact` task, which
+  records the same digest receipt; Prepare itself never builds one, even when a
+  sibling checkout is present, and consumes only a produced artifact.
 - A version or protocol mismatch between client, context and server refuses
   before any effect, naming the host re-prepare command. Guest artifact
   installation never replaces the live executable under an active run.
@@ -3577,10 +3586,14 @@ no run, no resolution and no second credential.
   mounted checkout. They open no connection, hold no capability and write
   nothing.
 - **Host authority.** Everything else becomes one channel request: `observe`
-  for a live read (`doctor`, run and container status, logs, hosts, scope) and
-  `invoke` for anything with authority (tasks, `container down` and the rest of
-  the container lifecycle, the workspace entry, stores, delivery). The method
-  label grants nothing — the host decides the effect class from its own policy.
+  for a live read and `invoke` for anything with authority. The method label
+  grants nothing — the host decides the effect class from its own policy. The
+  merged dispatcher (`workspace_client/host_dispatch.rs`) serves host-target
+  `runs:list` and `runs:status` observations and admits a declared host-placed
+  task run a reservation can carry; every other observation, a selector that
+  routes to a host built-in, a shared-lock task and an engine-internal run
+  refuse by name with the host command, so `doctor`, `container …` status/logs,
+  hosts, scope and the rest of the container lifecycle still run on the host.
   The body carries a selector, the checkout-relative cwd, the host target, the
   operator's own arguments and the output mode; it carries no plan, executable,
   entry point or state root.
@@ -3755,18 +3768,25 @@ another lane's.
   exists yet (the activation caller is still #482-owned); the focused fixtures mint a
   canonical secret.
 
-*Remaining binding:*
+*Bound (production dispatcher):*
 
-- **Production `channel::Server` construction and the dispatcher adapter.** `ServingFacts`
-  now supplies every fact `channel::Server::new` needs, so the remaining work is the
-  narrow adapter over the existing engine (`Resolver` re-resolving `InvocationBody` from
-  host records via `build_execution_preflight`/`resolve_route`/`TaskTarget`, `Admission`
-  calling `managed_run::client::start_admitted` with the exact ticket, `Observer` on the
-  host `ObserveContext`, `RunIds` on engine entropy) plus the `adopt_production` server
-  constructor in `serving.rs`. Both live entirely inside `src/runner/workspace_client/`;
-  no kernel or lane module changes are needed.
+- **The production server and dispatcher adapter are built from the validated serving
+  facts.** `host_dispatch::HostDispatch` re-resolves `InvocationBody` from host records
+  (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
+  `managed_run::start_reserved` with the exact ticket, serves `runs:list`/`runs:status`
+  on the host `ObserveContext`, and refuses every operation it does not serve.
+  `host_dispatch::production_server` composes it into `channel::Server`, and
+  `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
-**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+*Remaining:*
+
+- **The production activation caller.** `environment::workspace::up_prepared` still has
+  only test call sites, so nothing in a released command prepares a guest context and
+  a qualified locator yet. The wider Observe surface (every observation beyond
+  `runs:list`/`runs:status`), the guest-side entry for non-task invocations and native
+  backend qualification remain unmerged.
+
+**Guest entry (v2, bound).** The guest's context read is one
 call site, and the binding replaces the bridge entirely rather than adding a
 second seam:
 

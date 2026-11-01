@@ -792,8 +792,8 @@ relatively inside it, and Compose resolves that against the project directory,
 so neither a container environment nor the Compose command line carries an
 Effigy interpolation value. A catalog service's Dockerfile is rendered inline
 (`dockerfile_inline`) from that content instead of a path, because Compose
-reads `build.dockerfile` against the build context. The former mutable output
-under `.effigy/runtime/compose` is replaced automatically on the next Prepare.
+reads `build.dockerfile` against the build context. Anything left under the
+former mutable `.effigy/runtime/compose` is ignored and never rewritten.
 
 A shared service is rendered outside any checkout's generation, into one
 machine-wide content-addressed directory under the Effigy home

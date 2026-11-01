@@ -72,7 +72,7 @@ coverage limits (052 §7.6).
 | --- | --- | --- |
 | Generation, state | `resources` row | `active` (attachable at the current generation), `stopped`, or neither while a run is in progress |
 | Backend | `resources.backend` | exact engine, context and the policy source that chose it, written by Prepare (§6) |
-| Engine fields | `resources.engine` | `{schema, retention, project, imported}` |
+| Engine fields | `resources.engine` | `{schema, retention, project}` |
 | Desired | `object_refs` | the render this environment points at (#229) |
 | Holders | `attachments` | runs attached to the environment, with liveness from their owner gates |
 
@@ -85,8 +85,8 @@ runtime's own: Running, Stopped or Absent.
 ## 3. Transitions
 
 Every transition is one `EnvRun`: a kernel run owned by the environment, so
-up, down, handover, reset, reap and import serialise on `Gate(Env)`.
-A transition waits up to 10 minutes for the gate; idle stop and import do not wait.
+up, down, handover, reset and reap serialise on `Gate(Env)`.
+A transition waits up to 10 minutes for the gate; idle stop does not wait.
 
 - **Permit.** A backend effect needs a `TransitionPermit`. It is refused
   (`HeldBy`) while any holder remains. Before asking, the transition settles
@@ -413,8 +413,9 @@ on Docker Desktop, with cbs and Acowtancy:
    keeps the next one running.
 5. Kill a task with SIGKILL mid-run, then `container down`: it settles the
    interrupted holder and stops.
-6. Upgrade from v0.14.1 with stacks running: no container restarts; the
-   record imports; marker files are byte-identical.
+6. Upgrade from v0.14.1 with stacks running: the first `up` reconciles the
+   running stack in one apply, recreating each changed service once on its
+   unchanged named volume; no importer runs and marker files stay byte-identical.
 7. With both engines installed, the unselected engine sees no call.
 
 Q-010 adds crash recovery for each durable class, multi-checkout concurrency,
