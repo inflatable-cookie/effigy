@@ -607,6 +607,17 @@ pub struct ParkedEnvRun<'r> {
     parts: ParkedEnvParts<'r>,
 }
 
+pub(super) struct EnvAdmissionFailure<'r> {
+    pub error: EnvError,
+    pub run: Option<Box<Run<'r>>>,
+}
+
+impl From<EnvError> for EnvAdmissionFailure<'_> {
+    fn from(error: EnvError) -> Self {
+        Self { error, run: None }
+    }
+}
+
 #[derive(Debug)]
 enum ParkedEnvGate<'r> {
     Parked(Box<effigy_kernel::run::ParkedWorkspaceRun<'r>>),
@@ -953,6 +964,19 @@ impl<'r> EnvRun<'r> {
         Self::admit(ctx, env, op, wait, Some(claim))
     }
 
+    pub(super) fn begin_claimed_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<Self, EnvAdmissionFailure<'r>> {
+        let claim = reservation
+            .claim()
+            .map_err(|error| EnvError::from_run(&env.name, error))?;
+        Self::admit_recoverable(ctx, env, op, wait, Some(claim))
+    }
+
     fn admit(
         ctx: &EnvContext<'r>,
         env: &EnvRef,
@@ -960,8 +984,25 @@ impl<'r> EnvRun<'r> {
         wait: Wait,
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
     ) -> Result<Self, EnvError> {
+        Self::admit_recoverable(ctx, env, op, wait, claim).map_err(|failure| {
+            if let Some(run) = failure.run {
+                if let Ok(cleanup) = ctx.cleanup() {
+                    let _ = run.settle(&cleanup, &mut EnvSettlement);
+                }
+            }
+            failure.error
+        })
+    }
+
+    fn admit_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
+    ) -> Result<Self, EnvAdmissionFailure<'r>> {
         if ctx.cx.operation().placement() != Placement::Host {
-            return Err(EnvError::HostAuthorityRequired);
+            return Err(EnvError::HostAuthorityRequired.into());
         }
         let invocation = ResolvedInvocation::new(InvocationSpec {
             task: TaskId::new(env.checkout, "", Surface::Published, op.name(), None)
@@ -1037,7 +1078,7 @@ impl<'r> EnvRun<'r> {
             }
             Err(error) => {
                 step.fail(&format!("environment `{}` was not entered", env.name));
-                return Err(error);
+                return Err(error.into());
             }
         };
         // The gate is held: only this run writes the row until it settles.
@@ -1048,16 +1089,16 @@ impl<'r> EnvRun<'r> {
                     Observed::Unknown(reason) => format!("{reason}"),
                     _ => "row missing after admission".to_owned(),
                 };
-                if let Ok(cleanup) = ctx.cleanup() {
-                    let _ = run.settle(&cleanup, &mut EnvSettlement);
-                }
                 step.fail(&format!(
                     "environment `{}` record is unreadable after admission",
                     env.name
                 ));
-                return Err(EnvError::Invalid(format!(
-                    "environment record unreadable after admission: {reason}"
-                )));
+                return Err(EnvAdmissionFailure {
+                    error: EnvError::Invalid(format!(
+                        "environment record unreadable after admission: {reason}"
+                    )),
+                    run: Some(Box::new(run)),
+                });
             }
         };
         Ok(Self {

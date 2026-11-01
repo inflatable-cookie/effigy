@@ -18,6 +18,22 @@ pub enum WorkspaceBegin<'r> {
     Activate(Box<WorkspaceActivation<'r>>),
 }
 
+/// Admission failure and any exact owners that could not yet be settled.
+#[derive(Debug)]
+pub struct WorkspaceBeginFailure<'r> {
+    pub error: EnvError,
+    pub custody: Option<Box<GuardedAbortCustody<'r>>>,
+}
+
+impl From<EnvError> for WorkspaceBeginFailure<'_> {
+    fn from(error: EnvError) -> Self {
+        Self {
+            error,
+            custody: None,
+        }
+    }
+}
+
 /// Ownership retained when finalising an activation fails.
 #[derive(Debug)]
 pub enum WorkspaceFinishCustody<'r> {
@@ -41,6 +57,18 @@ pub struct GuardedAbortCustody<'r> {
 #[derive(Debug)]
 enum GuardedAbortState<'r> {
     Activation(Box<WorkspaceActivation<'r>>),
+    RawSession {
+        root: &'r effigy_kernel::root::StateRoot,
+        run: Box<Run<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
+    AdmissionUnknown {
+        root: &'r effigy_kernel::root::StateRoot,
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
     Environment {
         root: &'r effigy_kernel::root::StateRoot,
         environment: Box<Run<'r>>,
@@ -87,6 +115,8 @@ impl<'r> GuardedAbortState<'r> {
         let root = match &self_ {
             Self::Activation(_) => unreachable!(),
             Self::Environment { root, .. }
+            | Self::AdmissionUnknown { root, .. }
+            | Self::RawSession { root, .. }
             | Self::Session { root, .. }
             | Self::Reservation { root, .. } => *root,
         };
@@ -98,6 +128,84 @@ impl<'r> GuardedAbortState<'r> {
         }
         match self_ {
             Self::Activation(_) => unreachable!(),
+            Self::RawSession {
+                run,
+                reservation,
+                attempt,
+                ..
+            } => {
+                let cleanup = match ctx.cleanup() {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Box::new(Self::RawSession {
+                                root,
+                                run,
+                                reservation,
+                                attempt,
+                            }),
+                        ))
+                    }
+                };
+                match run.settle_workspace_recoverable(&cleanup, &mut EnvSettlement) {
+                    Ok(_) => Self::Reservation {
+                        root,
+                        reservation,
+                        attempt,
+                    }
+                    .retry(ctx, wait),
+                    Err((error, run)) => Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self::RawSession {
+                            root,
+                            run,
+                            reservation,
+                            attempt,
+                        }),
+                    )),
+                }
+            }
+            Self::AdmissionUnknown {
+                supervisor,
+                reservation,
+                attempt,
+                ..
+            } => {
+                let unclaimed = match effigy_kernel::store::Store::read(&ctx.observe(), root) {
+                    effigy_kernel::observe::Observed::Verified(reader, _) => matches!(
+                        WorkspaceActivationReservation::recover(&reader, reservation.environment()),
+                        effigy_kernel::observe::Observed::Verified(Some(current), _)
+                            if current.id() == reservation.id()
+                                && current.generation() == reservation.generation()
+                                && current.state() == effigy_kernel::workspace_session::ActivationReservationState::Reserved
+                                && current.record().environment_run.is_none()
+                    ),
+                    _ => false,
+                };
+                if unclaimed {
+                    Self::Session {
+                        root,
+                        supervisor,
+                        reservation,
+                        attempt,
+                    }
+                    .retry(ctx, wait)
+                } else {
+                    Err((
+                        EnvError::Invalid(
+                            "environment admission uncertain; reservation remains recoverable"
+                                .into(),
+                        ),
+                        Box::new(Self::AdmissionUnknown {
+                            root,
+                            supervisor,
+                            reservation,
+                            attempt,
+                        }),
+                    ))
+                }
+            }
             Self::Environment {
                 environment,
                 supervisor,
@@ -577,6 +685,32 @@ impl<'r> WorkspaceActivation<'r> {
         Self::begin_decided(ctx, env, decision, invocation, options, supervisor_id)
     }
 
+    /// Begin a workspace while retaining exact cleanup custody on failure.
+    pub fn begin_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        inputs: &PublishInputs,
+        invocation: &ResolvedInvocation,
+        options: BeginOpts,
+        supervisor_id: &str,
+    ) -> Result<WorkspaceBegin<'r>, WorkspaceBeginFailure<'r>> {
+        if supervisor_id.trim().is_empty() || supervisor_id.contains('\0') {
+            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "workspace supervisor identity is empty or malformed",
+            ))
+            .into());
+        }
+        let decision = WorkspaceActivationReservation::decide(
+            &ctx.cx,
+            ctx.root,
+            &env.resource,
+            inputs,
+            options.wait,
+        )
+        .map_err(EnvError::Kernel)?;
+        Self::begin_decided_recoverable(ctx, env, decision, invocation, options, supervisor_id)
+    }
+
     /// Observe decision inputs under the kernel's environment gate before
     /// admitting the session. The same absolute deadline bounds the observation.
     pub fn begin_observing(
@@ -608,6 +742,38 @@ impl<'r> WorkspaceActivation<'r> {
         Self::begin_decided(&bounded, env, decision, invocation, options, supervisor_id)
     }
 
+    /// Gate-scoped decision observation with recoverable admission custody.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_observing_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        invocation: &ResolvedInvocation,
+        options: BeginOpts,
+        supervisor_id: &str,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<PublishInputs, effigy_kernel::run::RunError>
+            + Send
+            + 'static,
+    ) -> Result<WorkspaceBegin<'r>, WorkspaceBeginFailure<'r>> {
+        if supervisor_id.trim().is_empty() || supervisor_id.contains('\0') {
+            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "workspace supervisor identity is empty or malformed",
+            ))
+            .into());
+        }
+        let bounded = ctx.bounded_until(deadline)?;
+        let decision = WorkspaceActivationReservation::decide_observing(
+            &bounded.cx,
+            bounded.root,
+            &env.resource,
+            options.wait,
+            deadline,
+            observe,
+        )
+        .map_err(EnvError::Kernel)?;
+        Self::begin_decided_recoverable(&bounded, env, decision, invocation, options, supervisor_id)
+    }
+
     fn begin_decided(
         ctx: &EnvContext<'r>,
         env: &EnvRef,
@@ -616,6 +782,18 @@ impl<'r> WorkspaceActivation<'r> {
         options: BeginOpts,
         supervisor_id: &str,
     ) -> Result<WorkspaceBegin<'r>, EnvError> {
+        Self::begin_decided_recoverable(ctx, env, decision, invocation, options, supervisor_id)
+            .map_err(|failure| failure.error)
+    }
+
+    fn begin_decided_recoverable(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        decision: ActivationDecision,
+        invocation: &ResolvedInvocation,
+        options: BeginOpts,
+        supervisor_id: &str,
+    ) -> Result<WorkspaceBegin<'r>, WorkspaceBeginFailure<'r>> {
         let wait = options.wait;
         let reservation = match decision {
             ActivationDecision::Attach(session) => return Ok(WorkspaceBegin::Attach(session)),
@@ -641,7 +819,8 @@ impl<'r> WorkspaceActivation<'r> {
                 EnvError::Kernel(error),
                 None,
                 None,
-            ));
+            )
+            .into());
         }
         let cleanup = match ctx.cleanup() {
             Ok(cleanup) => cleanup,
@@ -653,7 +832,8 @@ impl<'r> WorkspaceActivation<'r> {
                     error,
                     None,
                     None,
-                ))
+                )
+                .into())
             }
         };
         let run_id = options.id;
@@ -679,50 +859,63 @@ impl<'r> WorkspaceActivation<'r> {
                     EnvError::Kernel(error),
                     Some((&owner, run_id, next)),
                     None,
-                ))
+                )
+                .into())
             }
         };
         let supervisor = match SessionSupervisor::adopt_recoverable(session_run, supervisor_id) {
             Ok(supervisor) => supervisor,
             Err((error, run)) => {
-                return Err(cleanup_failed_reservation(
-                    ctx,
-                    &reservation,
+                let cause = EnvError::Kernel(error);
+                let custody = GuardedAbortState::RawSession {
+                    root: ctx.root,
+                    run,
+                    reservation,
                     attempt,
-                    EnvError::Kernel(error),
-                    None,
-                    Some(run),
-                ))
-            }
-        };
-        let environment = match EnvRun::begin_claimed(ctx, env, Operation::Up, wait, &reservation) {
-            Ok(environment) => environment,
-            Err(error) => {
-                let settled = ctx.cleanup().and_then(|cleanup| {
-                    supervisor
-                        .settle(&cleanup, &mut EnvSettlement)
-                        .map(|_| ())
-                        .map_err(EnvError::Kernel)
-                });
-                let cause = match settled {
-                    Ok(()) => error,
-                    Err(failure) => {
-                        return Err(EnvError::Cleanup {
-                            cause: Box::new(error),
-                            failures: vec![failure],
-                        })
-                    }
                 };
-                return Err(cleanup_failed_reservation(
-                    ctx,
-                    &reservation,
-                    attempt,
-                    cause,
-                    None,
-                    None,
-                ));
+                return match custody.retry(ctx, wait) {
+                    Ok(()) => Err(cause.into()),
+                    Err((cleanup_error, custody)) => Err(WorkspaceBeginFailure {
+                        error: EnvError::Cleanup {
+                            cause: Box::new(cause),
+                            failures: vec![cleanup_error],
+                        },
+                        custody: Some(Box::new(GuardedAbortCustody { state: *custody })),
+                    }),
+                };
             }
         };
+        let environment =
+            match EnvRun::begin_claimed_recoverable(ctx, env, Operation::Up, wait, &reservation) {
+                Ok(environment) => environment,
+                Err(failure) => {
+                    let custody = match failure.run {
+                        Some(environment) => GuardedAbortState::Environment {
+                            root: ctx.root,
+                            environment,
+                            supervisor: Box::new(supervisor),
+                            reservation,
+                            attempt,
+                        },
+                        None => GuardedAbortState::AdmissionUnknown {
+                            root: ctx.root,
+                            supervisor: Box::new(supervisor),
+                            reservation,
+                            attempt,
+                        },
+                    };
+                    return match custody.retry(ctx, wait) {
+                        Ok(()) => Err(failure.error.into()),
+                        Err((cleanup_error, custody)) => Err(WorkspaceBeginFailure {
+                            error: EnvError::Cleanup {
+                                cause: Box::new(failure.error),
+                                failures: vec![cleanup_error],
+                            },
+                            custody: Some(Box::new(GuardedAbortCustody { state: *custody })),
+                        }),
+                    };
+                }
+            };
         Ok(WorkspaceBegin::Activate(Box::new(Self {
             environment,
             supervisor,
@@ -1205,7 +1398,7 @@ mod tests {
         let observe_cx = ctx.cx.clone();
         let observe_state = state.clone();
         let observe_resource = env.resource.clone();
-        let refused = WorkspaceActivation::begin_observing(
+        let refused = WorkspaceActivation::begin_observing_recoverable(
             &ctx,
             &env,
             &invocation(),
@@ -1225,16 +1418,18 @@ mod tests {
             },
         );
         assert!(refused.is_err());
-        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin_observing(
-            &ctx,
-            &env,
-            &invocation(),
-            options(41),
-            "fixture-supervisor",
-            deadline,
-            |_| Ok(inputs()),
-        )
-        .expect("fresh decision after refusal") else {
+        let WorkspaceBegin::Activate(activation) =
+            WorkspaceActivation::begin_observing_recoverable(
+                &ctx,
+                &env,
+                &invocation(),
+                options(41),
+                "fixture-supervisor",
+                deadline,
+                |_| Ok(inputs()),
+            )
+            .expect("fresh decision after refusal")
+        else {
             panic!("fresh activation");
         };
         activation
@@ -1413,6 +1608,256 @@ mod tests {
         activation
             .abort_guarded_recoverable(&ctx, Wait::FailFast)
             .unwrap();
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn failed_env_admission_retains_unsettled_session_owner() {
+        use effigy_kernel::gate::OwnerState;
+        use effigy_kernel::observe::Observed;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let options = options(48);
+        let session = options.id;
+        let mut adopted = false;
+        let result = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "SessionSupervisorAdoptAfter" {
+                    adopted = true;
+                }
+                if adopted && (point == "BeginBefore" || point == "SettleCloseBefore") {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options,
+                    "fixture-supervisor",
+                )
+            },
+        );
+        let failure = result.expect_err("injected admission and cleanup fail");
+        let custody = failure.custody.expect("exact owner custody retained");
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        assert!(
+            matches!(
+                reader.run_owner_state(&ctx.observe(), &state, &session),
+                Observed::Verified(OwnerState::Held, _)
+            ),
+            "failed cleanup must retain the exact live session owner"
+        );
+        drop(reader);
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("retry settles exact session");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn ambiguous_env_admission_keeps_session_and_refuses_cleanup() {
+        use effigy_kernel::gate::OwnerState;
+        use effigy_kernel::observe::Observed;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let env = env("workspace");
+        let options = options(49);
+        let session = options.id;
+        let mut adopted = false;
+        let failure = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "SessionSupervisorAdoptAfter" {
+                    adopted = true;
+                }
+                if adopted && point == "BeginAdmitted" {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options,
+                    "fixture-supervisor",
+                )
+            },
+        )
+        .expect_err("post-admission error must not settle the session");
+        let custody = failure
+            .custody
+            .expect("retain session on ambiguous admission");
+        let (error, custody) = custody
+            .retry(&ctx, Wait::FailFast)
+            .expect_err("bound Env run requires recovery");
+        assert!(error
+            .to_string()
+            .contains("environment admission uncertain"));
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        assert!(matches!(
+            reader.run_owner_state(&ctx.observe(), &state, &session),
+            Observed::Verified(OwnerState::Held, _)
+        ));
+        drop(reader);
+        drop(custody);
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn supervisor_adoption_failure_retains_raw_session_on_failed_cleanup() {
+        use effigy_kernel::gate::OwnerState;
+        use effigy_kernel::observe::Observed;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let options = options(50);
+        let session = options.id;
+        let failure = effigy_kernel::fault_injection::with_hook(
+            |point| {
+                if point == "SessionSupervisorAdoptAfter" || point == "SettleCloseBefore" {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options,
+                    "fixture-supervisor",
+                )
+            },
+        )
+        .expect_err("injected adoption and cleanup fail");
+        let custody = failure.custody.expect("retain raw session");
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        assert!(matches!(
+            reader.run_owner_state(&ctx.observe(), &state, &session),
+            Observed::Verified(OwnerState::Held, _)
+        ));
+        drop(reader);
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("retry settles session");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn unreadable_env_record_retains_admitted_env_and_session() {
+        use effigy_kernel::gate::OwnerState;
+        use effigy_kernel::observe::Observed;
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let options = options(51);
+        let session = options.id;
+        let database = state.path().join("kernel.db");
+        let resource = env.resource.name().to_string();
+        let hook_database = database.clone();
+        let hook_resource = resource.clone();
+        let mut adopted = false;
+        let failure = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "SessionSupervisorAdoptAfter" {
+                    adopted = true;
+                }
+                if adopted && point == "BeginAdmitted" {
+                    let db = rusqlite::Connection::open(&hook_database).unwrap();
+                    db.execute(
+                        "UPDATE resources SET engine='{' WHERE name=?1",
+                        [&hook_resource],
+                    )
+                    .unwrap();
+                }
+                if adopted && point == "SettleCloseBefore" {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options,
+                    "fixture-supervisor",
+                )
+            },
+        )
+        .expect_err("unreadable admitted Env record");
+        let custody = failure.custody.expect("retain both owners");
+        assert!(matches!(
+            &custody.state,
+            GuardedAbortState::Environment { .. }
+        ));
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &ctx.cx,
+            &state,
+            std::slice::from_ref(&env.resource),
+            Wait::FailFast
+        )
+        .is_err());
+        let db = rusqlite::Connection::open(&database).unwrap();
+        db.execute(
+            "UPDATE resources SET engine=NULL WHERE name=?1",
+            [&resource],
+        )
+        .unwrap();
+        drop(db);
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        assert!(matches!(
+            reader.run_owner_state(&ctx.observe(), &state, &session),
+            Observed::Verified(OwnerState::Held, _)
+        ));
+        drop(reader);
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("retry settles both owners");
     }
 
     #[test]
