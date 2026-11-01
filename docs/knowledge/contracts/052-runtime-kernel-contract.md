@@ -3893,7 +3893,7 @@ crash or a stopped listener before the close keeps the row, so a successor still
 finds the recorded owner and settles or refuses instead of silently dropping
 authority, and a settled session is never an owner.
 
-**Desired successor absence (Effigy Supervisor, 2026-10-31;
+**Desired successor absence (Supervisor under Tom’s standing delegation, 2026-10-31;
 [Q-017 amendments](../questions.md#workspace-activation-amendments)).**
 `TargetEvidence::Absent { project, backend }` means that the desired successor
 identity is unknown before apply, for a fresh project or an authorized recreation
@@ -3907,7 +3907,7 @@ activation's own owned artifact, alias and boxed probe and its one absolute
 deadline; its gated reobserve is an independent fresh backend read under that same
 deadline, fenced to the exact ID, never a pass-through of an earlier observation,
 and it fails closed as `Unknown` when the evidence is unknown, changed or missing
-(Effigy Supervisor, 2026-11-01;
+(Supervisor under Tom’s standing delegation, 2026-11-01;
 [Q-017 amendments](../questions.md#workspace-activation-amendments)). This records
 the reobserve requirement without changing #509's kernel fence. No workspace-session publication may bypass its reserved
 `Absent` successor and the remaining staging/serving/commit gates.
@@ -3918,7 +3918,7 @@ The v0.15 receipt is a complete before/after full-ID project inventory differenc
 under the exclusive `Gate(Env)`, not an engine create response. Another checkout,
 project or stale generation must never be adopted. A same-user engine actor
 creating identically labelled containers inside the gate window is outside this
-narrowed guarantee (Tom, 2026-10-31; Q-017).
+narrowed guarantee: Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation); Q-017.
 
 Resolve each frozen service's image-inspect ID before activation and recheck
 under the gate, after apply and before target binding, including attached services.
@@ -3938,13 +3938,13 @@ Receipts name the actual backend capability for each service:
   during this activation. A tag moved X→Y before activation may leave a running
   container on X with the same reference/config hash; that move is undetectable
   on this engine, so the receipt never claims the old container runs Y
-  (Effigy Supervisor, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
+  (Supervisor under Tom’s standing delegation, 2026-10-31; [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 - `digest_reference`: the same exact repository/digest reference is immutable;
   its image-inspect resolution is still recorded and rechecked.
 
 Observed tag moves refuse. Same-user retag/restore inside the gate is excluded
-by the Effigy Supervisor's 2026-10-31 capability ruling; forged identical labels
-are excluded by Tom's 2026-10-31 base threat-model ruling
+by the Supervisor under Tom’s standing delegation, 2026-10-31; forged
+identical labels are excluded by the Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation)
 ([Q-017 and amendments](../questions.md#q-017-workspace-client-and-operator-feedback-at-v015)).
 The gate excludes competing Effigy activations, not foreign same-user engine activity. These capability rules replace the reference-only
 Colima refusal; Docker still requires its container image ID.
@@ -3970,7 +3970,7 @@ exactly one verified workspace row must remain. The complete new-ID difference
 must equal the required creations plus that one workspace replacement, if any.
 No extra service or foreign ID is adopted. Zero-change re-up stays attached.
 This replaces the image-reference-only prediction that refused routine workspace
-configuration changes (Effigy Supervisor, 2026-10-31;
+configuration changes (Supervisor under Tom’s standing delegation, 2026-10-31;
 [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 Container-attested image IDs must match their reference lookups before and after
 apply. For reference-only predecessors, those lookups prove reference stability,
@@ -4000,7 +4000,7 @@ adapter rechecks the complete project/image inventory immediately before
 `bind_target`. Each of those rechecks is an independent fresh backend read on the
 activation's one absolute deadline, fenced to the exact full ID; none reuses an
 earlier observation, and unknown, changed or missing evidence refuses as `Unknown`
-(Effigy Supervisor, 2026-11-01;
+(Supervisor under Tom’s standing delegation, 2026-11-01;
 [Q-017 amendments](../questions.md#workspace-activation-amendments)).
 Only this run's created workspace ID can satisfy an absent target; a caller-supplied creator run ID is never authority. Attached IDs remain attached.
 Missing attribution is Unknown, not proof of no creator. The original activation
@@ -5466,8 +5466,7 @@ generation while P's context remains selected.
 The crash windows then have defined behaviour, and the predecessor's selection is
 untouched in every one of them until E8 commits:
 
-**Creator attribution ruling (Tom, 2026-10-31, amended after the #510 design
-review).** Never adopt a container created by another checkout, project or
+**Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation), amended after the #510 design review.** Never adopt a container created by another checkout, project or
 stale generation. For v0.15, an exclusive `Gate(Env)` brackets one frozen
 Compose apply and exact full-ID inventories before and after it. Only an ID
 new in that window, with the complete expected created set and exact managed,
@@ -5481,8 +5480,8 @@ that can create an identically labelled container inside the gate window is
 **explicitly outside this v0.15 threat model**: same-user access already permits
 reading the render and replacing the binary or vault material. The ID-set
 difference is gate-scoped attribution under that stated limit, not proof that
-the engine returned the created IDs. This supersedes the earlier 2026-10-31
-engine-create-only ruling and the rejection of Option C; it does not permit
+the engine returned the created IDs. This supersedes the earlier 2026-10-30
+engine-create-only operator ruling and the rejection of Option C; it does not permit
 label-only, timestamp-only or unbounded post-apply guessing.
 
 | Window | What the guest resolves | Recovery |

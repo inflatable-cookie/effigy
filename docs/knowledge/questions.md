@@ -614,14 +614,18 @@ Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
 orders this work after Q-011 simplification; it does not waive the release
 criterion.
 
-Tom's 2026-10-31 creator-attribution amendment keeps the workspace client in
-v0.15 with the narrow, gate-scoped ID-set rule in
+Operator ruling (Tom, 2026-10-31, on the Supervisor’s recommendation):
+the creator-attribution amendment keeps the workspace client in v0.15 with the
+narrow, gate-scoped ID-set rule in
 [contract 052](contracts/052-runtime-kernel-contract.md). It forbids adopting a
 container from another checkout, project or stale generation and requires a
 complete before/after exact-ID set under the exclusive environment gate. A
 same-user actor able to create an identically labelled container during that
 window is explicitly outside the v0.15 threat model. This does not qualify a
 backend or waive the native Colima, Docker Desktop and Linux Docker checks.
+Tom answered “Go with your recommendation” to the Supervisor that day;
+`c18c3d2c2` recorded the ruling in 052 and Q-017. The earlier exact-created-ID
+direction was an operator ruling by Tom on 2026-10-30.
 
 ### Workspace activation amendments
 
@@ -631,14 +635,14 @@ implementation amendments are distinct. Sources: Queue-held effigy#510 brief,
 backend-capability amendments; Queue-held effigy#506 brief, “Cross-owner merge
 ruling (Supervisor 2026-11-01)”.
 
-- **2026-10-31 — Effigy Supervisor, under Tom's standing v0.15 authority:**
+- **Supervisor under Tom’s standing delegation, 2026-10-31:**
   configuration-only Compose recreation must support the new exact workspace
   ID, including at the same image reference. The subsequent capability and
   desired-successor amendments preserve the narrowed foreign-creator exclusion.
   [052 §8.11–§8.12](contracts/052-runtime-kernel-contract.md#812-gate-scoped-creation-inference-effigy510)
   owns the exact identity, replacement and capability rules. These amendments
   do not replace Tom's base threat-model ruling or qualify a backend.
-- **2026-11-01 — Effigy Supervisor, cross-owner merge ruling for #506:**
+- **Supervisor under Tom’s standing delegation, 2026-11-01 — cross-owner merge ruling for #506:**
   retain the activation's owned artifact, alias, boxed probe and one absolute
   deadline. Gated reobserve must use an independent fresh backend read with
   that same deadline and exact ID/fence, never pass through an earlier
