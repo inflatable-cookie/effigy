@@ -344,6 +344,7 @@ pub fn probe_authority(
             vm_boot_id: "fixture".to_owned(),
             body: effigy_kernel::workspace_channel::RequestBody::Observe(
                 effigy_kernel::workspace_channel::ObserveBody {
+                    run_id: None,
                     op: crate::runner::workspace_client::serving_fixture::PROBE_OPERATION
                         .to_owned(),
                     target: Some(effigy_kernel::workspace_channel::Target::Host),

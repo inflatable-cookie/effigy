@@ -40,6 +40,7 @@ pub(crate) struct HostDispatch {
     /// The environment's own cached state root, for the host reads this adapter
     /// makes (never a re-opened store).
     root: StateRoot,
+    checkout_id: Option<String>,
     /// The runs this session admitted, kept as owning clients. Dropping this
     /// list stops them as owner loss, so their authority dies with the owner.
     admitted: Arc<Mutex<Vec<Started>>>,
@@ -59,8 +60,15 @@ impl HostDispatch {
         Self {
             host_checkout,
             root,
+            checkout_id: None,
             admitted: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub(super) fn for_serving(host_checkout: PathBuf, root: StateRoot, checkout_id: &str) -> Self {
+        let mut dispatch = Self::new(host_checkout, root);
+        dispatch.checkout_id = Some(checkout_id.to_owned());
+        dispatch
     }
 
     /// The owning clients this session's admissions retain, for the owner to
@@ -318,6 +326,13 @@ impl channel::Observer for HostDispatch {
         cx: &ObserveContext,
         body: &ObserveBody,
     ) -> Result<serde_json::Value, Refusal> {
+        cx.check("workspace observation")
+            .map_err(|error| Refusal::unavailable(error.to_string()))?;
+        if body.op != "runs:status" && body.run_id.is_some() {
+            return Err(Refusal::invalid(
+                "run identity is not valid for this observation",
+            ));
+        }
         if body
             .target
             .as_ref()
@@ -351,6 +366,19 @@ impl channel::Observer for HostDispatch {
                     "runs": runs,
                 }))
             }
+            "runs:status" => {
+                let id = body
+                    .run_id
+                    .as_deref()
+                    .ok_or_else(|| Refusal::invalid("runs:status requires a run identity"))?
+                    .parse::<RunId>()
+                    .map_err(|_| Refusal::invalid("invalid run identity"))?;
+                let checkout = self.checkout_id.as_deref().ok_or_else(|| {
+                    Refusal::unavailable("published checkout identity is unavailable")
+                })?;
+                crate::runner::task_engine::status_owned_run(cx, &self.root, checkout, id)
+                    .map_err(|error| Refusal::unavailable(error.to_string()))
+            }
             other => Err(Self::refuse(format!(
                 "this workspace host does not serve `{other}` observations over the channel yet; \
                  run the command on the host"
@@ -379,12 +407,28 @@ pub(crate) fn production_server(
     serving: &super::ServingFacts,
     root: StateRoot,
 ) -> (HostServer, RetainedRuns) {
-    let admission = HostDispatch::new(serving.host_checkout.clone(), root.clone());
+    let admission = HostDispatch::for_serving(
+        serving.host_checkout.clone(),
+        root.clone(),
+        &serving.enrolment.checkout,
+    );
     let retained = admission.admitted();
     let dispatcher = channel::Dispatcher::new(
-        HostDispatch::new(serving.host_checkout.clone(), root.clone()),
-        HostDispatch::new(serving.host_checkout.clone(), root.clone()),
-        HostDispatch::new(serving.host_checkout.clone(), root),
+        HostDispatch::for_serving(
+            serving.host_checkout.clone(),
+            root.clone(),
+            &serving.enrolment.checkout,
+        ),
+        HostDispatch::for_serving(
+            serving.host_checkout.clone(),
+            root.clone(),
+            &serving.enrolment.checkout,
+        ),
+        HostDispatch::for_serving(
+            serving.host_checkout.clone(),
+            root,
+            &serving.enrolment.checkout,
+        ),
         admission,
     );
     (
@@ -421,6 +465,7 @@ mod checkout_boundary_tests {
                 .observe(
                     &expired,
                     &ObserveBody {
+                        run_id: None,
                         op: "runs:list".into(),
                         target: Some(Target::Host)
                     }
@@ -433,6 +478,7 @@ mod checkout_boundary_tests {
             .observe(
                 &active,
                 &ObserveBody {
+                    run_id: None,
                     op: "runs:list".into(),
                     target: Some(Target::Host),
                 },
@@ -445,6 +491,7 @@ mod checkout_boundary_tests {
                 .observe(
                     &active,
                     &ObserveBody {
+                        run_id: None,
                         op: "runs:status".into(),
                         target: Some(Target::Host)
                     }
@@ -452,6 +499,112 @@ mod checkout_boundary_tests {
                 .is_err(),
             "status without a run identity must not return a list"
         );
+    }
+
+    #[test]
+    fn run_status_reads_exact_scoped_journal_identity() {
+        use effigy_kernel::id::{CheckoutId, CheckoutKind, Surface, TaskId};
+        use effigy_kernel::observe::{Observed, UnknownReason};
+        use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, SettlementAdapter};
+        struct NoEffects;
+        impl SettlementAdapter for NoEffects {
+            fn observe(
+                &mut self,
+                _: &Effect,
+                _: &effigy_kernel::ctx::CleanupContext,
+            ) -> Observed<Fence> {
+                Observed::Unknown(UnknownReason::GuardUnavailable)
+            }
+            fn release(
+                &mut self,
+                _: &Effect,
+                _: &effigy_kernel::ctx::CleanupContext,
+            ) -> Observed<()> {
+                Observed::Unknown(UnknownReason::GuardUnavailable)
+            }
+            fn reconcile(
+                &mut self,
+                _: &Effect,
+                _: &effigy_kernel::ctx::CleanupContext,
+            ) -> Observed<Reconciled> {
+                Observed::Unknown(UnknownReason::GuardUnavailable)
+            }
+        }
+        let fixture = tempfile::tempdir().unwrap();
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [11; 16]);
+        let task = TaskId::new(checkout, "", Surface::Published, "sample", None).unwrap();
+        let id = RunId::new(42, [7; 10]).unwrap();
+        let invocation = ResolvedInvocation::new(InvocationSpec {
+            owner: task.resource(),
+            task,
+            route: Route::Task,
+            argv: vec!["sample".into()],
+            cwd: "".into(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![],
+            attachments: vec![],
+            class: EffectClass::Mutate,
+            placement: Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let next = effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+            .unwrap();
+        let cleanup = cx
+            .operation()
+            .cleanup(std::time::Duration::from_secs(5))
+            .unwrap();
+        let run = effigy_kernel::run::Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id,
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next,
+                custody: None,
+            },
+            &cleanup,
+            &mut NoEffects,
+        )
+        .unwrap();
+        let mut host =
+            HostDispatch::for_serving(fixture.path().to_owned(), root.clone(), &checkout.text());
+        let observe =
+            crate::runner::task_engine::observe_context(std::time::Duration::from_secs(5));
+        let body = |run_id| ObserveBody {
+            op: "runs:status".into(),
+            target: Some(Target::Host),
+            run_id,
+        };
+        let status = host
+            .observe(&observe, &body(Some(id.to_string())))
+            .expect("exact status");
+        assert_eq!(status["run"], id.to_string());
+        assert_eq!(status["status"]["state"], "running");
+        assert!(host.observe(&observe, &body(None)).is_err());
+        assert!(host
+            .observe(&observe, &body(Some("invalid".into())))
+            .is_err());
+        assert!(host
+            .observe(
+                &observe,
+                &body(Some(RunId::new(42, [8; 10]).unwrap().to_string()))
+            )
+            .is_err());
+        let mut foreign = HostDispatch::for_serving(
+            fixture.path().to_owned(),
+            root.clone(),
+            &CheckoutId::new(CheckoutKind::EphemeralClone, [12; 16]).text(),
+        );
+        assert!(foreign
+            .observe(&observe, &body(Some(id.to_string())))
+            .is_err());
+        drop(run);
     }
 
     fn invoke(cwd: &str, args: Vec<String>) -> InvocationBody {

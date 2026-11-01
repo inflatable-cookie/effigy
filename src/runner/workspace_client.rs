@@ -464,6 +464,7 @@ pub(crate) enum GuestOperation {
     Observe {
         op: String,
         target: Target,
+        run_id: Option<String>,
     },
     Invoke {
         selector: Selector,
@@ -489,6 +490,7 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     let observation = |label: &str| GuestOperation::Observe {
         op: label.to_owned(),
         target: Target::Host,
+        run_id: None,
     };
     match cmd {
         // The pinned identity this guest runs under, and the task names the
@@ -536,7 +538,14 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
         Command::Doctor(_) => observation("doctor"),
         Command::Runs(args) => match &args.action {
             RunsAction::List { .. } => observation("runs:list"),
-            RunsAction::Status { .. } => observation("runs:status"),
+            RunsAction::Status { .. } if args.repo_override.is_some() => GuestOperation::Refused(
+                "workspace run status does not accept a checkout override".into(),
+            ),
+            RunsAction::Status { run } => GuestOperation::Observe {
+                op: "runs:status".into(),
+                target: Target::Host,
+                run_id: Some(run.clone()),
+            },
             RunsAction::Logs { .. } => observation("runs:logs"),
             RunsAction::Stop { .. } => operation("runs:stop"),
         },
@@ -1457,10 +1466,11 @@ pub(crate) fn dispatch_in(
     match classify(cmd) {
         GuestOperation::Local(read) => run_local(read, published, guest, checkout, wants_json),
         GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
-        GuestOperation::Observe { op, target } => {
+        GuestOperation::Observe { op, target, run_id } => {
             let body = RequestBody::Observe(ObserveBody {
                 op,
                 target: Some(target),
+                run_id,
             });
             ask_host(published, guest, opener, body, wants_json, cwd)
         }

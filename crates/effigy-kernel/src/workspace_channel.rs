@@ -389,9 +389,26 @@ impl InvocationBody {
 pub struct ObserveBody {
     pub op: String,
     pub target: Option<Target>,
+    /// Exact run identity for run-specific observations. Omitted on legacy reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 impl ObserveBody {
     fn check(&self) -> Result<(), Refusal> {
+        match (&*self.op, &self.run_id) {
+            ("runs:status", Some(id)) if id.parse::<RunId>().is_ok() => {}
+            ("runs:status", _) => {
+                return Err(Refusal::invalid(
+                    "runs:status requires an exact run identity",
+                ))
+            }
+            (_, None) => {}
+            (_, Some(_)) => {
+                return Err(Refusal::invalid(
+                    "run identity is not valid for this observation",
+                ))
+            }
+        }
         if self.op.is_empty() || self.op.len() > 120 {
             return Err(Refusal::invalid("an observe operation name is bounded"));
         }

@@ -434,7 +434,7 @@ fn closed_state(summary: &RunSummary) -> String {
     .to_owned()
 }
 
-fn phase_name(phase: Phase) -> &'static str {
+pub(super) fn phase_name(phase: Phase) -> &'static str {
     match phase {
         Phase::Admitted => "admitted",
         Phase::Starting => "starting",

@@ -607,6 +607,7 @@ fn no_request_crosses_before_authentication() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -708,6 +709,7 @@ fn observe_writes_nothing_and_retries_re_observe() {
         Frame::Request(request(
             session,
             RequestBody::Observe(ObserveBody {
+                run_id: None,
                 op: "run:status".into(),
                 target: None,
             }),
@@ -840,6 +842,7 @@ fn a_grant_scopes_the_operation_the_target_and_its_generation() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        run_id: None,
                         op: "run:status".into(),
                         target: None,
                     }),
@@ -1534,6 +1537,7 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1550,6 +1554,7 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        run_id: None,
                         op: "run:status".into(),
                         target: None,
                     }),
@@ -1648,6 +1653,7 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1775,6 +1781,7 @@ fn an_enrolment_cannot_name_another_session() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1833,6 +1840,7 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1884,6 +1892,7 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -3772,4 +3781,30 @@ fn a_relative_working_directory_is_the_only_one_accepted() {
         selector.check().expect_err("bounded").code,
         RefusalCode::InvalidRequest
     );
+}
+
+#[test]
+fn observe_run_identity_wire_is_strict_and_preserves_legacy_list() {
+    let legacy = serde_json::json!({"op":"runs:list", "target":null});
+    let list: ObserveBody = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(list.check().is_ok());
+    assert_eq!(serde_json::to_value(&list).unwrap(), legacy);
+    assert!(serde_json::from_value::<ObserveBody>(
+        serde_json::json!({"op":"runs:list", "target":null, "extra":1})
+    )
+    .is_err());
+    let id = RunId::new(42, [1; 10]).unwrap().to_string();
+    let mut status = ObserveBody {
+        op: "runs:status".into(),
+        target: None,
+        run_id: None,
+    };
+    assert!(status.check().is_err());
+    status.run_id = Some("not-an-id".into());
+    assert!(status.check().is_err());
+    status.run_id = Some(id.clone());
+    assert!(status.check().is_ok());
+    assert_eq!(serde_json::to_value(&status).unwrap()["run_id"], id);
+    status.op = "runs:list".into();
+    assert!(status.check().is_err());
 }

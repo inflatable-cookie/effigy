@@ -386,6 +386,7 @@ fn a_container_guest_classifies_its_commands_by_coverage() {
     assert_eq!(
         classify(&parsed(&["doctor"])),
         GuestOperation::Observe {
+            run_id: None,
             op: "doctor".to_owned(),
             target: Target::Host,
         }
@@ -393,6 +394,7 @@ fn a_container_guest_classifies_its_commands_by_coverage() {
     assert_eq!(
         classify(&parsed(&["container", "status"])),
         GuestOperation::Observe {
+            run_id: None,
             op: "container:status".to_owned(),
             target: Target::Host,
         }
@@ -407,6 +409,7 @@ fn a_container_guest_classifies_its_commands_by_coverage() {
     assert_eq!(
         classify(&parsed(&["runs"])),
         GuestOperation::Observe {
+            run_id: None,
             op: "runs:list".to_owned(),
             target: Target::Host,
         }
@@ -1263,6 +1266,7 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
         .authenticate(GuestAuth::Capability(capability()))
         .expect("authenticated");
     let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        run_id: None,
         op: "doctor".to_owned(),
         target: Some(Target::Host),
     }));
@@ -1339,6 +1343,95 @@ fn an_observation_reaches_the_hosts_observe_engine() {
         served[0].as_ref().expect("a served connection").responses,
         1
     );
+}
+
+#[test]
+fn guest_run_status_reaches_real_host_dispatch() {
+    let id = RunId::new(42, [0x42; 10]).expect("run id");
+    let (client_side, host_side) = connection_pair();
+    let handle = std::thread::spawn(move || {
+        let fixture = effigy_test_support::Fixture::new("workspace-status").expect("fixture");
+        let cx = effects();
+        let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+        let owner = session_task("status").resource();
+        let run = Run::begin(
+            &cx,
+            &root,
+            &resolved(owner),
+            BeginOpts {
+                id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next_argv(),
+                custody: None,
+            },
+            &cleanup(&cx),
+            &mut NoEffects,
+        )
+        .expect("run");
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let mut grants = host::GrantBook::new();
+        grants.issue(
+            capability(),
+            grant_binding(),
+            host::session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]).text();
+        let observer = super::host_dispatch::HostDispatch::for_serving(
+            fixture.path().to_owned(),
+            root.clone(),
+            &checkout,
+        );
+        let mut server = host::Server::new(
+            negotiation(),
+            fence(),
+            server_identity(),
+            grants,
+            host::Dispatcher::new(
+                CountingAdmitter {
+                    calls: calls.clone(),
+                    root: &root,
+                    runs: Vec::new(),
+                },
+                CountingResolver {
+                    calls,
+                    owner: session_task("guest-request").resource(),
+                },
+                observer,
+                RunIds(VecDeque::new()),
+            ),
+        );
+        let result = server.serve(
+            &mut PeerTransport::new(host_side),
+            &cx,
+            &observation(),
+            &root,
+            &mut host::NoStreams,
+        );
+        drop(run);
+        result.expect("served status");
+    });
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let mut checkout = FakeCheckout::default();
+    let mut opener = PeerChannel {
+        connections: vec![client_side],
+    };
+    let run_id = id.to_string();
+    let output = dispatch_in(
+        &parsed(&["run", "status", &run_id]),
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .expect("status from host");
+    assert!(output.contains(&run_id), "{output}");
+    assert!(output.contains("running"), "{output}");
+    handle.join().expect("host thread");
 }
 
 // ---------------------------------------------------------------------------

@@ -3899,7 +3899,8 @@ another lane's.
   (`build_execution_preflight`/`resolve_route`/`TaskTarget`), admits through
   `managed_run::start_reserved` with the exact ticket, serves `runs:list`
   under the supplied host `ObserveContext`, and refuses every operation it does not serve.
-  `runs:status` refuses because the current Observe body carries no run identity.
+  `runs:status` accepts an explicit run identity and returns only a matching checkout-scoped run.
+  Legacy Observe reads omit the optional identity; old strict peers refuse the extended request.
   `host_dispatch::production_server` composes it into `channel::Server`, and
   `ServingOwner::adopt_production` in `serving.rs` retains it for the session's life.
 
@@ -3908,7 +3909,7 @@ another lane's.
 - **The production activation caller.** `environment::workspace::up_prepared` still has
   only test call sites, so nothing in a released command prepares a guest context and
   a qualified locator yet. The wider Observe surface (every observation beyond
-  `runs:list`, including run-specific `runs:status`), the guest-side entry for non-task invocations and native
+  `runs:list` and run-specific `runs:status`), the guest-side entry for non-task invocations and native
   backend qualification remain unmerged.
 
 **Guest entry (v2, bound).** The guest's context read is one

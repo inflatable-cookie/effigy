@@ -311,6 +311,7 @@ fn observe_retries_reobserve_without_admission_and_preserve_host_json() {
     let body = ObserveBody {
         op: "status".into(),
         target: Some(Target::Host),
+        run_id: None,
     };
     ledger
         .borrow_mut()
