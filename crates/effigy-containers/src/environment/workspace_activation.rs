@@ -48,16 +48,58 @@ impl<'r> WorkspaceActivation<'r> {
                 "workspace supervisor identity is empty or malformed",
             )));
         }
-        let wait = options.wait;
-        let reservation = match WorkspaceActivationReservation::decide(
+        let decision = WorkspaceActivationReservation::decide(
             &ctx.cx,
             ctx.root,
             &env.resource,
             inputs,
-            wait,
+            options.wait,
         )
-        .map_err(EnvError::Kernel)?
-        {
+        .map_err(EnvError::Kernel)?;
+        Self::begin_decided(ctx, env, decision, invocation, options, supervisor_id)
+    }
+
+    /// Observe decision inputs under the kernel's environment gate before
+    /// admitting the session. The same absolute deadline bounds the observation.
+    pub fn begin_observing(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        invocation: &ResolvedInvocation,
+        options: BeginOpts,
+        supervisor_id: &str,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<PublishInputs, effigy_kernel::run::RunError>
+            + Send
+            + 'static,
+    ) -> Result<WorkspaceBegin<'r>, EnvError> {
+        if supervisor_id.trim().is_empty() || supervisor_id.contains('\0') {
+            return Err(EnvError::Kernel(effigy_kernel::run::RunError::refused(
+                "workspace supervisor identity is empty or malformed",
+            )));
+        }
+        let bounded = ctx.bounded_until(deadline)?;
+        let decision = WorkspaceActivationReservation::decide_observing(
+            &bounded.cx,
+            bounded.root,
+            &env.resource,
+            options.wait,
+            deadline,
+            observe,
+        )
+        .map_err(EnvError::Kernel)?;
+        Self::begin_decided(&bounded, env, decision, invocation, options, supervisor_id)
+    }
+
+    fn begin_decided(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        decision: ActivationDecision,
+        invocation: &ResolvedInvocation,
+        options: BeginOpts,
+        supervisor_id: &str,
+    ) -> Result<WorkspaceBegin<'r>, EnvError> {
+        let wait = options.wait;
+        let reservation = match decision {
             ActivationDecision::Attach(session) => return Ok(WorkspaceBegin::Attach(session)),
             ActivationDecision::Activate(reservation) => *reservation,
         };
@@ -362,6 +404,53 @@ mod tests {
             )
             .expect("next"),
         }
+    }
+
+    #[test]
+    fn gated_decision_observation_precedes_session_admission_and_refuses_failure() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("context");
+        let env = env("workspace");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let observe_cx = ctx.cx.clone();
+        let observe_state = state.clone();
+        let observe_resource = env.resource.clone();
+        let refused = WorkspaceActivation::begin_observing(
+            &ctx,
+            &env,
+            &invocation(),
+            options(41),
+            "fixture-supervisor",
+            deadline,
+            move |until| {
+                assert!(until <= deadline);
+                assert!(effigy_kernel::gate::Gate::acquire(
+                    &observe_cx,
+                    &observe_state,
+                    std::slice::from_ref(&observe_resource),
+                    Wait::FailFast
+                )
+                .is_err());
+                Err(effigy_kernel::run::RunError::unavailable("unknown target"))
+            },
+        );
+        assert!(refused.is_err());
+        let WorkspaceBegin::Activate(activation) = WorkspaceActivation::begin_observing(
+            &ctx,
+            &env,
+            &invocation(),
+            options(41),
+            "fixture-supervisor",
+            deadline,
+            |_| Ok(inputs()),
+        )
+        .expect("fresh decision after refusal") else {
+            panic!("fresh activation");
+        };
+        activation
+            .abort(&ctx, Wait::FailFast)
+            .expect("settle activation");
     }
 
     #[test]

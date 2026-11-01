@@ -7689,3 +7689,108 @@ fn guest_locator_challenge_binds_alias_target_peer_pin_session_and_lifetime() {
         .is_err());
     assert!(launch.publish(&run).is_err());
 }
+
+#[test]
+fn decision_observes_inputs_while_holding_the_environment_gate() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let observe_cx = cx.clone();
+    let observe_root = root.clone();
+    let observe_environment = environment.clone();
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| {
+            assert!(
+                crate::gate::Gate::acquire(
+                    &observe_cx,
+                    &observe_root,
+                    std::slice::from_ref(&observe_environment),
+                    Wait::FailFast
+                )
+                .is_err(),
+                "another actor must not hold the decision gate during observation"
+            );
+            Ok(decision_inputs(1))
+        },
+    );
+    assert!(matches!(result, Ok(ActivationDecision::Activate(_))));
+}
+
+#[test]
+fn gated_decision_refuses_changed_unknown_and_expired_observations_without_reservation() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = pending_environment(&cx, &root);
+    let inputs = publish_inputs(7, None);
+    let activated =
+        activate_with_selection(&cx, &root, &environment, run_id(220), run_id(221), &inputs);
+    let count = reservation_rows(&read_journal(&cx, &root), &environment);
+    let mut replaced = published_target();
+    replaced.container_id = "bb".repeat(32);
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| Ok(publish_inputs(7, Some(replaced))),
+    );
+    assert!(
+        result.is_err(),
+        "a newly observed replacement cannot attach"
+    );
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        |_| Err(RunError::unavailable("target identity unknown")),
+    );
+    assert!(result.is_err(), "an unknown observation refuses");
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() - Duration::from_millis(1),
+        |_| panic!("expired decision must not observe"),
+    );
+    assert!(result.is_err());
+    let (release, blocked) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(100),
+        move |_| {
+            let _ = blocked.recv();
+            Ok(publish_inputs(7, Some(published_target())))
+        },
+    );
+    release.send(()).expect("release timed-out observer");
+    assert!(
+        result.is_err(),
+        "an observation returned after its deadline must refuse"
+    );
+    assert_eq!(
+        reservation_rows(&read_journal(&cx, &root), &environment),
+        count
+    );
+    end_run(
+        &cx,
+        activated.session_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+}

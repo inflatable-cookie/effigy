@@ -1778,6 +1778,68 @@ impl WorkspaceActivationReservation {
         }
         publishing.validate()?;
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
+        Self::decide_held(cx, root, environment, publishing)
+    }
+
+    /// Observe the publication inputs under the same environment gate that
+    /// protects the decision. The read-only observer owns its inputs and is
+    /// bounded by `deadline`; a late or failed result cannot be committed.
+    pub fn decide_observing(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        wait: Wait,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<PublishInputs, RunError> + Send + 'static,
+    ) -> Result<ActivationDecision, RunError> {
+        if environment.kind() != ResourceKind::Env {
+            return Err(ActivationRefusal::NotAnEnvironment.into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        let bounded = cx.child_until(deadline);
+        let _gate = Gate::acquire(&bounded, root, std::slice::from_ref(environment), wait)?;
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        let effective_deadline = match bounded.operation().deadline() {
+            crate::ctx::Deadline::At(until) => until.min(deadline),
+            crate::ctx::Deadline::Open(_) => deadline,
+        };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("workspace-decision-observation".into())
+            .spawn(move || {
+                let _ = sender.send(observe(effective_deadline));
+            })
+            .map_err(|error| {
+                RunError::unavailable(format!(
+                    "workspace decision observer could not start: {error}"
+                ))
+            })?;
+        let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
+        let publishing = receiver.recv_timeout(remaining).map_err(|error| {
+            RunError::unavailable(format!(
+                "workspace decision observation unavailable: {error}"
+            ))
+        })??;
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        publishing.validate()?;
+        Self::decide_held(&bounded, root, environment, &publishing)
+    }
+
+    fn decide_held(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        publishing: &PublishInputs,
+    ) -> Result<ActivationDecision, RunError> {
         crate::fault_point!(ActivationDecisionBefore)?;
         // The live session's *owner* liveness is observed under the same gate,
         // before the deciding transaction: a mapped run whose owner gate is free

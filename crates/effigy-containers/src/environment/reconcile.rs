@@ -169,6 +169,20 @@ impl<'r> EnvContext<'r> {
         })
     }
 
+    /// A child operation that cannot outlive a workspace publication budget.
+    pub fn bounded_until(&self, deadline: Instant) -> Result<Self, EnvError> {
+        if Instant::now() >= deadline {
+            return Err(EnvError::Kernel(RunError::unavailable(
+                "workspace publication deadline expired",
+            )));
+        }
+        Ok(Self {
+            root: self.root,
+            cx: self.cx.child_until(deadline),
+            cleanup_budget: self.cleanup_budget,
+        })
+    }
+
     /// A fresh bounded cleanup context, made when the settlement that uses it
     /// starts. Each admission, holder settlement and run settle takes its own,
     /// so activation time can never spend it (effigy#447).
