@@ -40,6 +40,7 @@ pub(in crate::runner) use process::{
 pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
 pub(in crate::runner) use run::{
     resolve_lock_wait_ms, resolve_lock_wait_ms_or, RunKey, TaskRun, TaskRunRequest,
+    WorkspaceAdmission, MANAGED_RUN_PROVENANCE,
 };
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,

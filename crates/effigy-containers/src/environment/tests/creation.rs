@@ -1048,6 +1048,88 @@ fn target_observer_facade_refuses_mismatches_and_retains_owner() {
 }
 
 #[test]
+fn resumed_activation_can_repark_for_cleanup_after_expiry_or_cancellation() {
+    use effigy_kernel::run::{
+        WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step,
+    };
+    for expired in [false, true] {
+        let fixture = home();
+        let state = root(fixture.path());
+        let base = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let ctx = base.bounded_until(deadline).unwrap();
+        let stack = env("stack");
+        let (mut parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+        parked
+            .record_integration_step(&ctx, Step::Routes, State::Attempted)
+            .unwrap();
+        parked
+            .record_integration_step(&ctx, Step::Routes, State::Completed)
+            .unwrap();
+        for _ in 0..2 {
+            fake.inventories
+                .push_back(verified(vec![row(PRIMARY, 'a')]));
+        }
+        let activation = parked
+            .reacquire_target(&mut fake, |view, _, _| {
+                verified((view.facts().target.clone(), view.facts().platform.clone()))
+            })
+            .expect("fixture resumes");
+        let other_fixture = home();
+        let other_root = root(other_fixture.path());
+        let other_ctx = EnvContext::new(&other_root, CancelToken::default()).unwrap();
+        let (_, activation) = activation
+            .park_for_cleanup(&other_ctx)
+            .expect_err("another root cannot take custody");
+        let probe = EnvContext::new(&state, CancelToken::default()).unwrap();
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &probe.cx,
+            &state,
+            std::slice::from_ref(&stack.resource),
+            Wait::FailFast
+        )
+        .is_err());
+        if expired {
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        } else {
+            ctx.cx
+                .operation()
+                .cancel_token()
+                .cancel(effigy_kernel::ctx::StopCause::Requested);
+        }
+        let parked = (*activation)
+            .park_for_cleanup(&ctx)
+            .expect("cleanup must repark the exact owner despite workload cancellation");
+        assert!(parked
+            .integration_snapshot(&ctx)
+            .unwrap()
+            .contains_key(&Step::Routes));
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &EnvContext::new(&state, CancelToken::default()).unwrap().cx,
+            &state,
+            std::slice::from_ref(&stack.resource),
+            Wait::FailFast
+        )
+        .is_ok());
+        let (error, custody) = parked
+            .abort(&ctx, Wait::FailFast)
+            .expect_err("unwound effects must be cleared before settlement");
+        assert!(error
+            .to_string()
+            .contains("integration effects unsettled; re-run up"));
+        let super::super::ParkedAbortCustody::CleanupActivation(mut parked) = *custody else {
+            panic!("cleanup must retain the same parked owner");
+        };
+        parked.clear_step(&ctx, Step::Routes).unwrap();
+        parked
+            .abort(&ctx, Wait::FailFast)
+            .expect("settle exact owners and cancel");
+    }
+}
+
+#[test]
 fn target_observation_cancel_refuses_resume_and_keeps_cleanup_custody() {
     let fixture = home();
     let state = root(fixture.path());

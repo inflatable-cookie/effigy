@@ -395,6 +395,8 @@ pub struct ParkedWorkspaceActivation<'r> {
 #[derive(Debug)]
 pub enum ParkedAbortCustody<'r> {
     Activation(Box<ParkedWorkspaceActivation<'r>>),
+    CleanupActivation(Box<CleanupParkedWorkspaceActivation<'r>>),
+    Guarded(Box<GuardedAbortCustody<'r>>),
     Environment {
         environment: effigy_kernel::run::WorkspaceCleanupCustody<'r>,
         supervisor: Box<SessionSupervisor<'r>>,
@@ -410,6 +412,133 @@ pub enum ParkedAbortCustody<'r> {
         reservation: WorkspaceActivationReservation,
         attempt: effigy_kernel::run::RequestId,
     },
+}
+
+/// A gate-free owner restricted to inspecting and clearing integration work.
+/// It cannot reacquire publication authority.
+#[derive(Debug)]
+pub struct CleanupParkedWorkspaceActivation<'r> {
+    environment: effigy_kernel::run::ParkedWorkspaceRun<'r>,
+    supervisor: SessionSupervisor<'r>,
+    root: &'r effigy_kernel::root::StateRoot,
+    reservation: WorkspaceActivationReservation,
+    attempt: effigy_kernel::run::RequestId,
+}
+
+impl<'r> CleanupParkedWorkspaceActivation<'r> {
+    pub fn integration_snapshot(
+        &self,
+        ctx: &EnvContext<'_>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            effigy_kernel::run::WorkspaceIntegrationStep,
+            effigy_kernel::run::WorkspaceIntegrationState,
+        >,
+        EnvError,
+    > {
+        if !std::ptr::eq(self.root, ctx.root) {
+            return Err(EnvError::Invalid(
+                "workspace cleanup uses a different state root".into(),
+            ));
+        }
+        let cleanup = ctx.cleanup()?;
+        let cx = cleanup
+            .operation()
+            .effects()
+            .map_err(|e| EnvError::Invalid(format!("cleanup authority unavailable: {e}")))?;
+        self.environment
+            .integration_snapshot(&self.supervisor, &cx)
+            .map_err(EnvError::Kernel)
+    }
+
+    pub fn clear_step(
+        &mut self,
+        ctx: &EnvContext<'_>,
+        step: effigy_kernel::run::WorkspaceIntegrationStep,
+    ) -> Result<(), EnvError> {
+        if !std::ptr::eq(self.root, ctx.root) {
+            return Err(EnvError::Invalid(
+                "workspace cleanup uses a different state root".into(),
+            ));
+        }
+        let cleanup = ctx.cleanup()?;
+        let cx = cleanup
+            .operation()
+            .effects()
+            .map_err(|e| EnvError::Invalid(format!("cleanup authority unavailable: {e}")))?;
+        self.environment
+            .record_integration_step(
+                &mut self.supervisor,
+                &cx,
+                step,
+                effigy_kernel::run::WorkspaceIntegrationState::Cleared,
+            )
+            .map_err(EnvError::Kernel)
+    }
+
+    pub fn abort(
+        self,
+        ctx: &EnvContext<'r>,
+        wait: Wait,
+    ) -> Result<(), (EnvError, Box<ParkedAbortCustody<'r>>)> {
+        match self.integration_snapshot(ctx) {
+            Ok(steps) if steps.is_empty() => {}
+            Ok(_) => {
+                return Err((
+                    EnvError::Invalid("integration effects unsettled; re-run up".into()),
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return Err((
+                    error,
+                    Box::new(ParkedAbortCustody::CleanupActivation(Box::new(self))),
+                ))
+            }
+        };
+        let Self {
+            environment,
+            supervisor,
+            root,
+            reservation,
+            attempt,
+        } = self;
+        if let Err((error, environment)) = environment.settle(&cleanup, &mut EnvSettlement) {
+            return Err((
+                EnvError::Kernel(error),
+                Box::new(ParkedAbortCustody::Environment {
+                    environment,
+                    supervisor: Box::new(supervisor),
+                    reservation,
+                    attempt,
+                }),
+            ));
+        }
+        GuardedAbortState::Session {
+            root,
+            supervisor: Box::new(supervisor),
+            reservation,
+            attempt,
+        }
+        .retry(ctx, wait)
+        .map_err(|(error, state)| {
+            (
+                error,
+                Box::new(ParkedAbortCustody::Guarded(Box::new(GuardedAbortCustody {
+                    state: *state,
+                }))),
+            )
+        })
+    }
 }
 
 impl<'r> ParkedWorkspaceActivation<'r> {
@@ -688,6 +817,52 @@ impl<'r> ParkedWorkspaceActivation<'r> {
 }
 
 impl<'r> WorkspaceActivation<'r> {
+    /// Give up Env for cleanup without granting publication authority again.
+    pub fn park_for_cleanup(
+        self,
+        ctx: &EnvContext<'r>,
+    ) -> Result<CleanupParkedWorkspaceActivation<'r>, (EnvError, Box<Self>)> {
+        if self.committed.is_some() || self.selected || !self.environment.owns_root(ctx.root) {
+            return Err((EnvError::Invalid("workspace cleanup requires an uncommitted activation and its original state root".into()), Box::new(self)));
+        }
+        let cleanup = match ctx.cleanup() {
+            Ok(cleanup) => cleanup,
+            Err(error) => return Err((error, Box::new(self))),
+        };
+        let Self {
+            environment,
+            supervisor,
+            session,
+            reservation,
+            selected,
+            committed,
+            supervisor_id,
+            attempt,
+        } = self;
+        match environment.park_for_cleanup(&reservation, &supervisor, &cleanup) {
+            Ok(environment) => Ok(CleanupParkedWorkspaceActivation {
+                environment,
+                supervisor,
+                root: ctx.root,
+                reservation,
+                attempt,
+            }),
+            Err((error, environment)) => Err((
+                error,
+                Box::new(Self {
+                    environment: *environment,
+                    supervisor,
+                    session,
+                    reservation,
+                    selected,
+                    committed,
+                    supervisor_id,
+                    attempt,
+                }),
+            )),
+        }
+    }
+
     /// Release Env after the one apply and target bind, retaining both exact
     /// owners and the creator evidence. Failure returns guarded custody.
     pub fn park(
@@ -1675,6 +1850,9 @@ mod tests {
             [&reservation],
         ).unwrap(), 1);
         drop(connection);
+        let (_, activation) = activation
+            .park_for_cleanup(&ctx)
+            .expect_err("committed reservation cannot release Env for cleanup");
         let (_, custody) = activation
             .abort_guarded_recoverable(&ctx, Wait::FailFast)
             .expect_err("committed reservation must refuse before settlement");
@@ -1949,6 +2127,145 @@ mod tests {
                 && retained
                 && bound,
             "exact session remains held and claimed reservation recoverable"
+        );
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn ambiguous_env_admission_owner_death_preserves_tagged_reservation() {
+        use effigy_kernel::observe::Observed;
+        use effigy_test_support::process::FixtureCommandExt;
+        const CHILD_HOME: &str = "EFFIGY_AMBIGUOUS_ENV_ADMISSION_CHILD_HOME";
+        if let Some(path) = std::env::var_os(CHILD_HOME) {
+            let state = root(std::path::Path::new(&path));
+            let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let env = env("workspace");
+            let mut adopted = false;
+            let mut armed = false;
+            let failure = effigy_kernel::fault_injection::with_hook(
+                move |point| {
+                    if point == "SessionSupervisorAdoptAfter" {
+                        adopted = true;
+                    }
+                    if adopted && point == "BeginRecovered" {
+                        armed = true;
+                    }
+                    if armed && point == "StoreCommitAfter" {
+                        armed = false;
+                        return Err(std::io::Error::other("injected post-commit ambiguity"));
+                    }
+                    Ok(())
+                },
+                || {
+                    WorkspaceActivation::begin_recoverable(
+                        &ctx,
+                        &env,
+                        &inputs(),
+                        &invocation(),
+                        options(54),
+                        "fixture-supervisor",
+                    )
+                },
+            )
+            .expect_err("post-commit ambiguity");
+            assert!(failure
+                .error
+                .to_string()
+                .contains("injected post-commit ambiguity"));
+            let custody = failure.custody.expect("retain session");
+            std::fs::write(std::path::Path::new(&path).join("ready"), b"ready").unwrap();
+            let mut line = String::new();
+            let _ = std::io::stdin().read_line(&mut line);
+            drop(custody);
+            panic!("parent must terminate this owner");
+        }
+        let fixture = home();
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "environment::workspace_activation::tests::ambiguous_env_admission_owner_death_preserves_tagged_reservation", "--nocapture"])
+            .env(CHILD_HOME, fixture.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(output)
+            .spawn_owned().unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let ready = fixture.path().join("ready");
+        while !ready.exists() && std::time::Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let reached = ready.exists();
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+        }
+        let status = child.wait().unwrap();
+        assert!(reached, "fixture owner did not reach ambiguous admission");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(nix::libc::SIGKILL));
+        }
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let env = env("workspace");
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        let Observed::Verified(Some(reservation), _) =
+            WorkspaceActivationReservation::recover(&reader, &env.resource)
+        else {
+            panic!("reservation unavailable")
+        };
+        let record = reservation.record();
+        assert_eq!(
+            record.state,
+            effigy_kernel::workspace_session::ActivationReservationState::Reserved
+        );
+        let env_run = record.environment_run.expect("bound Env run");
+        let session = record.session.as_ref().expect("bound session");
+        assert_eq!(session.run, options(54).id);
+        let session_run = session.run;
+        let session_owner = session.owner.clone();
+        drop(reader);
+        for (owner, id) in [(&env.resource, env_run), (&session_owner, session_run)] {
+            let outcome = effigy_kernel::run::settle_interrupted(
+                &ctx.cx,
+                &state,
+                owner,
+                id,
+                options(55).next,
+                &ctx.cleanup().unwrap(),
+                &mut super::super::EnvSettlement,
+            )
+            .expect("settle exact interrupted run");
+            assert_eq!(
+                outcome.cleanup(),
+                effigy_kernel::outcome::CleanupOutcome::Complete
+            );
+        }
+        let error = reservation
+            .cancel(&ctx.cx, &state, Wait::FailFast)
+            .expect_err("another attempt cannot cancel the staged session");
+        assert!(error
+            .to_string()
+            .contains("competing attempt or untagged reservation"));
+        let Observed::Verified(reader, _) =
+            effigy_kernel::store::Store::read(&ctx.observe(), &state)
+        else {
+            panic!("store unavailable")
+        };
+        let Observed::Verified(Some(after), _) =
+            WorkspaceActivationReservation::recover(&reader, &env.resource)
+        else {
+            panic!("reservation unavailable")
+        };
+        assert_eq!(after.id(), reservation.id());
+        assert_eq!(
+            after.state(),
+            effigy_kernel::workspace_session::ActivationReservationState::Reserved
         );
     }
 

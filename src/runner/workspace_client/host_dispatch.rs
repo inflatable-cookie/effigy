@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use effigy_kernel::ctx::{EffectClass, EffectContext, ObserveContext, Placement};
-use effigy_kernel::id::{ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId};
+use effigy_kernel::id::{
+    Digest, ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId,
+};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::workspace_channel::{
     self as channel, InvocationBody, ObserveBody, Refusal, Selector, Target,
@@ -303,6 +305,31 @@ impl channel::RunIds for HostDispatch {
 /// text, its arguments and a checkout-relative working directory that is
 /// resolved inside this host checkout.
 impl channel::Resolver for HostDispatch {
+    fn admission_invocation(
+        &mut self,
+        body: &InvocationBody,
+        resolved: &ResolvedInvocation,
+        run: RunId,
+    ) -> Result<ResolvedInvocation, Refusal> {
+        let runtime = effigy_execution::ExecutionRuntimeArgsPlan::from_args(&body.args)
+            .map_err(|error| Self::refuse(error.to_string()))?
+            .exec_task_runtime_args();
+        let mut spec = resolved.spec().clone();
+        spec.argv.truncate(1);
+        spec.argv.extend(
+            runtime
+                .passthrough
+                .into_iter()
+                .map(std::ffi::OsString::from),
+        );
+        let token = effigy_kernel::run::workspace_managed_token(run);
+        spec.provenance.insert(
+            crate::runner::task_engine::MANAGED_RUN_PROVENANCE.to_owned(),
+            Digest::of(token.as_bytes()),
+        );
+        ResolvedInvocation::new(spec).map_err(|error| Self::refuse(error.to_string()))
+    }
+
     fn resolve(
         &mut self,
         cx: &EffectContext,

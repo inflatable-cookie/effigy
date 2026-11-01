@@ -893,7 +893,15 @@ fn same_id_without_a_committed_admission_is_unknown_not_reusable() {
     };
     let digest = Digest::of(b"uncommitted");
     assert!(matches!(
-        run::reserve(&host.cx, &host.root, key, digest.clone(), id(20)).expect("reservation"),
+        run::reserve_resolved(
+            &host.cx,
+            &host.root,
+            key,
+            digest.clone(),
+            id(20),
+            &resolved("child")
+        )
+        .expect("reservation"),
         run::Reservation::Fresh(_)
     ));
     assert!(matches!(
