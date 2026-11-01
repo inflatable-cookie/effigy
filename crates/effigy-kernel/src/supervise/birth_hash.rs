@@ -175,7 +175,7 @@ pub(crate) fn self_hash(cx: &OperationContext) -> Result<Digest, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ctx::{CancelToken, EffectClass, Limits, Placement};
+    use crate::ctx::{CancelToken, EffectClass, Limits, Placement, StopCause};
 
     fn context(budget: Duration) -> OperationContext {
         OperationContext::new(
@@ -249,6 +249,45 @@ mod tests {
             ))),
             Ok(Digest::of(b"fresh"))
         );
+    }
+
+    #[test]
+    fn concurrent_caller_and_cancelled_attempt_cannot_reuse_worker() {
+        let cache = Arc::new(Cache::new());
+        let cancel = CancelToken::default();
+        let mut cx = context(Duration::from_secs(2));
+        cx = OperationContext::new(
+            cx.deadline(),
+            cancel.clone(),
+            cx.limits().clone(),
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        let (started, ready) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let worker_cache = Arc::clone(&cache);
+        let caller = std::thread::spawn(move || {
+            worker_cache.get(&cx, move || {
+                let _ = started.send(());
+                let _ = blocked.recv();
+                Ok(Digest::of(b"late"))
+            })
+        });
+        let reached = ready.recv_timeout(Duration::from_secs(1)).is_ok();
+        let competing = cache.get(&context(Duration::from_secs(1)), || {
+            panic!("competing caller started a second worker")
+        });
+        cancel.cancel(StopCause::Requested);
+        let outcome = caller.join();
+        let _ = release.send(());
+        assert!(reached);
+        assert!(competing.is_err());
+        assert!(outcome.unwrap().is_err());
+        assert!(cache
+            .get(&context(Duration::from_secs(1)), || {
+                panic!("cancelled attempt started another worker")
+            })
+            .is_err());
     }
 
     #[test]
