@@ -805,6 +805,98 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
 }
 
 #[test]
+fn activation_parks_the_real_claimed_run_after_target_binding() {
+    use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
+    use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
+    use std::collections::BTreeMap;
+
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let reservation = fresh_reservation(&ctx, &stack);
+    let inputs = reservation.inputs().unwrap().clone();
+    let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
+    let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task,
+        route: Route::Task,
+        argv: vec![],
+        cwd: String::new(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        gates: vec![],
+        attachments: vec![],
+        class: effigy_kernel::ctx::EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .unwrap();
+    let options = effigy_kernel::run::BeginOpts {
+        id: effigy_kernel::id::RunId::new(1_760_000_000_000, [73; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        custody: None,
+        next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+            .unwrap(),
+    };
+    let super::super::WorkspaceBegin::Activate(mut activation) =
+        super::super::WorkspaceActivation::begin(
+            &ctx,
+            &stack,
+            &inputs,
+            &invocation,
+            options,
+            "fixture-supervisor",
+        )
+        .unwrap()
+    else {
+        panic!("fresh activation")
+    };
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    activation
+        .environment_mut()
+        .create_with(&mut fake, &selection(), request(&render), || Ok(()))
+        .unwrap();
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    let candidate = verified(vec![TargetCandidate {
+        identity: ContainerIdentity {
+            container_id: id('a'),
+            vm_boot_id: "boot".into(),
+            backend: "fixture".into(),
+        },
+        project: PROJECT.into(),
+        created_by: None,
+    }]);
+    let reservation = activation.reservation().clone();
+    activation
+        .environment_mut()
+        .bind_target_observing(
+            &reservation,
+            candidate,
+            &mut fake,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+    let session = activation.session().clone();
+    let parked = activation
+        .park(Instant::now() + Duration::from_secs(10))
+        .expect("complete activation parks");
+    assert_eq!(parked.session(), &session);
+    let gate = effigy_kernel::gate::Gate::acquire(
+        &ctx.cx,
+        &state,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast,
+    )
+    .expect("Env is free");
+    drop(gate);
+    drop(parked);
+}
+
+#[test]
 fn same_image_workspace_env_mount_and_entrypoint_recreation_bind_the_new_id() {
     use effigy_kernel::workspace_session::{ContainerIdentity, TargetCandidate};
     for (key, value) in [
