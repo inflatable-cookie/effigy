@@ -283,6 +283,81 @@ fn resolved_admission_migrates_legacy_rows_without_rebinding_them() {
         Some(expected.digest().0.as_slice())
     );
 }
+
+#[test]
+fn concurrent_resolutions_bind_only_the_winning_reservation() {
+    let fixture = home();
+    let path = fixture.path().to_path_buf();
+    let key = admission_key(95);
+    let barrier = Arc::new(Barrier::new(2));
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2u8)
+            .map(|n| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, &path).unwrap();
+                    let resolved = inv(if n == 0 { owner() } else { foreign_owner() });
+                    barrier.wait();
+                    let result =
+                        reserve_resolved(&cx, &root, key, digest(), id(95 + n), &resolved).unwrap();
+                    (resolved, result)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    let mut winner = None;
+    let mut loser = None;
+    for (resolved, result) in results {
+        match result {
+            Reservation::Fresh(ticket) => {
+                assert!(winner.replace((resolved, ticket)).is_none());
+            }
+            Reservation::Recorded(Recovered::Unknown {
+                reason: UnknownAdmission::ReservedNotAdmitted,
+            }) => {
+                assert!(loser.replace(resolved).is_none());
+            }
+            other => panic!("unexpected concurrent reservation: {other:?}"),
+        }
+    }
+    let (expected, ticket) = winner.expect("one reservation winner");
+    let different = loser.expect("one recorded loser");
+    let cx = context();
+    let root = StateRoot::effects(&cx, &path).unwrap();
+    let mut fake = Fake::new(&path);
+    let run_id = ticket.run();
+    let error = Run::begin_admitted(
+        &cx,
+        &root,
+        &different,
+        begin_opts(run_id),
+        &cleanup(&cx),
+        &mut fake,
+        ticket.clone(),
+    )
+    .expect_err("loser resolution must refuse");
+    assert!(error.to_string().contains("resolved invocation"));
+    assert_eq!(runs(&cx, &root), 0);
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &expected,
+        begin_opts(run_id),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
 fn settled(cx: &EffectContext, root: &StateRoot, key: AdmissionKey, run: RunId, fake: &mut Fake) {
     let mut run = admitted(cx, root, key, run, fake);
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
