@@ -13,6 +13,31 @@ guest PTY, attach, reconnect and detach acknowledgement are deferred to
 Level 2 as specified in 052 §8.11. This does not remove the environment
 activation or its detached session supervisor.
 
+### Workspace apply boundary (effigy#533, 2026-11-02)
+
+The one ordinary Compose apply is an explicit boundary
+(`src/runner/environment_workspace/private_apply.rs`). The owner resolves the
+frozen command and the guarded Env run hands the strategy its own `Run`, child
+`EffectContext` and absolute deadline through
+`WorkspaceActivation::apply_sealed_with_owner`; nothing downstream can reopen a
+budget. Production supplies `private_apply::qualified`. A proof substitutes a
+fake backend at that same external process boundary, so the publication
+sequence is exercised against the real owner — journal, gate order, binding,
+gated re-observation, commit, selector switch and recovery — while the process
+custody of the apply is not claimed.
+
+The qualified invocation is still refused. A same-Env private apply needs the
+Env run to own kernel custody (`Custody::spawn_auxiliary` refuses a run without
+a sentinel), and the workspace activation admits that run through
+`Run::begin_claimed_recoverable`, which refuses an activation that would carry
+one (`crates/effigy-kernel/src/run/mod.rs`, "recoverable claimed admission
+requires an environment activation without a sentinel"). Resident Env custody,
+its sentinel placement and its owner-death/old-reader recovery are the deferred
+S1 item from #512; `Terminal::Discard`, the other way to keep backend bytes out
+of retained logs, is refused until helper identities carry a verified image
+(`crates/effigy-kernel/src/custody.rs`). Until those land, no workspace apply
+starts a backend and every deferred proof that needs one states that by name.
+
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and

@@ -735,6 +735,22 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **The one workspace Compose apply is an explicit boundary.** The owner still
+  resolves the frozen command, and the guarded Env run now lends the apply the
+  real `Run`, its child effect and the activation's one absolute deadline
+  through `WorkspaceActivation::apply_sealed_with_owner`. A proof substitutes a
+  fake backend at that external process boundary, so the reserved-guest proofs
+  reach committed selection through the real owner — journal, gate order,
+  binding, gated re-observation, commit, selector switch, unwind and recovery —
+  and the nine deferred publication, revalidation, activation-deadline and
+  guest-write-crash assertions from #512 now pass, joined by a negative control
+  that an unsettled apply performs no guest I/O, mints no credential, switches
+  no selector and leaves no pending selection. The production strategy still
+  refuses, because a same-Env apply needs resident Env custody, whose kernel
+  admission refuses an activation that carries a sentinel; no workspace apply
+  and no Discard executes, and the four deferred serving-host proofs remain
+  deferred to #531 by name.
+
 - **Group closure and anchor retirement are honest about their limits.** An anchor
   retires only when one inventory round positively accounts for every in-group row
   (a zombie cannot fork) and positively observes the anchor itself. A listed row

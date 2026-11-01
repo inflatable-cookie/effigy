@@ -145,3 +145,20 @@ inherited-plus-delta reviews.
 
 Run-specific `runs:status` is in progress in #512; the existing `runs:list`
 seam does not establish that capability or production activation qualification.
+
+## Apply boundary after integration (effigy#533, 2026-11-02)
+
+The slices are integrated and merged (#659). C's producer now takes the one
+ordinary apply as an injected strategy
+(`environment_workspace::PrivateApply`), and the guarded Env run lends it the
+real `Run`, child effect and deadline through `apply_sealed_with_owner`. The
+reserved-guest proofs (`workspace_reserved_*`) supply a fake backend on that
+boundary and pass 13/13; `workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection`
+plus the eight sibling publication, revalidation, deadline and guest-write
+crash proofs reach committed selection through the real owner.
+
+The production strategy still refuses, so no workspace apply executes. The
+blocker is resident Env custody: see the apply boundary section of
+[053](053-environment-reconciler-contract.md). The four `#[ignore]`d serving-host
+proofs in `tests/workspace_client/container_up_production.rs` need the same
+capability plus the fixture apply seam, and remain #531's positive E2E.

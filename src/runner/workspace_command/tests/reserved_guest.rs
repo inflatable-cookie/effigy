@@ -119,6 +119,8 @@ enum Fault {
     RecoveryDead,
     RecoveryUnknown,
     Hybrid,
+    /// The apply boundary never starts a backend.
+    ApplyRefused,
 }
 #[derive(Clone)]
 struct Probe {
@@ -126,6 +128,51 @@ struct Probe {
     fault: Fault,
     guest: Rc<RefCell<FakeGuest>>,
     context_probed: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+/// The fake backend on the far side of the apply boundary. The owner resolves
+/// the frozen command; this runs exactly that command once, as a child of the
+/// test process, with no capture. The reserved-guest proofs assert the
+/// publication sequence, so the process boundary is where their fake belongs;
+/// the qualified route owns the custody of the child it starts.
+fn fake_backend(
+    _run: &mut effigy_kernel::run::Run<'_>,
+    _effect: &effigy_kernel::ctx::EffectContext,
+    command: &PrivateApplyCommand<'_>,
+) -> Result<(), effigy_containers::environment::BackendError> {
+    use effigy_containers::environment::BackendError;
+    use std::process::{Command, Stdio};
+    if Instant::now() >= command.until {
+        return Err(BackendError::NotStarted(
+            "fixture apply deadline expired".into(),
+        ));
+    }
+    let mut child = Command::new(command.program)
+        .current_dir(command.workdir)
+        .args(command.args)
+        .envs(command.env.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| BackendError::NotStarted("fixture backend unavailable".into()))?;
+    loop {
+        if Instant::now() >= command.until {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(BackendError::Uncertain("fixture backend timed out".into()));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => return Err(BackendError::Uncertain("fixture backend failed".into())),
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => {
+                return Err(BackendError::Uncertain(
+                    "fixture backend wait unavailable".into(),
+                ))
+            }
+        }
+    }
 }
 impl WorkspaceGuestProbe for Probe {
     fn context_dial(
@@ -260,6 +307,18 @@ impl GuestChannelProbe for Probe {
         }
         Observed::Verified(observed, evidence())
     }
+}
+
+/// A backend that refuses the apply outright. The owner must report the
+/// unsettled outcome and perform no publication effect at all.
+fn refusing_backend(
+    _run: &mut effigy_kernel::run::Run<'_>,
+    _effect: &effigy_kernel::ctx::EffectContext,
+    _command: &PrivateApplyCommand<'_>,
+) -> Result<(), effigy_containers::environment::BackendError> {
+    Err(effigy_containers::environment::BackendError::Uncertain(
+        "fixture private apply outcome unsettled".into(),
+    ))
 }
 
 fn elf() -> Vec<u8> {
@@ -697,14 +756,22 @@ home = "/home/vscode"
             Fault::Revalidate | Fault::RevalidateChanged => {
                 let backend =
                     effigy_containers::environment::select_backend(&policy.repo_root, &policy);
-                crate::runner::environment::workspace::up(request, &[], |activation| {
-                    let input = observe(activation)?;
-                    let mut bound = super::bind_reserved_guest(activation, input)?;
-                    bound.revalidate(activation, backend.adapter().as_mut())?;
-                    super::publish_bound_reserved_guest(activation, bound)
-                })
+                crate::runner::environment::workspace::up(
+                    request,
+                    &[],
+                    fake_backend,
+                    |activation| {
+                        let input = observe(activation)?;
+                        let mut bound = super::bind_reserved_guest(activation, input)?;
+                        bound.revalidate(activation, backend.adapter().as_mut())?;
+                        super::publish_bound_reserved_guest(activation, bound)
+                    },
+                )
             }
-            _ => up_prepared(request, &[], observe),
+            _ if matches!(fault, Fault::ApplyRefused) => {
+                up_prepared(request, &[], refusing_backend, observe)
+            }
+            _ => up_prepared(request, &[], fake_backend, observe),
         };
         if matches!(
             fault,
@@ -838,6 +905,42 @@ home = "/home/vscode"
                 .supervisor
                 .settle(&cleanup, &mut effigy_containers::environment::EnvSettlement)
                 .unwrap();
+        } else if matches!(fault, Fault::ApplyRefused) {
+            // A refused or unsettled apply can never reach the guest: no
+            // credential, no staging, no selector switch and no pending
+            // selection obligation for a successor to settle.
+            let error = match result.expect_err("an unsettled apply cannot select") {
+                WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Finish { cause, .. } => cause.to_string(),
+                WorkspaceUpError::Preparation(error) => error.to_string(),
+            };
+            assert!(error.contains("unsettled"), "{error}");
+            assert_eq!(minted.get(), 0, "no credential after an unsettled apply");
+            assert_eq!(
+                io_count.get(),
+                0,
+                "an unsettled apply performs no guest I/O"
+            );
+            assert!(!probed.get(), "no guest probe after an unsettled apply");
+            assert_eq!(guest.text(CONTEXT_CURRENT_PATH).as_deref(), Some("3"));
+            assert_eq!(
+                guest.text(BINARY_CURRENT_PATH).as_deref(),
+                Some("/predecessor")
+            );
+            assert_eq!(
+                guest.link_target(ENTRY_SELECTOR).as_deref(),
+                Some("/predecessor")
+            );
+            let ctx = environment::context(&repo).unwrap();
+            let observed = effigy_kernel::store::Store::read(&ctx.observe(), ctx.root);
+            let journal = observed.verified().expect("journal");
+            assert!(
+                !matches!(
+                    effigy_kernel::workspace_session::unfinished_selection(journal, &env.resource),
+                    Observed::Verified(Some(_), _)
+                ),
+                "an apply that never completed leaves no pending selection"
+            );
         } else if matches!(fault, Fault::ExpiredDeadline) {
             let error = match result.expect_err("an expired publication deadline refuses") {
                 WorkspaceUpError::Owner { cause, .. } => cause.to_string(),
@@ -957,6 +1060,11 @@ home = "/home/vscode"
 #[test]
 fn workspace_reserved_owner_publishes_one_full_v2_through_real_commit_and_selection() {
     run(Fault::None);
+}
+
+#[test]
+fn workspace_reserved_unsettled_apply_refuses_without_any_guest_effect() {
+    run(Fault::ApplyRefused);
 }
 
 #[test]

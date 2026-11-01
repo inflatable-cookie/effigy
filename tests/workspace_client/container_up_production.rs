@@ -435,7 +435,7 @@ fn cut_refuses_before_binding_staging_and_liveness_faults() {
 }
 
 #[test]
-#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
+#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
 fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() {
     let fixture = BackendFixture::new();
     let mut config: serde_json::Value =
@@ -682,19 +682,19 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
 }
 
 #[test]
-#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
+#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
 fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("delay_final_revalidation");
 }
 
 #[test]
-#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
+#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
 fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
 }
 
 #[test]
-#[ignore = "deferred to #533/#531: private apply is refused before this proof"]
+#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
 fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sinks() {
     for case in ["fail_binding", "fail_binary_staging", "fail_liveness"] {
         let fixture = BackendFixture::new();
