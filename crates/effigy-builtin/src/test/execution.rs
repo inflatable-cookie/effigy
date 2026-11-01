@@ -305,24 +305,24 @@ pub(super) fn run_builtin_test_targets_parallel(
                     if let Some(mut custody) = custody {
                         // The suite stays in this run's process group, so
                         // custody still settles it.
-                        let suite = match custody
-                            .run(&execution_command, &root, &host_env, capture_output)
-                        {
-                            Ok(suite) => suite,
-                            Err(error) => {
-                                // The attempt never reported: close its run as
-                                // a failed attempt before the outer run
-                                // concludes.
-                                custody.settle(&crate::HostSuiteOutcome {
-                                    code: None,
-                                    stopped: false,
-                                });
-                                return Err(BuiltinError::TaskCommandLaunch {
-                                    command: execution_command.clone(),
-                                    error: std::io::Error::other(error.to_string()),
-                                });
-                            }
-                        };
+                        let suite =
+                            match custody.run(&execution_command, &root, &host_env, capture_output)
+                            {
+                                Ok(suite) => suite,
+                                Err(error) => {
+                                    // The attempt never reported: close its run as
+                                    // a failed attempt before the outer run
+                                    // concludes.
+                                    custody.settle(&crate::HostSuiteOutcome {
+                                        code: None,
+                                        stopped: false,
+                                    });
+                                    return Err(BuiltinError::TaskCommandLaunch {
+                                        command: execution_command.clone(),
+                                        error: std::io::Error::other(error.to_string()),
+                                    });
+                                }
+                            };
                         // The attempt's own outcome is recorded and its whole
                         // process group stopped here, before the run that owns
                         // the scratch directory concludes. The record is what
@@ -439,11 +439,6 @@ pub(super) fn run_builtin_test_targets_parallel(
                             .expect("child evidence receiver remains active until workers finish");
                     }
                     let status = wait_result?;
-                    #[cfg(unix)]
-                    let signal = {
-                        use std::os::unix::process::ExitStatusExt;
-                        status.signal()
-                    };
                     // These suites are the built-in's own children, not the
                     // run's: nothing the run records can say a stop ended one,
                     // so its status is its own result.

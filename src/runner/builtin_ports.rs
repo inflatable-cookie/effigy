@@ -126,7 +126,7 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
         // The run records what the runner itself observed for the attempt:
         // a cancellation stays a cancellation, and a failed suite keeps its
         // own code.
-        let workload = self.attempt.unwrap_or_else(|| match outcome.code {
+        let workload = self.attempt.unwrap_or(match outcome.code {
             Some(0) => effigy_kernel::outcome::WorkloadOutcome::Succeeded,
             Some(code) => effigy_kernel::outcome::WorkloadOutcome::Failed { code },
             None => effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
