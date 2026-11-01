@@ -2940,11 +2940,16 @@ run is its owner; a secondary never displaces a live owner, and a transferable
 admission ticket is not a client identity.
 
 After durable acknowledged detach, an authenticated client may make a new,
-explicit `Grant` owner claim. The host verifies pinned TLS, the grant book, the
-session and container/boot identities, and the exact session and run fences and
-generations. One atomic durable owner/attachment compare-and-swap decides the
-claim: one contender wins; concurrent others attach as secondaries or refuse.
-Stale or revoked grants refuse. Replay never creates an Owner, and no foreground
+explicit `Grant` owner claim. The host verifies pinned TLS and its own grant
+book and binds the authenticated per-client grant to the host user, CheckoutId,
+environment generation, allowed operation and target, session and container/boot
+identities, and exact session and run fences and generations. A digest or
+transferable admission ticket is not this identity or authority. One atomic
+durable owner/attachment compare-and-swap checks the detached state and decides
+the claim: one contender wins; concurrent others attach as secondaries or refuse.
+Stale or revoked grants refuse. A lost detach response is `Unknown`: no claim is
+allowed without positive durable acknowledgement of detach. Replay never creates
+an Owner, and no foreground
 reconnect or retry of an unknown invocation is authorized. New owner-claim
 journal state and the attachment transition are lifecycle slice E work after the
 #512 base, not an existing or qualified implementation.
@@ -4765,8 +4770,10 @@ for the session the host recorded, never the one an `enrol` frame names.
 Revoking a generation ends the enrolment credential with the capabilities it
 issued, so re-enrolment cannot mint a live capability for a dead generation.
 A connection owns at most one attachment: attaching to another run refuses,
-replacing this connection's own secondary releases the replaced row, and only
-the connection that admitted a run holds its owner handle. A connection that
+replacing this connection's own secondary releases the replaced row. The
+connection that admitted a run holds its owner handle until acknowledged detach;
+after that durable detach only the authenticated winner of the fenced claim in
+§8.7 may hold a new owner handle. A connection that
 ends on a refused or malformed frame releases its own secondary row with it, so
 a rejected frame can neither exhaust the run's secondary slots nor orphan one,
 while an owning client's lifetime is still released only by its own end of
@@ -4844,10 +4851,12 @@ connections with: one `RetainedStreams<WorkspaceTerminal>` per admitted run, and
 `ServingOwner::terminal_custody` (delegated by `ServiceOwner`) is the typed
 handoff its caller opens entries through. Opening a terminal resumes the run's
 owning handle, so a run this session did not admit has no owner to write for and
-is refused. Only that owning attachment binds the writer, for its whole life: a
-second terminal — the first one to attach included — never claims it, a re-attach
-never displaces it, and the kernel's own replacement of a second terminal cannot
-put one in its place. Because the attachment allowed to queue work and the row
+is refused. Only the current owning attachment binds the writer for that
+attachment's lifetime. A second terminal — the first one to attach included —
+never claims it, and no re-attach displaces a live owner. After durable
+acknowledged detach, the fenced owner claim in §8.7 atomically retires the old
+writer binding and installs the winning owner attachment; replacing a secondary
+never creates an owner or puts it in the writer's place. Because the attachment allowed to queue work and the row
 the pump re-reads before every effect are therefore one attachment, a released
 owning row stops queued work as well as new frames, and nothing is ever queued on
 a second terminal's authority. The connection fences the live attachment it was
