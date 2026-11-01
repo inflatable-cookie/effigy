@@ -1,14 +1,16 @@
 //! Bounded self-hash scaffolding. This does not grant a helper capability.
 //!
 //! A stalled filesystem read can retain at most one worker thread per process.
-//! A timed-out or cancelled first attempt permanently refuses later attempts;
-//! a late worker result can never authorize them.
+//! A timed-out or cancelled started attempt permanently refuses later attempts;
+//! a late worker result can never authorize them. An expired context rejected
+//! before starting does not use the worker slot. Thread creation itself is not
+//! proven bounded; this scaffold cannot be used as a deadline guarantee.
 use crate::ctx::{Deadline, OperationContext};
 use crate::id::Digest;
 use sha2::{Digest as _, Sha256};
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -22,14 +24,14 @@ enum State {
 #[derive(Debug)]
 struct Cache {
     state: Mutex<State>,
-    changed: Condvar,
+    claimed: AtomicBool,
 }
 
 impl Cache {
     fn new() -> Self {
         Self {
             state: Mutex::new(State::Fresh),
-            changed: Condvar::new(),
+            claimed: AtomicBool::new(false),
         }
     }
 
@@ -44,14 +46,12 @@ impl Cache {
         };
         cx.check("helper self-hash")
             .map_err(|_| "helper self-hash unavailable")?;
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match &*state {
-            State::Fresh => *state = State::Running,
-            // A second caller cannot adopt an unfinished or unaccepted result.
-            _ => return Err("helper self-hash unavailable"),
+        if self.claimed.swap(true, Ordering::AcqRel) {
+            return Err("helper self-hash unavailable");
+        }
+        {
+            let mut state = self.lock_until(cx, deadline)?;
+            *state = State::Running;
         }
         let cache = Arc::clone(self);
         if std::thread::Builder::new()
@@ -69,18 +69,13 @@ impl Cache {
                         Err(_) => State::Refused,
                     };
                 }
-                cache.changed.notify_all();
             })
             .is_err()
         {
-            *state = State::Refused;
             return Err("helper self-hash unavailable");
         }
         loop {
-            if cx.check("helper self-hash").is_err() || Instant::now() >= deadline {
-                *state = State::Refused;
-                return Err("helper self-hash unavailable");
-            }
+            let mut state = self.lock_until(cx, deadline)?;
             match &*state {
                 State::Ready(digest, finished) if *finished < deadline => {
                     let digest = digest.clone();
@@ -93,17 +88,26 @@ impl Cache {
                     *state = State::Refused;
                     return Err("helper self-hash unavailable");
                 }
-                State::Running => {
-                    let wait = deadline
-                        .saturating_duration_since(Instant::now())
-                        .min(Duration::from_millis(20));
-                    let result = self
-                        .changed
-                        .wait_timeout(state, wait)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    state = result.0;
-                }
+                State::Running => drop(state),
                 State::Fresh => return Err("helper self-hash unavailable"),
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn lock_until(
+        &self,
+        cx: &OperationContext,
+        deadline: Instant,
+    ) -> Result<std::sync::MutexGuard<'_, State>, &'static str> {
+        loop {
+            if cx.check("helper self-hash").is_err() || Instant::now() >= deadline {
+                return Err("helper self-hash unavailable");
+            }
+            match self.state.try_lock() {
+                Ok(state) => return Ok(state),
+                Err(TryLockError::Poisoned(_)) => return Err("helper self-hash unavailable"),
+                Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(2)),
             }
         }
     }
@@ -174,6 +178,25 @@ mod tests {
         );
         assert!(cache
             .get(&cx, || panic!("must not spawn another worker"))
+            .is_err());
+    }
+
+    #[test]
+    fn a_stalled_state_lock_refuses_within_the_deadline() {
+        let cache = Arc::new(Cache::new());
+        let lock = cache.state.lock().unwrap();
+        let started = Instant::now();
+        assert!(cache
+            .get(&context(Duration::from_millis(50)), || {
+                panic!("a locked cache must not start a worker")
+            })
+            .is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(lock);
+        assert!(cache
+            .get(&context(Duration::from_secs(1)), || {
+                panic!("a spent slot must not start a worker")
+            })
             .is_err());
     }
 
