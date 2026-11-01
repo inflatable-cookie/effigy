@@ -808,6 +808,14 @@ fn parked_activation_fixture<'a>(
     ctx: &EnvContext<'a>,
     stack: &EnvRef,
 ) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
+    parked_activation_fixture_with_budget(ctx, stack, Duration::from_secs(60))
+}
+
+fn parked_activation_fixture_with_budget<'a>(
+    ctx: &EnvContext<'a>,
+    stack: &EnvRef,
+    budget: Duration,
+) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
     use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
     use effigy_kernel::workspace_session::{
         BoundPlatform, ContainerIdentity, GuestObject, ImagePlatform, LoaderFamily, TargetCandidate,
@@ -908,7 +916,7 @@ fn parked_activation_fixture<'a>(
         )
         .unwrap();
     let parked = activation
-        .park(Instant::now() + Duration::from_secs(60))
+        .park(Instant::now() + budget)
         .expect("complete activation parks");
     (parked, fake)
 }
@@ -1037,6 +1045,62 @@ fn target_observer_facade_refuses_mismatches_and_retains_owner() {
     activation
         .abort_guarded_recoverable(&ctx, Wait::FailFast)
         .unwrap();
+}
+
+#[test]
+fn target_observation_cancel_refuses_resume_and_keeps_cleanup_custody() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
+    for _ in 0..2 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let cancel = ctx.cx.operation().cancel_token().clone();
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            cancel.cancel(effigy_kernel::ctx::StopCause::Requested);
+            // A structural fixture; production must supply an actual observation.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect_err("cancel during observation refuses resume");
+    assert!(error.to_string().contains("cancelled"));
+    assert_eq!(parked.session(), &session);
+    parked
+        .abort(&ctx, Wait::FailFast)
+        .expect("fresh cleanup settles exact owners");
+}
+
+#[test]
+fn target_observation_past_deadline_refuses_resume_and_keeps_cleanup_custody() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) =
+        parked_activation_fixture_with_budget(&ctx, &stack, Duration::from_secs(2));
+    let session = parked.session().clone();
+    for _ in 0..2 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, deadline, _| {
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(50),
+            );
+            // A structural fixture; production must supply an actual observation.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect_err("expired observation refuses resume");
+    assert!(error.to_string().contains("deadline"));
+    assert_eq!(parked.session(), &session);
+    parked
+        .abort(&ctx, Wait::FailFast)
+        .expect("fresh cleanup settles exact owners");
 }
 
 #[test]
