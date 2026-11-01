@@ -137,6 +137,13 @@ mod tests {
     }
 
     #[test]
+    fn worker_inputs_have_send_bounds_without_sharing_runs() {
+        fn assert_send<T: Send>() {}
+        assert_send::<crate::root::StateRoot>();
+        assert_send::<crate::supervise::EngineSession>();
+    }
+
+    #[test]
     fn worker_local_root_and_run_survive_a_caught_command_unwind() {
         use crate::gate::GateError;
         use crate::id::{CheckoutId, CheckoutKind, ResourceId};
