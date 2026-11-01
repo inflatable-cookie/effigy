@@ -321,6 +321,24 @@ fn refusing_backend(
     ))
 }
 
+thread_local! {
+    /// The deadline the apply boundary was handed. `recording_backend` writes
+    /// it; `workspace_reserved_callback_keeps_the_original_activation_deadline`
+    /// compares it with the activation's own, so a fresh budget cannot pass.
+    static APPLIED_UNTIL: RefCell<Option<std::time::Instant>> = const { RefCell::new(None) };
+}
+
+/// As [`fake_backend`], also recording the absolute deadline the owner handed
+/// the apply. The strategy is the only place a later budget could be invented.
+fn recording_backend(
+    run: &mut effigy_kernel::run::Run<'_>,
+    effect: &effigy_kernel::ctx::EffectContext,
+    command: &PrivateApplyCommand<'_>,
+) -> Result<(), effigy_containers::environment::BackendError> {
+    APPLIED_UNTIL.with(|slot| *slot.borrow_mut() = Some(command.until));
+    fake_backend(run, effect, command)
+}
+
 fn elf() -> Vec<u8> {
     let interpreter = "/lib64/ld-linux-x86-64.so.2";
     let mut b = vec![0; 512];
@@ -557,6 +575,11 @@ home = "/home/vscode"
         };
         let gated_reads = std::rc::Rc::new(Cell::new(0));
         let gated_reads_for_closure = gated_reads.clone();
+        // The activation's own deadline, observed through the environment run
+        // the apply borrows. The publication callback must not exceed it, and
+        // neither may the apply it follows.
+        let activation_deadline = std::rc::Rc::new(Cell::new(None));
+        let activation_deadline_for_closure = activation_deadline.clone();
         let probe_identity = probe.identity.clone();
         let probe_guest = probe.guest.clone();
         let probe_probed = probe.context_probed.clone();
@@ -627,6 +650,7 @@ home = "/home/vscode"
             let original_deadline = activation.environment_mut().observation_deadline(
                 std::time::Instant::now() + Duration::from_secs(24 * 60 * 60),
             );
+            activation_deadline_for_closure.set(Some(original_deadline));
             Ok(ReservedGuestInput {
                 guest: Box::new(Guest(
                     shared.clone(),
@@ -771,6 +795,10 @@ home = "/home/vscode"
             _ if matches!(fault, Fault::ApplyRefused) => {
                 up_prepared(request, &[], refusing_backend, observe)
             }
+            Fault::LongObservationBudget => {
+                APPLIED_UNTIL.with(|slot| *slot.borrow_mut() = None);
+                up_prepared(request, &[], recording_backend, observe)
+            }
             _ => up_prepared(request, &[], fake_backend, observe),
         };
         if matches!(
@@ -788,6 +816,23 @@ home = "/home/vscode"
             for file in &policy.compose_files {
                 assert!(applies[0].contains(file.to_str().unwrap()));
             }
+        }
+        if matches!(fault, Fault::LongObservationBudget) {
+            // The producer asked for a 24-hour publication and the activation
+            // kept its own deadline. The apply strategy must be handed exactly
+            // that deadline: a leak of the requested 24 hours is later than it,
+            // and a budget the strategy measured for itself is a different
+            // instant, so both fail this comparison.
+            let own = activation_deadline
+                .get()
+                .expect("the activation observed its own deadline");
+            let applied = APPLIED_UNTIL
+                .with(|slot| *slot.borrow())
+                .expect("the apply boundary received a deadline");
+            assert_eq!(
+                applied, own,
+                "the apply must receive the activation's own deadline"
+            );
         }
         if matches!(fault, Fault::RevalidateChanged) {
             assert!(

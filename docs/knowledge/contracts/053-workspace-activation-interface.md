@@ -159,6 +159,10 @@ crash proofs reach committed selection through the real owner.
 
 The production strategy still refuses, so no workspace apply executes. The
 blocker is resident Env custody: see the apply boundary section of
-[053](053-environment-reconciler-contract.md). The four `#[ignore]`d serving-host
+[053](053-environment-reconciler-contract.md), which also carries the per-item
+disposition table for every inherited gap this task was given. The apply now
+receives the activation's own absolute deadline rather than one it measures
+itself, and `workspace_reserved_callback_keeps_the_original_activation_deadline`
+asserts exactly that. The four `#[ignore]`d serving-host
 proofs in `tests/workspace_client/container_up_production.rs` need the same
 capability plus the fixture apply seam, and remain #531's positive E2E.

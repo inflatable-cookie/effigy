@@ -745,7 +745,12 @@ During v0.x, MINOR bumps may include breaking changes.
   and the nine deferred publication, revalidation, activation-deadline and
   guest-write-crash assertions from #512 now pass, joined by a negative control
   that an unsettled apply performs no guest I/O, mints no credential, switches
-  no selector and leaves no pending selection. The production strategy still
+  no selector and leaves no pending selection. The apply strategy is handed the
+  activation's own absolute deadline, and the retained-deadline proof compares
+  that exact instant rather than merely proving the run succeeded. Every
+  inherited gap this task was given has a recorded disposition in
+  [contract 053](docs/knowledge/contracts/053-environment-reconciler-contract.md).
+  The production strategy still
   refuses, because a same-Env apply needs resident Env custody, whose kernel
   admission refuses an activation that carries a sentinel; no workspace apply
   and no Discard executes, and the four deferred serving-host proofs remain
