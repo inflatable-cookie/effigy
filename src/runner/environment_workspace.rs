@@ -165,7 +165,10 @@ pub(in crate::runner) struct PlannedWorkspaceUp<'a> {
     pub(in crate::runner) plan:
         &'a crate::runner::container_command::reserved_input::ReservedPublicationPlan,
     pub(in crate::runner) decide: Box<
-        dyn FnOnce(std::time::Instant) -> Result<PublishInputs, effigy_kernel::run::RunError>
+        dyn FnOnce(
+                std::time::Instant,
+                Arc<effigy_containers::environment::CreationPreflight>,
+            ) -> Result<PublishInputs, effigy_kernel::run::RunError>
             + Send,
     >,
     pub(in crate::runner) observation:
@@ -249,15 +252,17 @@ fn up_impl<'a>(
     }
     .creation_request();
     preflight_request.deadline = until;
-    let preflight = effigy_containers::environment::CreationPreflight::observe(
-        backend.adapter().as_mut(),
-        preflight_request,
-    )
-    .map_err(|error| {
-        owner_error(EnvError::Backend(BackendError::NotStarted(
-            error.to_string(),
-        )))
-    })?;
+    let preflight = Arc::new(
+        effigy_containers::environment::CreationPreflight::observe(
+            backend.adapter().as_mut(),
+            preflight_request,
+        )
+        .map_err(|error| {
+            owner_error(EnvError::Backend(BackendError::NotStarted(
+                error.to_string(),
+            )))
+        })?,
+    );
     let owned_seal = if planned.is_none() {
         Some(
             effigy_kernel::objects::Objects::seal_for_preflight(
@@ -294,19 +299,23 @@ fn up_impl<'a>(
     }
     let is_planned = planned.is_some();
     let (begin, before_apply) = match planned {
-        Some(planned) => (
-            WorkspaceActivation::begin_observing(
-                &ctx,
-                &env,
-                request.invocation,
-                request.options,
-                request.supervisor_id,
-                until,
-                planned.decide,
+        Some(planned) => {
+            let decision_preflight = Arc::clone(&preflight);
+            let decide = planned.decide;
+            (
+                WorkspaceActivation::begin_observing(
+                    &ctx,
+                    &env,
+                    request.invocation,
+                    request.options,
+                    request.supervisor_id,
+                    until,
+                    move |deadline| decide(deadline, decision_preflight),
+                )
+                .map_err(owner_error)?,
+                Some((planned.plan, planned.observation)),
             )
-            .map_err(owner_error)?,
-            Some((planned.plan, planned.observation)),
-        ),
+        }
         None => (
             WorkspaceActivation::begin(
                 &ctx,
