@@ -3091,11 +3091,43 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // lifetime and records no stop, so a Detached run keeps
                     // going (§8.11). The handle is taken, so a later end of
                     // stream has nothing left to send a stop for.
-                    match attachment.take().filter(|handle| handle.run() == body.run) {
-                        Some(mut handle) => handle
-                            .release(cx, root, Release::Detach)
-                            .map_err(refusal_from)?,
-                        None => self.dispatcher.detach(cx, root, session, body)?,
+                    if attachment
+                        .as_ref()
+                        .is_some_and(|handle| handle.run() != body.run)
+                    {
+                        return Err(Refusal::forbidden(
+                            "this connection is attached to another run",
+                        ));
+                    }
+                    match attachment.as_mut() {
+                        Some(handle) => {
+                            let is_owner = handle.client() == Client::Owner;
+                            if let Err(error) = handle.release(cx, root, Release::Detach) {
+                                if is_owner && !matches!(error, run::RunError::Refused(_)) {
+                                    self.dispatcher.admitted.remove(&body.run);
+                                }
+                                return Err(refusal_from(error));
+                            }
+                            if is_owner {
+                                self.dispatcher.admitted.remove(&body.run);
+                            }
+                            attachment.take();
+                        }
+                        None => {
+                            match self.dispatcher.detach(cx, root, session, body) {
+                                Ok(()) => {
+                                    self.dispatcher.admitted.remove(&body.run);
+                                }
+                                Err(error) => {
+                                    // The dispatcher returns a typed refusal; uncertain failures
+                                    // cannot confer a renewed owner lifetime.
+                                    if error.code != RefusalCode::Forbidden {
+                                        self.dispatcher.admitted.remove(&body.run);
+                                    }
+                                    return Err(error);
+                                }
+                            }
+                        }
                     }
                     self.attach = None;
                     // A detached connection has no attachment to publish for,

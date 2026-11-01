@@ -323,6 +323,49 @@ fn fresh_connection_cannot_detach_another_connections_owner() {
         "a fresh connection stopped another connection's run"
     );
 }
+
+#[test]
+fn refused_wrong_run_detach_preserves_the_current_owner_until_eof() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut frames = attached(session.session());
+    frames.push(Frame::Request(request(
+        session.session(),
+        3,
+        RequestBody::Detach(RunBody { run: id(99) }),
+    )));
+    let mut pipe = Pipe::new(&frames);
+    server
+        .serve(
+            &mut pipe,
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("conversation");
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert_eq!(
+        stops, 1,
+        "wrong-run detach lost the owning attachment before EOF"
+    );
+}
 fn input() -> StreamFrame {
     StreamFrame {
         id: RequestId::new([2; 16]),
