@@ -72,6 +72,7 @@ pub use workspace::{
     Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
 };
 mod workspace;
+mod workspace_custody;
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
