@@ -308,6 +308,7 @@ pub fn probe_authority(
     write_answer(
         &mut transport,
         &Frame::Hello(Hello {
+            capabilities: Vec::new(),
             schema: SCHEMA.to_owned(),
             protocol_versions: vec![PROTOCOL_V1],
             effigy_version: "fixture".to_owned(),
@@ -344,6 +345,7 @@ pub fn probe_authority(
             vm_boot_id: "fixture".to_owned(),
             body: effigy_kernel::workspace_channel::RequestBody::Observe(
                 effigy_kernel::workspace_channel::ObserveBody {
+                    query: None,
                     run_id: None,
                     op: crate::runner::workspace_client::serving_fixture::PROBE_OPERATION
                         .to_owned(),
@@ -399,6 +401,7 @@ fn unissued_is_refused(
     write_answer(
         &mut transport,
         &Frame::Hello(Hello {
+            capabilities: Vec::new(),
             schema: SCHEMA.to_owned(),
             protocol_versions: vec![PROTOCOL_V1],
             effigy_version: "fixture".to_owned(),

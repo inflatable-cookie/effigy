@@ -264,14 +264,12 @@ impl ChannelOpener for RefusingChannel {
     }
 }
 
+fn argv(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_owned()).collect()
+}
+
 fn parsed(words: &[&str]) -> Command {
-    parse_command(
-        words
-            .iter()
-            .map(|word| (*word).to_owned())
-            .collect::<Vec<_>>(),
-    )
-    .expect("a parsable command")
+    parse_command(argv(words)).expect("a parsable command")
 }
 
 #[test]
@@ -284,6 +282,7 @@ fn a_pinned_task_list_is_read_from_the_context_without_a_channel() {
 
     let rendered = dispatch_in(
         &parsed(&["tasks"]),
+        &argv(&["tasks"]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -309,6 +308,7 @@ fn a_stale_generation_refuses_before_any_read() {
 
     let error = dispatch_in(
         &parsed(&["tasks"]),
+        &argv(&["tasks"]),
         &stale,
         &mut guest,
         &mut checkout,
@@ -508,6 +508,7 @@ fn a_context_whose_locator_is_not_a_qualified_alias_refuses_before_the_connectio
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -541,6 +542,7 @@ fn a_host_refusal_returns_an_error_and_never_falls_back() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -570,6 +572,7 @@ fn a_version_mismatch_refuses_before_the_connection() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -601,6 +604,7 @@ fn an_identity_mismatch_refuses_before_the_connection() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &mismatched,
         &mut guest,
         &mut checkout,
@@ -1059,6 +1063,7 @@ impl MuteTransport {
     /// to send nothing at all.
     fn answering_negotiation_with_peer(peer: Digest) -> Self {
         let hello_ok = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+            capabilities: vec![host::ChannelCapability::ObserveQueryV1],
             protocol: host::PROTOCOL_V1,
             effigy_version: running_binary().version,
         }))
@@ -1117,6 +1122,7 @@ fn a_guest_authority_request_reaches_host_resolution_and_admission() {
 
     let rendered = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1171,6 +1177,47 @@ impl ChannelOpener for PeerChannel {
 
 #[test]
 fn a_wrong_capability_refuses_before_any_effect() {
+    // Coalesce these writes as socket buffering can, so the request write
+    // completes before the host rejects authentication and closes. A failed
+    // request write has a different, indeterminate outcome tested separately.
+    struct CoalescedAuthentication(PeerTransport, Vec<u8>);
+    impl Transport for CoalescedAuthentication {
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if !self.1.is_empty() {
+                self.0.write_all(&std::mem::take(&mut self.1))?;
+            }
+            self.0.read(bytes)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(Frame::Authenticate(_))) {
+                self.1.extend_from_slice(bytes);
+                Ok(())
+            } else if self.1.is_empty() {
+                self.0.write_all(bytes)
+            } else {
+                self.1.extend_from_slice(bytes);
+                self.0.write_all(&std::mem::take(&mut self.1))
+            }
+        }
+    }
+    struct CoalescedPeer(Option<UnixStream>);
+    impl ChannelOpener for CoalescedPeer {
+        fn open(
+            &mut self,
+            verified: &VerifiedWorkspaceContext,
+            live: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            WorkspaceClient::connect(
+                CoalescedAuthentication(PeerTransport::new(self.0.take().unwrap()), Vec::new()),
+                verified.clone(),
+                live.clone(),
+            )
+            .map(|client| Box::new(client) as Box<dyn ChannelRequest>)
+        }
+    }
     let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
     let (client_side, host_side) = connection_pair();
     let (served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
@@ -1179,12 +1226,11 @@ fn a_wrong_capability_refuses_before_any_effect() {
     // A capability this host never issued.
     publish(&mut guest, &context, Some(&Secret::new([0xcd; 32])));
     let mut checkout = FakeCheckout::default();
-    let mut opener = PeerChannel {
-        connections: vec![client_side],
-    };
+    let mut opener = CoalescedPeer(Some(client_side));
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1264,7 +1310,7 @@ fn a_repeated_intent_is_answered_from_the_hosts_record() {
 }
 
 #[test]
-fn an_unanswered_attempt_is_unknown_and_replayable() {
+fn an_unanswered_attempt_is_unknown_and_never_resends() {
     let mut client = WorkspaceClient::connect(
         MuteTransport::answering_negotiation(),
         verified(),
@@ -1275,6 +1321,7 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
         .authenticate(GuestAuth::Capability(capability()))
         .expect("authenticated");
     let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
         run_id: None,
         op: "doctor".to_owned(),
         target: Some(Target::Host),
@@ -1283,9 +1330,7 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
     let error = client.send(&intent).expect_err("the host went silent");
 
     match error {
-        ChannelError::Unknown { replayable, .. } => {
-            assert!(replayable, "the same id answers from the record");
-        }
+        ChannelError::Unknown { .. } => {}
         other => panic!("an unanswered request is Unknown, not {other:?}"),
     }
 }
@@ -1331,6 +1376,7 @@ fn an_observation_reaches_the_hosts_observe_engine() {
 
     let rendered = dispatch_in(
         &parsed(&["doctor"]),
+        &argv(&["doctor"]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1431,6 +1477,7 @@ fn guest_run_status_reaches_real_host_dispatch() {
     let run_id = id.to_string();
     let output = dispatch_in(
         &parsed(&["run", "status", &run_id]),
+        &argv(&["run", "status", &run_id]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1455,6 +1502,7 @@ fn run_status_refuses_stale_context_before_dial() {
     let id = session_run().to_string();
     let error = dispatch_in(
         &parsed(&["run", "status", &id]),
+        &argv(&["run", "status", &id]),
         &stale,
         &mut guest,
         &mut checkout,
@@ -1481,6 +1529,7 @@ fn run_status_with_unissued_capability_never_reaches_observer() {
     let id = session_run().to_string();
     dispatch_in(
         &parsed(&["run", "status", &id]),
+        &argv(&["run", "status", &id]),
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1523,6 +1572,7 @@ fn an_unusable_pinned_locator_refuses_as_unavailable() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guest,
         &mut checkout,
@@ -1576,6 +1626,7 @@ fn a_mispinned_peer_refuses_the_guest_dispatch_before_any_effect() {
 
     let error = dispatch_in(
         &parsed(&["build"]),
+        &[],
         &published(&context),
         &mut guarded,
         &mut checkout,
@@ -1675,9 +1726,8 @@ fn an_attach_intent_replays_to_the_same_attachment() {
         first.cursor, 0,
         "the attachment starts at the host's beginning"
     );
-    // The same intent is the same attachment, never a second one: the request
-    // id is the attachment's identity, so a lost response is resumed rather
-    // than allocated twice (§8.11).
+    // This definitive answer permits a known-safe replay on the same
+    // connection. An indeterminate delivery is fenced instead.
     let second = attach_view(&owner.send(&attach).expect("replayed"));
     assert_eq!(second.attachment, first.attachment);
     drop(owner);
@@ -2177,6 +2227,7 @@ fn serving_connection() -> (ScriptedTransport, Arc<Mutex<Vec<u8>>>) {
     let written = Arc::new(Mutex::new(Vec::new()));
     let input = framed(&[
         host::Frame::Hello(host::Hello {
+            capabilities: Vec::new(),
             schema: host::SCHEMA.to_owned(),
             protocol_versions: vec![host::PROTOCOL_V1],
             effigy_version: binary.version,
@@ -3044,6 +3095,7 @@ fn terminal_hello(capability: Secret) -> Vec<host::Frame> {
     let binary = running_binary();
     vec![
         host::Frame::Hello(host::Hello {
+            capabilities: Vec::new(),
             schema: host::SCHEMA.to_owned(),
             protocol_versions: vec![host::PROTOCOL_V1],
             effigy_version: binary.version,
@@ -5345,4 +5397,1877 @@ fn the_retained_service_hands_over_a_session_bound_terminal_custody() {
 
 fn runs_admitted(calls: &SharedCalls) -> Vec<RunId> {
     calls.lock().expect("calls").admitted.clone()
+}
+
+#[test]
+fn level_one_query_requires_selected_peer_capability_before_sending_inputs() {
+    let reply = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+        capabilities: vec![],
+        protocol: host::PROTOCOL_V1,
+        effigy_version: running_binary().version,
+    }))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (reply.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(reply)
+        .collect();
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: Some(host::ObserveQuery {
+            cwd: "private-cwd".into(),
+            args: vec!["doctor".into(), "private-argument".into()],
+            output: host::OutputMode::Json,
+        }),
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let error = client.send(&intent).unwrap_err();
+    assert!(
+        matches!(&error, ChannelError::Refused { code: "forbidden", message } if message.contains("observe_query_v1"))
+    );
+    assert!(!format!("{error:?}").contains("private"));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "unnegotiated query wrote private inputs"
+    );
+}
+
+#[test]
+fn level_one_dispatch_never_reopens_after_unknown_or_uses_guest_fallback() {
+    struct CountingOpener {
+        opened: usize,
+    }
+    impl ChannelOpener for CountingOpener {
+        fn open(
+            &mut self,
+            verified: &VerifiedWorkspaceContext,
+            live: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            self.opened += 1;
+            Ok(Box::new(WorkspaceClient::connect(
+                MuteTransport::answering_negotiation(),
+                verified.clone(),
+                live.clone(),
+            )?))
+        }
+    }
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let mut checkout = FakeCheckout::default();
+    let mut opener = CountingOpener { opened: 0 };
+    let error = dispatch_in(
+        &parsed(&["build"]),
+        &[],
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("unknown"));
+    assert_eq!(opener.opened, 1, "Unknown reopened and resent the request");
+    assert_eq!(
+        checkout.reads, 0,
+        "Unknown fell back to guest-local checkout reads"
+    );
+}
+
+#[test]
+fn level_one_hidden_dispatch_refuses_while_limited_probe_entry_keeps_existing_bypass() {
+    struct ReadForbidden;
+    impl GuestReader for ReadForbidden {
+        fn read_file(&mut self, _: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+            panic!("hidden request read guest authority");
+        }
+        fn file_sha256(&mut self, _: &str) -> Result<Option<String>, RunnerError> {
+            panic!("hidden request hashed guest authority");
+        }
+    }
+    let probe = Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity);
+    assert!(
+        guest_command(&probe, None, Path::new("/private-producer"))
+            .unwrap()
+            .is_none(),
+        "the limited probe entry must retain its existing bypass"
+    );
+    let context = workspace_document(Some(session_run()), None);
+    let mut checkout = FakeCheckout::default();
+    for command in [
+        probe,
+        Command::InternalScriptRun(effigy_cli::InternalScriptRunArgs {
+            file: "/private-script".into(),
+            repo_root: None,
+            task_name: None,
+            args: vec![],
+        }),
+    ] {
+        let error = dispatch_in(
+            &command,
+            &[],
+            &published(&context),
+            &mut ReadForbidden,
+            &mut checkout,
+            &mut NoChannel,
+            Path::new(GUEST_CHECKOUT),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("hidden internal"));
+        assert!(!error.to_string().contains("private"));
+    }
+    assert_eq!(checkout.reads, 0);
+}
+
+#[test]
+fn level_one_qa_status_and_stop_route_to_read_and_existing_control() {
+    assert!(
+        matches!(classify(&parsed(&["tasks", "qa-group", "status", "run"])), GuestOperation::Observe { op, .. } if op == "tasks:qa-group:status")
+    );
+    assert!(
+        matches!(classify(&parsed(&["tasks", "qa-group", "stop", "run"])), GuestOperation::Invoke { selector: Selector::Operation(op), .. } if op == "tasks:qa-group:stop")
+    );
+}
+
+#[test]
+fn level_one_old_strict_peer_refusal_names_unsupported_feature_before_authentication() {
+    let response = host::encode_frame(&host::Frame::Refuse(host::Refusal::invalid(
+        "unknown hello field",
+    )))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (response.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(response)
+        .collect();
+    let written = transport.written.clone();
+    let error = WorkspaceClient::connect(transport, verified(), live_run()).unwrap_err();
+    assert!(
+        matches!(error, ChannelError::Refused { code: "forbidden", message } if message.contains("observe_query_v1"))
+    );
+    let bytes = written.lock().unwrap();
+    let length = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+    assert_eq!(
+        bytes.len(),
+        length + 4,
+        "unsupported negotiation wrote more than hello"
+    );
+    assert!(matches!(
+        host::decode_frame(&bytes[4..]).unwrap(),
+        host::Frame::Hello(_)
+    ));
+}
+
+#[test]
+fn level_one_unknown_intent_clone_cannot_be_resent_after_transport_loss() {
+    let intent = Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }));
+    let mut first = WorkspaceClient::connect(
+        MuteTransport::answering_negotiation(),
+        verified(),
+        live_run(),
+    )
+    .unwrap();
+    first
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    assert!(matches!(
+        first.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    let cloned = intent.clone();
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut second = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    second
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let _refused = second.send(&cloned).unwrap_err();
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "an indeterminate clone resent its request"
+    );
+}
+
+fn level_one_append_response(
+    transport: &mut MuteTransport,
+    intent: &Intent,
+    outcome: host::ResponseOutcome,
+) {
+    let bytes = host::encode_frame(&host::Frame::Response(host::Response {
+        id: intent.id(),
+        outcome,
+    }))
+    .unwrap();
+    transport.input.extend((bytes.len() as u32).to_be_bytes());
+    transport.input.extend(bytes);
+}
+
+#[test]
+fn level_one_host_unknown_fences_all_intent_clones_but_known_answers_allow_safe_replay() {
+    for unknown in [true, false] {
+        let intent = Intent::new(RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }));
+        let mut transport = MuteTransport::answering_negotiation();
+        let response = || {
+            if unknown {
+                host::ResponseOutcome::Refused(host::Refusal::unknown(
+                    "outcome cannot be established",
+                ))
+            } else {
+                host::ResponseOutcome::Observed(serde_json::json!({"observed":true}))
+            }
+        };
+        level_one_append_response(&mut transport, &intent, response());
+        level_one_append_response(&mut transport, &intent, response());
+        let written = transport.written.clone();
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        let first = client.send(&intent);
+        let before = written.lock().unwrap().len();
+        let cloned = intent.clone();
+        let second = client.send(&cloned);
+        if unknown {
+            assert!(matches!(first, Err(ChannelError::Unknown { .. })));
+            assert!(matches!(second, Err(ChannelError::Unknown { .. })));
+            assert_eq!(
+                written.lock().unwrap().len(),
+                before,
+                "host Unknown resent a clone"
+            );
+        } else {
+            assert!(
+                first.is_ok() && second.is_ok(),
+                "a known answer must retain safe replay semantics"
+            );
+            assert!(written.lock().unwrap().len() > before);
+        }
+    }
+}
+
+#[test]
+fn level_one_prewrite_refusal_does_not_mark_an_unsent_intent_indeterminate() {
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: Some(host::ObserveQuery {
+            cwd: ".".into(),
+            args: vec!["doctor".into()],
+            output: host::OutputMode::Text,
+        }),
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let hello = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+        capabilities: vec![],
+        protocol: host::PROTOCOL_V1,
+        effigy_version: running_binary().version,
+    }))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (hello.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(hello)
+        .collect();
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&intent),
+        Err(ChannelError::Refused {
+            code: "forbidden",
+            ..
+        })
+    ));
+    assert_eq!(written.lock().unwrap().len(), before);
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut capable = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    capable
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        capable.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert!(
+        written.lock().unwrap().len() > before,
+        "an unsent intent was incorrectly fenced"
+    );
+}
+
+#[test]
+fn level_one_partial_write_is_unknown_and_never_resends() {
+    struct PartialWrite(MuteTransport, bool);
+    impl Transport for PartialWrite {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.0.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if self.1 {
+                self.0
+                    .written
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&bytes[..2]);
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "partial request"))
+            } else {
+                self.0.write_all(bytes)
+            }
+        }
+    }
+    let transport = PartialWrite(MuteTransport::answering_negotiation(), false);
+    let written = transport.0.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.transport.1 = true;
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    assert!(matches!(
+        client.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "partial-write Unknown resent bytes"
+    );
+}
+
+#[test]
+fn level_one_concurrent_intent_clone_refuses_before_a_second_transport_write() {
+    use std::sync::mpsc;
+    struct BlockingWrite {
+        inner: MuteTransport,
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl Transport for BlockingWrite {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.inner.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(host::Frame::Request(_))) {
+                self.started
+                    .send(())
+                    .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+                self.release
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+            }
+            self.inner.write_all(bytes)
+        }
+    }
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let transport = BlockingWrite {
+        inner: MuteTransport::answering_negotiation(),
+        started: started_tx,
+        release: release_rx,
+    };
+    let mut first = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    first
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut second = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    second
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let cloned = intent.clone();
+    let first_thread = std::thread::spawn(move || first.send(&cloned));
+    let ready = started_rx.recv_timeout(Duration::from_secs(5));
+    let refused = second.send(&intent);
+    let released = release_tx.send(());
+    let first_result = first_thread.join();
+    assert!(ready.is_ok() && released.is_ok());
+    assert!(matches!(
+        first_result.unwrap(),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert!(matches!(refused, Err(ChannelError::Local(message)) if message.contains("in flight")));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "a concurrent clone wrote a second request"
+    );
+    assert!(matches!(
+        second.send(&intent),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(written.lock().unwrap().len(), before);
+}
+
+#[derive(Clone, Debug)]
+enum LevelOnePostwriteReply {
+    Malformed,
+    Oversized,
+    Mismatched,
+    Unexpected,
+    HostUnknown,
+    UnreadableAttach,
+    Typed {
+        method: host::Method,
+        outcome: host::ResponseOutcome,
+    },
+    RequestAttachment {
+        run: RunId,
+        cursor: u64,
+        client: effigy_kernel::run::Client,
+        wrong_id: bool,
+    },
+}
+
+fn level_one_postwrite_peer_exchange(
+    reply: LevelOnePostwriteReply,
+) -> (Intent, Result<ChannelOutcome, ChannelError>, Vec<RunId>) {
+    level_one_postwrite_peer_exchange_in(reply, false)
+}
+
+fn level_one_postwrite_peer_exchange_in(
+    reply: LevelOnePostwriteReply,
+    admit_first: bool,
+) -> (Intent, Result<ChannelOutcome, ChannelError>, Vec<RunId>) {
+    let method = match &reply {
+        LevelOnePostwriteReply::UnreadableAttach
+        | LevelOnePostwriteReply::RequestAttachment { .. } => host::Method::Attach,
+        LevelOnePostwriteReply::Typed { method, .. } => *method,
+        _ => host::Method::Invoke,
+    };
+    let body = match method {
+        host::Method::Observe => RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }),
+        host::Method::Cancel => RequestBody::Cancel(host::RunBody { run: session_run() }),
+        host::Method::Detach => RequestBody::Detach(host::RunBody { run: session_run() }),
+        host::Method::Attach => RequestBody::Attach(AttachBody {
+            run: session_run(),
+            streams: vec![StreamKind::Stdout],
+            cursor: None,
+            cursors: None,
+        }),
+        host::Method::Invoke => RequestBody::Invoke(InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: vec![],
+            output: ChannelOutputMode::Text,
+        }),
+    };
+    let intent = Intent::new(body);
+    let (client_side, host_side) = connection_pair();
+    // Unlike a preloaded reply, this peer cannot answer until it has decoded
+    // the actual request. Every refusal below therefore follows delivery.
+    let peer = std::thread::spawn(move || -> Result<RequestId, String> {
+        let mut transport = PeerTransport::new(host_side);
+        let hello = read_frame(&mut transport).map_err(|error| format!("{error:?}"))?;
+        if !matches!(hello, Frame::Hello(_)) {
+            return Err("expected hello".into());
+        }
+        host::write_frame(
+            &mut transport,
+            &Frame::HelloOk(host::HelloOk {
+                capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        if !matches!(
+            read_frame(&mut transport).map_err(|error| format!("{error:?}"))?,
+            Frame::Authenticate(_)
+        ) {
+            return Err("expected authentication".into());
+        }
+        if admit_first {
+            let Frame::Request(admission) =
+                read_frame(&mut transport).map_err(|error| format!("{error:?}"))?
+            else {
+                return Err("expected admission request".into());
+            };
+            if !matches!(admission.body, RequestBody::Invoke(_)) {
+                return Err("expected invoke before attach".into());
+            }
+            host::write_frame(
+                &mut transport,
+                &Frame::Response(host::Response {
+                    id: admission.id,
+                    outcome: level_one_accepted_reply(),
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        let Frame::Request(request) =
+            read_frame(&mut transport).map_err(|error| format!("{error:?}"))?
+        else {
+            return Err("expected request".into());
+        };
+        let response = match reply {
+            LevelOnePostwriteReply::Malformed => {
+                let bytes = b"not-json-private-reply";
+                transport
+                    .write_all(&(bytes.len() as u32).to_be_bytes())
+                    .map_err(|error| error.to_string())?;
+                transport
+                    .write_all(bytes)
+                    .map_err(|error| error.to_string())?;
+                return Ok(request.id);
+            }
+            LevelOnePostwriteReply::Oversized => {
+                transport
+                    .write_all(&((host::MAX_FRAME_BYTES + 1) as u32).to_be_bytes())
+                    .map_err(|error| error.to_string())?;
+                return Ok(request.id);
+            }
+            LevelOnePostwriteReply::Mismatched => {
+                let mut foreign = *request.id.bytes();
+                foreign[0] ^= 1;
+                Frame::Response(host::Response {
+                    id: RequestId::new(foreign),
+                    outcome: host::ResponseOutcome::Observed(
+                        serde_json::json!({"private-reply":true}),
+                    ),
+                })
+            }
+            LevelOnePostwriteReply::Unexpected => Frame::HelloOk(host::HelloOk {
+                capabilities: vec![],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+            LevelOnePostwriteReply::HostUnknown => Frame::Response(host::Response {
+                id: request.id,
+                outcome: host::ResponseOutcome::Refused(host::Refusal::unknown(
+                    "the host cannot establish this outcome",
+                )),
+            }),
+            LevelOnePostwriteReply::Typed { outcome, .. } => Frame::Response(host::Response {
+                id: request.id,
+                outcome,
+            }),
+            LevelOnePostwriteReply::RequestAttachment {
+                run,
+                cursor,
+                client,
+                wrong_id,
+            } => Frame::Response(host::Response {
+                id: request.id,
+                outcome: level_one_request_attachment_reply(
+                    request.id, run, cursor, client, wrong_id,
+                ),
+            }),
+            LevelOnePostwriteReply::UnreadableAttach => Frame::Response(host::Response {
+                id: request.id,
+                outcome: host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+            }),
+        };
+        host::write_frame(&mut transport, &response).map_err(|error| error.to_string())?;
+        Ok(request.id)
+    });
+    let (outcome, admitted) =
+        match WorkspaceClient::connect(PeerTransport::new(client_side), verified(), live_run()) {
+            Ok(mut client) => {
+                let outcome = client
+                    .authenticate(GuestAuth::Capability(capability()))
+                    .and_then(|()| {
+                        if admit_first {
+                            client.send(&level_one_build_intent()).map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .and_then(|()| client.send(&intent));
+                (
+                    outcome,
+                    client
+                        .admitted
+                        .values()
+                        .map(|admission| admission.run)
+                        .collect(),
+                )
+            }
+            Err(error) => (Err(error), Vec::new()),
+        };
+    let received = peer
+        .join()
+        .expect("peer reaped")
+        .expect("peer received and answered request");
+    assert_eq!(received, intent.id());
+    (intent, outcome, admitted)
+}
+
+fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
+    let (intent, outcome, admitted) = level_one_postwrite_peer_exchange(reply.clone());
+    assert!(
+        admitted.is_empty(),
+        "an invalid reply changed the admitted run"
+    );
+    level_one_unknown_has_no_clone_write(&intent, outcome);
+}
+
+fn level_one_unknown_has_no_clone_write(
+    intent: &Intent,
+    outcome: Result<ChannelOutcome, ChannelError>,
+) {
+    let error = outcome.expect_err("invalid post-delivery answer");
+    assert!(
+        matches!(&error, ChannelError::Unknown { .. }),
+        "reported as {error:?} after host delivery"
+    );
+    let message = error.into_runner().to_string();
+    assert!(
+        message.contains("unknown")
+            && message.contains("independent host CLI")
+            && message.contains("do not submit it as a new request"),
+        "{message}"
+    );
+    assert!(!message.contains("private-reply"));
+    let transport = MuteTransport::answering_negotiation();
+    let written = transport.written.clone();
+    let mut reconnect = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    reconnect
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        reconnect.send(&intent.clone()),
+        Err(ChannelError::Unknown { .. })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "post-delivery Unknown clone resent"
+    );
+}
+
+fn level_one_build_intent() -> Intent {
+    Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }))
+}
+
+#[test]
+fn level_one_postwrite_malformed_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Malformed);
+}
+#[test]
+fn level_one_postwrite_oversized_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Oversized);
+}
+#[test]
+fn level_one_postwrite_mismatched_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Mismatched);
+}
+#[test]
+fn level_one_postwrite_unexpected_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::Unexpected);
+}
+#[test]
+fn level_one_postwrite_host_unknown_reports_no_resend_guidance() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::HostUnknown);
+}
+#[test]
+fn level_one_postwrite_unreadable_attach_reply_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::UnreadableAttach);
+}
+
+fn level_one_accepted_reply() -> host::ResponseOutcome {
+    host::ResponseOutcome::Accepted(host::Accepted {
+        run: session_run(),
+        placement: effigy_kernel::ctx::Placement::Host,
+    })
+}
+
+fn level_one_completed_reply() -> host::ResponseOutcome {
+    host::ResponseOutcome::Completed(host::Completed {
+        outcome: serde_json::json!({"completed":true}),
+        exit: host::ExitStatus {
+            code: Some(0),
+            signal: None,
+        },
+    })
+}
+
+fn level_one_attachment_reply(run: RunId, cursor: u64) -> host::ResponseOutcome {
+    host::ResponseOutcome::Observed(
+        serde_json::to_value(host::AttachView {
+            attachment: effigy_kernel::run::AttachmentId::new([17; 16]),
+            run,
+            client: effigy_kernel::run::Client::Secondary,
+            cursor,
+        })
+        .unwrap(),
+    )
+}
+
+#[test]
+fn level_one_wrong_same_id_outcome_type_is_unknown_for_every_request_method() {
+    let mut cases = vec![(
+        host::Method::Invoke,
+        host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+    )];
+    for method in [
+        host::Method::Observe,
+        host::Method::Attach,
+        host::Method::Cancel,
+        host::Method::Detach,
+    ] {
+        cases.push((method, level_one_accepted_reply()));
+        cases.push((method, level_one_completed_reply()));
+    }
+    for (method, outcome) in cases {
+        level_one_postwrite_unknown_control(LevelOnePostwriteReply::Typed { method, outcome });
+    }
+}
+
+#[test]
+fn level_one_wrong_same_id_outcome_payload_is_unknown() {
+    for (method, outcome) in [
+        (
+            host::Method::Attach,
+            level_one_attachment_reply(RunId::new(1, [44; 10]).unwrap(), 0),
+        ),
+        (
+            host::Method::Attach,
+            level_one_attachment_reply(session_run(), 1),
+        ),
+        (
+            host::Method::Cancel,
+            host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+        ),
+        (
+            host::Method::Detach,
+            host::ResponseOutcome::Observed(serde_json::json!({"private-reply":true})),
+        ),
+        (
+            host::Method::Invoke,
+            host::ResponseOutcome::Accepted(host::Accepted {
+                run: session_run(),
+                placement: effigy_kernel::ctx::Placement::Guest,
+            }),
+        ),
+    ] {
+        level_one_postwrite_unknown_control(LevelOnePostwriteReply::Typed { method, outcome });
+    }
+}
+
+fn level_one_request_attachment_reply(
+    id: RequestId,
+    run: RunId,
+    cursor: u64,
+    client: effigy_kernel::run::Client,
+    wrong_id: bool,
+) -> host::ResponseOutcome {
+    let mut attachment = if client == effigy_kernel::run::Client::Owner {
+        *effigy_kernel::run::owner_attachment_id(run).bytes()
+    } else {
+        *id.bytes()
+    };
+    if wrong_id {
+        attachment[0] ^= 1;
+    }
+    host::ResponseOutcome::Observed(
+        serde_json::to_value(host::AttachView {
+            attachment: effigy_kernel::run::AttachmentId::new(attachment),
+            run,
+            client,
+            cursor,
+        })
+        .unwrap(),
+    )
+}
+
+#[test]
+fn level_one_secondary_attachment_wrong_identity_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment {
+        run: session_run(),
+        cursor: 0,
+        client: effigy_kernel::run::Client::Secondary,
+        wrong_id: true,
+    });
+}
+
+#[test]
+fn level_one_nonadmitting_connection_cannot_accept_owner_role() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment {
+        run: session_run(),
+        cursor: 0,
+        client: effigy_kernel::run::Client::Owner,
+        wrong_id: false,
+    });
+}
+
+#[test]
+fn level_one_admitting_connection_validates_owner_identity_and_role() {
+    for (client, wrong_id) in [
+        (effigy_kernel::run::Client::Owner, false),
+        (effigy_kernel::run::Client::Owner, true),
+        (effigy_kernel::run::Client::Secondary, false),
+    ] {
+        let (intent, outcome, admitted) = level_one_postwrite_peer_exchange_in(
+            LevelOnePostwriteReply::RequestAttachment {
+                run: session_run(),
+                cursor: 0,
+                client,
+                wrong_id,
+            },
+            true,
+        );
+        assert_eq!(admitted, vec![session_run()]);
+        if client == effigy_kernel::run::Client::Owner && !wrong_id {
+            let view = attach_view(&outcome.expect("the admitting connection's owner"));
+            assert_eq!(view.client, effigy_kernel::run::Client::Owner);
+            assert_eq!(
+                view.attachment,
+                effigy_kernel::run::owner_attachment_id(session_run())
+            );
+        } else {
+            level_one_unknown_has_no_clone_write(&intent, outcome);
+        }
+    }
+}
+
+#[test]
+fn level_one_known_admission_replay_does_not_grant_fresh_connection_ownership() {
+    for client_role in [
+        effigy_kernel::run::Client::Secondary,
+        effigy_kernel::run::Client::Owner,
+    ] {
+        let invoke = level_one_build_intent();
+        let attach = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+        // The first connection receives a definitive acceptance. Replaying
+        // that known request is safe, but conveys no new owner authority.
+        let mut initial_transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut initial_transport, &invoke, level_one_accepted_reply());
+        let mut initial =
+            WorkspaceClient::connect(initial_transport, verified(), live_run()).unwrap();
+        initial
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        initial.send(&invoke).unwrap();
+        assert_eq!(
+            initial
+                .admitted
+                .values()
+                .map(|admission| admission.run)
+                .collect::<Vec<_>>(),
+            vec![session_run()]
+        );
+        drop(initial);
+
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        level_one_append_response(
+            &mut transport,
+            &attach,
+            level_one_request_attachment_reply(attach.id(), session_run(), 0, client_role, false),
+        );
+        let mut reconnect = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        reconnect
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        reconnect.send(&invoke.clone()).unwrap();
+        assert!(reconnect.admitted.is_empty());
+        let outcome = reconnect.send(&attach);
+        if client_role == effigy_kernel::run::Client::Secondary {
+            assert_eq!(attach_view(&outcome.unwrap()).client, client_role);
+        } else {
+            level_one_unknown_has_no_clone_write(&attach, outcome);
+        }
+    }
+}
+
+#[test]
+fn level_one_detach_retires_owner_eligibility_without_replay_revival() {
+    for response in [
+        host::ResponseOutcome::Observed(serde_json::Value::Null),
+        host::ResponseOutcome::Refused(host::Refusal::unknown("detach outcome unknown")),
+        host::ResponseOutcome::Refused(host::Refusal::forbidden("detach not allowed")),
+    ] {
+        let invoke = level_one_build_intent();
+        let detach = Intent::new(RequestBody::Detach(host::RunBody { run: session_run() }));
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        level_one_append_response(&mut transport, &detach, response.clone());
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        client.send(&invoke).unwrap();
+        let outcome = client.send(&detach);
+        let definite_refusal = matches!(
+            response,
+            host::ResponseOutcome::Refused(host::Refusal {
+                code: host::RefusalCode::Forbidden,
+                ..
+            })
+        );
+        assert_eq!(client.admitted.is_empty(), !definite_refusal);
+        assert_eq!(
+            outcome.is_ok(),
+            matches!(response, host::ResponseOutcome::Observed(_))
+        );
+        client.send(&invoke.clone()).unwrap();
+        assert_eq!(
+            client.admitted.is_empty(),
+            !definite_refusal,
+            "replay revived a retired owner"
+        );
+    }
+}
+
+#[test]
+fn level_one_completion_retires_only_its_own_admission() {
+    let first = level_one_build_intent();
+    let second = level_one_build_intent();
+    let other_run = RunId::new(1, [66; 10]).unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &first, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &second,
+        host::ResponseOutcome::Accepted(host::Accepted {
+            run: other_run,
+            placement: effigy_kernel::ctx::Placement::Host,
+        }),
+    );
+    level_one_append_response(&mut transport, &first, level_one_completed_reply());
+    level_one_append_response(&mut transport, &first, level_one_accepted_reply());
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.send(&first).unwrap();
+    client.send(&second).unwrap();
+    assert_eq!(client.admitted.len(), 2);
+    client.send(&first).unwrap();
+    assert_eq!(
+        client
+            .admitted
+            .values()
+            .map(|admission| admission.run)
+            .collect::<Vec<_>>(),
+        vec![other_run]
+    );
+    let error = client
+        .send(&first)
+        .expect_err("a completed request cannot admit again");
+    assert!(matches!(error, ChannelError::Unknown { .. }));
+    assert_eq!(
+        client
+            .admitted
+            .values()
+            .map(|admission| admission.run)
+            .collect::<Vec<_>>(),
+        vec![other_run]
+    );
+}
+
+#[test]
+fn level_one_completion_on_a_clone_retires_original_connection_ownership() {
+    let invoke = level_one_build_intent();
+    let still_owner = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+    let attach = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &still_owner,
+        level_one_request_attachment_reply(
+            still_owner.id(),
+            session_run(),
+            0,
+            effigy_kernel::run::Client::Owner,
+            false,
+        ),
+    );
+    level_one_append_response(
+        &mut transport,
+        &attach,
+        level_one_request_attachment_reply(
+            attach.id(),
+            session_run(),
+            0,
+            effigy_kernel::run::Client::Owner,
+            false,
+        ),
+    );
+    let written = transport.written.clone();
+    let mut original = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    original
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    original.send(&invoke).unwrap();
+
+    let mut replay_transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut replay_transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(&mut replay_transport, &invoke, level_one_completed_reply());
+    let mut replay = WorkspaceClient::connect(replay_transport, verified(), live_run()).unwrap();
+    replay
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    replay.send(&invoke.clone()).unwrap();
+    assert_eq!(
+        attach_view(
+            &original
+                .send(&still_owner)
+                .expect("known acceptance preserves original owner")
+        )
+        .client,
+        effigy_kernel::run::Client::Owner,
+    );
+    replay.send(&invoke.clone()).unwrap();
+
+    let before = written.lock().unwrap().len();
+    assert!(original.detach(session_run()).is_err());
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "completed owner sent detach"
+    );
+    level_one_unknown_has_no_clone_write(&attach, original.send(&attach));
+}
+
+#[test]
+fn level_one_connection_cannot_change_its_authenticated_client() {
+    let invoke = level_one_build_intent();
+    let observe = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &observe,
+        host::ResponseOutcome::Refused(host::Refusal::unauthenticated("credential revoked")),
+    );
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&invoke),
+        Err(ChannelError::Refused {
+            code: "unauthenticated",
+            ..
+        })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "request sent without authentication"
+    );
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.send(&invoke).unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(client
+        .authenticate(GuestAuth::Capability(Secret::new([88; 32])))
+        .is_err());
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "credential changed on a live connection"
+    );
+    assert_eq!(client.admitted.len(), 1);
+    assert!(client.send(&observe).is_err());
+    assert!(
+        client.admitted.is_empty(),
+        "revoked authority retained owner eligibility"
+    );
+}
+
+#[test]
+fn level_one_partial_authentication_receipt_fences_all_later_writes() {
+    use std::io::Read as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    struct PartialAuthentication {
+        inner: PeerTransport,
+        attempts: Arc<AtomicUsize>,
+        received: mpsc::Receiver<()>,
+    }
+    impl Transport for PartialAuthentication {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(bytes)
+        }
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.inner.verified_peer()
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(
+                host::decode_frame(&bytes[4..]),
+                Ok(Frame::Authenticate(_) | Frame::Enrol(_))
+            ) {
+                self.attempts.fetch_add(1, Ordering::SeqCst);
+                self.inner.write_all(&bytes[..bytes.len() / 2])?;
+                self.received
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "partial credential frame",
+                ))
+            } else {
+                self.inner.write_all(bytes)
+            }
+        }
+    }
+
+    for (enrol, queued_refusal) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (client_side, host_side) = connection_pair();
+        let (received_tx, received_rx) = mpsc::channel();
+        let peer = std::thread::spawn(move || -> Result<(usize, usize), String> {
+            let mut transport = PeerTransport::new(host_side);
+            if !matches!(read_frame(&mut transport), Ok(Frame::Hello(_))) {
+                return Err("expected hello".into());
+            }
+            host::write_frame(
+                &mut transport,
+                &Frame::HelloOk(host::HelloOk {
+                    capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                    protocol: host::PROTOCOL_V1,
+                    effigy_version: running_binary().version,
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut prefix = [0; 4];
+            transport
+                .stream
+                .read_exact(&mut prefix)
+                .map_err(|error| error.to_string())?;
+            let body_len = u32::from_be_bytes(prefix) as usize;
+            if body_len > host::MAX_FRAME_BYTES {
+                return Err("authentication frame exceeded the bound".into());
+            }
+            let received = (body_len + 4) / 2;
+            let mut partial = vec![0; received - 4];
+            transport
+                .stream
+                .read_exact(&mut partial)
+                .map_err(|error| error.to_string())?;
+            // An unkeyed refusal cannot prove whether this partial credential
+            // was accepted. Signal actual receipt before the write returns.
+            if queued_refusal {
+                host::write_frame(
+                    &mut transport,
+                    &Frame::Refuse(host::Refusal::unauthenticated(
+                        "unkeyed queued authentication refusal",
+                    )),
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            transport
+                .stream
+                .shutdown(std::net::Shutdown::Write)
+                .map_err(|error| error.to_string())?;
+            received_tx.send(()).map_err(|error| error.to_string())?;
+            let mut trailing = Vec::new();
+            match transport.stream.read_to_end(&mut trailing) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            Ok((received, trailing.len()))
+        });
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut client = WorkspaceClient::connect(
+            PartialAuthentication {
+                inner: PeerTransport::new(client_side),
+                attempts: attempts.clone(),
+                received: received_rx,
+            },
+            verified(),
+            live_run(),
+        )
+        .unwrap();
+        let auth = if enrol {
+            GuestAuth::Enrolment {
+                credential: capability(),
+                session: SessionIdentity {
+                    run: session_run(),
+                    generation: Generation::new(1),
+                },
+            }
+        } else {
+            GuestAuth::Capability(capability())
+        };
+        let first = client.authenticate(auth);
+        let second = client.authenticate(GuestAuth::Capability(Secret::new([0xcd; 32])));
+        let intent = level_one_build_intent();
+        let request = client.send(&intent);
+        let retained_enrolment = client.enrolled.is_some();
+        drop(client);
+        let (received, trailing) = peer
+            .join()
+            .expect("peer reaped")
+            .expect("peer read partial auth");
+        assert!(received > 4);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "second credential write after partial receipt"
+        );
+        assert_eq!(
+            trailing, 0,
+            "bytes followed an indeterminate authentication frame"
+        );
+        assert!(
+            !retained_enrolment,
+            "unacknowledged enrolment retained staged authority"
+        );
+        for outcome in [first, second] {
+            let error = outcome.expect_err("authentication ambiguity cannot grant access");
+            assert!(matches!(error, ChannelError::Unknown { .. }), "{error:?}");
+            let message = error.into_runner().to_string();
+            assert!(!message.contains(&"ab".repeat(32)));
+            assert!(message.contains("unknown"));
+        }
+        let error = request.expect_err("an uncompleted authentication sends no command");
+        assert!(matches!(
+            error,
+            ChannelError::Refused {
+                code: "unauthenticated",
+                ..
+            }
+        ));
+        assert!(error
+            .into_runner()
+            .to_string()
+            .contains("no command was sent"));
+        // This command was never encoded or written. Its intent therefore
+        // remains usable on a fresh, successfully authenticated connection.
+        let mut fresh_transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut fresh_transport, &intent, level_one_accepted_reply());
+        let mut fresh = WorkspaceClient::connect(fresh_transport, verified(), live_run()).unwrap();
+        fresh
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        assert!(matches!(
+            fresh.send(&intent),
+            Ok(ChannelOutcome::Accepted { .. })
+        ));
+    }
+}
+
+#[test]
+fn level_one_authentication_prewrite_failure_keeps_the_connection_unsent() {
+    for encoding in [false, true] {
+        let observe = Intent::new(RequestBody::Observe(ObserveBody {
+            query: None,
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }));
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(
+            &mut transport,
+            &observe,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        );
+        let written = transport.written.clone();
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        if encoding {
+            client.live.container.container_id = "x".repeat(host::MAX_FRAME_BYTES + 1);
+        } else {
+            client.live.environment_generation = "not-a-generation".into();
+        }
+        let before = written.lock().unwrap().len();
+        let error = client
+            .authenticate(GuestAuth::Enrolment {
+                credential: capability(),
+                session: SessionIdentity {
+                    run: session_run(),
+                    generation: Generation::new(1),
+                },
+            })
+            .expect_err("invalid local authentication input");
+        assert!(!matches!(error, ChannelError::Unknown { .. }));
+        assert_eq!(written.lock().unwrap().len(), before);
+        assert!(client.enrolled.is_none());
+        client.live = live_run();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .expect("no credential was attempted");
+        assert!(matches!(
+            client.send(&observe),
+            Ok(ChannelOutcome::Observed(_))
+        ));
+    }
+}
+
+#[test]
+fn level_one_partial_request_write_cannot_use_a_queued_unkeyed_refusal() {
+    use std::io::Read as _;
+    use std::sync::mpsc;
+    struct PartialRequest(PeerTransport, mpsc::Receiver<()>);
+    impl Transport for PartialRequest {
+        fn verified_peer(&self) -> Option<host::ServerIdentity> {
+            self.0.verified_peer()
+        }
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.0.read(bytes)
+        }
+        fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            if matches!(host::decode_frame(&bytes[4..]), Ok(Frame::Request(_))) {
+                self.0.write_all(&bytes[..bytes.len() / 2])?;
+                self.1
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?;
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "partial request"))
+            } else {
+                self.0.write_all(bytes)
+            }
+        }
+    }
+    let (queued_tx, queued_rx) = mpsc::channel();
+    let (client_side, host_side) = connection_pair();
+    let peer = std::thread::spawn(move || -> Result<usize, String> {
+        let mut transport = PeerTransport::new(host_side);
+        if !matches!(read_frame(&mut transport), Ok(Frame::Hello(_))) {
+            return Err("hello".into());
+        }
+        host::write_frame(
+            &mut transport,
+            &Frame::HelloOk(host::HelloOk {
+                capabilities: vec![host::ChannelCapability::ObserveQueryV1],
+                protocol: host::PROTOCOL_V1,
+                effigy_version: running_binary().version,
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        if !matches!(read_frame(&mut transport), Ok(Frame::Authenticate(_))) {
+            return Err("credential".into());
+        }
+        let mut prefix = [0; 4];
+        transport
+            .stream
+            .read_exact(&mut prefix)
+            .map_err(|error| error.to_string())?;
+        let body_len = u32::from_be_bytes(prefix) as usize;
+        if body_len > host::MAX_FRAME_BYTES {
+            return Err("request frame bound".into());
+        }
+        let mut partial = vec![0; (body_len + 4) / 2 - 4];
+        transport
+            .stream
+            .read_exact(&mut partial)
+            .map_err(|error| error.to_string())?;
+        host::write_frame(
+            &mut transport,
+            &Frame::Refuse(host::Refusal::unauthenticated("unkeyed queued refusal")),
+        )
+        .map_err(|error| error.to_string())?;
+        queued_tx.send(()).map_err(|error| error.to_string())?;
+        let mut trailing = Vec::new();
+        match transport.stream.read_to_end(&mut trailing) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        Ok(trailing.len())
+    });
+    let mut client = WorkspaceClient::connect(
+        PartialRequest(PeerTransport::new(client_side), queued_rx),
+        verified(),
+        live_run(),
+    )
+    .unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let intent = level_one_build_intent();
+    let first = client.send(&intent);
+    let second = client.send(&intent.clone());
+    drop(client);
+    assert_eq!(
+        peer.join()
+            .expect("peer reaped")
+            .expect("peer received partial request"),
+        0
+    );
+    for outcome in [first, second] {
+        let error = outcome.expect_err("an unkeyed refusal proves no request outcome");
+        assert!(matches!(error, ChannelError::Unknown { .. }), "{error:?}");
+        assert!(error
+            .into_runner()
+            .to_string()
+            .contains("do not submit it as a new request"));
+    }
+}
+
+#[test]
+fn level_one_valid_method_outcome_matrix_and_definitive_refusals_stay_sendable() {
+    let typed = |method, outcome| LevelOnePostwriteReply::Typed { method, outcome };
+    let mut cases = vec![
+        typed(host::Method::Invoke, level_one_accepted_reply()),
+        typed(host::Method::Invoke, level_one_completed_reply()),
+        typed(
+            host::Method::Observe,
+            host::ResponseOutcome::Observed(serde_json::json!({"observed":true})),
+        ),
+        LevelOnePostwriteReply::RequestAttachment {
+            run: session_run(),
+            cursor: 0,
+            client: effigy_kernel::run::Client::Secondary,
+            wrong_id: false,
+        },
+        typed(
+            host::Method::Cancel,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
+        typed(
+            host::Method::Detach,
+            host::ResponseOutcome::Observed(serde_json::Value::Null),
+        ),
+    ];
+    for method in [
+        host::Method::Invoke,
+        host::Method::Observe,
+        host::Method::Attach,
+        host::Method::Cancel,
+        host::Method::Detach,
+    ] {
+        cases.push(typed(
+            method,
+            host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal")),
+        ));
+    }
+    for reply in cases {
+        let (intent, outcome, _) = level_one_postwrite_peer_exchange(reply.clone());
+        let response = match reply {
+            LevelOnePostwriteReply::Typed { outcome, .. } => outcome,
+            LevelOnePostwriteReply::RequestAttachment {
+                run,
+                cursor,
+                client,
+                wrong_id,
+            } => level_one_request_attachment_reply(intent.id(), run, cursor, client, wrong_id),
+            _ => panic!("positive matrix has only typed responses"),
+        };
+        match &response {
+            host::ResponseOutcome::Refused(_) => assert!(matches!(
+                outcome,
+                Err(ChannelError::Refused {
+                    code: "forbidden",
+                    ..
+                })
+            )),
+            _ => assert!(outcome.is_ok(), "{response:?}: {outcome:?}"),
+        }
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &intent, response);
+        let written = transport.written.clone();
+        let mut replay = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        replay
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        let before = written.lock().unwrap().len();
+        let replayed = replay.send(&intent.clone());
+        assert!(
+            !matches!(replayed, Err(ChannelError::Unknown { .. })),
+            "valid answer fenced replay"
+        );
+        assert!(written.lock().unwrap().len() > before);
+    }
+}
+
+#[test]
+fn level_one_dispatch_uses_explicit_frozen_arguments_and_checkout_relative_cwd() {
+    struct Capture(Arc<Mutex<Vec<RequestBody>>>);
+    impl ChannelRequest for Capture {
+        fn authenticate(&mut self, _: GuestAuth) -> Result<(), ChannelError> {
+            Ok(())
+        }
+        fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+            self.0.lock().unwrap().push(intent.body.clone());
+            Ok(match intent.body {
+                RequestBody::Invoke(_) => ChannelOutcome::Accepted {
+                    run: RunId::new(1, [41; 10]).unwrap(),
+                    placement: RunPlacement::Host,
+                },
+                _ => ChannelOutcome::Observed(serde_json::json!({"observed":true})),
+            })
+        }
+        fn detach(&mut self, _: RunId) -> Result<(), ChannelError> {
+            panic!("argument construction does not detach")
+        }
+    }
+    impl ChannelOpener for Capture {
+        fn open(
+            &mut self,
+            _: &VerifiedWorkspaceContext,
+            _: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            Ok(Box::new(Self(self.0.clone())))
+        }
+    }
+    // Request construction only; guest_run_status_reaches_real_host_dispatch
+    // separately verifies these explicit args are parsed by the real observer.
+    let operation = argv(&[
+        "--json",
+        "doctor",
+        "nested/build",
+        "--",
+        "two words",
+        "literal;$()",
+    ]);
+    let task_tail = argv(&["--", "two words", "literal;$()"]);
+    let cases = [
+        (
+            parse_command(operation.clone()).unwrap(),
+            operation.clone(),
+            true,
+        ),
+        (
+            Command::Task(effigy_cli::TaskInvocation {
+                name: "build".into(),
+                args: task_tail.clone(),
+            }),
+            task_tail.clone(),
+            false,
+        ),
+    ];
+    for (command, supplied, observed) in cases {
+        let context = workspace_document(Some(session_run()), None);
+        let mut guest = FakeGuest::new();
+        publish(&mut guest, &context, Some(&capability()));
+        let mut checkout = FakeCheckout::default();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut channel = Capture(captured.clone());
+        dispatch_in(
+            &command,
+            &supplied,
+            &published(&context),
+            &mut guest,
+            &mut checkout,
+            &mut channel,
+            Path::new("/workspace/nested"),
+        )
+        .unwrap();
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        if observed {
+            let RequestBody::Observe(body) = &captured[0] else {
+                panic!("Observe query");
+            };
+            let query = body.query.as_ref().unwrap();
+            assert_eq!(query.args, operation);
+            assert_eq!(query.cwd, "nested");
+            assert_eq!(query.output, ChannelOutputMode::Json);
+        } else {
+            let RequestBody::Invoke(body) = &captured[0] else {
+                panic!("task invocation");
+            };
+            assert_eq!(body.args, task_tail);
+            assert_eq!(body.cwd, "nested");
+            assert_eq!(body.selector, Selector::Task("build".into()));
+        }
+        assert_eq!(checkout.reads, 0);
+    }
+}
+
+#[test]
+fn level_one_pinned_or_refused_commands_do_not_capture_process_arguments() {
+    for command in [
+        Command::Version,
+        parsed(&["tasks"]),
+        Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity),
+    ] {
+        assert!(invocation_args(&command, None).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn level_one_public_entry_keeps_original_argv_with_guest_io_faked() {
+    const CHILD: &str = "EFFIGY_TEST_PUBLIC_ARGV_CHILD";
+    const ROOT: &str = "EFFIGY_TEST_PUBLIC_ARGV_ROOT";
+    let operation = argv(&[
+        "--json",
+        "doctor",
+        "nested/build",
+        "--",
+        "two words",
+        "literal;$()",
+    ]);
+    let status = argv(&["--json", "run", "status", &session_run().to_string()]);
+    let task = argv(&["--json", "build", "--", "two words", "literal;$()"]);
+    let local = argv(&["--json", "tasks"]);
+    if std::env::var_os(CHILD).is_some() {
+        struct Capture(Arc<Mutex<Vec<serde_json::Value>>>);
+        impl ChannelRequest for Capture {
+            fn authenticate(&mut self, _: GuestAuth) -> Result<(), ChannelError> {
+                Ok(())
+            }
+            fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+                self.0.lock().unwrap().push(serde_json::json!({"method":intent.body.method().as_str(), "body":&intent.body}));
+                Ok(match intent.body {
+                    RequestBody::Invoke(_) => ChannelOutcome::Accepted {
+                        run: RunId::new(1, [41; 10]).unwrap(),
+                        placement: RunPlacement::Host,
+                    },
+                    _ => ChannelOutcome::Observed(serde_json::json!({"ok":true})),
+                })
+            }
+            fn detach(&mut self, _: RunId) -> Result<(), ChannelError> {
+                panic!("public argv fixture does not detach")
+            }
+        }
+        impl ChannelOpener for Capture {
+            fn open(
+                &mut self,
+                _: &VerifiedWorkspaceContext,
+                _: &LiveGuestRun,
+            ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+                Ok(Box::new(Self(self.0.clone())))
+            }
+        }
+        let project = PathBuf::from(std::env::var_os(ROOT).unwrap())
+            .canonicalize()
+            .unwrap();
+        let mut context = workspace_document(Some(session_run()), None);
+        context.0.paths.guest_checkout = project.display().to_string();
+        context.0.paths.workdir = project.join("nested").display().to_string();
+        let mut guest = FakeGuest::new();
+        publish(&mut guest, &context, Some(&capability()));
+        let published = published(&context);
+        let mut checkout = FakeCheckout::default();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_by_hook = captured.clone();
+        let mut channel = Capture(captured_by_hook);
+        with_guest_command_io(
+            move |cmd, args, cwd| {
+                dispatch_in(
+                    cmd,
+                    args,
+                    &published,
+                    &mut guest,
+                    &mut checkout,
+                    &mut channel,
+                    cwd,
+                )
+                .map(Some)
+            },
+            || {
+                for explicit in [&operation, &status, &task, &local] {
+                    assert_ne!(
+                        *explicit,
+                        std::env::args().skip(1).collect::<Vec<_>>(),
+                        "fixture requires explicit argv unlike ambient process argv"
+                    );
+                    crate::run_main(explicit.clone()).unwrap();
+                }
+            },
+        );
+        std::fs::write(
+            project.join("observed.json"),
+            serde_json::to_vec(&*captured.lock().unwrap()).unwrap(),
+        )
+        .unwrap();
+        return;
+    }
+    let fixture = effigy_test_support::Fixture::new("workspace-public-entry-argv").unwrap();
+    let project = fixture.path().join("checkout");
+    let task_home = fixture.path().join("home");
+    std::fs::create_dir_all(project.join("nested")).unwrap();
+    std::fs::create_dir_all(&task_home).unwrap();
+    std::fs::write(
+        project.join("effigy.toml"),
+        "[tasks]\nbuild = 'echo unused'\n",
+    )
+    .unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args(["--exact", "runner::workspace_client::tests::level_one_public_entry_keeps_original_argv_with_guest_io_faked", "--nocapture"])
+        .current_dir(project.join("nested")).env(CHILD, "1").env(ROOT, &project)
+        .env("HOME", &task_home).env("XDG_CONFIG_HOME", task_home.join(".config"))
+        .env("XDG_DATA_HOME", task_home.join(".local/share")).env("XDG_CACHE_HOME", task_home.join(".cache"))
+        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    // The selector supplies the real pool; retain it under this private HOME.
+    if let Some(pool) = std::env::var_os("OXIDE_POOL") {
+        child.env("OXIDE_POOL", pool);
+    }
+    let running = child.spawn().unwrap();
+    let pid = running.id();
+    let output = running.wait_with_output().unwrap();
+    eprintln!("public-entry child pid={pid} exit={}", output.status);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observed: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(project.join("observed.json")).unwrap()).unwrap();
+    assert_eq!(
+        observed.len(),
+        3,
+        "pinned local tasks must not open the channel"
+    );
+    assert_eq!(
+        observed[0]["body"]["query"]["args"],
+        serde_json::json!(operation),
+        "public run_main lost its original operation argv"
+    );
+    assert_eq!(
+        observed[1]["body"]["query"]["args"],
+        serde_json::json!(status)
+    );
+    let Command::Task(expected) = parse_command(task).unwrap() else {
+        panic!("task");
+    };
+    assert_eq!(
+        observed[2]["body"]["args"],
+        serde_json::json!(expected.args)
+    );
+    for row in &observed[..2] {
+        assert_eq!(row["body"]["query"]["cwd"], "nested");
+        assert_eq!(row["body"]["query"]["output"], "json");
+    }
+    assert_eq!(observed[2]["body"]["cwd"], "nested");
+    let json_start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .expect("JSON envelope");
+    let mut values = serde_json::Deserializer::from_slice(&output.stdout[json_start..])
+        .into_iter::<serde_json::Value>();
+    let mut envelopes = Vec::new();
+    while let Some(Ok(value)) = values.next() {
+        envelopes.push(value);
+    }
+    assert_eq!(envelopes.len(), 4);
+    assert!(envelopes
+        .iter()
+        .all(|row| row["schema"] == "effigy.command.v1"));
+    assert_eq!(
+        envelopes[3]["result"]["tasks"],
+        serde_json::json!(["build", "seed"])
+    );
+}
+
+#[test]
+fn level_one_embedded_builtins_require_matching_original_arguments() {
+    let fixture = effigy_test_support::Fixture::new("workspace-embedded-argv").unwrap();
+    std::fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks]\nbuild = 'echo unused'\n",
+    )
+    .unwrap();
+    let context = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(fixture.path().to_owned()))
+        .captured_env(effigy_context::CapturedEnv {
+            home: Some(fixture.path().join("home").into_os_string()),
+            ..Default::default()
+        })
+        .capture()
+        .unwrap();
+    let command = parsed(&["doctor", "first-private-selector"]);
+    with_guest_command_io(
+        |_, _, _| panic!("invalid original arguments reached guest I/O"),
+        || {
+            let missing = crate::runner::run_command_with_context(command.clone(), &context)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                missing.contains("original arguments") && missing.contains("independent host CLI")
+            );
+            let mismatch = crate::runner::run_command_with_context_and_args(
+                command,
+                &context,
+                &argv(&["doctor", "other-private-selector"]),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(mismatch.contains("do not match"));
+            assert!(
+                !mismatch.contains("first-private-selector")
+                    && !mismatch.contains("other-private-selector")
+            );
+        },
+    );
+    let tail = argv(&["--", "embedded value"]);
+    let expected = tail.clone();
+    with_guest_command_io(
+        move |cmd, args, _| {
+            assert!(matches!(cmd, Command::Task(task) if task.name == "build"));
+            assert_eq!(args, expected);
+            Ok(Some("canonical task".into()))
+        },
+        || {
+            assert_eq!(
+                crate::runner::run_command_with_context(
+                    Command::Task(effigy_cli::TaskInvocation {
+                        name: "build".into(),
+                        args: tail
+                    }),
+                    &context
+                )
+                .unwrap(),
+                "canonical task"
+            );
+        },
+    );
 }

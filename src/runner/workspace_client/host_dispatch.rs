@@ -28,6 +28,158 @@ use effigy_kernel::workspace_channel::{
 use crate::runner::error::RunnerError;
 use crate::runner::managed_run::Started;
 
+/// Named Level 1 adapters. These discriminants select an owning host engine;
+/// they never grant authority or imply that its adapter is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceOperation {
+    DeclaredTask,
+    Test,
+    Qa,
+    QaStatus,
+    QaStop,
+    Doctor,
+    Resolve,
+    TaskStatus,
+    ContainerStatus,
+    ContainerLogs,
+    ContainerDown,
+    ContainerRestart,
+    RunsList,
+    RunsStatus,
+    RunsStop,
+    WorkspaceAttach,
+}
+
+impl WorkspaceOperation {
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::DeclaredTask => "task",
+            Self::Test => "test",
+            Self::Qa => "tasks:qa-group",
+            Self::QaStatus => "tasks:qa-group:status",
+            Self::QaStop => "tasks:qa-group:stop",
+            Self::Doctor => "doctor",
+            Self::Resolve => "tasks:show",
+            Self::TaskStatus => "tasks:status",
+            Self::ContainerStatus => "container:status",
+            Self::ContainerLogs => "container:logs",
+            Self::ContainerDown => "container:down",
+            Self::ContainerRestart => "container:restart",
+            Self::RunsList => "runs:list",
+            Self::RunsStatus => "runs:status",
+            Self::RunsStop => "runs:stop",
+            Self::WorkspaceAttach => "workspace:attach",
+        }
+    }
+
+    pub(crate) fn from_invocation(body: &InvocationBody) -> Result<Self, Refusal> {
+        if body.target != Target::Host {
+            return Err(Refusal::forbidden(
+                "workspace Level 1 requires host placement",
+            ));
+        }
+        match &body.selector {
+            Selector::Task(_) => Ok(Self::DeclaredTask),
+            Selector::Operation(name) => match name.as_str() {
+                "test" => Ok(Self::Test),
+                "tasks:qa-group" => Ok(Self::Qa),
+                "tasks:qa-group:stop" => Ok(Self::QaStop),
+                "container:down" => Ok(Self::ContainerDown),
+                "container:restart" => Ok(Self::ContainerRestart),
+                "runs:stop" => Ok(Self::RunsStop),
+                "workspace:attach" => Ok(Self::WorkspaceAttach),
+                _ => Err(unsupported_operation()),
+            },
+            Selector::Shell(_) => Err(unsupported_operation()),
+        }
+    }
+
+    pub(crate) fn from_observation(body: &ObserveBody) -> Result<Self, Refusal> {
+        if body
+            .target
+            .as_ref()
+            .is_some_and(|target| *target != Target::Host)
+        {
+            return Err(Refusal::forbidden(
+                "workspace Level 1 requires host placement",
+            ));
+        }
+        match body.op.as_str() {
+            "doctor" => Ok(Self::Doctor),
+            "tasks:qa-group:status" => Ok(Self::QaStatus),
+            "tasks:show" => Ok(Self::Resolve),
+            "tasks:status" => Ok(Self::TaskStatus),
+            "container:status" => Ok(Self::ContainerStatus),
+            "container:logs" => Ok(Self::ContainerLogs),
+            "runs:list" => Ok(Self::RunsList),
+            "runs:status" => Ok(Self::RunsStatus),
+            _ => Err(unsupported_operation()),
+        }
+    }
+}
+
+fn unsupported_operation() -> Refusal {
+    Refusal::forbidden("workspace Level 2 unsupported operation; use an independent host CLI")
+}
+
+/// The exact borrowed handoff from the authenticated kernel dispatcher to an
+/// owning engine. The ticket is rechecked durably by `Run::begin_admitted`;
+/// this view cannot mint, change or stand in for that authority.
+#[derive(Debug)]
+pub(crate) struct ReservedWorkspaceInvocation<'a> {
+    ticket: &'a effigy_kernel::run::AdmissionTicket,
+    resolved: &'a ResolvedInvocation,
+    checkout: &'a Path,
+}
+
+impl<'a> ReservedWorkspaceInvocation<'a> {
+    pub(crate) fn validate(
+        cx: &EffectContext,
+        ticket: &'a effigy_kernel::run::AdmissionTicket,
+        resolved: &'a ResolvedInvocation,
+        checkout: &'a Path,
+    ) -> Result<Self, Refusal> {
+        if cx.operation().placement() != Placement::Host
+            || resolved.spec().placement != Placement::Host
+            || !matches!(resolved.spec().target, ExecutionTarget::Host)
+        {
+            return Err(Refusal::forbidden(
+                "a guest placement cannot admit a host run",
+            ));
+        }
+        if !checkout.is_absolute() {
+            return Err(Refusal::forbidden("the published checkout is not absolute"));
+        }
+        channel::check_relative_path(&resolved.spec().cwd)?;
+        if resolved.spec().argv.is_empty()
+            || resolved
+                .spec()
+                .argv
+                .iter()
+                .any(|argument| argument.to_str().is_none())
+        {
+            return Err(Refusal::invalid(
+                "the frozen invocation requires exact UTF-8 arguments",
+            ));
+        }
+        Ok(Self {
+            ticket,
+            resolved,
+            checkout,
+        })
+    }
+
+    pub(crate) fn ticket(&self) -> &effigy_kernel::run::AdmissionTicket {
+        self.ticket
+    }
+    pub(crate) fn resolved(&self) -> &ResolvedInvocation {
+        self.resolved
+    }
+    pub(crate) fn checkout(&self) -> &Path {
+        self.checkout
+    }
+}
+
 /// The task engine's fresh entropy, requested exactly as an ordinary admission
 /// requests it. A dispatcher never invents a run id.
 fn fresh_run_id() -> Result<RunId, RunnerError> {
@@ -212,6 +364,7 @@ impl channel::Resolver for HostDispatch {
                 "this workspace host dispatches host-target requests only",
             ));
         }
+        WorkspaceOperation::from_invocation(body)?;
         let Selector::Task(name) = &body.selector else {
             return Err(Self::refuse(
                 "this workspace host does not dispatch built-in or operation selectors over the \
@@ -268,13 +421,15 @@ impl channel::Resolver for HostDispatch {
         // A run that would first take a task-declared shared lock owns another
         // run, so it cannot carry this reservation. Refuse before the host
         // records the request.
-        if target.shared_lock.is_some() {
-            return Err(Self::refuse(format!(
-                "task `{}` takes a shared lock, which a reserved workspace request cannot carry; \
-                 run it on the host",
-                target.label
-            )));
+        let policy = if target.shared_lock.is_some() {
+            super::coverage_policy::ResolvedTaskPolicy::SharedLock
+        } else {
+            super::coverage_policy::ResolvedTaskPolicy::LevelOne
+        };
+        if let Some(message) = super::coverage_policy::unsupported_resolved_task(policy) {
+            return Err(Self::refuse(message));
         }
+
         let checkout = crate::runner::task_engine::checkout::mint(&target.root)
             .map_err(|error| Self::refuse(error.to_string()))?;
         let task = target
@@ -310,9 +465,64 @@ impl channel::Resolver for HostDispatch {
 }
 
 impl HostDispatch {
+    pub(crate) fn state_root(&self) -> &StateRoot {
+        &self.root
+    }
+
+    /// Reparse a typed read using host CLI grammar and verify its claimed
+    /// operation against that parsed command before any owning observer runs.
+    pub(crate) fn observation_command(
+        &self,
+        body: &ObserveBody,
+    ) -> Result<Option<(PathBuf, effigy_cli::Command)>, Refusal> {
+        WorkspaceOperation::from_observation(body)?;
+        let Some(query) = &body.query else {
+            return Ok(None);
+        };
+        let cwd = self.checkout_directory(&query.cwd).map_err(|_| {
+            Refusal::forbidden("the Observe cwd is outside the pinned checkout or unavailable")
+        })?;
+        let command = effigy_cli::parse_command(query.args.clone()).map_err(|_| {
+            Refusal::invalid("the Observe query does not name a valid host command")
+        })?;
+        use effigy_cli::{Command, ContainerSubcommand, RunsAction};
+        let forbidden = match &command {
+            Command::Doctor(args) => args.repo_override.is_some() || args.fix || args.refresh,
+            Command::Tasks(args) => args.repo_override.is_some(),
+            Command::Container(args) => {
+                args.repo_override.is_some()
+                    || matches!(
+                        args.subcommand,
+                        ContainerSubcommand::Status { global: true, .. }
+                            | ContainerSubcommand::Logs { follow: true, .. }
+                    )
+            }
+            Command::Runs(args) => {
+                args.repo_override.is_some()
+                    || matches!(args.action, RunsAction::List { all: true, .. })
+            }
+            _ => false,
+        };
+        if forbidden {
+            return Err(Refusal::forbidden(
+                "workspace Observe scope or mutation flags unsupported; use an independent host CLI",
+            ));
+        }
+        match super::classify(&command) {
+            super::GuestOperation::Observe {
+                op,
+                target: Target::Host,
+                run_id,
+            } if op == body.op && run_id == body.run_id => Ok(Some((cwd, command))),
+            _ => Err(Refusal::invalid(
+                "the Observe query does not match its read-only operation",
+            )),
+        }
+    }
+
     /// The host directory a guest's checkout-relative working directory names.
     /// Absolute paths, `..` components and escapes out of the checkout refuse.
-    fn checkout_directory(&self, relative: &str) -> Result<PathBuf, Refusal> {
+    pub(crate) fn checkout_directory(&self, relative: &str) -> Result<PathBuf, Refusal> {
         if relative.starts_with('/')
             || relative.contains(['\\', '\0'])
             || relative.split('/').any(|part| part == "..")
@@ -382,17 +592,9 @@ impl channel::Admission for HostDispatch {
         ticket: &effigy_kernel::run::AdmissionTicket,
         resolved: &ResolvedInvocation,
     ) -> Result<(), Refusal> {
-        if cx.operation().placement() != Placement::Host {
-            return Err(Self::refuse("a guest placement cannot admit a host run"));
-        }
-        if resolved.spec().placement != Placement::Host
-            || !matches!(resolved.spec().target, ExecutionTarget::Host)
-        {
-            return Err(Self::refuse(
-                "the resolved invocation is not a host-placed task",
-            ));
-        }
-        let argv = resolved.spec().argv.clone();
+        let handoff =
+            ReservedWorkspaceInvocation::validate(cx, ticket, resolved, &self.host_checkout)?;
+        let argv = handoff.resolved().spec().argv.clone();
         let Some(name) = argv.first().and_then(|arg| arg.to_str()) else {
             return Err(Self::refuse(
                 "the resolved invocation names no runnable task",
@@ -403,8 +605,12 @@ impl channel::Admission for HostDispatch {
             args: argv
                 .iter()
                 .skip(1)
-                .filter_map(|arg| arg.to_str().map(str::to_owned))
-                .collect(),
+                .map(|arg| {
+                    arg.to_str().map(str::to_owned).ok_or_else(|| {
+                        Refusal::invalid("the frozen invocation requires exact UTF-8 arguments")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         };
         // Recheck the published directory immediately before launching its
         // supervisor, and carry the exact resolved facts through its private
@@ -463,6 +669,7 @@ impl channel::Observer for HostDispatch {
                 "this workspace host answers host-target observations only",
             ));
         }
+        self.observation_command(body)?;
         match body.op.as_str() {
             "runs:list" => {
                 let listing = crate::runner::task_engine::list_owned_runs(cx, &self.root, 64)
@@ -663,6 +870,7 @@ mod checkout_boundary_tests {
                 .observe(
                     &expired,
                     &ObserveBody {
+                        query: None,
                         run_id: None,
                         op: "runs:list".into(),
                         target: Some(Target::Host)
@@ -676,6 +884,7 @@ mod checkout_boundary_tests {
             .observe(
                 &active,
                 &ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "runs:list".into(),
                     target: Some(Target::Host),
@@ -689,6 +898,7 @@ mod checkout_boundary_tests {
                 .observe(
                     &active,
                     &ObserveBody {
+                        query: None,
                         run_id: None,
                         op: "runs:status".into(),
                         target: Some(Target::Host)
@@ -775,6 +985,7 @@ mod checkout_boundary_tests {
         let observe =
             crate::runner::task_engine::observe_context(std::time::Duration::from_secs(5));
         let body = |run_id| ObserveBody {
+            query: None,
             op: "runs:status".into(),
             target: Some(Target::Host),
             run_id,
@@ -904,5 +1115,108 @@ mod checkout_boundary_tests {
             dispatch.resolve(&cx, &invoke(".", vec![])).is_err(),
             "a replacement checkout refuses"
         );
+    }
+}
+
+#[cfg(test)]
+mod level_one_routing_tests {
+    use super::*;
+    use effigy_kernel::workspace_channel::Resolver;
+
+    fn host() -> (tempfile::TempDir, HostDispatch) {
+        let fixture = tempfile::tempdir().unwrap();
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let dispatch = HostDispatch::new(fixture.path().to_owned(), root);
+        (fixture, dispatch)
+    }
+
+    #[test]
+    fn level_one_observation_reparses_exact_argv_and_refuses_effects_and_escapes() {
+        let (fixture, dispatch) = host();
+        std::fs::create_dir(fixture.path().join("nested")).unwrap();
+        let body = |op: &str, args: &[&str], cwd: &str| ObserveBody {
+            query: Some(channel::ObserveQuery {
+                cwd: cwd.into(),
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                output: channel::OutputMode::Json,
+            }),
+            op: op.into(),
+            target: Some(Target::Host),
+            run_id: None,
+        };
+        let (cwd, command) = dispatch
+            .observation_command(&body(
+                "doctor",
+                &["doctor", "build", "--", "two words"],
+                "nested",
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cwd, fixture.path().join("nested").canonicalize().unwrap());
+        let effigy_cli::Command::Doctor(args) = command else {
+            panic!("doctor");
+        };
+        assert_eq!(args.explain.unwrap().args, vec!["--", "two words"]);
+        for query in [
+            body("doctor", &["doctor", "--fix"], "."),
+            body("doctor", &["doctor", "--refresh"], "."),
+            body("doctor", &["doctor", "--repo", "/private-cwd"], "."),
+            body("doctor", &["release", "run"], "."),
+            body(
+                "container:status",
+                &["container", "status", "--global"],
+                ".",
+            ),
+            body("container:logs", &["container", "logs", "--follow"], "."),
+            body("runs:list", &["runs", "--all"], "."),
+            body("doctor", &["doctor"], "../private-cwd"),
+        ] {
+            let refusal = dispatch.observation_command(&query).unwrap_err();
+            assert!(!refusal.diagnostic.contains("private-cwd"));
+        }
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), fixture.path().join("outside")).unwrap();
+        assert!(dispatch
+            .observation_command(&body("doctor", &["doctor"], "outside"))
+            .is_err());
+    }
+
+    #[test]
+    fn level_one_direct_host_request_cannot_admit_a_shared_lock_task() {
+        let (fixture, mut dispatch) = host();
+        std::fs::write(
+            fixture.path().join("effigy.toml"),
+            "[tasks.build]\nrun = 'echo forbidden'\nlock = 'shared'\n",
+        )
+        .unwrap();
+        let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::Shell);
+        let body = InvocationBody {
+            selector: Selector::Task("build".into()),
+            cwd: ".".into(),
+            target: Target::Host,
+            args: vec![],
+            output: channel::OutputMode::Text,
+        };
+        let refusal = dispatch.resolve(&cx, &body).unwrap_err();
+        assert!(refusal.diagnostic.contains("shared-lock"), "{refusal}");
+        assert!(dispatch.admitted().lock().unwrap().is_empty());
+        for op in [
+            "release",
+            "gateway",
+            "config",
+            "install",
+            "pause",
+            "not-a-route",
+        ] {
+            let body = InvocationBody {
+                selector: Selector::Operation(op.into()),
+                ..body.clone()
+            };
+            assert_eq!(
+                WorkspaceOperation::from_invocation(&body).unwrap_err().code,
+                channel::RefusalCode::Forbidden
+            );
+        }
     }
 }

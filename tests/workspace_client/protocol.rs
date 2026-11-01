@@ -309,6 +309,7 @@ fn observe_retries_reobserve_without_admission_and_preserve_host_json() {
     let ledger = Rc::new(RefCell::new(Ledger::default()));
     let runs = Rc::new(RefCell::new(vec![]));
     let body = ObserveBody {
+        query: None,
         op: "status".into(),
         target: Some(Target::Host),
         run_id: None,

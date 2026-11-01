@@ -361,24 +361,150 @@ impl InvocationBody {
         self.selector.check()?;
         self.target.check()?;
         check_relative_path(&self.cwd)?;
-        if self.args.len() > MAX_ARGUMENTS {
-            return Err(Refusal::invalid("a request carries at most 256 arguments"));
-        }
-        let mut total = 0usize;
-        for argument in &self.args {
-            total = total.saturating_add(argument.len());
-            if argument.len() > MAX_PATH_BYTES {
-                return Err(Refusal::invalid("an argument is at most 4096 bytes"));
-            }
-            if argument.contains('\0') {
-                return Err(Refusal::invalid("an argument carries no NUL"));
-            }
-        }
-        if total > MAX_BODY_BYTES {
-            return Err(Refusal::invalid("a request body is at most 64 KiB"));
-        }
+        check_arguments(&self.args)?;
         Ok(())
     }
+}
+
+fn check_arguments(args: &[String]) -> Result<(), Refusal> {
+    if args.len() > MAX_ARGUMENTS {
+        return Err(Refusal::invalid("a request carries at most 256 arguments"));
+    }
+    let mut total = 0usize;
+    for argument in args {
+        total = total.saturating_add(argument.len());
+        if argument.len() > MAX_PATH_BYTES {
+            return Err(Refusal::invalid("an argument is at most 4096 bytes"));
+        }
+        if argument.contains('\0') {
+            return Err(Refusal::invalid("an argument carries no NUL"));
+        }
+    }
+    if total > MAX_BODY_BYTES {
+        return Err(Refusal::invalid("a request body is at most 64 KiB"));
+    }
+    Ok(())
+}
+
+/// Typed query inputs for the negotiated `observe_query_v1` extension.
+/// Debug deliberately omits cwd and arguments, which may contain private input.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveQuery {
+    #[serde(deserialize_with = "deserialize_query_cwd")]
+    pub cwd: String,
+    #[serde(deserialize_with = "deserialize_query_args")]
+    pub args: Vec<String>,
+    pub output: OutputMode,
+}
+impl fmt::Debug for ObserveQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObserveQuery")
+            .field("output", &self.output)
+            .finish_non_exhaustive()
+    }
+}
+impl ObserveQuery {
+    fn check(&self) -> Result<(), Refusal> {
+        check_relative_path(&self.cwd)?;
+        check_arguments(&self.args)
+    }
+}
+
+/// Validate query inputs before the general frame decoder allocates its JSON
+/// value tree. Only the bounded frame buffer and serde's string unescape scratch
+/// exist before this pass; arbitrary frame fields are skipped without storing.
+fn preflight_observe_query(body: &[u8]) -> Result<(), Refusal> {
+    #[derive(Deserialize)]
+    struct QueryFrame {
+        #[serde(default)]
+        body: Option<QueryBody>,
+    }
+    #[derive(Deserialize)]
+    struct QueryBody {
+        #[serde(default)]
+        query: Option<ObserveQuery>,
+    }
+    let frame: QueryFrame = serde_json::from_slice(body)
+        .map_err(|_| Refusal::invalid("a frame has malformed or unbounded query inputs"))?;
+    if let Some(query) = frame.body.and_then(|body| body.query) {
+        query.check()?;
+    }
+    Ok(())
+}
+
+fn deserialize_query_cwd<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    struct Cwd;
+    impl Visitor<'_> for Cwd {
+        type Value = String;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded checkout-relative cwd")
+        }
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<String, E> {
+            check_relative_path(value).map_err(|_| E::custom("invalid query cwd"))?;
+            Ok(value.to_owned())
+        }
+    }
+    deserializer.deserialize_str(Cwd)
+}
+
+fn deserialize_query_args<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    struct Argument(String);
+    impl<'de> Deserialize<'de> for Argument {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Text;
+            impl Visitor<'_> for Text {
+                type Value = Argument;
+                fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    formatter.write_str("a bounded UTF-8 argument")
+                }
+                fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Argument, E> {
+                    if value.len() > MAX_PATH_BYTES || value.contains('\0') {
+                        return Err(E::custom("invalid query argument"));
+                    }
+                    Ok(Argument(value.to_owned()))
+                }
+            }
+            deserializer.deserialize_str(Text)
+        }
+    }
+    struct Arguments;
+    impl<'de> Visitor<'de> for Arguments {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("at most 256 bounded arguments")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<String>, A::Error> {
+            let mut values = Vec::new();
+            let mut bytes = 0usize;
+            loop {
+                if values.len() == MAX_ARGUMENTS {
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::custom("too many query arguments"));
+                    }
+                    break;
+                }
+                let Some(Argument(value)) = seq.next_element::<Argument>()? else {
+                    break;
+                };
+                bytes += value.len();
+                if bytes > MAX_BODY_BYTES {
+                    return Err(serde::de::Error::custom(
+                        "query arguments exceed body limit",
+                    ));
+                }
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_seq(Arguments)
 }
 
 /// The body of an `observe` request. `op` is a bounded operation name whose
@@ -387,6 +513,8 @@ impl InvocationBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<ObserveQuery>,
     pub op: String,
     pub target: Option<Target>,
     /// Exact run identity for run-specific observations. Omitted on legacy reads.
@@ -395,6 +523,9 @@ pub struct ObserveBody {
 }
 impl ObserveBody {
     fn check(&self) -> Result<(), Refusal> {
+        if let Some(query) = &self.query {
+            query.check()?;
+        }
         match (&*self.op, &self.run_id) {
             ("runs:status", Some(id)) if id.parse::<RunId>().is_ok() => {}
             ("runs:status", _) => {
@@ -628,9 +759,19 @@ pub struct Negotiation {
     pub artifact: HostArtifact,
 }
 
+/// Versioned, explicitly negotiated optional wire support. No capability is
+/// inferred from a binary version, digest or an unacknowledged query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelCapability {
+    ObserveQueryV1,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hello {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ChannelCapability>,
     pub schema: String,
     pub protocol_versions: Vec<u32>,
     pub effigy_version: String,
@@ -641,8 +782,19 @@ pub struct Hello {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelloOk {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ChannelCapability>,
     pub protocol: u32,
     pub effigy_version: String,
+}
+
+fn check_capabilities(capabilities: &[ChannelCapability]) -> Result<(), Refusal> {
+    if capabilities.len() > 1 {
+        return Err(Refusal::invalid(
+            "a hello offers each supported capability once",
+        ));
+    }
+    Ok(())
 }
 
 /// The TLS identity the transport verified. The pin check compares it with the
@@ -677,6 +829,7 @@ pub fn check_server_pin(pinned: &Digest, peer: Option<&ServerIdentity>) -> Resul
 /// anything else is written, so a version or identity mismatch refuses before
 /// effects and before a credential is disclosed.
 pub fn negotiate(client: &Hello, host: &Negotiation) -> Result<HelloOk, Refusal> {
+    check_capabilities(&client.capabilities)?;
     if client.schema != SCHEMA {
         return Err(Refusal::version(
             "this client speaks another channel schema; rerun the binary this workspace provisioned",
@@ -705,6 +858,7 @@ pub fn negotiate(client: &Hello, host: &Negotiation) -> Result<HelloOk, Refusal>
         ));
     }
     Ok(HelloOk {
+        capabilities: client.capabilities.clone(),
         protocol: PROTOCOL_V1,
         effigy_version: host.artifact.effigy_version.clone(),
     })
@@ -1787,6 +1941,12 @@ impl Frame {
 /// Encode a frame body. Framing (the four-byte length prefix) belongs to the
 /// connection, so a body and its length can never disagree.
 pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, Refusal> {
+    match frame {
+        Frame::Request(request) => request.body.check()?,
+        Frame::Hello(hello) => check_capabilities(&hello.capabilities)?,
+        Frame::HelloOk(hello) => check_capabilities(&hello.capabilities)?,
+        _ => {}
+    }
     let mut object = Map::new();
     object.insert("frame".to_string(), Value::String(frame.tag().into()));
     match frame {
@@ -1887,6 +2047,7 @@ pub fn decode_frame(body: &[u8]) -> Result<Frame, Refusal> {
     if body.len() > MAX_FRAME_BYTES {
         return Err(Refusal::invalid("a frame is at most 1 MiB"));
     }
+    preflight_observe_query(body)?;
     let value = serde_json::from_slice::<NoDuplicates>(body)
         .map_err(|_| Refusal::invalid("a frame is not JSON, or repeats a key"))?
         .0;
@@ -1930,7 +2091,9 @@ pub fn decode_frame(body: &[u8]) -> Result<Frame, Refusal> {
     match &frame {
         Frame::Request(request) => request.body.check()?,
         Frame::Stream(stream) => stream.check()?,
+        Frame::HelloOk(hello) => check_capabilities(&hello.capabilities)?,
         Frame::Hello(hello) => {
+            check_capabilities(&hello.capabilities)?;
             if hello.protocol_versions.len() > 8 {
                 return Err(Refusal::invalid("a hello names at most eight versions"));
             }
@@ -2610,6 +2773,7 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     /// The next inbound sequence this connection accepts per stream id:
     /// terminal input and resize, in order and never replayed.
     inbound: BTreeMap<u32, u64>,
+    observe_query_v1: bool,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A, R, O, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2652,6 +2816,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             attach: None,
             carry: None,
             inbound: BTreeMap::new(),
+            observe_query_v1: false,
         }
     }
     pub fn grants(&self) -> &GrantBook {
@@ -2820,6 +2985,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.attach = None;
         self.carry = None;
         self.inbound.clear();
+        self.observe_query_v1 = false;
     }
 
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
@@ -2839,7 +3005,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             Err(refusal) => return Err(self.refuse(transport, refusal)),
         };
         match negotiate(&hello, &self.negotiation) {
-            Ok(ok) => write_frame(transport, &Frame::HelloOk(ok))?,
+            Ok(ok) => {
+                self.observe_query_v1 =
+                    ok.capabilities.contains(&ChannelCapability::ObserveQueryV1);
+                write_frame(transport, &Frame::HelloOk(ok))?;
+            }
             Err(refusal) => return Err(self.refuse(transport, refusal)),
         }
         let Some(body) = read_frame(transport)? else {
@@ -3268,6 +3438,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             let session = grant.session();
             match &request.body {
                 RequestBody::Observe(body) => {
+                    if body.query.is_some() && !self.observe_query_v1 {
+                        return Err(Refusal::forbidden(
+                            "observe_query_v1 is unsupported on this connection; use an independent host CLI",
+                        ));
+                    }
                     let value = self.dispatcher.observe(observe, body)?;
                     Ok(ResponseOutcome::Observed(value))
                 }

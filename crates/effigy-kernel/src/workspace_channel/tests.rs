@@ -305,6 +305,7 @@ fn host() -> Negotiation {
 }
 fn hello() -> Hello {
     Hello {
+        capabilities: Vec::new(),
         schema: SCHEMA.into(),
         protocol_versions: vec![PROTOCOL_V1],
         effigy_version: "0.15.0".into(),
@@ -1708,6 +1709,7 @@ fn version_and_digest_mismatch_refuse_before_authentication() {
             ..hello()
         },
         Hello {
+            capabilities: Vec::new(),
             schema: "effigy.workspace-channel.v0".into(),
             ..hello()
         },
@@ -1742,6 +1744,7 @@ fn no_request_crosses_before_authentication() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -1844,6 +1847,7 @@ fn observe_writes_nothing_and_retries_re_observe() {
         Frame::Request(request(
             session,
             RequestBody::Observe(ObserveBody {
+                query: None,
                 run_id: None,
                 op: "run:status".into(),
                 target: None,
@@ -1977,6 +1981,7 @@ fn a_grant_scopes_the_operation_the_target_and_its_generation() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        query: None,
                         run_id: None,
                         op: "run:status".into(),
                         target: None,
@@ -2612,6 +2617,7 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -2629,6 +2635,7 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        query: None,
                         run_id: None,
                         op: "run:status".into(),
                         target: None,
@@ -2729,6 +2736,7 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -2857,6 +2865,7 @@ fn an_enrolment_cannot_name_another_session() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -2916,6 +2925,7 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -2968,6 +2978,7 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
                     run_id: None,
                     op: "run:status".into(),
                     target: None,
@@ -4871,6 +4882,7 @@ fn observe_run_identity_wire_is_strict_and_preserves_legacy_list() {
     .is_err());
     let id = RunId::new(42, [1; 10]).unwrap().to_string();
     let mut status = ObserveBody {
+        query: None,
         op: "runs:status".into(),
         target: None,
         run_id: None,
@@ -4883,4 +4895,266 @@ fn observe_run_identity_wire_is_strict_and_preserves_legacy_list() {
     assert_eq!(serde_json::to_value(&status).unwrap()["run_id"], id);
     status.op = "runs:list".into();
     assert!(status.check().is_err());
+}
+
+#[test]
+fn observe_query_v1_roundtrips_exact_arguments_before_dispatch() {
+    let value = serde_json::json!({
+        "op":"doctor", "target":"host",
+        "query":{"cwd":"nested", "args":["doctor", "build", "--", "two words"], "output":"json"}
+    });
+    let body: ObserveBody =
+        serde_json::from_value(value.clone()).expect("a typed bounded Observe query must decode");
+    assert!(body.check().is_ok());
+    assert_eq!(serde_json::to_value(body).unwrap(), value);
+}
+
+#[test]
+fn observe_query_v1_capability_is_explicit_and_legacy_bytes_stay_identical() {
+    let mut client = hello();
+    let legacy_reply = negotiate(&client, &host()).unwrap();
+    assert_eq!(
+        serde_json::to_string(&legacy_reply).unwrap(),
+        r#"{"protocol":1,"effigy_version":"0.15.0"}"#
+    );
+    let legacy_body = r#"{"op":"runs:list","target":null}"#;
+    let legacy: ObserveBody = serde_json::from_str(legacy_body).unwrap();
+    assert_eq!(serde_json::to_string(&legacy).unwrap(), legacy_body);
+    let old_hello = serde_json::to_vec(&client).unwrap();
+    assert!(!String::from_utf8_lossy(&old_hello).contains("capabilities"));
+    assert_eq!(serde_json::from_slice::<Hello>(&old_hello).unwrap(), client);
+    client.capabilities = vec![ChannelCapability::ObserveQueryV1];
+    let selected = negotiate(&client, &host()).unwrap();
+    assert_eq!(selected.capabilities, client.capabilities);
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyReply {
+        protocol: u32,
+        effigy_version: String,
+    }
+    let old: LegacyReply =
+        serde_json::from_str(r#"{"protocol":1,"effigy_version":"0.15.0"}"#).unwrap();
+    assert_eq!(old.protocol, 1);
+    assert_eq!(old.effigy_version, "0.15.0");
+    assert!(
+        serde_json::from_value::<LegacyReply>(serde_json::to_value(selected).unwrap()).is_err()
+    );
+    client.capabilities.push(ChannelCapability::ObserveQueryV1);
+    assert_eq!(
+        negotiate(&client, &host()).unwrap_err().code,
+        RefusalCode::InvalidRequest
+    );
+}
+
+#[test]
+fn observe_query_v1_bounds_and_redaction_apply_before_encoding_or_dispatch() {
+    let session = Session {
+        run: hello().session_run_id,
+        generation: Generation::new(SESSION_GENERATION),
+    };
+    let query = ObserveQuery {
+        cwd: "private-cwd".into(),
+        args: vec!["private-argument".into()],
+        output: OutputMode::Json,
+    };
+    assert!(!format!("{query:?}").contains("private"));
+    let valid = ObserveBody {
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+        query: Some(query),
+    };
+    let mut cases = Vec::new();
+    for cwd in ["../private-cwd", "/private-cwd", "a\\b"] {
+        let mut body = valid.clone();
+        body.query.as_mut().unwrap().cwd = cwd.into();
+        cases.push(body);
+    }
+    for args in [
+        vec!["x".into(); MAX_ARGUMENTS + 1],
+        vec!["x".repeat(MAX_PATH_BYTES + 1)],
+        vec!["private\0argument".into()],
+        vec!["x".repeat(MAX_PATH_BYTES); 17],
+    ] {
+        let mut body = valid.clone();
+        body.query.as_mut().unwrap().args = args;
+        cases.push(body);
+    }
+    for body in cases {
+        let request = request(session, RequestBody::Observe(body), 91);
+        let refusal = encode_frame(&Frame::Request(request)).expect_err("client bounds");
+        assert!(!refusal.diagnostic.contains("private"));
+    }
+    for edit in [
+        serde_json::json!({"cwd":"../private-cwd", "args":[], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":vec!["private"; MAX_ARGUMENTS + 1], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":["x".repeat(MAX_PATH_BYTES + 1)], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":["private\0argument"], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":[], "output":"text", "private":1}),
+    ] {
+        let mut value: Value = serde_json::from_slice(
+            &encode_frame(&Frame::Request(request(
+                session,
+                RequestBody::Observe(valid.clone()),
+                92,
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        value["body"]["query"] = edit;
+        let refusal = decode_frame(&serde_json::to_vec(&value).unwrap()).expect_err("host bounds");
+        assert!(!refusal.diagnostic.contains("private"));
+    }
+}
+
+#[test]
+fn observe_query_v1_requires_negotiation_before_read_only_observer() {
+    let (_fixture, cx, root, session) = journal("effigy-query-capability");
+    for negotiated in [false, true] {
+        let mut host = server(session, &[]);
+        let mut hello = hello();
+        if negotiated {
+            hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+        }
+        let body = ObserveBody {
+            query: Some(ObserveQuery {
+                cwd: ".".into(),
+                args: vec!["doctor".into()],
+                output: OutputMode::Json,
+            }),
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        };
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello),
+                Frame::Authenticate(capability()),
+                Frame::Request(request(session, RequestBody::Observe(body), 90)),
+            ]),
+            peer(),
+        );
+        host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .unwrap();
+        assert!(host.dispatcher.admission.tickets.is_empty());
+        assert_eq!(host.dispatcher.resolver.calls, 0);
+        if negotiated {
+            assert_eq!(host.dispatcher.observer.calls, 1);
+        } else {
+            assert_eq!(host.dispatcher.observer.calls, 0);
+            assert!(written_frames(&pipe).iter().any(|frame| matches!(frame, Frame::Response(Response { outcome: ResponseOutcome::Refused(refusal), .. }) if refusal.diagnostic.contains("observe_query_v1"))));
+        }
+    }
+}
+
+fn observe_query_frame(session: Session, id: u8) -> Frame {
+    Frame::Request(request(
+        session,
+        RequestBody::Observe(ObserveBody {
+            query: Some(ObserveQuery {
+                cwd: ".".into(),
+                args: vec!["doctor".into()],
+                output: OutputMode::Json,
+            }),
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }),
+        id,
+    ))
+}
+
+#[test]
+fn observe_query_negotiation_survives_attach_replacement_and_detach() {
+    let (_fixture, cx, root, session) = journal("effigy-query-attachment-lifetime");
+    let (_run, live) = admitted_run(&cx, &root, session, 41, &[121]);
+    let mut host = server(session, &[]);
+    let mut hello = hello();
+    hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+    let attach = |id| {
+        Frame::Request(request(
+            session,
+            RequestBody::Attach(AttachBody {
+                run: live,
+                streams: vec![StreamKind::Stdout],
+                cursor: None,
+                cursors: None,
+            }),
+            id,
+        ))
+    };
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello),
+            Frame::Authenticate(capability()),
+            attach(1),
+            observe_query_frame(session, 2),
+            attach(3),
+            observe_query_frame(session, 4),
+            Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                5,
+            )),
+            observe_query_frame(session, 6),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("the negotiated connection remains usable");
+    let replies: Vec<_> = written_frames(&pipe)
+        .into_iter()
+        .filter_map(|frame| match frame {
+            Frame::Response(response) => Some(response),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(replies.len(), 6);
+    for reply in &replies {
+        assert!(
+            matches!(reply.outcome, ResponseOutcome::Observed(_)),
+            "{reply:?}"
+        );
+    }
+    assert_eq!(host.dispatcher.observer.calls, 3);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
+}
+
+#[test]
+fn observe_query_negotiation_is_not_inherited_by_a_fresh_connection() {
+    let (_fixture, cx, root, session) = journal("effigy-query-connection-lifetime");
+    let mut host = server(session, &[]);
+    for (connection, negotiated) in [true, false, true].into_iter().enumerate() {
+        let mut hello = hello();
+        if negotiated {
+            hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+        }
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello),
+                Frame::Authenticate(capability()),
+                observe_query_frame(session, 90 + connection as u8),
+            ]),
+            peer(),
+        );
+        host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .unwrap();
+        let outcome = written_frames(&pipe)
+            .into_iter()
+            .find_map(|frame| match frame {
+                Frame::Response(response) => Some(response.outcome),
+                _ => None,
+            })
+            .expect("the query is answered");
+        if negotiated {
+            assert!(matches!(outcome, ResponseOutcome::Observed(_)));
+        } else {
+            assert!(matches!(outcome, ResponseOutcome::Refused(refusal)
+                if refusal.code == RefusalCode::Forbidden && refusal.diagnostic.contains("observe_query_v1")));
+        }
+    }
+    assert_eq!(host.dispatcher.observer.calls, 2);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
 }
