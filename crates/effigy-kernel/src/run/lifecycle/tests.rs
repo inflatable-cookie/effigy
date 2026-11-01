@@ -373,6 +373,66 @@ fn layered_helper_identities(log: &str) -> Result<Vec<ProcessIdentity>, serde_js
         .collect()
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "child entry for the image-observation fixture"]
+fn image_observation_child() {
+    use std::io::Read;
+    let mut byte = [0u8; 1];
+    let _ = std::io::stdin().read(&mut byte);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_live_child_image_is_path_evidence_not_mapped_image_proof() {
+    use std::process::{Command, Stdio};
+
+    let mut home = LayeredHome::new();
+    let image = crate::supervise::image_identity::TestCreatorImage::capture()
+        .expect("creator image observation");
+    let mut command = Command::new(image.launch_path().expect("creator path"));
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "run::lifecycle::tests::image_observation_child",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut same = LayeredChild::spawn(&mut command, home.path()).expect("same-image child");
+    let identity = same.identity.clone().expect("same-image child identity");
+    assert!(
+        same.child().try_wait().unwrap().is_none(),
+        "child must be live"
+    );
+    image.verify(&identity).expect("matching child observation");
+    drop(same.child().stdin.take());
+    assert!(same
+        .wait(Duration::from_secs(3))
+        .expect("reap same-image child")
+        .success());
+
+    let mut other_command = Command::new("/bin/sleep");
+    other_command
+        .arg("30")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut other = LayeredChild::spawn(&mut other_command, home.path()).expect("different child");
+    let other_identity = other.identity.clone().expect("different child identity");
+    assert!(
+        image.verify(&other_identity).is_err(),
+        "different image must refuse"
+    );
+    other.kill().expect("stop exact different child");
+    other
+        .wait(Duration::from_secs(3))
+        .expect("reap different child");
+    // proc_pidpath plus stat observes a pathname, not the mapped image; an ABA
+    // replacement between observation and exec remains an accepted limitation.
+    home.finish();
+}
+
 #[test]
 #[ignore = "requires an explicitly supplied older Effigy executable"]
 fn old_helpers_wait_for_config_and_exit_on_eof() {

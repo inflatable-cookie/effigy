@@ -37,7 +37,10 @@ pub(crate) mod anchor;
 mod birth_hash;
 // Observation scaffold only; it does not qualify a helper or enable Discard.
 #[allow(dead_code)]
+#[cfg(not(test))]
 mod image_identity;
+#[cfg(test)]
+pub(crate) mod image_identity;
 pub(crate) mod memory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -122,6 +122,25 @@ fn unsupported_image_identity() -> io::Error {
     )
 }
 
+/// Test-only access to observations; this does not qualify a helper.
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) struct TestCreatorImage(CreatorImage);
+
+#[cfg(all(test, feature = "fault-injection"))]
+impl TestCreatorImage {
+    pub(crate) fn capture() -> io::Result<Self> {
+        CreatorImage::capture().map(Self)
+    }
+
+    pub(crate) fn launch_path(&self) -> io::Result<&Path> {
+        self.0.launch_path()
+    }
+
+    pub(crate) fn verify(&self, identity: &ProcessIdentity) -> io::Result<()> {
+        self.0.verify_process(identity)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
