@@ -1647,6 +1647,40 @@ fn parked_integration_owner_death_preserves_reservation_and_journal() {
         } else {
             "reserved by a workspace activation"
         }));
+        let binding = reservation.record().session.as_ref().unwrap();
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &environment(),
+            run_id(242),
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .unwrap();
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &binding.owner,
+            binding.run,
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .unwrap();
+        let cancellation = reservation.cancel(&cx, &root, Wait::FailFast);
+        if stage < 3 {
+            let error =
+                cancellation.expect_err("settling owner runs cannot claim integration cleanup");
+            assert!(error
+                .to_string()
+                .contains("integration effects unsettled; re-run up"));
+        } else {
+            assert_eq!(
+                cancellation.unwrap().state(),
+                ActivationReservationState::Cancelled
+            );
+        }
     }
 }
 
