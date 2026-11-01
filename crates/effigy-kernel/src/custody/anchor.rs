@@ -12,23 +12,28 @@ pub(super) fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
         && unsafe { libc::getpgid(anchor.pid as i32) } == r.pgid as i32
 }
 
-pub(super) fn closed(
+pub(super) fn closed<'a>(
     r: &ProcessReceipt,
-    anchor: Option<&ProcessIdentity>,
-    leader: Option<u32>,
+    anchor: Option<&'a ProcessIdentity>,
+    leader: Option<&'a ProcessIdentity>,
 ) -> Observed<Closure> {
     let Some(anchor) = anchor.filter(|a| verified(r, a)) else {
-        return platform::group_closed(r.pgid, leader);
+        let accounted: Vec<&ProcessIdentity> = leader.into_iter().collect();
+        return platform::group_closed(r.pgid, &accounted);
     };
-    match platform::live_pids(r.pgid) {
-        Ok(pids)
-            if pids
-                .iter()
-                .all(|pid| *pid == anchor.pid || Some(*pid) == leader) =>
-        {
-            Observed::Verified(Closure, evidence())
+    let mut accounted: Vec<&ProcessIdentity> = vec![anchor];
+    accounted.extend(leader);
+    match platform::group_membership(r.pgid).map(|rows| platform::classify_round(&rows, &accounted))
+    {
+        Ok(platform::RoundVerdict::Empty) => Observed::Verified(Closure, evidence()),
+        Ok(platform::RoundVerdict::Live) => {
+            Observed::Unknown(unknown("workload still has live members"))
         }
-        Ok(_) => Observed::Unknown(unknown("workload still has live members")),
+        // A row that could not be resolved may hide a member this inventory
+        // cannot see: never closure, and the caller re-inventories.
+        Ok(platform::RoundVerdict::Unproven) => {
+            Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE))
+        }
         Err(e) => Observed::Unknown(unknown(e)),
     }
 }
@@ -98,7 +103,7 @@ pub(super) fn stop(
     cx: &CleanupContext,
 ) -> Observed<Closure> {
     let Some(anchor) = anchor else {
-        return platform::group_closed(r.pgid, None);
+        return platform::group_closed(r.pgid, &[]);
     };
     if verified(r, anchor) {
         if let Err(e) = crate::fault_point!(AnchorStop) {
@@ -112,7 +117,7 @@ pub(super) fn stop(
         }
     }
     loop {
-        let state = platform::group_closed(r.pgid, None);
+        let state = platform::group_closed(r.pgid, &[]);
         if matches!(state, Observed::Verified(..) | Observed::Absent(_)) {
             return state;
         }

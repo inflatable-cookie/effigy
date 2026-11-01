@@ -677,10 +677,11 @@ fn canonical_supervisor_stop_is_bounded_with_an_inherited_pipe_holder() {
     assert!(read.truncated && read.bytes.is_empty());
 }
 
-/// The anchor retires only on a round it positively observed: a live member (or a
-/// second live row) keeps it, and an inventory without its own row is never
-/// closure. Unreadable rows are an error in the inventory and never reach this
-/// decision (effigy#520).
+/// The anchor retires only on a round it positively resolved: a live member keeps
+/// it, a zombie (positively not live) does not, and an ambiguous row — including
+/// one that was live and then vanished, or that the kernel lists with no readable
+/// identity — keeps it alive. An inventory without the anchor's own row is never
+/// closure (effigy#520).
 #[test]
 fn anchor_closure_round_only_retires_on_positive_evidence() {
     use crate::custody::platform::MembershipRow as Row;
@@ -707,6 +708,16 @@ fn anchor_closure_round_only_retires_on_positive_evidence() {
         anchor::ClosureRound::Empty,
         "a zombie cannot fork, so it is positively not live"
     );
+    // The fork race the review names: the row was live at the state read and is
+    // unreadable afterwards, so a child it forked may be invisible.
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(identity.clone()), Row::Unproven(member_pid)],
+            me
+        ),
+        anchor::ClosureRound::Unproven,
+        "an unresolved row leaves the fork race open"
+    );
     assert_eq!(
         anchor::closure_round(&[], me),
         anchor::ClosureRound::Unknown,
@@ -716,5 +727,10 @@ fn anchor_closure_round_only_retires_on_positive_evidence() {
         anchor::closure_round(&[Row::NotLive(me)], me),
         anchor::ClosureRound::Unknown,
         "the anchor's own row must be positively observed live"
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::Unproven(me)], me),
+        anchor::ClosureRound::Unknown,
+        "an unresolved anchor row is not the anchor's own evidence"
     );
 }

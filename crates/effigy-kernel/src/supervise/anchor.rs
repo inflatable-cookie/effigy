@@ -269,33 +269,38 @@ pub(crate) enum ClosureRound {
     Empty,
     /// A member other than the anchor is positively live.
     Live,
+    /// A row could not be resolved: it was live and then vanished, or the kernel
+    /// lists it in the group with no readable identity. It may hide a member this
+    /// inventory cannot see, so nothing is proved.
+    Unproven,
     /// An observation failed, or the anchor's own row was not positively seen.
-    /// Nothing is proved and the anchor stays as the group's evidence.
     Unknown,
 }
 
 /// Classify one inventory round. Pure, so the shape is testable without timing.
 ///
-/// A row is evidence only when it was positively observed: `Live` with its
-/// generation, or `NotLive` (a zombie or a pid with no task, which cannot fork).
-/// An unreadable row never reaches here — `group_membership` returns an error for
-/// it, which becomes [`ClosureRound::Unknown`] and keeps the anchor alive. The
-/// anchor's own positive row keeps an empty inventory from satisfying this
-/// vacuously (effigy#520).
+/// Only positively resolved rows are evidence: a zombie (`NotLive`) cannot fork,
+/// while an unreadable row is [`ClosureRound::Unproven`] and keeps the anchor
+/// alive. The anchor's own positive row keeps an empty inventory from satisfying
+/// this vacuously (effigy#520).
 pub(crate) fn closure_round(rows: &[platform::MembershipRow], me: u32) -> ClosureRound {
     let mut anchor_live = false;
+    let mut unproven = false;
     for row in rows {
         match row {
             platform::MembershipRow::Live(identity) if identity.pid == me => anchor_live = true,
             platform::MembershipRow::Live(_) => return ClosureRound::Live,
             platform::MembershipRow::NotLive(_) => {}
+            platform::MembershipRow::Unproven(_) => unproven = true,
         }
     }
-    if anchor_live {
-        ClosureRound::Empty
-    } else {
-        ClosureRound::Unknown
+    if !anchor_live {
+        return ClosureRound::Unknown;
     }
+    if unproven {
+        return ClosureRound::Unproven;
+    }
+    ClosureRound::Empty
 }
 
 /// This round's outcome against the live group.

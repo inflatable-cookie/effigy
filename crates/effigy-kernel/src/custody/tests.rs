@@ -116,6 +116,76 @@ fn wait(mut yes: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+/// Closure classification keeps an unresolved row out of closure, and exclusion is
+/// incarnation-exact: the accounted generation is skipped, a recycled pid is a
+/// member again, and a vanished row is never absence (effigy#520).
+#[test]
+fn group_closure_round_refuses_unresolved_rows() {
+    use super::platform::{classify_round, MembershipRow as Row, RoundVerdict};
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    let accounted: Vec<&crate::ident::ProcessIdentity> = vec![&identity];
+    let mut member = identity.clone();
+    member.pid += 1;
+    let member_pid = member.pid;
+
+    assert_eq!(
+        classify_round(&[Row::Live(member.clone())], &accounted),
+        RoundVerdict::Live,
+        "a live member is not closure"
+    );
+    assert_eq!(
+        classify_round(&[Row::Live(identity.clone())], &accounted),
+        RoundVerdict::Empty,
+        "the accounted incarnation is excluded by its generation"
+    );
+    assert_eq!(
+        classify_round(&[Row::NotLive(member_pid)], &accounted),
+        RoundVerdict::Empty,
+        "a zombie is positively not live"
+    );
+    // The fork race: live at the state read, unreadable afterwards.
+    assert_eq!(
+        classify_round(&[Row::Unproven(member_pid)], &accounted),
+        RoundVerdict::Unproven
+    );
+    assert_eq!(
+        classify_round(&[Row::Unproven(identity.pid)], &accounted),
+        RoundVerdict::Empty,
+        "the accounted incarnation covers its own unresolved row"
+    );
+    // A recycled pid carries a different generation, so exclusion by number alone
+    // would have hidden a member.
+    let mut recycled = identity.clone();
+    recycled.start = match identity.start {
+        crate::ident::ProcessStartIdentity::LinuxTicks(ticks) => {
+            crate::ident::ProcessStartIdentity::LinuxTicks(ticks + 1)
+        }
+        crate::ident::ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds,
+        } => crate::ident::ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds: microseconds + 1,
+        },
+    };
+    assert_eq!(
+        classify_round(&[Row::Live(recycled)], &accounted),
+        RoundVerdict::Live,
+        "an accounted pid reused by another incarnation is not excluded"
+    );
+    assert_eq!(
+        classify_round(
+            &[Row::Live(member), Row::Unproven(member_pid + 1)],
+            &accounted
+        ),
+        RoundVerdict::Live,
+        "a live member outranks an unresolved row"
+    );
+}
+
 /// Group authority comes only from a leader whose live generation matches the
 /// receipt: an absent, unreadable or mismatched leader never yields a group
 /// signal, and no signal reaches a process that is not in the recorded group
@@ -1045,7 +1115,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         }
         wait(|| {
             matches!(
-                platform::group_closed(r.pgid, None),
+                platform::group_closed(r.pgid, &[]),
                 Observed::Verified(..) | Observed::Absent(_)
             )
         });

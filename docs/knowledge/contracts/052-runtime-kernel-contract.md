@@ -400,7 +400,7 @@ names the rule or invariant it relies on.
 | K3 | **Intent first.** No external effect without a committed intent. `Admitted` commits before the first effect of a run, including setup steps, env-schema commands, gateway ensure and spawn. Observation probes are not effects: they change nothing Effigy owns and run under a probe guard, never a journal (§5.11). | A child, container, route or file effect with no prior journal entry; publication before bind. |
 | K4 | **One settle.** One settle implementation, run only by the owner gate's holder, in reverse effect order. It is idempotent and resumable. | Two teardown authorities for one effect; cleanup only on the success path; settle reconstructed from directory scans. |
 | K5 | **One unresolved run per owner.** `Run::begin` admits a run only when every earlier run of its owner is settled, or that run's remaining residue was explicitly acknowledged. A non-closed predecessor is settled first; a `Closed` predecessor with `Incomplete` cleanup gets a settle retry first. | A successor running beside a predecessor's unsettled record or unacknowledged residue. |
-| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no group anchor outlives the group it evidences. An empty group proves closure for the *observer* (an `ESRCH` group, or an inventory in which every row was positively resolved and none is live); the anchor retires on its own positively resolved round and stays alive otherwise, and neither observer's repeated scans are a proof. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
+| K6 | **Custody closure.** No Effigy-spawned process outlives its run's settle, and no group anchor outlives the group it evidences. An empty group proves closure for the *observer* (an `ESRCH` group, or an inventory in which every row was positively resolved — live, a zombie, or a task-less row the kernel still lists in the group — and none is live, with no row unproven); the anchor retires on its own positively resolved round and stays alive otherwise, and neither observer's repeated scans are a proof. No probe process with generation evidence outlives its deadline plus grace while its observer or its guard lives (§5.11). The owner exists before the first spawn. A spawn barrier prevents an unrecorded workload. Partial spawns roll back. Process groups are retained through stream close. Signals need positive generation evidence (I-P4). | Orphans after SIGTERM, SIGHUP or owner SIGKILL; leader exit read as group closure; client exit read as remote closure; a group or session signalled because its number is in use. |
 | K7 | **Fencing.** Every effect, request and callback carries `(ResourceId, Generation)`. A stale generation is refused. A remote workload binds its environment's generation at intent; its acknowledgement and completion check the owner fence and the environment's identity, because every bring-up advances that generation, while container identity and VM boot (I-RC2) and holder protection (R4) keep it off a replacement (planner ruling, 2026-10-20). A stale-target intent writes nothing and leaves the run usable, so the caller re-reads and retries, as an attach does. | A stale stop stopping a successor; a late callback deleting a successor's route; a concurrent reuse bring-up failing a running remote step. |
 | K8 | **Bounded.** Every kernel wait takes a deadline. Expiry cancels at a safe boundary and never detaches a writer. Only declared workload lifetimes are open-ended. | A `starting` loop that skips its deadline; curl without a time limit; a detached writer killed mid-transaction. |
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
@@ -1137,11 +1137,15 @@ kernel's membership of the group it is in, so the number cannot be a stale
 recording and a member that is still present is never inferred away from a missing
 leader alone. A retirable round is one in which every listed row was positively
 resolved — the anchor's own row observed live, and every other row observed either
-live (not retirable) or positively not live, meaning a zombie or a pid the kernel
-still lists in the group with no task, which cannot fork. A row whose identity
-cannot be read at all makes the inventory an error, not an absence: the anchor then
-stays alive as the group's evidence and the paths that observe its absence report
-the named state `unproven group closure`. An inventory is not atomic with process
+live (not retirable) or positively not live. A row is positively not live when the
+kernel reports it as a zombie, or lists it in the group with no readable task
+(zombies and processes already in exit report no task on macOS); neither can fork. A
+row that was **live at its state read and then unreadable at its identity read** is
+different: it left the group inside the round and may have forked a member this
+inventory cannot see, so it is `unproven` and the anchor stays alive. Any other read
+failure makes the inventory an error, never an absence. In both of those cases the
+anchor keeps retrying as the group's evidence and the observing path reports the
+named state `unproven group closure`. An inventory is not atomic with process
 creation, so a descendant forked and orphaned inside the window can be missed:
 repeated scans are **best effort**, never a proof of an empty group, and the
 contract does not claim otherwise (effigy#520). That self-retirement
@@ -1263,11 +1267,11 @@ have execed, changed credentials or been reaped. Those are owned-child authority
 
 Group closure is decided by two observers, and both use positively resolved rows.
 The **owner** holds the leader unreaped and drives the kill, so it re-inventories
-until no positively live member remains; a member that vanished inside one round can
-only have left a live child that the next round lists, so closure is never claimed
-over a live member. An **anchor** is a bystander with no kill loop of its own, so it
-retires only on a round that positively resolves every row as described above and
-otherwise stays alive in the named state `unproven group closure`. In both cases an
+until no positively live member remains and no row stayed unproven; a row that was
+live and then unreadable, or any read failure, means `Unknown` and the named state
+`unproven group closure` rather than closure. An **anchor** is a bystander with no
+kill loop of its own, so it retires only on a round that positively resolves every
+row as described above and otherwise stays alive in the same named state. In both cases an
 unreadable row is `Unknown`, never absence, and repeated snapshots are best-effort
 observations rather than proofs.
 

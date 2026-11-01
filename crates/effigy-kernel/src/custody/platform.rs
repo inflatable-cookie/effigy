@@ -98,23 +98,21 @@ pub(crate) fn not_earlier(member: &ProcessIdentity, receipt: &ProcessReceipt) ->
 }
 /// Closed means no live member; an unreaped leader/zombie supplies no workload
 /// and is reaped only by its owner. A vanished group has an ESRCH proof.
-/// Owner closure. The owner holds the leader unreaped and drives the kill, so it
-/// re-inventories until the group is empty: a member that vanished inside one round
-/// can only have left a live child that the next round lists, so closure is never
-/// claimed over a live member. The *anchor* is a bystander with no kill loop to
-/// drive and uses the conservative rule in `supervise::anchor`.
-pub(crate) fn group_closed(pgid: u32, exclude: Option<u32>) -> Observed<Closure> {
+/// Owner closure. The owner holds the leader unreaped and drives the kill, so a
+/// row is only evidence when it was positively resolved: no positively live member,
+/// no row that stayed ambiguous. An ambiguous row reports
+/// [`crate::custody::UNPROVEN_GROUP_CLOSURE`], and the caller re-inventories rather
+/// than treating it as absence.
+pub(crate) fn group_closed(pgid: u32, accounted: &[&ProcessIdentity]) -> Observed<Closure> {
     if let Observed::Absent(_) = group_exists(pgid) {
         return gone(pgid);
     }
-    // An unreaped macOS zombie can leave killpg(0) returning EPERM. A successful
-    // group inventory is independent positive evidence of no live members; it
-    // permits reaping our pinned leader without signalling an unknown target.
-    match live_pids(pgid) {
-        Ok(pids) if pids.iter().all(|pid| Some(*pid) == exclude) => {
-            Observed::Verified(Closure, evidence())
+    match group_membership(pgid).map(|rows| classify_round(&rows, accounted)) {
+        Ok(RoundVerdict::Empty) => Observed::Verified(Closure, evidence()),
+        Ok(RoundVerdict::Live) => Observed::Unknown(unknown("group still has live members")),
+        Ok(RoundVerdict::Unproven) => {
+            Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE))
         }
-        Ok(_) => Observed::Unknown(unknown("group still has live members")),
         Err(e) => Observed::Unknown(unknown(e)),
     }
 }
@@ -434,20 +432,24 @@ pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {
 }
 /// How one listed candidate resolved in a group inventory round.
 ///
-/// A member is either positively live (with its kernel generation) or positively
-/// not live: a zombie or a pid with no task cannot fork. A row whose identity
-/// cannot be read at all is an error, never a row: an unreadable member is never
-/// treated as absent.
+/// Only a positively resolved row is evidence. A row that was live and then could
+/// not be read — or that the kernel lists in the group without a readable
+/// identity — is *unproven*: it may have forked a member this inventory cannot see,
+/// so it supports neither closure nor an anchor's retirement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MembershipRow {
     /// Positively observed live in this group, with its kernel generation.
     Live(ProcessIdentity),
-    /// Positively not running (a zombie, or a listed pid with no task).
+    /// Positively not running: the kernel reports it as a zombie, which cannot fork.
     NotLive(u32),
+    /// Live at its state read, then unreadable at its identity read: it left
+    /// inside the round and may have forked a member this inventory cannot see.
+    /// Ambiguous, never absence.
+    Unproven(u32),
 }
 
-/// One inventory of the group, keeping each row's outcome. Rows are the kernel's
-/// own membership; the caller decides what a not-live row means for its question.
+/// One inventory of the group, keeping each row's outcome. A failed read that is
+/// not simply "no such process" is an error: an unreadable member is never absent.
 pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
     let mut rows = Vec::new();
     for pid in group_pids(pgid)? {
@@ -460,7 +462,7 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
                 if e.raw_os_error() == Some(libc::ESRCH) {
                     // Gone before we could ask whether it was ours. Linux lists
                     // every pid, so this is usually an unrelated short-lived
-                    // process; it is not a member and never closure evidence.
+                    // process; it is neither a member nor closure evidence.
                     continue;
                 }
                 return Err(e);
@@ -475,11 +477,15 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
                 // The generation travels with a live row so evidence is
                 // incarnation-exact rather than a bare number.
                 Observed::Verified(identity, _) => rows.push(MembershipRow::Live(identity)),
-                Observed::Absent(_) => rows.push(MembershipRow::NotLive(pid)),
+                // Live at the state read, gone at the identity read: it may have
+                // forked into this group first.
+                Observed::Absent(_) => rows.push(MembershipRow::Unproven(pid)),
                 Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
             },
-            // No task for a pid the kernel still lists in this group: a macOS
-            // zombie or a process in exit. It cannot fork, so it is not live.
+            // The kernel lists this pid in our group but no task can be read for
+            // it: it is a zombie, or a process already in exit (macOS reports no
+            // task for either). It had no task before we read it, so it cannot
+            // have forked during this round: positively not live.
             Observed::Absent(_) => rows.push(MembershipRow::NotLive(pid)),
             Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
         }
@@ -487,12 +493,57 @@ pub(crate) fn group_membership(pgid: u32) -> io::Result<Vec<MembershipRow>> {
     Ok(rows)
 }
 
+/// Verdict of one inventory round, given the incarnations the caller has evidence
+/// for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoundVerdict {
+    /// No live member other than the accounted ones, and every other row was
+    /// positively resolved as not live.
+    Empty,
+    /// A member other than the accounted ones is positively live.
+    Live,
+    /// A row is ambiguous: it may hide a member this inventory cannot see.
+    Unproven,
+}
+
+/// Classify one round. Pure, so the fork-race shape is testable without timing.
+///
+/// `accounted` holds the exact recorded incarnations the caller has evidence for
+/// (an anchor it verified, or a leader it holds unreaped or has observed exit).
+/// Live rows are compared by generation, so a pid recycled into a new process is a
+/// member again; an unproven row is skipped only for an accounted pid, whose own
+/// evidence covers that incarnation.
+pub(crate) fn classify_round(
+    rows: &[MembershipRow],
+    accounted: &[&ProcessIdentity],
+) -> RoundVerdict {
+    let mut verdict = RoundVerdict::Empty;
+    for row in rows {
+        match row {
+            MembershipRow::Live(identity) => {
+                if accounted.contains(&identity) {
+                    continue;
+                }
+                return RoundVerdict::Live;
+            }
+            MembershipRow::NotLive(_) => {}
+            MembershipRow::Unproven(pid) => {
+                if accounted.iter().any(|known| known.pid == *pid) {
+                    continue;
+                }
+                verdict = RoundVerdict::Unproven;
+            }
+        }
+    }
+    verdict
+}
+
 pub(crate) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
     Ok(group_membership(pgid)?
         .into_iter()
         .filter_map(|row| match row {
             MembershipRow::Live(identity) => Some(identity.pid),
-            MembershipRow::NotLive(_) => None,
+            MembershipRow::NotLive(_) | MembershipRow::Unproven(_) => None,
         })
         .collect())
 }

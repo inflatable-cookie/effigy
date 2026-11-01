@@ -1557,7 +1557,7 @@ impl ProcessCore {
             let state = anchor::closed(
                 &self.receipt,
                 self.anchor.as_ref(),
-                self.exit.map(|_| self.receipt.identity.pid),
+                self.exit.map(|_| &self.receipt.identity),
             );
             if matches!(state, Observed::Verified(..) | Observed::Absent(_)) {
                 break state;

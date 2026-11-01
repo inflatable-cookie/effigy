@@ -745,7 +745,7 @@ impl Drop for Blocked {
         // residue path rather than claiming closure here.
         let deadline = Instant::now() + Duration::from_secs(1);
         while !matches!(
-            super::platform::group_closed(self.pid, None),
+            super::platform::group_closed(self.pid, &[]),
             Observed::Verified(..) | Observed::Absent(_)
         ) && Instant::now() < deadline
         {
