@@ -6486,6 +6486,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
         (Point::SelectionCommitBefore, false, None),
         (Point::ActivationMappingBefore, false, None),
         (Point::ActivationAttachmentBefore, false, None),
+        (Point::ActivationCommitAfter, true, Some("pending")),
         (Point::SelectionCommitAfter, true, Some("pending")),
         (Point::SelectionSwitchBefore, true, Some("pending")),
         (Point::SelectionSwitchAfter, true, Some("switched")),
