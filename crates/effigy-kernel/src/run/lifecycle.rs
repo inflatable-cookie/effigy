@@ -129,12 +129,24 @@ impl Run<'_> {
         if result.is_err() {
             self.poisoned = true;
             if let Some(mut lease) = lease {
-                let cleanup = self
+                let cleanup = match self
                     .cx
                     .operation()
                     .cleanup(std::time::Duration::from_secs(30))
-                    .map_err(|_| RunError::broken("cleanup overflow"))?;
-                lease.close(&cleanup)?;
+                {
+                    Ok(cleanup) => cleanup,
+                    Err(_) => {
+                        self.sentinel = Some(lease);
+                        return Err(RunError::broken("cleanup overflow"));
+                    }
+                };
+                if let Err(error) = lease.close(&cleanup) {
+                    // A failed close is not proof that the exact helper has
+                    // exited. Keep its lease in the original gated Run so a
+                    // recoverable settlement can continue owning it.
+                    self.sentinel = Some(lease);
+                    return Err(error);
+                }
             }
         }
         result?;
@@ -200,6 +212,95 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn failed_registration_and_close_keep_the_exact_sentinel_lease() {
+        let home = effigy_test_support::short_tempdir("ls-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let checkout = crate::id::CheckoutId::new(crate::id::CheckoutKind::EphemeralClone, [7; 16]);
+        let owner = ResourceId::environment(checkout, "workspace-sentinel-proof").unwrap();
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let plan = LifecyclePlan {
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
+            placement: crate::supervise::Placement::Detached,
+        };
+        let lease =
+            crate::supervise::spawn_sentinel(&run, &root, &plan, &super::super::tests::next())
+                .unwrap();
+        let identity = lease.identity.clone();
+        let before_count = Arc::new(AtomicUsize::new(0));
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let before_seen = Arc::clone(&before_count);
+        let close_seen = Arc::clone(&close_count);
+        crate::fault::hook(Some(Box::new(move |point| {
+            if point == crate::fault::Point::LifecycleBefore {
+                before_seen.fetch_add(1, Ordering::SeqCst);
+            }
+            if point == crate::fault::Point::SentinelClose {
+                close_seen.fetch_add(1, Ordering::SeqCst);
+                crate::fault::arm_point(
+                    crate::fault::Point::SentinelClose,
+                    crate::fault::Fault::Eperm,
+                );
+            }
+        })));
+        crate::fault::arm_point(
+            crate::fault::Point::LifecycleBefore,
+            crate::fault::Fault::Enospc,
+        );
+        let result = run.register_lifecycle(lease, &plan);
+        let close_fired = crate::fault::fired();
+        crate::fault::hook(None);
+        crate::fault::arm(None);
+        let retained = run.sentinel.as_ref().map(|lease| lease.identity.clone());
+        let cleanup =
+            run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
+        // The failing-first implementation can lose the Child handle. Reap
+        // only this test's exact recorded child before making assertions.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let mut status = 0;
+            // SAFETY: this is the exact helper child spawned above.
+            let waited = unsafe { libc::waitpid(identity.pid as i32, &mut status, libc::WNOHANG) };
+            if waited != 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                // SAFETY: only the exact unreaped child spawned by this test.
+                unsafe {
+                    libc::kill(identity.pid as i32, libc::SIGKILL);
+                    libc::waitpid(identity.pid as i32, &mut status, 0);
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(result.is_err());
+        assert_eq!(before_count.load(Ordering::SeqCst), 1);
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        assert!(close_fired, "sentinel close fault must fire");
+        assert_eq!(
+            retained,
+            Some(identity),
+            "the failed close must retain its exact lease"
+        );
+        assert!(
+            cleanup.is_ok(),
+            "fixture cleanup must settle the exact owner"
+        );
+    }
 
     fn check_backup_start_fault(point: crate::fault::Point) {
         let home = effigy_test_support::short_tempdir("lb-").unwrap();
