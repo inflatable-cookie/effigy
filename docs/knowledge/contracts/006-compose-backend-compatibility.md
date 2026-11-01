@@ -330,9 +330,9 @@ Effigy ownership:
   every Effigy writer and sweep. A non-cooperating same-user process that swaps
   an entry after its stat can cause deletion of a foreign entry before any check
   runs, and that deletion is not guaranteed to be detected. A no-replace rename
-  does not close that stat-to-unlink window. The per-file lock is the only
-  cooperative protocol the code implements today; the directory lock is not yet
-  implemented
+  does not close that stat-to-unlink window. Effigy locks the verified directory
+  across creation, sweep and removal; the per-file lock remains held throughout
+  the file owner’s lifetime. The directory lock does not prove group closure
 - limits of this slice: a removal that fails still consumes its owner, so
   `remove(self)` and `Drop` do not retain the file for retry; there is no
   durable attempt or group binding and no caller-drop Unknown lifecycle.

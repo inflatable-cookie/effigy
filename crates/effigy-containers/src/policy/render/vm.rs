@@ -221,6 +221,7 @@ impl InterpolationFile {
     /// or was already removed; `Err` means its state is unknown.
     pub fn remove(mut self) -> io::Result<()> {
         self.removed = true;
+        let _directory_lock = lock_directory(&self.directory)?;
         remove_owned(&self.directory, &self.name, &self.stat)
     }
 
@@ -231,6 +232,7 @@ impl InterpolationFile {
         })?;
         let directory = open_private_directory(&home)?;
         let directory_path = home.join(DIRECTORY);
+        let _directory_lock = lock_directory(&directory)?;
         sweep(&directory_path);
         for _ in 0..CREATE_ATTEMPTS {
             let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", random_hex(RANDOM_BYTES)?);
@@ -340,7 +342,11 @@ fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
 
 impl Drop for InterpolationFile {
     fn drop(&mut self) {
-        if !self.removed && remove_owned(&self.directory, &self.name, &self.stat).is_err() {
+        if !self.removed
+            && lock_directory(&self.directory)
+                .and_then(|_guard| remove_owned(&self.directory, &self.name, &self.stat))
+                .is_err()
+        {
             eprintln!(
                 "effigy: could not confirm removal of a Compose interpolation file at {}; its cleanup state is unknown",
                 self.path.display()
@@ -416,6 +422,20 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
         }
     }
     Ok(directory)
+}
+
+/// Lock the verified directory itself. Reopen `.` to obtain an independent
+/// open-file description: dup would share the existing flock across threads.
+fn lock_directory(directory: &OwnedFd) -> io::Result<Flock<File>> {
+    let fd = openat(
+        directory,
+        ".",
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    Flock::lock(File::from(fd), FlockArg::LockExclusive)
+        .map_err(|(_, error)| io::Error::from(error))
 }
 
 /// Count the residue this layout can name and leave it in place. A free file
@@ -996,6 +1016,53 @@ mod tests {
             .expect("mode");
         let _held = invoke(home.path(), &args(&["up"]), &secret("secret")).expect("repaired");
         assert_eq!(mode(&compose_dir(home.path())), 0o700);
+    }
+
+    #[test]
+    fn creation_waits_for_the_cooperative_directory_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let directory = open_private_directory(home.path()).expect("directory");
+        let held = lock_directory(&directory).expect("directory lock");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let root = home.path().to_path_buf();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("started");
+            let invocation = invoke(&root, &args(&["up"]), &secret("value"));
+            done_tx.send(invocation.is_ok()).expect("done");
+        });
+        started_rx.recv().expect("worker started");
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(held);
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("creation finished"));
+        worker.join().expect("worker");
+    }
+
+    #[test]
+    fn removal_waits_for_the_cooperative_directory_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("value")).expect("invocation");
+        let path = env_path(&invocation);
+        let file = invocation.interpolation.expect("file");
+        let directory = open_private_directory(home.path()).expect("directory");
+        let held = lock_directory(&directory).expect("directory lock");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("started");
+            done_tx.send(file.remove().is_ok()).expect("done");
+        });
+        started_rx.recv().expect("worker started");
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(path.exists(), "the held lock prevents removal");
+        drop(held);
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("removal finished"));
+        worker.join().expect("worker");
+        assert!(!path.exists());
     }
 
     #[test]

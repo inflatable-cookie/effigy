@@ -11,6 +11,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
 | Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
 | Runtime kernel (session kernel, guest client, pinned TLS transport, host channel seam and serving owner implemented; the production activation caller, the wider guest Observe surface and backend/consumer qualification are not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
+| Interpolation custody and recovery (proposed) | [Design](architecture/037-interpolation-custody-proposal.md) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
 | Releases (config, `status`, `--plan` and the Run with checkpoints and receipts implemented for `tag` and `task` targets; native publish providers are v0.16) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |

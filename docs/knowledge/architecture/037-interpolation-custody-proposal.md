@@ -34,8 +34,8 @@ cleanup failure retains the exact owner and its phase for retry.
 Before a child can access a path, create the file under the verified private
 parent and hold its file lock. Under a cooperative directory-wide lock, publish
 and sync a versioned binding in the kernel-owned durable attempt journal. Bind
-an unpredictable attempt identifier and the kernel's generation-qualified
-process/group custody record to the parent identity, original component, file
+an unpredictable invocation identifier, its one-to-one attempt identifier,
+and the kernel's generation-qualified process/group custody record to the parent identity, original component, file
 identity, and initial phase. The record contains no secret contents. Sync the
 file and relevant directory entries, and persist the binding before releasing
 the spawn barrier. A failed or uncertain publication refuses spawn and retains
@@ -44,7 +44,10 @@ creating a second owner. The kernel's spawn receipt and binding must have an
 ordered recovery protocol that covers a crash between each durable write: an
 incomplete or ambiguous pair preserves residue and cannot establish closure.
 
-Device and inode numbers alone can be reused after crash. Recovery may unlink
+Stat identity (device, inode and birthtime where available) is necessary but
+never sufficient for cleanup; a generation-qualified group-closure receipt is
+an independent authorizing gate. Device and inode numbers can be reused after
+crash. Recovery may unlink
 only if the kernel can reacquire a reviewed, generation-qualified identity
 that proves the recorded object is still the same object, and can prove closure
 of the bound group. A path, timestamp, file lock, or journal assertion alone is
