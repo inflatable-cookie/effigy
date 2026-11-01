@@ -76,23 +76,27 @@ fn qa_subcommands_are_explicit_and_hidden_entries_never_reach_routing() {
     });
     assert_eq!(unsupported(&run), None);
     for qa in [
+        TasksQaCommand::GroupStatus {
+            run_id: "run".into(),
+            output_json: false,
+        },
+        TasksQaCommand::GroupStop {
+            run_id: "run".into(),
+            output_json: false,
+        },
+    ] {
+        assert_eq!(unsupported(&command(qa)), None);
+    }
+    for qa in [
         TasksQaCommand::GroupsList {
             filter: None,
             file: None,
             output_json: false,
             pretty_json: false,
         },
-        TasksQaCommand::GroupStatus {
-            run_id: "private".into(),
-            output_json: false,
-        },
         TasksQaCommand::GroupLogs {
             run_id: "private".into(),
             follow: false,
-        },
-        TasksQaCommand::GroupStop {
-            run_id: "private".into(),
-            output_json: false,
         },
     ] {
         let diagnostic = unsupported(&command(qa)).expect("deferred QA operation must refuse");
@@ -111,4 +115,29 @@ fn doctor_mutations_do_not_use_the_read_only_route() {
     assert_eq!(unsupported(&parse(&["doctor"])), None);
     assert!(unsupported(&parse(&["doctor", "--fix"])).is_some());
     assert!(unsupported(&parse(&["doctor", "--deep", "--refresh"])).is_some());
+}
+
+#[test]
+fn checkout_overrides_refuse_before_local_reads_or_host_requests() {
+    for args in [
+        vec!["tasks"],
+        vec!["doctor"],
+        vec!["container", "status"],
+        vec!["runs"],
+        vec!["workspace"],
+    ] {
+        let mut command = parse(&args);
+        let path = Some("/private/secret".into());
+        match &mut command {
+            Command::Tasks(args) => args.repo_override = path,
+            Command::Doctor(args) => args.repo_override = path,
+            Command::Container(args) => args.repo_override = path,
+            Command::Runs(args) => args.repo_override = path,
+            Command::Workspace(args) => args.repo_override = path,
+            _ => panic!("unexpected command fixture"),
+        }
+        let diagnostic = unsupported(&command).expect("checkout override must refuse");
+        assert!(diagnostic.contains("checkout override"));
+        assert!(!diagnostic.contains("private"));
+    }
 }
