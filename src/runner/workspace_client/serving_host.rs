@@ -222,10 +222,26 @@ pub(crate) fn start(
     executable: &Executable,
 ) -> Result<ServingHost, RunError> {
     let payload = serde_json::to_vec(request)?;
+    // The kernel deliberately clears inherited environment. Pass only path
+    // routing and the declared credential-free backend identity. Secret values,
+    // policies and session credentials never use this lane.
+    let mut environment = vec![("HOME".into(), request.state_home.as_os_str().to_owned())];
+    if let Some(path) = std::env::var_os("PATH") {
+        environment.push(("PATH".into(), path));
+    }
+    if let Activation::ContainerUp { request: input } = &request.activation {
+        if let Some(declaration) = &input.post_prep {
+            environment.extend(declaration.backend_environment()?);
+        }
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if let Some(config) = std::env::var_os("EFFIGY_WORKSPACE_ACTIVATION_FAKE") {
+        environment.push(("EFFIGY_WORKSPACE_ACTIVATION_FAKE".into(), config));
+    }
     let launch = EngineLaunch {
         payload,
         cwd: request.project_path.clone(),
-        env: Vec::new(),
+        env: environment,
         handoff: None,
         admission: None,
     };
@@ -471,11 +487,15 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             "the workspace serving payload is unsupported",
         ));
     }
-    if let Activation::ContainerUp { request: input } = &request.activation {
-        if let Err(error) = super::container_up::preflight(&request, input) {
-            return Err(refuse(&session, error.category(), error.to_string()));
+    let prepared_container = match &request.activation {
+        Activation::ContainerUp { request: input } => {
+            match super::container_up::preflight(&request, input) {
+                Ok(prepared) => Some(prepared),
+                Err(error) => return Err(refuse(&session, error.category(), error.to_string())),
+            }
         }
-    }
+        Activation::Disposable(_) => None,
+    };
     crate::runner::task_engine::adopt_state_home(request.state_home.clone());
     let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
     #[cfg_attr(not(feature = "workspace-serving-fixture"), allow(unused_variables))]
@@ -563,13 +583,31 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             )
         }
         Activation::ContainerUp { request: input } => {
-            let service = match super::container_up::activate(&request, input) {
-                Ok(service) => service,
-                Err(error) => {
-                    return settle_refused_host(session, run, error);
-                }
+            let Some(prepared) = prepared_container else {
+                return settle_refused_host(
+                    session,
+                    run,
+                    RunError::broken("workspace activation lost its prevalidation"),
+                );
             };
-            serve_activated(session, run, &root, service, false, None)
+            let activated = match super::container_up::activate(
+                &request,
+                input,
+                prepared,
+                &mut session,
+                &mut run,
+            ) {
+                Ok(activated) => activated,
+                Err(error) => return settle_refused_host(session, run, error),
+            };
+            let service = activated.service;
+            let effects = activated.effects;
+            let report = activated.report;
+            let result = serve_activated(session, run, &root, service, false, Some(report));
+            // Keep the exact integration handles beside the original serving
+            // owner until its control loop has ended.
+            drop(effects);
+            result
         }
     }
 }

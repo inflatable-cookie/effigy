@@ -9,7 +9,6 @@ use effigy_kernel::run::RunError;
 use serde::{Deserialize, Serialize};
 
 use super::serving_host::ServingHostRequest;
-use super::supervisor::ServiceOwner;
 
 mod cli_preflight;
 mod declaration;
@@ -18,9 +17,17 @@ mod fake_io;
 pub(in crate::runner) mod integrations;
 mod plan;
 mod production;
+mod recovery;
 mod supervisor_preflight;
 pub(crate) use cli_preflight::{prevalidate_cli, PreparedIntent};
 pub(crate) use declaration::PostPrepDeclaration;
+
+#[cfg(feature = "workspace-serving-fixture")]
+pub(crate) fn fixture_diagnostic(message: &str) {
+    if fake_io::configured() {
+        fake_io::diagnostic(message);
+    }
+}
 
 const PREPARATION_UNAVAILABLE: &str =
     "bounded workspace Phase-A preparation is unavailable; no preparation or apply was attempted";
@@ -214,34 +221,50 @@ fn validate_identity(host: &ServingHostRequest, until: Instant) -> Result<(), Ru
     .map_err(|error| RunError::unavailable(error.to_string()))
 }
 
-/// Refuse unsupported Phase-A custody before invoking mutating preparation.
-/// No plan, seal or run is reconstructed, and no ordinary reconcile fallback
-/// can turn this missing capability into an activation acknowledgement.
+/// Read-only validation is completed before effects/run admission. Its one
+/// deadline and directory descriptor are moved into the actual activation.
+pub(crate) struct PreparedActivation {
+    validation: supervisor_preflight::PrevalidatedContainer,
+}
+
 pub(crate) fn activate(
     host: &ServingHostRequest,
     request: ContainerUpRequest,
-) -> Result<ServiceOwner<'static>, RunError> {
-    preflight(host, &request)?;
-    Err(RunError::unavailable(PREPARATION_UNAVAILABLE))
+    prepared: PreparedActivation,
+    session: &mut effigy_kernel::supervise::EngineSession,
+    run: &mut effigy_kernel::run::Run<'_>,
+) -> Result<production::ActivatedContainer, RunError> {
+    production::activate_with(
+        host,
+        request,
+        prepared.validation,
+        session,
+        run,
+        |owner, backend, bound| {
+            owner.reacquire_target(backend, |_view, until, _same_backend| {
+                bound.observe_resume(until)
+            })
+        },
+        recovery::cleanup,
+    )
 }
 
-/// Runs in the detached process before opening an effects root or admitting
-/// any run. This head cannot return activation authority: bounded Phase-A
-/// preparation remains unavailable even when read-only identity matches.
+/// No live seal, policy values, owner or backend handle crosses a process.
+/// Legacy intents without the required post-prep declaration still fail closed.
 pub(crate) fn preflight(
     host: &ServingHostRequest,
     request: &ContainerUpRequest,
-) -> Result<(), RunError> {
+) -> Result<PreparedActivation, RunError> {
     let until = request.deadline(host)?;
-    if request.post_prep.is_some() {
-        let validated = supervisor_preflight::validate(host, request, until)?;
-        validated.recheck_directory()?;
+    if request.post_prep.is_none() {
+        validate_identity(host, until)?;
         return Err(RunError::unavailable(
-            "workspace guarded activation recovery is unavailable; no apply was attempted",
+            "workspace activation requires a post-prep declaration",
         ));
     }
-    validate_identity(host, until)?;
-    Err(RunError::unavailable(PREPARATION_UNAVAILABLE))
+    let validation = supervisor_preflight::validate(host, request, until)?;
+    validation.recheck_directory()?;
+    Ok(PreparedActivation { validation })
 }
 
 #[cfg(test)]

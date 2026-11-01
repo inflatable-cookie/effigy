@@ -29,7 +29,7 @@ pub(in crate::runner) enum AdapterFailure {
     IntegrationBudget,
     ReservationDeadline,
     Journal,
-    Effect,
+    Effect(Step),
 }
 impl std::fmt::Display for AdapterFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -37,7 +37,15 @@ impl std::fmt::Display for AdapterFailure {
             Self::IntegrationBudget => "integration budget exhausted",
             Self::ReservationDeadline => "workspace reservation deadline expired",
             Self::Journal => "integration effects unsettled; re-run up",
-            Self::Effect => "workspace integration failed; exact owner and effect handles retained",
+            Self::Effect(step) => match step {
+                Step::Readiness => "workspace readiness integration failed; exact owner retained",
+                Step::Permissions => {
+                    "workspace permissions integration failed; exact owner retained"
+                }
+                Step::Secrets => "workspace secrets integration failed; exact owner retained",
+                Step::Routes => "workspace routes integration failed; exact owner retained",
+                Step::HostIntegrations => "workspace host integration failed; exact owner retained",
+            },
         })
     }
 }
@@ -134,13 +142,13 @@ impl<E: IntegrationEffects> WorkspaceIntegrationAdapter for IntegrationAdapter<'
     fn reconcile(&mut self, step: Step, deadline: Instant) -> Result<(), AdapterFailure> {
         self.effects
             .reconcile(step, deadline)
-            .map_err(|_| AdapterFailure::Effect)
+            .map_err(|_| AdapterFailure::Effect(step))
     }
 
     fn unwind(&mut self, step: Step, deadline: Instant) -> Result<(), AdapterFailure> {
         self.effects
             .unwind(step, deadline)
-            .map_err(|_| AdapterFailure::Effect)
+            .map_err(|_| AdapterFailure::Effect(step))
     }
 }
 

@@ -85,6 +85,34 @@ impl PostPrepDeclaration {
         })
     }
 
+    pub(crate) fn backend_environment(
+        &self,
+    ) -> Result<Vec<(std::ffi::OsString, std::ffi::OsString)>, RunError> {
+        let engine = match self.backend.engine.as_str() {
+            "docker-compose" => "docker",
+            "colima-nerdctl" => "colima",
+            _ => {
+                return Err(RunError::refused(
+                    "workspace declared backend engine is unsupported",
+                ))
+            }
+        };
+        if self
+            .backend
+            .context
+            .chars()
+            .any(|ch| matches!(ch, '@' | '?' | '#'))
+        {
+            return Err(RunError::refused(
+                "workspace declared backend context is not credential-free",
+            ));
+        }
+        Ok(vec![
+            ("EFFIGY_COMPOSE_BACKEND".into(), engine.into()),
+            ("DOCKER_CONTEXT".into(), self.backend.context.clone().into()),
+        ])
+    }
+
     /// Compare independently rebuilt policy/identity facts. The declared paths
     /// are comparison inputs, never paths the supervisor executes or trusts.
     pub(crate) fn verify_policy(

@@ -33,8 +33,31 @@ pub(in crate::runner) struct ParkedPhase<'a, E> {
     pub(in crate::runner) integration_until: std::time::Instant,
 }
 
+pub(in crate::runner) struct GuardedCleanup<'a, E> {
+    pub(in crate::runner) primary: EnvError,
+    pub(in crate::runner) cleanup: EnvError,
+    pub(in crate::runner) custody:
+        Box<effigy_containers::environment::GuardedAbortCustody<'static>>,
+    pub(in crate::runner) context: effigy_containers::environment::EnvContext<'static>,
+    pub(in crate::runner) backend: Box<dyn EnvironmentBackend>,
+    pub(in crate::runner) plan:
+        std::sync::Arc<crate::runner::container_command::reserved_input::ReservedPublicationPlan>,
+    pub(in crate::runner) bound: Option<Box<BoundReservedGuest<'a>>>,
+    pub(in crate::runner) effects: Option<Box<E>>,
+}
+
+pub(in crate::runner) struct ParkedCleanupSupport<'a, E> {
+    pub(in crate::runner) context: effigy_containers::environment::EnvContext<'static>,
+    pub(in crate::runner) backend: Box<dyn EnvironmentBackend>,
+    pub(in crate::runner) plan:
+        std::sync::Arc<crate::runner::container_command::reserved_input::ReservedPublicationPlan>,
+    pub(in crate::runner) bound: BoundReservedGuest<'a>,
+    pub(in crate::runner) effects: E,
+}
+
 pub(in crate::runner) enum IntegratedFailure<'a, E> {
     PhaseA(PhaseAFailure),
+    Cleanup(Box<GuardedCleanup<'a, E>>),
     Guarded {
         cause: EnvError,
         owner: Box<GuardedPhaseA>,
@@ -44,6 +67,11 @@ pub(in crate::runner) enum IntegratedFailure<'a, E> {
     Parked {
         cause: EnvError,
         custody: Box<ParkedPhase<'a, E>>,
+    },
+    ParkedCleanup {
+        cause: EnvError,
+        custody: Box<effigy_containers::environment::ParkedAbortCustody<'static>>,
+        support: Box<ParkedCleanupSupport<'a, E>>,
     },
     Publication {
         cause: PublicationFailure,

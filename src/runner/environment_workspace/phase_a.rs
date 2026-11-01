@@ -24,10 +24,18 @@ pub(in crate::runner) struct GuardedPhaseA {
 
 pub(in crate::runner) enum PhaseAFailure {
     BeforeAdmission(EnvError),
+    Admission(Box<AdmissionFailure>),
     Guarded {
         cause: EnvError,
         custody: Box<GuardedPhaseA>,
     },
+}
+
+pub(in crate::runner) struct AdmissionFailure {
+    pub(in crate::runner) failure: effigy_containers::environment::WorkspaceBeginFailure<'static>,
+    pub(in crate::runner) context: EnvContext<'static>,
+    pub(in crate::runner) backend: Box<dyn EnvironmentBackend>,
+    pub(in crate::runner) plan: Arc<ReservedPublicationPlan>,
 }
 
 pub(in crate::runner) type DecisionObserver = Box<
@@ -106,7 +114,7 @@ pub(in crate::runner) fn apply(
     );
     let decision_preflight = Arc::clone(&preflight);
     let decide = request.decide;
-    let begin = WorkspaceActivation::begin_observing(
+    let begin = match WorkspaceActivation::begin_observing_recoverable(
         &context,
         &environment,
         request.invocation,
@@ -114,8 +122,17 @@ pub(in crate::runner) fn apply(
         request.supervisor_id,
         plan.deadline().at(),
         move |until| decide(until, decision_preflight),
-    )
-    .map_err(before)?;
+    ) {
+        Ok(begin) => begin,
+        Err(failure) => {
+            return Err(PhaseAFailure::Admission(Box::new(AdmissionFailure {
+                failure,
+                context,
+                backend,
+                plan,
+            })))
+        }
+    };
     let activation = match begin {
         WorkspaceBegin::Activate(activation) => activation,
         WorkspaceBegin::Attach(_) => {

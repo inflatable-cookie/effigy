@@ -50,8 +50,24 @@ pub(super) fn configured() -> bool {
 fn failure() -> RunnerError {
     RunnerError::task_invocation("workspace fake I/O unavailable")
 }
+pub(super) fn diagnostic(message: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(config) = std::env::var_os(CONFIG) {
+        let path = PathBuf::from(config).with_extension("failure");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+        {
+            let _ = writeln!(file, "{message}");
+        }
+    }
+}
 fn config() -> Result<Config, RunnerError> {
-    let path = std::env::var_os(CONFIG).ok_or_else(failure)?;
+    let path = std::env::var_os(CONFIG)
+        .ok_or_else(|| RunnerError::task_invocation("fake configuration environment absent"))?;
     serde_json::from_slice(&std::fs::read(path).map_err(|_| failure())?).map_err(|_| failure())
 }
 fn evidence() -> Evidence {
@@ -402,4 +418,34 @@ impl WorkspaceGuestProbe for Probe {
         };
         self.dial(target, &document.locator.endpoint, &pin, budget)
     }
+}
+
+pub(super) fn activation_failure<E>(
+    failure: &crate::runner::environment::workspace::integrated::IntegratedFailure<'_, E>,
+) {
+    use crate::runner::environment::workspace::integrated::IntegratedFailure;
+    use crate::runner::environment::workspace::phase_a::PhaseAFailure;
+    use crate::runner::environment::workspace::phase_b::PublicationFailure;
+    let (stage, cause): (&str, &dyn std::fmt::Display) = match failure {
+        IntegratedFailure::PhaseA(PhaseAFailure::BeforeAdmission(cause)) => {
+            ("before admission", cause)
+        }
+        IntegratedFailure::PhaseA(PhaseAFailure::Admission(admission)) => {
+            ("admission", &admission.failure.error)
+        }
+        IntegratedFailure::PhaseA(PhaseAFailure::Guarded { cause, .. }) => ("sealed apply", cause),
+        IntegratedFailure::Guarded { cause, .. } => ("bind/reacquire", cause),
+        IntegratedFailure::Parked { cause, .. } => ("integrations/resume", cause),
+        IntegratedFailure::Cleanup(custody) => ("guarded cleanup", &custody.cleanup),
+        IntegratedFailure::ParkedCleanup { cause, .. } => ("parked cleanup", cause),
+        IntegratedFailure::Publication {
+            cause: PublicationFailure::Guarded { cause, .. },
+            ..
+        } => ("publication/selection", cause),
+        IntegratedFailure::Publication {
+            cause: PublicationFailure::Finishing { cause, .. },
+            ..
+        } => ("selected finish", cause),
+    };
+    diagnostic(&format!("{stage}: {cause}"));
 }

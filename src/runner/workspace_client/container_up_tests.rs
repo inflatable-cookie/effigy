@@ -150,13 +150,11 @@ fn container_up_changed_recorded_profile_refuses_before_preparation() {
     host.profile = "pinned-profile".into();
     validate_identity(&host, Instant::now() + Duration::from_secs(5))
         .expect("matched recorded profile");
-    let error = match activate(&host, request()) {
+    let error = match preflight(&host, &request()) {
         Err(error) => error,
         Ok(_) => panic!("unsupported preparation acknowledged"),
     };
-    assert!(error
-        .to_string()
-        .contains("bounded workspace Phase-A preparation is unavailable"));
+    assert!(error.to_string().contains("post-prep declaration"));
     let malformed = serde_json::json!({"engine":"password=BACKEND_SECRET_DO_NOT_EMIT", "context":"pinned-profile", "source":"driver-default"});
     connection
         .execute(

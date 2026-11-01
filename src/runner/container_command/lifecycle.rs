@@ -3764,7 +3764,15 @@ impl crate::runner::workspace_client::container_up::integrations::IntegrationEff
     ) -> Result<(), effigy_kernel::run::RunError> {
         use super::workspace_integrations::WorkspaceIntegrationStep as Step;
         use effigy_kernel::run::RunError;
-        let failed = |_| RunError::unavailable("workspace integration effect failed");
+        let failed = |error: RunnerError| {
+            #[cfg(feature = "workspace-serving-fixture")]
+            crate::runner::workspace_client::container_up::fixture_diagnostic(&format!(
+                "integration effect: {error}"
+            ));
+            #[cfg(not(feature = "workspace-serving-fixture"))]
+            let _ = error;
+            RunError::unavailable("workspace integration effect failed")
+        };
         if std::time::Instant::now() >= deadline {
             return Err(RunError::unavailable("integration budget exhausted"));
         }

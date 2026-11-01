@@ -28,10 +28,10 @@ use crate::runner::workspace_command::provisioning::reserved_guest::BoundReserve
 type ResumeResult =
     Result<WorkspaceActivation<'static>, (EnvError, Box<ParkedWorkspaceActivation<'static>>)>;
 
-pub(super) struct ActivatedContainer {
-    pub(super) service: ServiceOwner<'static>,
-    pub(super) effects: WorkspaceUpEffects,
-    pub(super) report: ContainerStartupReport,
+pub(crate) struct ActivatedContainer {
+    pub(crate) service: ServiceOwner<'static>,
+    pub(crate) effects: WorkspaceUpEffects,
+    pub(crate) report: ContainerStartupReport,
 }
 
 /// The typed facade and retaining cleanup are injected only to keep this
@@ -103,6 +103,10 @@ pub(super) fn activate_with(
     let (owner, obligation, effects) = match selected {
         Ok(selected) => selected,
         Err(failure) => {
+            #[cfg(feature = "workspace-serving-fixture")]
+            if super::fake_io::configured() {
+                super::fake_io::activation_failure(&failure);
+            }
             let mut failure = failure;
             let mut owner_loss_handled = false;
             loop {

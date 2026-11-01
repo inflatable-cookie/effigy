@@ -146,7 +146,12 @@ pub(super) fn prepare_observation(
 ) -> Result<Box<dyn ReservedBackendObservation + Send>, crate::runner::error::RunnerError> {
     #[cfg(feature = "workspace-serving-fixture")]
     if super::fake_io::configured() {
-        return Ok(Box::new(super::fake_io::Observation::new(policy)?));
+        return super::fake_io::Observation::new(policy)
+            .map(|observation| Box::new(observation) as Box<dyn ReservedBackendObservation + Send>)
+            .map_err(|error| {
+                super::fake_io::diagnostic(&format!("prepare observation: {error}"));
+                error
+            });
     }
     Ok(Box::new(ContainerBackendObservation::prepare(policy)?))
 }
