@@ -493,7 +493,12 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
 #[cfg(feature = "fault-injection")]
 fn replacement_release_fault_retains_both_secondary_handles() {
     use crate::fault::{self, Point};
-    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+    for (point, fail_new_cleanup) in [
+        (Point::RunAttachReleaseBefore, false),
+        (Point::RunAttachReleaseAfter, false),
+        (Point::RunAttachReleaseBefore, true),
+        (Point::RunAttachReleaseAfter, true),
+    ] {
         let (_fixture, cx, root, session) = journal("effigy-channel-replacement-fault");
         let (_run, live) = admitted_run(&cx, &root, session, 93, &[175]);
         let mut host = server(session, &[176]);
@@ -560,13 +565,44 @@ fn replacement_release_fault_retains_both_secondary_handles() {
             .operation()
             .effects()
             .expect("fresh cleanup authority");
-        assert_eq!(
-            host.retry_cleanup(&fresh, &root)
-                .expect_err("two handles remain fenced")
-                .code,
-            RefusalCode::Unknown
-        );
-        assert!(host.cleanup_pending());
+        if fail_new_cleanup {
+            fault::arm_nth(Point::RunAttachReleaseBefore, 1, fault::Fault::Eperm);
+            assert_eq!(
+                host.retry_cleanup(&fresh, &root)
+                    .expect_err("new release fails")
+                    .code,
+                RefusalCode::Unknown
+            );
+            assert!(fault::fired());
+            fault::arm(None);
+            assert!(host.cleanup_pending());
+            assert!(
+                host.unsettled_attachment.is_none(),
+                "old exact release was reconciled"
+            );
+            assert_eq!(
+                host.unsettled_replacement.as_ref().map(Attachment::id),
+                Some(AttachmentId::new([2; 16]))
+            );
+        }
+        host.retry_cleanup(&fresh, &root)
+            .expect("both exact secondaries recover");
+        assert!(!host.cleanup_pending());
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let remaining: i64 = reader.conn().query_row("SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'", [live.to_string()], |row| row.get(0)).unwrap();
+        let stops: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+        assert_eq!(stops, 0);
     }
 }
 

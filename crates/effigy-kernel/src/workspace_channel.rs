@@ -2608,10 +2608,42 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         if !self.owner_cleanup_unsettled {
             return Err(Refusal::forbidden("there is no retained channel cleanup"));
         }
-        if self.unsettled_replacement.is_some() {
-            return Err(Refusal::unknown(
-                "attachment replacement cleanup is unsettled",
-            ));
+        if let Some(replacement) = self.unsettled_replacement.as_mut() {
+            if let Some(previous) = self.unsettled_attachment.as_mut() {
+                if previous.client() != Client::Secondary
+                    || previous.pending_release() != Some(Release::Eof)
+                {
+                    return Err(Refusal::unknown(
+                        "attachment replacement cleanup is unsettled",
+                    ));
+                }
+                previous
+                    .release_recoverable(cx, root, Release::Eof)
+                    .map_err(|_| Refusal::unknown("attachment replacement cleanup is unsettled"))?;
+                self.unsettled_attachment = None;
+            }
+            if replacement.client() != Client::Secondary {
+                return Err(Refusal::unknown(
+                    "attachment replacement cleanup is unsettled",
+                ));
+            }
+            let released = match replacement.pending_release() {
+                None => replacement.release(cx, root, Release::Eof),
+                Some(Release::Eof) => replacement.release_recoverable(cx, root, Release::Eof),
+                Some(Release::Detach) => {
+                    return Err(Refusal::unknown(
+                        "attachment replacement cleanup is unsettled",
+                    ))
+                }
+            };
+            released
+                .map_err(|_| Refusal::unknown("attachment replacement cleanup is unsettled"))?;
+            self.unsettled_replacement = None;
+            if !self.dispatcher.admitted.is_empty() {
+                return Err(Refusal::unknown("other admitted owners remain unsettled"));
+            }
+            self.owner_cleanup_unsettled = false;
+            return Ok(());
         }
         let Some(handle) = self.unsettled_attachment.as_mut() else {
             return Err(Refusal::unknown(
