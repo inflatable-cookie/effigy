@@ -841,13 +841,71 @@ fn activation_parks_the_real_claimed_run_after_target_binding() {
                 Wait::FailFast,
             )
             .is_ok();
-        let refused =
-            ready && EnvRun::begin(&ctx, &stack, Operation::Down, Wait::FailFast).is_err();
+        let refused = ready
+            && EnvRun::begin(&ctx, &stack, Operation::Down, Wait::FailFast)
+                .err()
+                .is_some_and(|error| {
+                    error
+                        .to_string()
+                        .contains("reserved by a workspace activation")
+                });
+        let alias = effigy_kernel::id::ResourceId::environment(
+            effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [8; 16]),
+            "stack",
+        )
+        .unwrap();
+        let task = TaskId::new(
+            stack.checkout,
+            "",
+            Surface::Published,
+            "container-down",
+            None,
+        )
+        .unwrap();
+        let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+            owner: alias,
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![stack.resource.clone()],
+            attachments: vec![],
+            class: effigy_kernel::ctx::EffectClass::Mutate,
+            placement: effigy_kernel::ctx::Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let options = effigy_kernel::run::BeginOpts {
+            id: effigy_kernel::id::RunId::new(1_760_000_000_000, [74; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            custody: None,
+            next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+                .unwrap(),
+        };
+        let alias_refused = ready
+            && effigy_kernel::run::Run::begin(
+                &ctx.cx,
+                &state,
+                &invocation,
+                options,
+                &ctx.cleanup().unwrap(),
+                &mut EnvSettlement,
+            )
+            .err()
+            .is_some_and(|error| {
+                error
+                    .to_string()
+                    .contains("reserved by a workspace activation")
+            });
         drop(child.stdin.take());
         let exit = child.wait().expect("reap exact child");
         assert!(ready, "child {pid} did not park");
         assert!(gate_free, "parked activation released Env");
         assert!(refused, "ordinary competing admission refuses");
+        assert!(alias_refused, "alias competing admission refuses");
         assert!(exit.success(), "child {pid} failed: {exit}");
         return;
     };
