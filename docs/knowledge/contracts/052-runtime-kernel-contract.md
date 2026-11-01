@@ -3156,7 +3156,10 @@ A gap, a `truncated` capture, an unreadable read, an unestablishable status or a
 lost connection is `unknown`, never success. `LevelOneStreams` composes the
 #485 terminal custody: a run without a terminal opens its owning attachment for
 custody only, and terminal input and resize refuse with the named Level 2
-message.
+message. The Level 1 client's own connection also refuses an acknowledged
+detach by name before any frame; the kernel serves a `detach` request itself and
+has no runner seam for a host-side refusal, so the guest is the side that must
+never form one.
 
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged

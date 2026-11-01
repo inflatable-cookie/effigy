@@ -50,6 +50,10 @@ struct FakeChannel {
     outcome: serde_json::Value,
     /// The exit status a completed invoke answers with.
     exit: ExitStatus,
+    /// How the next authentication answers. A `Unknown` is the indeterminate
+    /// delivery that must be replayed on a fresh connection.
+    authenticate: Auth,
+    authentications: usize,
     invoked: Vec<RequestId>,
     attaches: usize,
     /// The offsets each observe named, in order.
@@ -71,6 +75,8 @@ impl Default for FakeChannel {
             refuse_attach: None,
             outcome: json!({"workload": "Succeeded", "cleanup_complete": true}),
             exit: ExitStatus::UNKNOWN,
+            authenticate: Auth::Accept,
+            authentications: 0,
             invoked: Vec::new(),
             attaches: 0,
             observed: Vec::new(),
@@ -101,6 +107,12 @@ impl FakeChannel {
 
     fn truncated_at(mut self, read: usize) -> Self {
         self.truncated_at = Some(read);
+        self
+    }
+
+    /// Make the next authentication's delivery indeterminate.
+    fn lost_authentication(mut self) -> Self {
+        self.authenticate = Auth::Unknown;
         self
     }
 
@@ -153,9 +165,23 @@ impl FakeChannel {
     }
 }
 
+/// How a fake connection answers authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Auth {
+    Accept,
+    Unknown,
+}
+
 impl ChannelRequest for FakeChannel {
     fn authenticate(&mut self, _auth: super::super::GuestAuth) -> Result<(), ChannelError> {
-        Ok(())
+        self.authentications += 1;
+        match self.authenticate {
+            Auth::Accept => Ok(()),
+            Auth::Unknown => Err(ChannelError::Unknown {
+                message: "the connection failed before the host answered authentication".to_owned(),
+                replayable: true,
+            }),
+        }
     }
 
     fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
@@ -200,9 +226,9 @@ impl ChannelRequest for FakeChannel {
     }
 
     fn detach(&mut self, _run: RunId) -> Result<(), ChannelError> {
-        Err(ChannelError::Local(
-            "a Level 1 forwarder never detaches".to_owned(),
-        ))
+        // A Level 1 connection ends with its forwarded command. `LevelOneChannel`
+        // must refuse a detach by name before this is reached.
+        panic!("a Level 1 connection acknowledged a detach")
     }
 }
 
@@ -938,4 +964,130 @@ fn the_host_dispatcher_serves_the_captured_output_read_and_nothing_new_else() {
     let refusal = channel::Observer::observe(&mut dispatch, &host.observe, &body)
         .expect_err("an unserved observe still refuses");
     assert!(refusal.diagnostic.contains("does not serve"), "{refusal:?}");
+}
+
+/// Scripted connections for the production replay state machine.
+struct MemoryConnections {
+    channels: Vec<SharedChannel>,
+    next: usize,
+}
+
+impl Connections for MemoryConnections {
+    fn open(&mut self) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+        let channel =
+            self.channels.get(self.next).cloned().ok_or_else(|| {
+                ChannelError::Local("the proof ran out of connections".to_owned())
+            })?;
+        self.next += 1;
+        Ok(Box::new(channel))
+    }
+}
+
+fn level_one_auth() -> super::super::GuestAuth {
+    super::super::GuestAuth::Capability(channel::Secret::new([4u8; 32]))
+}
+
+#[test]
+fn a_replay_authenticates_the_replacement_once() {
+    // The first connection's authentication delivery is indeterminate, so the
+    // forwarder must open a replacement, present the credential there, and
+    // adopt it. Presenting it twice on the replacement would be refused by the
+    // host, and the debug assert on `client()` would fire if the session forgot
+    // the replacement had presented it.
+    let first = SharedChannel::new(FakeChannel::new().lost_authentication());
+    let second = SharedChannel::new(
+        FakeChannel::new()
+            .stdout_chunk(b"replayed\n")
+            // Two outcome checks: a double presentation would happen on the
+            // second one.
+            .closed_after(10),
+    );
+    let memory = MemoryConnections {
+        channels: vec![first.clone(), second.clone()],
+        next: 0,
+    };
+    let mut session =
+        super::Session::connect(Box::new(memory)).expect("the first connection opened");
+    session.authenticate_with(level_one_auth());
+    let mut sinks = RecordingSinks::default();
+    let result = super::drive(&mut session, &task_intent(), &mut sinks, false);
+    assert_eq!(result.expect("a replayed success"), "");
+    assert_eq!(sinks.stdout, b"replayed\n");
+    assert_eq!(
+        first.inspect().authentications,
+        1,
+        "the indeterminate connection presented the credential once"
+    );
+    assert_eq!(
+        second.inspect().authentications,
+        1,
+        "the replacement presented the credential exactly once"
+    );
+    assert!(
+        second
+            .inspect()
+            .invoked
+            .windows(2)
+            .all(|pair| pair[0] == pair[1]),
+        "every replay keeps the one request id across the replacement"
+    );
+}
+
+#[test]
+fn a_level_one_connection_refuses_an_acknowledged_detach_by_name() {
+    let fake = SharedChannel::new(FakeChannel::new().closed_after(usize::MAX));
+    let memory = MemoryConnections {
+        channels: vec![fake.clone()],
+        next: 0,
+    };
+    let mut session = super::Session::connect(Box::new(memory)).expect("the connection opened");
+    session.authenticate_with(level_one_auth());
+    let admitted = session.replay(&task_intent()).expect("the admission");
+    assert!(matches!(admitted, ChannelOutcome::Accepted { .. }));
+    // The Level 1 client refuses the named Level 2 request before any frame, so
+    // the fake's detach (which panics) is never reached.
+    let refusal = session
+        .client()
+        .detach(run_id())
+        .expect_err("a detach is not offered in Level 1");
+    assert!(
+        matches!(&refusal, ChannelError::Local(message) if message == LEVEL_TWO_DETACH),
+        "{refusal:?}"
+    );
+    assert_eq!(
+        fake.inspect().authentications,
+        1,
+        "the refusal is local and sends no frame"
+    );
+}
+
+#[test]
+fn the_credential_is_presented_only_by_the_first_request() {
+    // `forward` opens the pinned connection (pin check and negotiation), then
+    // reads the credential, then hands it to the session. Nothing is presented
+    // until the first request, and the session presents it exactly once.
+    let fake = SharedChannel::new(FakeChannel::new().closed_after(usize::MAX));
+    let memory = MemoryConnections {
+        channels: vec![fake.clone()],
+        next: 0,
+    };
+    let mut session = super::Session::connect(Box::new(memory)).expect("the connection opened");
+    assert_eq!(
+        fake.inspect().authentications,
+        0,
+        "opening a connection presents nothing"
+    );
+    session.authenticate_with(level_one_auth());
+    assert_eq!(
+        fake.inspect().authentications,
+        0,
+        "holding the credential presents nothing"
+    );
+    let admitted = session.replay(&task_intent()).expect("the admission");
+    assert!(matches!(admitted, ChannelOutcome::Accepted { .. }));
+    assert_eq!(
+        fake.inspect().authentications,
+        1,
+        "the first request presents the credential once"
+    );
 }

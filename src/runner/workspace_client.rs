@@ -1476,18 +1476,27 @@ pub(crate) fn dispatch_in(
         }
         GuestOperation::Invoke { selector, target } => {
             let args = invocation_args(cmd)?;
+            let relative = checkout_relative(&published.document.paths, cwd)?;
             // A forwarded task is a foreground command: it streams its own
-            // stdout, stderr and terminal status on this connection through
-            // the Level 1 seam. Every other selector keeps the request/answer
-            // path, whose scope is the Level 1 command policy's decision.
+            // stdout, stderr and terminal status on this connection through the
+            // Level 1 seam. The verified context and this process's own run
+            // facts are the values `ask_host` would derive, built here so the
+            // forwarding module needs no private helper of this file. Every
+            // other selector keeps the request/answer path, whose scope is the
+            // Level 1 command policy's decision.
             if matches!(selector, Selector::Task(_)) {
+                let live = live_guest_run(published, RunningBinary::observe()?);
+                let verified = published
+                    .document
+                    .verify(&mut ObservedGuest(published.observation.clone()), &live)
+                    .map_err(context_refusal_error)?;
                 return noninteractive_stream::forward(
-                    published, guest, opener, selector, args, cwd, wants_json,
+                    published, guest, opener, verified, live, &relative, selector, args, wants_json,
                 );
             }
             let body = RequestBody::Invoke(InvocationBody {
                 selector,
-                cwd: checkout_relative(&published.document.paths, cwd)?,
+                cwd: relative,
                 target,
                 args,
                 output: if wants_json {
@@ -1542,101 +1551,12 @@ fn ask_host(
         RequestBody::Observe(_) => GuestOperationClass::Observe,
         _ => GuestOperationClass::Mutate,
     };
-    let mut session = authenticated_client(published, guest, opener, class, cwd)?;
-    let intent = Intent::new(body);
-    let outcome = session
-        .send_replaying(opener, &intent)
-        .map_err(ChannelError::into_runner)?;
-    Ok(render_outcome(outcome, wants_json))
-}
-
-/// One authenticated connection, with the context facts and credential a replay
-/// on a fresh connection needs.
-///
-/// Order is the contract's: verify the strict context against this guest's own
-/// observation, open the pinned connection and let it check the server pin and
-/// negotiate, and only then read a credential from guest storage and present
-/// it. A mispinned peer therefore learns nothing and never causes a credential
-/// to be read, let alone sent.
-pub(crate) struct AuthenticatedClient {
-    verified: VerifiedWorkspaceContext,
-    live: LiveGuestRun,
-    auth: GuestAuth,
-    client: Box<dyn ChannelRequest>,
-    /// The credential was presented on the live connection. Authentication
-    /// follows negotiation inside the connection, and the first request is what
-    /// presents it, exactly as this path always ordered the two.
-    presented: bool,
-}
-
-impl AuthenticatedClient {
-    /// The live connection, for a request that is not the one replayable
-    /// intent (an output read or the owning attachment). The first intent
-    /// authenticated this connection, so a later request never arrives on an
-    /// unauthenticated one.
-    pub(crate) fn client(&mut self) -> &mut dyn ChannelRequest {
-        debug_assert!(
-            self.presented,
-            "a request needs the authenticated connection the first intent opened"
-        );
-        self.client.as_mut()
-    }
-
-    fn present(&mut self) -> Result<(), ChannelError> {
-        if self.presented {
-            return Ok(());
-        }
-        self.client.authenticate(self.auth.clone())?;
-        self.presented = true;
-        Ok(())
-    }
-
-    /// Send one intent; a transport failure whose delivery is indeterminate is
-    /// replayed on one fresh authenticated connection under the same request
-    /// id, so the host answers from its record instead of admitting again
-    /// (§8.11).
-    pub(crate) fn send_replaying(
-        &mut self,
-        opener: &mut dyn ChannelOpener,
-        intent: &Intent,
-    ) -> Result<ChannelOutcome, ChannelError> {
-        let sent = self.present().and_then(|()| self.client.send(intent));
-        match sent {
-            Ok(outcome) => Ok(outcome),
-            Err(error) if error.is_replayable() => {
-                let mut replay = opener.open(&self.verified, &self.live)?;
-                replay.authenticate(self.auth.clone())?;
-                let outcome = replay.send(intent)?;
-                // The fresh connection answered, so it is the one this client
-                // keeps: every later read and the run's owning attachment must
-                // travel on a connection that works, and the dead one only ever
-                // names the same request id.
-                self.client = replay;
-                Ok(outcome)
-            }
-            Err(error) => Err(error),
-        }
-    }
-}
-
-/// Open and authenticate the one connection a guest command uses.
-///
-/// The caller never sees the credential read as authority: `class` decides
-/// whether a direct terminal's enrolment credential may be presented, and an
-/// observation never enrols (§8.8).
-pub(crate) fn authenticated_client(
-    published: &PublishedGuestContext,
-    guest: &mut dyn GuestReader,
-    opener: &mut dyn ChannelOpener,
-    class: GuestOperationClass,
-    cwd: &Path,
-) -> Result<AuthenticatedClient, RunnerError> {
     let live = live_guest_run(published, RunningBinary::observe()?);
     let verified = published
         .document
         .verify(&mut ObservedGuest(published.observation.clone()), &live)
         .map_err(context_refusal_error)?;
-    let client = opener
+    let mut client = opener
         .open(&verified, &live)
         .map_err(ChannelError::into_runner)?;
     let auth = load_auth(guest, &published.document, &client_id()?)?;
@@ -1655,13 +1575,25 @@ pub(crate) fn authenticated_client(
             )))
         }
     };
-    Ok(AuthenticatedClient {
-        verified,
-        live,
-        auth,
-        client,
-        presented: false,
-    })
+    let intent = Intent::new(body);
+    let outcome = match client
+        .authenticate(auth.clone())
+        .and_then(|()| client.send(&intent))
+    {
+        Ok(outcome) => Ok(outcome),
+        Err(error) if error.is_replayable() => {
+            let mut replay = opener
+                .open(&verified, &live)
+                .map_err(ChannelError::into_runner)?;
+            replay
+                .authenticate(auth)
+                .and_then(|()| replay.send(&intent))
+        }
+        Err(error) => Err(error),
+    };
+    outcome
+        .map(|outcome| render_outcome(outcome, wants_json))
+        .map_err(ChannelError::into_runner)
 }
 
 /// The guest's own argv tail, as the channel carries it. A task's own

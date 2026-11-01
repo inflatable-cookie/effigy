@@ -41,9 +41,14 @@
 //! unavailable read is a refusal, so rotated or missing output is never
 //! presented as complete.
 //!
-//! The guest never sends terminal input, resize or a detach, and both this
-//! module's host `Streams` and the guest command filter refuse those requests
-//! with the named Level 2 message before any effect.
+//! The guest never sends terminal input, resize or a detach. The guest command
+//! filter refuses a terminal-shaped command before it opens a connection, this
+//! module's host `Streams` refuses terminal input and resize with the named
+//! Level 2 message, and the Level 1 client's own connection refuses an
+//! acknowledged detach by name before any frame. (The kernel serves a `detach`
+//! request itself and exposes no runner seam to refuse it on the host; the
+//! guest is the side that must never form one, and Level 2 owns the host
+//! refusal when it adds acknowledged detach.)
 //!
 //! ## Level 2 boundary
 //!
@@ -55,7 +60,6 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::Path;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -72,11 +76,10 @@ use effigy_kernel::workspace_channel::{
 use serde::{Deserialize, Serialize};
 
 use super::context::v2::PublishedGuestContext;
-use super::context::{GuestOperationClass, GuestReader};
+use super::context::{GuestReader, LiveGuestRun, VerifiedWorkspaceContext};
 use super::terminal::TerminalCustody;
 use super::{
-    authenticated_client, ChannelError, ChannelOpener, ChannelOutcome, ChannelRequest, Intent,
-    RunPlacement, Selector,
+    ChannelError, ChannelOpener, ChannelOutcome, ChannelRequest, Intent, RunPlacement, Selector,
 };
 use crate::runner::error::RunnerError;
 
@@ -463,12 +466,65 @@ struct Delivered {
     incomplete: bool,
 }
 
-/// The Level 1 forwarder's connection, including the replay that recovers an
-/// indeterminate send on a fresh connection.
+/// Opens one guest connection, and can replace it when the current one must be
+/// replayed.
 ///
-/// The two operations are asked for per use, never borrowed across a replay:
-/// [`AuthenticatedClient::send_replaying`] adopts the fresh connection when a
-/// replay succeeds, and every later request must use it.
+/// A production forwarder opens a pinned, negotiated connection from the
+/// verified context; a proof supplies scripted connections through the same
+/// seam, so the replay state machine below is the one that runs in both.
+pub(crate) trait Connections {
+    fn open(&mut self) -> Result<Box<dyn ChannelRequest>, ChannelError>;
+}
+
+/// The production connections: the guest's pinned opener and the facts it
+/// verified.
+struct GuestConnections<'a> {
+    opener: &'a mut dyn ChannelOpener,
+    verified: VerifiedWorkspaceContext,
+    live: LiveGuestRun,
+}
+
+impl Connections for GuestConnections<'_> {
+    fn open(&mut self) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+        self.opener.open(&self.verified, &self.live)
+    }
+}
+
+/// The Level 1 client's connection: it never acknowledges a detach.
+///
+/// A Level 1 connection ends with its forwarded command, so there is no
+/// acknowledged detach to send. Refusing here is the named Level 2 answer and it
+/// happens before a frame, so no host effect can follow. (The kernel serves a
+/// `detach` request itself and has no runner seam to refuse it on the host; the
+/// guest is the side that must not form one.)
+struct LevelOneChannel(Box<dyn ChannelRequest>);
+
+impl ChannelRequest for LevelOneChannel {
+    fn authenticate(&mut self, auth: super::GuestAuth) -> Result<(), ChannelError> {
+        self.0.authenticate(auth)
+    }
+
+    fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+        self.0.send(intent)
+    }
+
+    fn detach(&mut self, _run: RunId) -> Result<(), ChannelError> {
+        Err(ChannelError::Local(
+            InteractiveRequest::Detach.refusal().to_owned(),
+        ))
+    }
+}
+
+/// The Level 1 forwarder's authenticated connection, with the replay that
+/// recovers an indeterminate send on a fresh connection.
+///
+/// The credential is presented lazily by the first request, exactly as
+/// `ask_host` orders it: negotiation is already done, so a mispinned peer has
+/// learned nothing and the credential is read only after the pin check. An
+/// indeterminate delivery opens a fresh connection, presents the same
+/// credential once there, and adopts it — and the session records that the
+/// replacement presented it, so a later request never presents it twice. The
+/// two operations are asked for per use, never borrowed across a replay.
 pub(crate) trait ForwardChannel {
     /// The live connection.
     fn client(&mut self) -> &mut dyn ChannelRequest;
@@ -477,21 +533,101 @@ pub(crate) trait ForwardChannel {
     fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError>;
 }
 
-/// The production forwarder: one authenticated connection and the opener that
-/// can replace it.
-struct Forwarder<'a> {
-    session: &'a mut super::AuthenticatedClient,
-    opener: &'a mut dyn ChannelOpener,
+/// One forwarder's authenticated connection and the state that keeps it honest.
+pub(crate) struct Session<'a> {
+    connections: Box<dyn Connections + 'a>,
+    /// The credential, read only after the first connection's pin check and
+    /// negotiation. The first request presents it.
+    auth: Option<super::GuestAuth>,
+    client: LevelOneChannel,
+    /// The credential was presented on the live connection. A replacement
+    /// presents it itself, so this is set for the replacement too.
+    presented: bool,
 }
 
-impl ForwardChannel for Forwarder<'_> {
+impl<'a> Session<'a> {
+    /// Open the first connection: the pinned peer check and the protocol
+    /// negotiation happen here, before any credential is read.
+    pub(crate) fn connect(
+        mut connections: Box<dyn Connections + 'a>,
+    ) -> Result<Self, ChannelError> {
+        let client = connections.open()?;
+        Ok(Self {
+            connections,
+            auth: None,
+            client: LevelOneChannel(client),
+            presented: false,
+        })
+    }
+
+    /// Hand over the credential the guest read after the pin check. Nothing is
+    /// presented until the first request.
+    pub(crate) fn authenticate_with(&mut self, auth: super::GuestAuth) {
+        self.auth = Some(auth);
+    }
+
+    fn present(&mut self) -> Result<(), ChannelError> {
+        if self.presented {
+            return Ok(());
+        }
+        let auth = self.auth.clone().ok_or_else(|| {
+            ChannelError::Local(
+                "the workspace client has no credential to present after negotiation".to_owned(),
+            )
+        })?;
+        self.client.authenticate(auth)?;
+        self.presented = true;
+        Ok(())
+    }
+}
+
+impl ForwardChannel for Session<'_> {
     fn client(&mut self) -> &mut dyn ChannelRequest {
-        self.session.client()
+        debug_assert!(
+            self.presented,
+            "a request needs the authenticated connection the first intent opened"
+        );
+        &mut self.client
     }
 
     fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
-        self.session.send_replaying(self.opener, intent)
+        let sent = self.present().and_then(|()| self.client.send(intent));
+        match sent {
+            Ok(outcome) => Ok(outcome),
+            Err(error) if replayable(&error) => {
+                let fresh = self.connections.open()?;
+                let mut client = LevelOneChannel(fresh);
+                let auth = self.auth.clone().ok_or_else(|| {
+                    ChannelError::Local(
+                        "the workspace client has no credential to present after negotiation"
+                            .to_owned(),
+                    )
+                })?;
+                client.authenticate(auth)?;
+                let outcome = client.send(intent)?;
+                self.client = client;
+                // The replacement presented the credential itself. Without this
+                // the next request would present it again on an already
+                // authenticated connection, and the host would refuse it.
+                self.presented = true;
+                Ok(outcome)
+            }
+            Err(error) => Err(error),
+        }
     }
+}
+
+/// Whether a failure may be replayed under the same request id: the delivery is
+/// indeterminate, so the host answers from its own record rather than admitting
+/// again.
+fn replayable(error: &ChannelError) -> bool {
+    matches!(
+        error,
+        ChannelError::Unknown {
+            replayable: true,
+            ..
+        }
+    )
 }
 
 /// Forward one non-interactive command and drive it to its terminal outcome.
@@ -502,16 +638,27 @@ pub(crate) fn forward(
     published: &PublishedGuestContext,
     guest: &mut dyn GuestReader,
     opener: &mut dyn ChannelOpener,
+    verified: VerifiedWorkspaceContext,
+    live: LiveGuestRun,
+    cwd: &str,
     selector: Selector,
     args: Vec<String>,
-    cwd: &Path,
     wants_json: bool,
 ) -> Result<String, RunnerError> {
-    let mut session =
-        authenticated_client(published, guest, opener, GuestOperationClass::Mutate, cwd)?;
+    let connections = GuestConnections {
+        opener,
+        verified,
+        live,
+    };
+    // Order is the contract's: the pinned peer check and negotiation happen in
+    // `connect`, and the credential is read from guest storage only after that,
+    // so a mispinned peer causes no credential to be read, let alone sent.
+    let mut session = Session::connect(Box::new(connections)).map_err(ChannelError::into_runner)?;
+    let auth = super::load_auth(guest, &published.document, &super::client_id()?)?;
+    session.authenticate_with(auth);
     let body = channel::InvocationBody {
         selector,
-        cwd: super::checkout_relative(&published.document.paths, cwd)?,
+        cwd: cwd.to_owned(),
         target: channel::Target::Host,
         args,
         output: if wants_json {
@@ -522,11 +669,7 @@ pub(crate) fn forward(
     };
     let intent = Intent::new(channel::RequestBody::Invoke(body));
     let mut sinks = ProcessSinks::new(!wants_json);
-    let mut forwarder = Forwarder {
-        session: &mut session,
-        opener,
-    };
-    drive(&mut forwarder, &intent, &mut sinks, wants_json)
+    drive(&mut session, &intent, &mut sinks, wants_json)
 }
 
 /// The protocol loop over a forwarder's connection.
