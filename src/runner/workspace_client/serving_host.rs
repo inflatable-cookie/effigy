@@ -732,7 +732,7 @@ where
     if let Err(error) = terminal {
         return settle_failed_host(session, run, error, failed(), false);
     }
-    match run.settle_recoverable(&cleanup, &mut adapter) {
+    match run.settle_workspace_recoverable(&cleanup, &mut adapter) {
         Ok(settled) => {
             session.closed(&settled);
             Ok(())
@@ -857,7 +857,7 @@ fn settle_failed_host(
             Err(error) => Some(error),
         };
         let run_id = run.id();
-        match run.settle_recoverable(&cleanup, &mut ServingSettlement) {
+        match run.settle_workspace_recoverable(&cleanup, &mut ServingSettlement) {
             Ok(outcome) => {
                 let error = if let Some(mark_error) = mark_error {
                     RunError::unavailable(format!(
