@@ -320,6 +320,20 @@ fn resolved_admission_migrates_legacy_rows_without_rebinding_them() {
         bound_digest.as_deref(),
         Some(expected.digest().0.as_slice())
     );
+    drop(reader);
+    let mut fake = Fake::new(fixture.path());
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(foreign_owner()),
+        begin_opts(id(93)),
+        &cleanup(&cx),
+        &mut fake,
+        legacy,
+    )
+    .expect("a migrated legacy ticket remains explicitly unbound");
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 
 #[test]
