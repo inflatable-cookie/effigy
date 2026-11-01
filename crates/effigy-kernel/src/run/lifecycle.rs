@@ -306,7 +306,12 @@ mod tests {
         drop(settlement); // Fixture teardown, not a cleanup receipt.
         assert!(fired && start.is_err());
         assert_eq!(recorded.len(), 1);
-        assert!(retry.is_err(), "unsettled startup must refuse retry");
+        assert!(
+            retry.err().is_some_and(|error| error
+                .to_string()
+                .contains("workspace sentinel startup remains unsettled")),
+            "unsettled startup must name retained partial custody"
+        );
         assert_eq!(before_retry, after_retry);
         assert_eq!(retained, Some((run_id, recorded[0])));
         assert!(matches!(

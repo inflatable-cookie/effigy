@@ -2756,6 +2756,11 @@ impl Run<'_> {
         &mut self,
         plan: &crate::supervise::LifecyclePlan,
     ) -> Result<(), RunError> {
+        if self.partial_sentinel.is_some() {
+            return Err(RunError::unavailable(
+                "workspace sentinel startup remains unsettled",
+            ));
+        }
         self.can_effect()?;
         self.require_environment_gate()?;
         if self.root.is_machine() || self.owner.resource.kind() != crate::id::ResourceKind::Env {
@@ -2763,7 +2768,7 @@ impl Run<'_> {
                 "workspace custody requires a checkout environment",
             ));
         }
-        if self.sentinel.is_some() || self.partial_sentinel.is_some() {
+        if self.sentinel.is_some() {
             return Err(RunError::unavailable(
                 "workspace sentinel startup remains unsettled",
             ));
