@@ -1012,6 +1012,37 @@ fn attachment_release_retry_compares_exact_durable_cause() {
 
 #[test]
 #[cfg(feature = "fault-injection")]
+fn attachment_release_retry_refuses_replaced_state_directory() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    fault::arm_point(Point::RunAttachReleaseBefore, Fault::Eperm);
+    assert!(owner.release(&cx, &root, Release::Eof).is_err());
+    assert!(fault::fired());
+    fault::arm(None);
+    let original_path = root.path().to_path_buf();
+    let saved_path = fixture.path().join("retained-state");
+    let replacement_path = fixture.path().join("replacement-state");
+    std::fs::rename(&original_path, &saved_path).unwrap();
+    let replacement = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let refusal = owner.release_recoverable(&cx, &replacement, Release::Eof);
+    drop(replacement);
+    std::fs::rename(&original_path, &replacement_path).unwrap();
+    std::fs::rename(&saved_path, &original_path).unwrap();
+    let restored = owner.release_recoverable(&cx, &root, Release::Eof);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(
+        refusal.is_err(),
+        "a replacement state directory must refuse"
+    );
+    assert!(restored.is_ok(), "the retained original root may recover");
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
 fn workspace_attachment_release_wins_while_control_is_before_its_transaction() {
     let fixture = home();
     let cx = context();
