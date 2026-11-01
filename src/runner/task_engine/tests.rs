@@ -1268,6 +1268,17 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         InvocationBody, OutputMode, Resolver, Selector, Target,
     };
     let _lock = crate::contract_test_support::lock_test();
+    // This test proves the real reserved engine starts without a ChildGrant.
+    // Nextest isolates its process and the lock protects the process-local state.
+    unsafe {
+        std::env::remove_var("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
+    }
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    assert!(
+        crate::runner::secret_session::take_child_grant().is_none(),
+        "the positive launch starts grant-absent"
+    );
     let fixture = tempfile::tempdir().unwrap();
     let checkout = fixture.path().join("checkout");
     std::fs::create_dir(&checkout).unwrap();
