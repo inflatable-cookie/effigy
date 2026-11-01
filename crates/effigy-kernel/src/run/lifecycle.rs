@@ -472,24 +472,36 @@ mod tests {
                 .collect();
             let child = command.spawn()?;
             let pid = child.id();
-            let identity = crate::ident::process_identity(pid).verified().cloned();
-            Ok(Self {
+            // Install the child guard before the fallible identity observation.
+            let mut owned = Self {
                 child: Some(child),
                 fixture: fixture.into(),
                 pid,
-                identity,
+                identity: None,
                 argv,
                 fail_kill: false,
                 fail_wait: false,
-            })
+            };
+            owned.identity = crate::ident::process_identity(pid).verified().cloned();
+            Ok(owned)
         }
-        fn record_unknown(&self, reason: &str) {
+        fn record_unknown(&self, reason: &str) -> bool {
+            use std::os::unix::ffi::OsStrExt;
             let record = self
                 .fixture
                 .join(format!("child-{}-unknown.json", self.pid));
-            let body = serde_json::json!({ "message": "harness failed; child state Unknown; clean by recorded PID after identity check", "pid": self.pid, "identity": self.identity, "argv_bytes": self.argv, "fixture": self.fixture, "reason": reason });
+            let message = if self.identity.is_some() {
+                "harness failed; child state Unknown; clean by recorded PID after identity check"
+            } else {
+                "harness failed; child state Unknown; do not signal without independently established identity"
+            };
+            let body = serde_json::json!({ "message": message, "pid": self.pid, "identity": self.identity, "argv_bytes": self.argv, "fixture": self.fixture.to_string_lossy(), "fixture_bytes": self.fixture.as_os_str().as_bytes(), "reason": reason });
             let write = std::fs::write(&record, body.to_string());
-            eprintln!("harness failed; child state Unknown; clean by recorded PID after identity check: pid {} identity {:?} argv {:?} fixture {:?}; record {:?}, write {write:?}; {reason}", self.pid, self.identity, self.argv, self.fixture, record);
+            match &write {
+                Ok(()) => eprintln!("{message}: pid {} identity {:?} argv {:?} fixture {:?}; record {:?}; {reason}", self.pid, self.identity, self.argv, self.fixture, record),
+                Err(error) => eprintln!("{message}: pid {} identity {:?} argv {:?} fixture {:?}; adjacent record unavailable ({error}); {reason}", self.pid, self.identity, self.argv, self.fixture),
+            }
+            write.is_ok()
         }
         fn kill(&mut self) -> std::io::Result<()> {
             let result = if self.fail_kill {
@@ -632,6 +644,15 @@ mod tests {
         let kill_error = child.kill();
         let kill_record: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        let identity = child.identity.take();
+        let unknown_written = child.record_unknown("injected identity unavailable");
+        let unknown_record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        child.identity = identity;
+        let fixture = child.fixture.clone();
+        child.fixture = home.path().join("missing-directory");
+        let unavailable = child.record_unknown("injected unwritable record");
+        child.fixture = fixture;
         child.fail_kill = false;
         let killed = child.kill();
         let reaped = child.wait(Duration::from_secs(3));
@@ -639,11 +660,21 @@ mod tests {
             home.finish();
         }
         assert!(wait_error.is_err() && kill_error.is_err());
+        assert!(unknown_written && !unavailable);
+        assert!(unknown_record["identity"].is_null());
+        assert!(unknown_record["message"]
+            .as_str()
+            .unwrap()
+            .contains("do not signal without independently established identity"));
         for (record, expected) in [(wait_record, "wait failed"), (kill_record, "kill failed")] {
             assert_eq!(record["pid"].as_u64(), Some(u64::from(pid)));
             assert!(record["reason"].as_str().unwrap().contains(expected));
             assert!(!record["argv_bytes"].as_array().unwrap().is_empty());
             assert_eq!(record["fixture"].as_str(), home.path().to_str());
+            assert!(
+                !record["identity"].is_null(),
+                "test child identity must be observed"
+            );
         }
         assert!(
             killed.is_ok() && reaped.is_ok(),
