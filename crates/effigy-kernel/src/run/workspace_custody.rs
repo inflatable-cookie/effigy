@@ -1,6 +1,6 @@
 //! Unwired, pre-effect capacity scaffold. A reservation is not a Run, gate,
-//! process, or permission to perform an effect. It must not be used to hold
-//! a live or uncertain owner: dropping it releases only this empty slot.
+//! process, or permission to perform an effect. Neither state holds a live or
+//! uncertain owner: the resident worker and actual custody do not exist yet.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -28,6 +28,16 @@ pub(super) struct Capacity {
 #[derive(Debug)]
 pub(super) struct Reservation {
     busy: Arc<AtomicBool>,
+    release_empty: bool,
+}
+
+/// A capacity state only: this is not a Run, child, or recovery receipt.
+/// There is no reset operation until actual settlement evidence is available.
+#[allow(dead_code)]
+#[must_use]
+#[derive(Debug)]
+pub(super) struct UnsettledSlot {
+    _busy: Arc<AtomicBool>,
 }
 
 impl Capacity {
@@ -38,13 +48,26 @@ impl Capacity {
             .map_err(|_| CapacityUnavailable)?;
         Ok(Reservation {
             busy: self.busy.clone(),
+            release_empty: true,
         })
+    }
+}
+
+impl Reservation {
+    #[allow(dead_code)]
+    pub(super) fn mark_unsettled(mut self) -> UnsettledSlot {
+        self.release_empty = false;
+        UnsettledSlot {
+            _busy: self.busy.clone(),
+        }
     }
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        self.busy.store(false, Ordering::Release);
+        if self.release_empty {
+            self.busy.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -101,6 +124,28 @@ mod tests {
         });
         assert!(unwind.is_err());
         assert!(capacity.reserve().is_ok());
+    }
+
+    #[test]
+    fn unsettled_slot_stays_unavailable_after_its_token_is_dropped() {
+        let capacity = Capacity::default();
+        let unsettled = capacity.reserve().unwrap().mark_unsettled();
+        drop(unsettled);
+        assert!(
+            capacity.reserve().is_err(),
+            "losing an unsettled token must not free the slot"
+        );
+    }
+
+    #[test]
+    fn unsettled_slot_stays_unavailable_after_token_unwind() {
+        let capacity = Capacity::default();
+        let unwind = std::panic::catch_unwind(|| {
+            let _unsettled = capacity.reserve().unwrap().mark_unsettled();
+            panic!("fixture owner failure");
+        });
+        assert!(unwind.is_err());
+        assert!(capacity.reserve().is_err());
     }
 
     #[test]
