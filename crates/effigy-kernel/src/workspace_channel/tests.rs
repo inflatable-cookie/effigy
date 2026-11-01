@@ -608,11 +608,12 @@ impl Admission for LiveAdmitter<'_> {
 #[cfg(feature = "fault-injection")]
 fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
     use crate::fault::{self, Point};
-    for (point, still_attached, detach) in [
-        (Point::RunAttachReleaseBefore, true, true),
-        (Point::RunAttachReleaseAfter, false, true),
-        (Point::RunAttachReleaseBefore, true, false),
-        (Point::RunAttachReleaseAfter, false, false),
+    for (point, still_attached, detach, close_before_retry) in [
+        (Point::RunAttachReleaseBefore, true, true, false),
+        (Point::RunAttachReleaseAfter, false, true, false),
+        (Point::RunAttachReleaseBefore, true, false, false),
+        (Point::RunAttachReleaseAfter, false, false, false),
+        (Point::RunAttachReleaseAfter, false, false, true),
     ] {
         let (_fixture, cx, root, session) = journal("effigy-channel-owner-detach-fault");
         let mut grants = GrantBook::new();
@@ -722,13 +723,36 @@ fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
             assert!(matches!(request.action, crate::run::RequestAction::Stop));
         }
         drop(reader);
+        if close_before_retry {
+            for run in host.dispatcher.admission.runs.drain(..) {
+                run.settle(&cleanup(&cx), &mut NoEffects)
+                    .expect("test-owned run closes");
+            }
+        }
         let fresh = cleanup(&cx)
             .operation()
             .effects()
             .expect("fresh cleanup authority");
-        host.retry_cleanup(&fresh, &root)
-            .expect("same owner release retry");
-        assert!(!host.cleanup_pending());
+        if close_before_retry {
+            assert_eq!(
+                host.retry_cleanup(&fresh, &root)
+                    .expect_err("compacted release stays unresolved")
+                    .code,
+                RefusalCode::Unknown
+            );
+            assert!(host.cleanup_pending());
+            assert_eq!(
+                host.unsettled_attachment
+                    .as_ref()
+                    .expect("same handle retained")
+                    .run(),
+                live
+            );
+        } else {
+            host.retry_cleanup(&fresh, &root)
+                .expect("same owner release retry");
+            assert!(!host.cleanup_pending());
+        }
         for run in host.dispatcher.admission.runs.drain(..) {
             run.settle(&cleanup(&cx), &mut NoEffects)
                 .expect("test-owned run cleanup");

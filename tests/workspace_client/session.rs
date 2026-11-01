@@ -629,6 +629,11 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
             &host.root,
             &mut NoStreams,
         );
+        let fresh = cleanup(&host.cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        let retry_cleanup = server.retry_cleanup(&fresh, &host.root);
         settle(&host, &runs);
         owner
             .settle(&cleanup(&host.cx), &mut NoEffects)
@@ -649,6 +654,12 @@ fn malformed_connection_retains_owner_without_forging_eof_stop() {
         }
         assert_eq!(
             retry.expect_err("unsettled owner fences service").code,
+            RefusalCode::Unknown
+        );
+        assert_eq!(
+            retry_cleanup
+                .expect_err("malformed input has no EOF cause")
+                .code,
             RefusalCode::Unknown
         );
     }
