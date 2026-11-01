@@ -1593,11 +1593,14 @@ fn engine_status(home: &Path) -> Observed<RunStatus> {
     fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap())
 }
 fn workload_gone(home: &Path) -> bool {
-    let pid: i32 = std::fs::read_to_string(home.join("engine-workload.pid"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    // The workload writes its pid file after exec, so the first poll can precede
+    // it: a missing or partial file means "not gone yet", never a panic.
+    let Ok(text) = std::fs::read_to_string(home.join("engine-workload.pid")) else {
+        return false;
+    };
+    let Ok(pid) = text.trim().parse::<i32>() else {
+        return false;
+    };
     // SAFETY: probe-only signal 0 to the fixture workload this test recorded.
     unsafe { libc::kill(pid, 0) != 0 }
 }

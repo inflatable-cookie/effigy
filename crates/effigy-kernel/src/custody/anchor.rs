@@ -57,7 +57,9 @@ pub(super) fn signal(
         return Observed::Unknown(unknown("invalid custody signal"));
     }
     if !verified(r, anchor) {
-        return Observed::Unknown(unknown("group anchor unavailable"));
+        // The anchor is the group's continuity evidence. Without it the group
+        // cannot be proved closed, so the refusal carries the named state.
+        return Observed::Unknown(unknown(crate::custody::UNPROVEN_GROUP_CLOSURE));
     }
     let pids = match platform::live_pids(r.pgid) {
         Ok(pids) => pids,

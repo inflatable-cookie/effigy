@@ -224,16 +224,13 @@ pub(super) fn entry() -> Result<(), RunError> {
     }
     let group = group as u32;
     let me = std::process::id();
-    // Members an earlier round observed live in this group: only those can be a
-    // vanished member rather than an unreadable or already-reaped row.
-    let mut seen = std::collections::BTreeSet::new();
     let mut wait = POLL_MIN;
     loop {
         // A live leader pins the group, so no inventory is needed while it is
         // there; only an emptied leader turns this into a closure question. A
         // signal still ends the process: INT and HUP stay ignored, TERM keeps
         // its default action, and settlement may still retire the anchor last.
-        if !leader_live(group) && observe_group(group, me, &mut seen) == ClosureRound::Empty {
+        if !leader_live(group) && observe_group(group, me) == ClosureRound::Empty {
             // No live member remains, so the anchor is no longer anyone's
             // evidence. It retires itself here instead of waiting to be killed:
             // that is what keeps no anchor beyond its group, including after its
@@ -266,59 +263,39 @@ fn leader_live(group: u32) -> bool {
 /// Outcome of one best-effort closure round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClosureRound {
-    /// Every listed member other than the anchor was positively not live and no
-    /// member that an earlier round saw live has vanished, and the anchor's own
-    /// row was positively observed. No member existed at inventory time, so
-    /// nothing could fork afterwards.
+    /// Every listed member other than the anchor was positively not live, and the
+    /// anchor's own row was positively observed. No live member existed at
+    /// inventory time, so nothing could fork afterwards.
     Empty,
     /// A member other than the anchor is positively live.
     Live,
-    /// A member an earlier round saw live vanished or left the group inside this
-    /// round: it may have forked a member this inventory cannot see, so the round
-    /// proves nothing.
-    Churn,
     /// An observation failed, or the anchor's own row was not positively seen.
+    /// Nothing is proved and the anchor stays as the group's evidence.
     Unknown,
 }
 
-/// Classify one inventory round against the members the previous round saw live.
+/// Classify one inventory round. Pure, so the shape is testable without timing.
 ///
-/// `seen` carries only pids an earlier round observed **live in this group**, so a
-/// listing that merely reports an unreadable or already-reaped pid (a zombie the
-/// owner still holds, or a row the OS lists while its identity read fails) is not
-/// mistaken for a member that vanished. A pid that was live and is now gone or
-/// unreadable is the fork race: it may have forked a child this round cannot see.
-/// Pure, so the whole sequence is testable without timing.
-pub(crate) fn closure_round(
-    rows: &[platform::MembershipRow],
-    me: u32,
-    seen: &mut std::collections::BTreeSet<u32>,
-) -> ClosureRound {
+/// A row is evidence only when it was positively observed: `Live` with its
+/// generation, or `NotLive` (a zombie or a pid with no task, which cannot fork).
+/// An unreadable row never reaches here — `group_membership` returns an error for
+/// it, which becomes [`ClosureRound::Unknown`] and keeps the anchor alive. The
+/// anchor's own positive row keeps an empty inventory from satisfying this
+/// vacuously (effigy#520).
+pub(crate) fn closure_round(rows: &[platform::MembershipRow], me: u32) -> ClosureRound {
     let mut anchor_live = false;
-    let mut live_now = std::collections::BTreeSet::new();
-    let mut verdict = ClosureRound::Empty;
     for row in rows {
         match row {
             platform::MembershipRow::Live(identity) if identity.pid == me => anchor_live = true,
-            platform::MembershipRow::Live(identity) => {
-                live_now.insert(identity.pid);
-                verdict = ClosureRound::Live;
-            }
+            platform::MembershipRow::Live(_) => return ClosureRound::Live,
             platform::MembershipRow::NotLive(_) => {}
-            platform::MembershipRow::Churn(pid) => {
-                if seen.contains(pid) {
-                    verdict = ClosureRound::Churn;
-                }
-            }
         }
     }
-    *seen = live_now;
-    // The anchor's own positive row keeps an empty inventory from satisfying this
-    // vacuously (effigy#520).
-    if !anchor_live {
-        return ClosureRound::Unknown;
+    if anchor_live {
+        ClosureRound::Empty
+    } else {
+        ClosureRound::Unknown
     }
-    verdict
 }
 
 /// This round's outcome against the live group.
@@ -328,9 +305,9 @@ pub(crate) fn closure_round(
 /// round in which no row churned and the anchor's own row was positively observed
 /// retires the anchor; a churn or a failed read keeps it alive as evidence
 /// (`unproven group closure`).
-fn observe_group(group: u32, me: u32, seen: &mut std::collections::BTreeSet<u32>) -> ClosureRound {
+fn observe_group(group: u32, me: u32) -> ClosureRound {
     match platform::group_membership(group) {
-        Ok(rows) => closure_round(&rows, me, seen),
+        Ok(rows) => closure_round(&rows, me),
         Err(_) => ClosureRound::Unknown,
     }
 }
