@@ -16,6 +16,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
+    let original_args = raw_args.clone();
     let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
     // One argv snapshot feeds the targeted usage of every argument error below:
     // the answer is the nearest command's own usage, never the whole help. It
@@ -239,11 +240,22 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::InternalGuestProbe(_)
         | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
-        | Command::Task(_)) => run_and_render_command(&context, command),
+        | Command::Task(_)) => run_and_render_command_in(&context, command, Some(&original_args)),
     }
 }
 
+/// Render a typed command. Guest built-in requests need the original CLI argv
+/// through `run_cli` or the argv-aware runner entry; this typed-only entry never
+/// substitutes ambient process arguments.
 pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Command) {
+    run_and_render_command_in(context, command, None)
+}
+
+fn run_and_render_command_in(
+    context: &CliExecutionContext<'_>,
+    command: Command,
+    original_args: Option<&[String]>,
+) {
     let task_stdout_owned = command_owns_task_stdout(&command);
     let stdout_is_terminal = std::io::stdout().is_terminal();
     let clean_machine_output = matches!(&command, Command::InternalGuestProbe(_))
@@ -259,7 +271,13 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             let _ = render_cli_header(&mut renderer, context.command_root);
         }
     }
-    match crate::runner::run_command_with_context(command, context.runtime_context) {
+    let result = match original_args {
+        Some(args) => {
+            crate::runner::run_command_with_context_and_args(command, context.runtime_context, args)
+        }
+        None => crate::runner::run_command_with_context(command, context.runtime_context),
+    };
+    match result {
         Ok(output) => {
             if context.emit_json_envelope {
                 emit_json_envelope_success(context.command_kind, context.command_name, &output);

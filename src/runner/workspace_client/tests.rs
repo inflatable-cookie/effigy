@@ -5192,7 +5192,7 @@ fn level_one_hidden_dispatch_refuses_while_limited_probe_entry_keeps_existing_by
     }
     let probe = Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity);
     assert!(
-        guest_command(&probe, Path::new("/private-producer"))
+        guest_command(&probe, None, Path::new("/private-producer"))
             .unwrap()
             .is_none(),
         "the limited probe entry must retain its existing bypass"
@@ -6069,6 +6069,237 @@ fn level_one_pinned_or_refused_commands_do_not_capture_process_arguments() {
         parsed(&["tasks"]),
         Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity),
     ] {
-        assert!(invocation_args(&command).unwrap().is_empty());
+        assert!(invocation_args(&command, None).unwrap().is_empty());
     }
+}
+
+#[test]
+fn level_one_public_entry_keeps_original_argv_with_guest_io_faked() {
+    const CHILD: &str = "EFFIGY_TEST_PUBLIC_ARGV_CHILD";
+    const ROOT: &str = "EFFIGY_TEST_PUBLIC_ARGV_ROOT";
+    let operation = argv(&[
+        "--json",
+        "doctor",
+        "nested/build",
+        "--",
+        "two words",
+        "literal;$()",
+    ]);
+    let status = argv(&["--json", "run", "status", &session_run().to_string()]);
+    let task = argv(&["--json", "build", "--", "two words", "literal;$()"]);
+    let local = argv(&["--json", "tasks"]);
+    if std::env::var_os(CHILD).is_some() {
+        struct Capture(Arc<Mutex<Vec<serde_json::Value>>>);
+        impl ChannelRequest for Capture {
+            fn authenticate(&mut self, _: GuestAuth) -> Result<(), ChannelError> {
+                Ok(())
+            }
+            fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+                self.0.lock().unwrap().push(serde_json::json!({"method":intent.body.method().as_str(), "body":&intent.body}));
+                Ok(match intent.body {
+                    RequestBody::Invoke(_) => ChannelOutcome::Accepted {
+                        run: RunId::new(1, [41; 10]).unwrap(),
+                        placement: RunPlacement::Host,
+                    },
+                    _ => ChannelOutcome::Observed(serde_json::json!({"ok":true})),
+                })
+            }
+            fn detach(&mut self, _: RunId) -> Result<(), ChannelError> {
+                panic!("public argv fixture does not detach")
+            }
+        }
+        impl ChannelOpener for Capture {
+            fn open(
+                &mut self,
+                _: &VerifiedWorkspaceContext,
+                _: &LiveGuestRun,
+            ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+                Ok(Box::new(Self(self.0.clone())))
+            }
+        }
+        let project = PathBuf::from(std::env::var_os(ROOT).unwrap())
+            .canonicalize()
+            .unwrap();
+        let mut context = workspace_document(Some(session_run()), None);
+        context.0.paths.guest_checkout = project.display().to_string();
+        context.0.paths.workdir = project.join("nested").display().to_string();
+        let mut guest = FakeGuest::new();
+        publish(&mut guest, &context, Some(&capability()));
+        let published = published(&context);
+        let mut checkout = FakeCheckout::default();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_by_hook = captured.clone();
+        let mut channel = Capture(captured_by_hook);
+        with_guest_command_io(
+            move |cmd, args, cwd| {
+                dispatch_in(
+                    cmd,
+                    args,
+                    &published,
+                    &mut guest,
+                    &mut checkout,
+                    &mut channel,
+                    cwd,
+                )
+                .map(Some)
+            },
+            || {
+                for explicit in [&operation, &status, &task, &local] {
+                    assert_ne!(
+                        *explicit,
+                        std::env::args().skip(1).collect::<Vec<_>>(),
+                        "fixture requires explicit argv unlike ambient process argv"
+                    );
+                    crate::run_main(explicit.clone()).unwrap();
+                }
+            },
+        );
+        std::fs::write(
+            project.join("observed.json"),
+            serde_json::to_vec(&*captured.lock().unwrap()).unwrap(),
+        )
+        .unwrap();
+        return;
+    }
+    let fixture = effigy_test_support::Fixture::new("workspace-public-entry-argv").unwrap();
+    let project = fixture.path().join("checkout");
+    let task_home = fixture.path().join("home");
+    std::fs::create_dir_all(project.join("nested")).unwrap();
+    std::fs::create_dir_all(&task_home).unwrap();
+    std::fs::write(
+        project.join("effigy.toml"),
+        "[tasks]\nbuild = 'echo unused'\n",
+    )
+    .unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args(["--exact", "runner::workspace_client::tests::level_one_public_entry_keeps_original_argv_with_guest_io_faked", "--nocapture"])
+        .current_dir(project.join("nested")).env(CHILD, "1").env(ROOT, &project)
+        .env("HOME", &task_home).env("XDG_CONFIG_HOME", task_home.join(".config"))
+        .env("XDG_DATA_HOME", task_home.join(".local/share")).env("XDG_CACHE_HOME", task_home.join(".cache"))
+        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    // The selector supplies the real pool; retain it under this private HOME.
+    if let Some(pool) = std::env::var_os("OXIDE_POOL") {
+        child.env("OXIDE_POOL", pool);
+    }
+    let running = child.spawn().unwrap();
+    let pid = running.id();
+    let output = running.wait_with_output().unwrap();
+    eprintln!("public-entry child pid={pid} exit={}", output.status);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observed: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(project.join("observed.json")).unwrap()).unwrap();
+    assert_eq!(
+        observed.len(),
+        3,
+        "pinned local tasks must not open the channel"
+    );
+    assert_eq!(
+        observed[0]["body"]["query"]["args"],
+        serde_json::json!(operation),
+        "public run_main lost its original operation argv"
+    );
+    assert_eq!(
+        observed[1]["body"]["query"]["args"],
+        serde_json::json!(status)
+    );
+    let Command::Task(expected) = parse_command(task).unwrap() else {
+        panic!("task");
+    };
+    assert_eq!(
+        observed[2]["body"]["args"],
+        serde_json::json!(expected.args)
+    );
+    for row in &observed[..2] {
+        assert_eq!(row["body"]["query"]["cwd"], "nested");
+        assert_eq!(row["body"]["query"]["output"], "json");
+    }
+    assert_eq!(observed[2]["body"]["cwd"], "nested");
+    let json_start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .expect("JSON envelope");
+    let mut values = serde_json::Deserializer::from_slice(&output.stdout[json_start..])
+        .into_iter::<serde_json::Value>();
+    let mut envelopes = Vec::new();
+    while let Some(Ok(value)) = values.next() {
+        envelopes.push(value);
+    }
+    assert_eq!(envelopes.len(), 4);
+    assert!(envelopes
+        .iter()
+        .all(|row| row["schema"] == "effigy.command.v1"));
+    assert_eq!(
+        envelopes[3]["result"]["tasks"],
+        serde_json::json!(["build", "seed"])
+    );
+}
+
+#[test]
+fn level_one_embedded_builtins_require_matching_original_arguments() {
+    let fixture = effigy_test_support::Fixture::new("workspace-embedded-argv").unwrap();
+    std::fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks]\nbuild = 'echo unused'\n",
+    )
+    .unwrap();
+    let context = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(fixture.path().to_owned()))
+        .captured_env(effigy_context::CapturedEnv {
+            home: Some(fixture.path().join("home").into_os_string()),
+            ..Default::default()
+        })
+        .capture()
+        .unwrap();
+    let command = parsed(&["doctor", "first-private-selector"]);
+    with_guest_command_io(
+        |_, _, _| panic!("invalid original arguments reached guest I/O"),
+        || {
+            let missing = crate::runner::run_command_with_context(command.clone(), &context)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                missing.contains("original arguments") && missing.contains("independent host CLI")
+            );
+            let mismatch = crate::runner::run_command_with_context_and_args(
+                command,
+                &context,
+                &argv(&["doctor", "other-private-selector"]),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(mismatch.contains("do not match"));
+            assert!(
+                !mismatch.contains("first-private-selector")
+                    && !mismatch.contains("other-private-selector")
+            );
+        },
+    );
+    let tail = argv(&["--", "embedded value"]);
+    let expected = tail.clone();
+    with_guest_command_io(
+        move |cmd, args, _| {
+            assert!(matches!(cmd, Command::Task(task) if task.name == "build"));
+            assert_eq!(args, expected);
+            Ok(Some("canonical task".into()))
+        },
+        || {
+            assert_eq!(
+                crate::runner::run_command_with_context(
+                    Command::Task(effigy_cli::TaskInvocation {
+                        name: "build".into(),
+                        args: tail
+                    }),
+                    &context
+                )
+                .unwrap(),
+                "canonical task"
+            );
+        },
+    );
 }

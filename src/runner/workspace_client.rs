@@ -1702,11 +1702,14 @@ fn ask_host(
         .map_err(ChannelError::into_runner)
 }
 
-/// The guest's own argv tail, as the channel carries it. A task's own
-/// arguments come from its parsed invocation; every other command carries the
-/// arguments the operator typed, which the host re-parses against its own
-/// records (§8.11).
-fn invocation_args(cmd: &Command) -> Result<Vec<String>, RunnerError> {
+/// The caller's frozen argument array, never the ambient process's argv.
+/// A Task carries its lossless parsed tail; other authority-bearing commands
+/// require the original CLI array and must reparse to the same command. The
+/// host independently reparses these claims against its own records (§8.11).
+fn invocation_args(
+    cmd: &Command,
+    original_args: Option<&[String]>,
+) -> Result<Vec<String>, RunnerError> {
     if !matches!(
         classify(cmd),
         GuestOperation::Observe { .. } | GuestOperation::Invoke { .. }
@@ -1716,17 +1719,18 @@ fn invocation_args(cmd: &Command) -> Result<Vec<String>, RunnerError> {
     if let Command::Task(task) = cmd {
         return Ok(task.args.clone());
     }
-    let mut args = Vec::new();
-    for argument in std::env::args_os().skip(1) {
-        let argument = argument.into_string().map_err(|_| {
-            RunnerError::task_invocation(
-                "a container-mode guest sends its arguments over the workspace channel, which \
-                 carries UTF-8 text; rename the argument to cross the channel",
-            )
-        })?;
-        args.push(argument);
+    let args = original_args.ok_or_else(|| RunnerError::task_invocation(
+        "this embedded workspace command lacks its original arguments; pass the captured CLI arguments or use an independent host CLI",
+    ))?;
+    let parsed = effigy_cli::parse_command(args.iter().cloned()).map_err(|_| {
+        RunnerError::task_invocation("the captured workspace arguments do not name a valid command")
+    })?;
+    if parsed != *cmd {
+        return Err(RunnerError::task_invocation(
+            "the captured workspace arguments do not match the parsed command",
+        ));
     }
-    Ok(args)
+    Ok(args.to_vec())
 }
 
 fn checkout_relative(paths: &WorkspacePathMap, cwd: &Path) -> Result<String, RunnerError> {
@@ -1895,18 +1899,57 @@ fn local_read_error(error: LocalReadError) -> RunnerError {
     }
 }
 
+#[cfg(test)]
+type TestGuestCommand =
+    Box<dyn FnMut(&Command, &[String], &Path) -> Result<Option<String>, RunnerError>>;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_GUEST_COMMAND: std::cell::RefCell<Option<TestGuestCommand>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Substitute guest I/O only, leaving public CLI parsing and argv selection real.
+#[cfg(test)]
+fn with_guest_command_io<T>(
+    hook: impl FnMut(&Command, &[String], &Path) -> Result<Option<String>, RunnerError> + 'static,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<TestGuestCommand>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            drop(TEST_GUEST_COMMAND.with(|slot| slot.replace(self.0.take())));
+        }
+    }
+    let previous = TEST_GUEST_COMMAND.with(|slot| slot.replace(Some(Box::new(hook))));
+    let _restore = Restore(previous);
+    run()
+}
+
 /// The dispatch entry the runner calls before its host dispatch.
 ///
 /// `Ok(None)` means this process is not a prepared container-mode guest: the
 /// ordinary host dispatch runs unchanged, and nothing was written. Hybrid mode
 /// always takes this path (§8.10 R1). `cwd` is the directory the command was
 /// invoked from, as the runner captured it.
-pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>, RunnerError> {
+pub(crate) fn guest_command(
+    cmd: &Command,
+    original_args: Option<&[String]>,
+    cwd: &Path,
+) -> Result<Option<String>, RunnerError> {
     // The staged guest probe is executed by the producer inside the created
     // container. It is the guest's own entry, handled by `guest_probe`, so it
     // takes the ordinary dispatch rather than the channel.
     if matches!(cmd, Command::InternalGuestProbe(_)) {
         return Ok(None);
+    }
+    #[cfg(test)]
+    if TEST_GUEST_COMMAND.with(|hook| hook.borrow().is_some()) {
+        let args = invocation_args(cmd, original_args)?;
+        return TEST_GUEST_COMMAND.with(|hook| {
+            hook.borrow_mut()
+                .as_mut()
+                .expect("installed guest I/O override")(cmd, &args, cwd)
+        });
     }
     let mut guest = ContainerGuest;
     let published = match detect(&mut guest)? {
@@ -1918,7 +1961,7 @@ pub(crate) fn guest_command(cmd: &Command, cwd: &Path) -> Result<Option<String>,
         backend: published.document.backend.clone(),
         budget: CHANNEL_OPEN_BUDGET,
     };
-    let args = invocation_args(cmd)?;
+    let args = invocation_args(cmd, original_args)?;
     dispatch_in(
         cmd,
         &args,

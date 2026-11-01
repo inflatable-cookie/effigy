@@ -103,7 +103,9 @@ pub(in crate::runner) use workspace_command::run_workspace;
 /// A container-mode workspace guest serves its static reads from the published
 /// context and sends everything with authority over the one host channel
 /// (contract 052 §8.6, §8.11), so the guest dispatch runs first. Anything else
-/// is an ordinary host command and takes the host dispatch unchanged.
+/// is an ordinary host command and takes the host dispatch unchanged. A typed
+/// Task retains its full argument tail; built-in guest requests need the original
+/// CLI arguments through [`run_command_with_context_and_args`].
 pub fn run_command(cmd: effigy_cli::Command) -> Result<String, RunnerError> {
     let context = effigy_context::EffigyRuntimeContext::capture_lossy(
         None,
@@ -113,12 +115,35 @@ pub fn run_command(cmd: effigy_cli::Command) -> Result<String, RunnerError> {
     run_command_with_context(cmd, &context)
 }
 
-/// [`run_command`] with an already-captured runtime context.
+/// [`run_command`] with an already-captured runtime context. Built-in guest
+/// requests without original arguments fail closed; use the argv-aware entry
+/// for those requests.
 pub fn run_command_with_context(
     cmd: effigy_cli::Command,
     context: &effigy_context::EffigyRuntimeContext,
 ) -> Result<String, RunnerError> {
-    if let Some(rendered) = workspace_client::guest_command(&cmd, context.invocation_cwd())? {
+    run_command_in(cmd, context, None)
+}
+
+/// Run a command with the original CLI arguments captured by its caller.
+/// Task invocations retain their parsed argument tail; built-in guest requests
+/// require this original array rather than arguments from the ambient process.
+pub fn run_command_with_context_and_args(
+    cmd: effigy_cli::Command,
+    context: &effigy_context::EffigyRuntimeContext,
+    original_args: &[String],
+) -> Result<String, RunnerError> {
+    run_command_in(cmd, context, Some(original_args))
+}
+
+fn run_command_in(
+    cmd: effigy_cli::Command,
+    context: &effigy_context::EffigyRuntimeContext,
+    original_args: Option<&[String]>,
+) -> Result<String, RunnerError> {
+    if let Some(rendered) =
+        workspace_client::guest_command(&cmd, original_args, context.invocation_cwd())?
+    {
         return Ok(rendered);
     }
     entrypoints::run_command_with_context(cmd, context)
