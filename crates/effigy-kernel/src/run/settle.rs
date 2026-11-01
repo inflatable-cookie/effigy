@@ -159,12 +159,36 @@ impl Run<'_> {
         adapter: &mut impl SettlementAdapter,
         successor: Option<(RunId, Generation)>,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering_with_policy(cleanup, adapter, successor, false)
+    }
+
+    /// Workspace custody cannot be discarded while cleanup is unresolved.
+    pub(super) fn settle_workspace_inner(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering_with_policy(cleanup, adapter, None, true)
+    }
+
+    fn settle_recovering_with_policy(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        successor: Option<(RunId, Generation)>,
+        retain_incomplete: bool,
+    ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
         if !self.holds_owner_gate()? {
             return Err(RunError::broken("a settle without its owner gate"));
         }
         crate::fault_point!(SettleBefore)?;
         let record = journal::run(self.store.conn(), self.id)?;
+        if retain_incomplete && record.phase == Phase::Closed {
+            return Err(RunError::unavailable(
+                "workspace owner is already closed; reservation remains recoverable",
+            ));
+        }
         let workload = record.workload.unwrap_or(WorkloadOutcome::Interrupted);
         let machine = self.root.is_machine();
         let batch = self.machine_lifecycle();
@@ -333,6 +357,29 @@ impl Run<'_> {
             }
         }
         let complete = effects.iter().all(|e| e.state.terminal());
+        if retain_incomplete && !complete {
+            // Machine batches defer their individual writes until close. Keep
+            // those dispositions durable even though this owner remains live.
+            if !dispositions.is_empty() {
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        for (sequence, (state, reason)) in &dispositions {
+                            journal::write_effect(
+                                txn,
+                                self.id,
+                                *sequence,
+                                *state,
+                                None,
+                                reason.as_deref(),
+                            )?;
+                        }
+                        Ok::<_, RunError>(())
+                    })?;
+            }
+            return Err(RunError::unavailable(
+                "integration effects unsettled; re-run up",
+            ));
+        }
         // A non-gateway sentinel needs the closed row as positive evidence
         // until it has observed EOF and exited. Gateway has its own bounded
         // completion fact in the resource row.

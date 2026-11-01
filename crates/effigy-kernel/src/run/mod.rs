@@ -692,7 +692,7 @@ impl<'a> GuardedWorkspaceCleanup<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
-        match self.run.settle_recoverable(cleanup, adapter) {
+        match self.run.settle_workspace_recoverable(cleanup, adapter) {
             Ok(outcome) => Ok(outcome),
             Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
         }
@@ -2331,6 +2331,23 @@ impl<'a> Run<'a> {
         }
         self.run_settle_actions();
         match self.settle_inner(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => Err((error, Box::new(self))),
+        }
+    }
+
+    /// Workspace-only settlement keeps the exact owner gate when an effect is
+    /// unresolved; listener/key release actions still run before cleanup.
+    pub(crate) fn settle_workspace_recoverable(
+        mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
+        if let Err(error) = self.require_environment_gate() {
+            return Err((error, Box::new(self)));
+        }
+        self.run_settle_actions();
+        match self.settle_workspace_inner(cleanup, adapter) {
             Ok(outcome) => Ok(outcome),
             Err(error) => Err((error, Box::new(self))),
         }
