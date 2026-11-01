@@ -8,30 +8,77 @@
 //! form both readers agree on: a plain value stays unquoted, and only a value
 //! Compose must read literally is double quoted and escaped.
 //!
-//! The file lives under the Effigy home, never inside an object closure, so a
-//! generation's content digest stays independent of the state-home path. Its
-//! name is the digest of its contents: the same plan names the same file, so a
-//! re-up adds nothing. It is private to this user (0600 inside a 0700
-//! directory) and nothing prunes it: the name is content-addressed, so an
-//! unchanged plan reuses one file and a changed one adds one more.
+//! Every invocation that needs interpolation writes its own file. The name is
+//! fresh random bytes, never derived from the contents, and the file is created
+//! `O_EXCL|O_NOFOLLOW` with mode 0600 inside a directory verified as the
+//! operator's own 0700 directory, reached by descriptor-relative no-follow
+//! opens. The invocation keeps a shared `flock` on the file until the Compose
+//! child that reads it has been reaped, then removes it by identity.
+//!
+//! A sweep, run before each creation, removes crash residue only when it can
+//! prove the file idle: a `compose-` file whose exclusive lock it can take has
+//! no live holder. Legacy `<16 hex>.env` files from earlier development builds
+//! carry no lock and cannot be proven idle, so they are never removed; the sweep
+//! counts them in a one-time notice instead.
+//!
+//! Failures never leave a secret behind on this path: a value is written only
+//! after the lock and the name agree, and any failure after that removes the
+//! file before returning.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::io;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Component, Path, PathBuf};
 
-use effigy_kernel::fs::{DirFd, FileName};
-use effigy_kernel::gate::{Gate, Wait};
+use nix::errno::Errno;
+use nix::fcntl::{openat, renameat, AtFlags, Flock, FlockArg, OFlag};
+use nix::sys::stat::{fchmod, fstat, fstatat, mkdirat, FileStat, Mode, SFlag};
+use nix::unistd::{geteuid, linkat, unlinkat, UnlinkatFlags};
 
 /// Compose's interpolation file flag. `nerdctl compose` accepts exactly one.
 const ENV_FILE_FLAG: &str = "--env-file";
-/// Effigy-home directory that holds each interpolation set.
+/// Effigy-home directory that holds each interpolation file.
 const DIRECTORY: &str = "compose-env";
 /// The Compose subcommand token every Compose invocation carries.
 const COMPOSE: &str = "compose";
 /// The host adapter whose Compose process runs inside the Colima VM.
 const COLIMA: &str = "colima";
+/// `compose-<32 hex>.env`: one per invocation.
+const FILE_PREFIX: &str = "compose-";
+const FILE_SUFFIX: &str = ".env";
+/// `.rm-<32 hex>`: a file moved aside before its removal.
+const QUARANTINE_PREFIX: &str = ".rm-";
+/// `<16 hex>.env`: the content-named files earlier development builds wrote.
+const LEGACY_DIGITS: usize = 16;
+/// Printed once per process when legacy files are left in place.
+static DEFERRED_NOTICE: std::sync::Once = std::sync::Once::new();
+#[cfg(test)]
+thread_local! {
+    /// Test seam: the next body write fails once, to prove cleanup on that path.
+    static FAIL_NEXT_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test seam: the next removal fails before it touches the directory.
+    static FAIL_NEXT_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test seam: the next removal's quarantine entry vanishes after the move.
+    static VANISH_NEXT_QUARANTINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Fresh names tried before an invocation gives up.
+const CREATE_ATTEMPTS: usize = 8;
+/// Random bytes behind one name: 32 hex digits.
+const RANDOM_BYTES: usize = 16;
+
+/// One Compose invocation's arguments and the interpolation file they name. A
+/// VM-hosted backend that needs interpolation carries `Some`; a host backend
+/// and an invocation with nothing to deliver carry `None` and unchanged args.
+///
+/// Keep `interpolation` alive until the Compose process has exited and been
+/// reaped: dropping it removes the file the VM reads.
+pub struct ComposeInvocation {
+    pub args: Vec<OsString>,
+    pub interpolation: Option<InterpolationFile>,
+}
 
 /// One Compose invocation's arguments, with the interpolation values a
 /// VM-hosted backend cannot inherit. A host backend already owns the caller's
@@ -41,23 +88,31 @@ pub fn compose_invocation_args(
     program: &OsStr,
     args: &[OsString],
     env: &[(String, OsString)],
-) -> io::Result<Vec<OsString>> {
+) -> io::Result<ComposeInvocation> {
+    let unchanged = || ComposeInvocation {
+        args: args.to_vec(),
+        interpolation: None,
+    };
     if !runs_in_vm(program) || env.is_empty() {
-        return Ok(args.to_vec());
+        return Ok(unchanged());
     }
     let Some(index) = args.iter().position(|argument| argument == COMPOSE) else {
-        return Ok(args.to_vec());
+        return Ok(unchanged());
     };
     let mut entries = BTreeMap::new();
     for (name, value) in env {
         validate_name(name)?;
         entries.insert(name.clone(), value.clone());
     }
-    let path = write_interpolation_file(&entries)?;
+    let body = render(&entries)?;
+    let file = InterpolationFile::create(&body)?;
     let mut resolved = args.to_vec();
     resolved.insert(index + 1, OsString::from(ENV_FILE_FLAG));
-    resolved.insert(index + 2, path.into_os_string());
-    Ok(resolved)
+    resolved.insert(index + 2, file.path().as_os_str().to_owned());
+    Ok(ComposeInvocation {
+        args: resolved,
+        interpolation: Some(file),
+    })
 }
 
 /// Only the Colima adapter runs Compose on the other side of a VM boundary.
@@ -137,74 +192,432 @@ fn invalid(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// Write one interpolation set, reusing an identical file this user already
-/// published. The name is the digest of the contents, so concurrent
-/// invocations of the same plan converge on one file.
-fn write_interpolation_file(entries: &BTreeMap<String, OsString>) -> io::Result<PathBuf> {
-    let body = render(entries)?;
-    let op = crate::environment::operation(
-        effigy_kernel::ctx::EffectClass::Mutate,
-        effigy_kernel::ctx::CancelToken::default(),
-        Duration::from_secs(10),
-    );
-    let cx = op.effects().map_err(|e| invalid(format!("{e:?}")))?;
-    let home = crate::effigy_home().ok_or_else(|| invalid("the Effigy home is unknown (HOME is required to deliver Compose interpolation to the Colima VM)".into()))?;
-    let home_dir = match DirFd::open(&home) {
-        Ok(dir) => dir,
-        Err(_) if !home.exists() => {
-            let parent = home
-                .parent()
-                .ok_or_else(|| invalid("Effigy home has no parent".into()))?;
-            let name = home
-                .file_name()
-                .and_then(OsStr::to_str)
-                .ok_or_else(|| invalid("invalid Effigy home".into()))?;
-            DirFd::open(parent)
-                .and_then(|dir| dir.prepare_setup_child(&cx, &FileName::new(name)?, 0o700))
-                .map_err(|e| invalid(e.to_string()))?
-        }
-        Err(error) => return Err(invalid(error.to_string())),
-    };
-    let directory = home_dir
-        .prepare_setup_child(
-            &cx,
-            &FileName::new(DIRECTORY).map_err(|e| invalid(e.to_string()))?,
-            0o700,
-        )
-        .map_err(|e| invalid(e.to_string()))?;
-    let gate = Gate::files(
-        &cx,
-        &directory,
-        "compose-interpolation",
-        Wait::Until(std::time::Instant::now() + Duration::from_secs(10)),
-    )
-    .map_err(|e| invalid(e.to_string()))?;
-    let digest = effigy_gateway::ports::sha256_hex(body.as_bytes());
-    let name =
-        FileName::new(&format!("{}.env", &digest[..16])).map_err(|e| invalid(e.to_string()))?;
-    let path = home.join(DIRECTORY).join(name.as_str());
-    if path
-        .symlink_metadata()
-        .is_ok_and(|metadata| metadata.file_type().is_file())
-    {
-        return Ok(path);
+/// A per-invocation interpolation file, held open under a shared lock. Its
+/// removal is identity-checked: a name that now points at another inode is
+/// restored, never unlinked.
+pub struct InterpolationFile {
+    path: PathBuf,
+    directory: OwnedFd,
+    name: String,
+    stat: FileStat,
+    /// Holds the shared lock for the file's lifetime. A sweep takes the
+    /// exclusive lock only when no invocation holds this one.
+    _lock: Flock<File>,
+    removed: bool,
+}
+
+impl InterpolationFile {
+    /// The path the VM reads, under the operator's Effigy home.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
-    effigy_kernel::record::atomic_replace(
-        &cx,
-        &gate,
-        &directory,
-        &name,
-        body.as_bytes(),
-        Default::default(),
+
+    /// Remove the file now. `Ok` means the entry this invocation created is gone
+    /// or was already removed; `Err` means its state is unknown.
+    pub fn remove(mut self) -> io::Result<()> {
+        self.removed = true;
+        remove_owned(&self.directory, &self.name, &self.stat)
+    }
+
+    /// Sweep stale files, then write one fresh file for `body`.
+    fn create(body: &str) -> io::Result<Self> {
+        let home = crate::effigy_home().ok_or_else(|| {
+            invalid("the Effigy home is unknown (HOME is required to deliver Compose interpolation to the Colima VM)".into())
+        })?;
+        let directory = open_private_directory(&home)?;
+        let directory_path = home.join(DIRECTORY);
+        sweep(&directory, &directory_path);
+        for _ in 0..CREATE_ATTEMPTS {
+            let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", random_hex(RANDOM_BYTES)?);
+            let flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW;
+            let fd = match openat(
+                &directory,
+                name.as_str(),
+                flags | OFlag::O_CLOEXEC,
+                Mode::from_bits_truncate(0o600),
+            ) {
+                Ok(fd) => fd,
+                Err(Errno::EEXIST) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if let Some(file) =
+                Self::fill(&directory, &directory_path, &name, File::from(fd), body)?
+            {
+                return Ok(file);
+            }
+        }
+        Err(invalid(
+            "could not create a unique Compose interpolation file".into(),
+        ))
+    }
+
+    /// Lock and fill a file this invocation just created. Nothing secret is
+    /// written until the shared lock is held and the name still names this
+    /// inode, so a failure before that point leaves no value behind. `Ok(None)`
+    /// means another party took the name and the caller creates a fresh one.
+    /// Once the body is being written, every failure removes the file.
+    fn fill(
+        directory: &OwnedFd,
+        path: &Path,
+        name: &str,
+        file: File,
+        body: &str,
+    ) -> io::Result<Option<Self>> {
+        let stat = fstat(&file).map_err(io::Error::from)?;
+        if !owned_file(&stat) {
+            discard(directory, name, &stat)?;
+            return Err(invalid(
+                "a Compose interpolation file was not created as an owned single-link file".into(),
+            ));
+        }
+        let owned = match directory.try_clone() {
+            Ok(owned) => owned,
+            Err(error) => {
+                discard(directory, name, &stat)?;
+                return Err(error);
+            }
+        };
+        if let Err(error) = fchmod(&file, Mode::from_bits_truncate(0o600)) {
+            discard(directory, name, &stat)?;
+            return Err(error.into());
+        }
+        let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
+            // A sweep holds the exclusive lock: it is removing this name.
+            discard(directory, name, &stat)?;
+            return Ok(None);
+        };
+        if !is_entry(directory, name, &stat) {
+            discard(directory, name, &stat)?;
+            return Ok(None);
+        }
+        // From here the value may reach the file: every failure removes it, and
+        // a failed removal is reported with the original error, never dropped.
+        if let Err(error) = write_body(&mut locked, body).and_then(|()| locked.sync_all()) {
+            return Err(unknown_after_write(
+                error,
+                remove_owned(directory, name, &stat),
+            ));
+        }
+        Ok(Some(Self {
+            path: path.join(name),
+            directory: owned,
+            name: name.to_owned(),
+            stat,
+            _lock: locked,
+            removed: false,
+        }))
+    }
+}
+
+/// A failed write whose cleanup also failed: the caller sees both, and the
+/// cleanup state is named as unknown rather than success.
+fn unknown_after_write(write_error: io::Error, cleanup: io::Result<()>) -> io::Error {
+    match cleanup {
+        Ok(()) => write_error,
+        Err(cleanup_error) => io::Error::new(
+            write_error.kind(),
+            format!(
+                "{write_error}; the Compose interpolation file's cleanup state is unknown ({cleanup_error})"
+            ),
+        ),
+    }
+}
+
+/// The one write of a value into a locked interpolation file.
+fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_WRITE.with(|armed| armed.replace(false)) {
+        return Err(io::Error::other("injected write failure"));
+    }
+    file.write_all(body.as_bytes())
+}
+
+impl Drop for InterpolationFile {
+    fn drop(&mut self) {
+        if !self.removed && remove_owned(&self.directory, &self.name, &self.stat).is_err() {
+            eprintln!(
+                "effigy: could not confirm removal of a Compose interpolation file at {}; its cleanup state is unknown",
+                self.path.display()
+            );
+        }
+    }
+}
+
+/// Open the operator's `<home>/compose-env` directory, creating it 0700. Each
+/// component is reopened no-follow from `/` after the home is canonicalized, so
+/// no path swap redirects a later open. An existing directory owned by this user
+/// with group or other bits is repaired to 0700; a foreign one is refused.
+fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
+    if fs::symlink_metadata(home).is_err() {
+        fs::DirBuilder::new().mode(0o700).create(home)?;
+    }
+    let canonical = fs::canonicalize(home)?;
+    let mut walk = nix::fcntl::open(
+        Path::new("/"),
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+        Mode::empty(),
     )
-    .map_err(|e| invalid(e.to_string()))?;
-    Ok(path)
+    .map_err(io::Error::from)?;
+    for component in canonical.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(part) => {
+                walk = openat(
+                    &walk,
+                    part,
+                    OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(io::Error::from)?;
+            }
+            _ => return Err(invalid("the Effigy home path is not canonical".into())),
+        }
+    }
+    let home_fd = walk;
+    let home_stat = fstat(&home_fd).map_err(io::Error::from)?;
+    if !is_directory(&home_stat)
+        || home_stat.st_uid != geteuid().as_raw()
+        || u32::from(home_stat.st_mode) & 0o022 != 0
+    {
+        return Err(invalid(
+            "the Effigy home is not an operator-owned directory without group or other write access".into(),
+        ));
+    }
+    match mkdirat(&home_fd, DIRECTORY, Mode::from_bits_truncate(0o700)) {
+        Ok(()) | Err(Errno::EEXIST) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let directory = openat(
+        &home_fd,
+        DIRECTORY,
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let mut stat = fstat(&directory).map_err(io::Error::from)?;
+    if !owned_directory_for(&stat, geteuid().as_raw()) {
+        return Err(invalid(
+            "the Compose interpolation directory is not an owned directory".into(),
+        ));
+    }
+    if u32::from(stat.st_mode) & 0o777 != 0o700 {
+        fchmod(&directory, Mode::from_bits_truncate(0o700)).map_err(io::Error::from)?;
+        stat = fstat(&directory).map_err(io::Error::from)?;
+        if u32::from(stat.st_mode) & 0o777 != 0o700 {
+            return Err(invalid(
+                "the Compose interpolation directory could not be made private".into(),
+            ));
+        }
+    }
+    Ok(directory)
+}
+
+/// Remove crash residue this layout owns. Only names this layout creates are
+/// candidates, and each is reached through the verified directory descriptor. A
+/// `compose-` or quarantine file is removed only when its exclusive lock is free:
+/// a live invocation holds the shared lock for the file's lifetime. A legacy
+/// `<16 hex>.env` file carries no lock and no proof of idleness, so it is never
+/// removed; its names are counted in a one-time notice. A sweep that cannot read
+/// the directory removes nothing.
+fn sweep(directory: &OwnedFd, path: &Path) {
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    let mut removed = 0_usize;
+    let mut deferred = 0_usize;
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        match Candidate::of(&name) {
+            Some(Candidate::Locked) => {}
+            Some(Candidate::Legacy) => {
+                deferred += 1;
+                continue;
+            }
+            None => continue,
+        }
+        let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
+        let Ok(fd) = openat(directory, name.as_str(), flags, Mode::empty()) else {
+            continue;
+        };
+        let file = File::from(fd);
+        let Ok(stat) = fstat(&file) else {
+            continue;
+        };
+        if !owned_file(&stat) {
+            continue;
+        }
+        let Ok(_exclusive) = Flock::lock(file, FlockArg::LockExclusiveNonblock) else {
+            continue;
+        };
+        if is_entry(directory, &name, &stat) && remove_owned(directory, &name, &stat).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        eprintln!(
+            "effigy: removed {removed} stale Compose interpolation file(s) from {}",
+            path.display()
+        );
+    }
+    if deferred > 0 {
+        DEFERRED_NOTICE.call_once(|| {
+            eprintln!(
+                "effigy: {deferred} legacy Compose interpolation file(s) in {} predate per-invocation files and cannot be proven idle; they are left in place",
+                path.display()
+            );
+        });
+    }
+}
+
+/// The kinds of name a sweep may consider.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Candidate {
+    /// A per-invocation file or a quarantine name: protected by its lock.
+    Locked,
+    /// A content-named file from an earlier build: never removed.
+    Legacy,
+}
+
+impl Candidate {
+    fn of(name: &str) -> Option<Self> {
+        if is_hex_name(name, FILE_PREFIX, 32, FILE_SUFFIX)
+            || is_hex_name(name, QUARANTINE_PREFIX, 32, "")
+        {
+            Some(Self::Locked)
+        } else if is_hex_name(name, "", LEGACY_DIGITS, FILE_SUFFIX) {
+            Some(Self::Legacy)
+        } else {
+            None
+        }
+    }
+}
+
+/// Whether `name` is `prefix`, then `digits` lowercase hex digits, then `suffix`.
+fn is_hex_name(name: &str, prefix: &str, digits: usize, suffix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .is_some_and(|hex| {
+            hex.len() == digits
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
+/// Remove the entry `name` only if it still names the inode described by
+/// `expected`. The entry is first moved to a fresh quarantine name, so the
+/// unlink never follows a check: if the moved inode is not `expected`, it is
+/// put back with a no-overwrite link and never unlinked.
+fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_REMOVE.with(|armed| armed.replace(false)) {
+        return Err(io::Error::other("injected removal failure"));
+    }
+    let quarantine = format!("{QUARANTINE_PREFIX}{}", random_hex(RANDOM_BYTES)?);
+    match renameat(directory, name, directory, quarantine.as_str()) {
+        Ok(()) => {}
+        // The name is already gone. Nothing confirms that this invocation's
+        // inode was the one removed, so the caller decides whether that matters.
+        Err(Errno::ENOENT) => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "a Compose interpolation file was already gone; its removal is not confirmed",
+            ))
+        }
+        Err(error) => return Err(error.into()),
+    }
+    #[cfg(test)]
+    if VANISH_NEXT_QUARANTINE.with(|armed| armed.replace(false)) {
+        let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
+    }
+    match fstatat(directory, quarantine.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
+        Ok(moved) if same_object(&moved, expected) => {
+            unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir)
+                .map_err(io::Error::from)
+        }
+        Ok(_) => {
+            // Something replaced the name between the check and the move. Put
+            // it back without overwriting whatever holds the name now.
+            match linkat(
+                directory,
+                quarantine.as_str(),
+                directory,
+                name,
+                AtFlags::empty(),
+            ) {
+                Ok(()) => {
+                    let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
+                    Err(invalid(
+                        "a Compose interpolation name was replaced before removal; the replacement was restored".into(),
+                    ))
+                }
+                Err(_) => Err(invalid(
+                    "a Compose interpolation name was replaced before removal; the replacement is left in quarantine".into(),
+                )),
+            }
+        }
+        // The moved entry vanished before it could be checked or unlinked, so
+        // whatever it was, its removal is not confirmed.
+        Err(Errno::ENOENT) => Err(invalid(
+            "a Compose interpolation file vanished during removal; its state is unknown".into(),
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Removal of a file that no value has reached yet. A name already gone is not
+/// an error here: nothing secret was written, and the caller retries or fails
+/// on its own terms. Any other failure is returned, never dropped.
+fn discard(directory: &OwnedFd, name: &str, stat: &FileStat) -> io::Result<()> {
+    match remove_owned(directory, name, stat) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+fn is_entry(directory: &OwnedFd, name: &str, stat: &FileStat) -> bool {
+    fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW).is_ok_and(|now| same_object(&now, stat))
+}
+
+fn same_object(left: &FileStat, right: &FileStat) -> bool {
+    left.st_dev == right.st_dev && left.st_ino == right.st_ino
+}
+
+fn is_directory(stat: &FileStat) -> bool {
+    SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFDIR
+}
+
+/// A regular file owned by this user with exactly one link.
+fn owned_file(stat: &FileStat) -> bool {
+    owned_file_for(stat, geteuid().as_raw())
+}
+
+fn owned_file_for(stat: &FileStat, uid: u32) -> bool {
+    SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
+        && stat.st_uid == uid
+        && stat.st_nlink == 1
+}
+
+/// A directory owned by the given user.
+fn owned_directory_for(stat: &FileStat, uid: u32) -> bool {
+    is_directory(stat) && stat.st_uid == uid
+}
+
+/// `bytes` of `/dev/urandom`, as lowercase hex.
+fn random_hex(bytes: usize) -> io::Result<String> {
+    let mut buffer = vec![0_u8; bytes];
+    File::open("/dev/urandom")?.read_exact(&mut buffer)?;
+    Ok(buffer.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nix::unistd::geteuid;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, SystemTime};
 
     fn args(paths: &[&str]) -> Vec<OsString> {
         ["nerdctl", "--profile", "effigy", "--", "compose"]
@@ -218,65 +631,116 @@ mod tests {
         vec![("DATABASE_URL".to_owned(), OsString::from(value))]
     }
 
+    fn invoke(
+        home: &Path,
+        invocation: &[OsString],
+        env: &[(String, OsString)],
+    ) -> io::Result<ComposeInvocation> {
+        crate::with_test_effigy_home(home, || {
+            compose_invocation_args(OsStr::new("colima"), invocation, env)
+        })
+    }
+
+    /// The file an invocation names after `--env-file`.
+    fn env_path(resolved: &ComposeInvocation) -> PathBuf {
+        let index = resolved
+            .args
+            .iter()
+            .position(|argument| argument == ENV_FILE_FLAG)
+            .expect("--env-file");
+        PathBuf::from(&resolved.args[index + 1])
+    }
+
+    fn compose_dir(home: &Path) -> PathBuf {
+        home.join(DIRECTORY)
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
+    }
+
+    fn entries(home: &Path) -> Vec<String> {
+        let mut names = fs::read_dir(compose_dir(home))
+            .expect("compose-env")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
     #[test]
-    fn a_vm_hosted_invocation_names_a_file_the_vm_can_read() {
+    fn a_vm_hosted_invocation_names_a_fresh_owner_only_file() {
         let home = tempfile::tempdir().expect("home");
         let invocation = args(&["-f", "checkout/compose.yml", "-p", "probe", "up", "-d"]);
-        let resolved = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(
-                OsStr::new("colima"),
-                &invocation,
-                &secret("postgres://db/app"),
-            )
-        })
-        .expect("interpolation file");
+        let resolved = invoke(home.path(), &invocation, &secret("postgres://db/app"))
+            .expect("interpolation file");
         let index = resolved
+            .args
             .iter()
             .position(|argument| argument == ENV_FILE_FLAG)
             .expect("--env-file");
         assert_eq!(
-            resolved[index - 1],
+            resolved.args[index - 1],
             OsString::from(COMPOSE),
             "--env-file is a Compose flag, ahead of the subcommand"
         );
-        let path = PathBuf::from(&resolved[index + 1]);
+        let file = resolved.interpolation.as_ref().expect("held file");
+        let path = PathBuf::from(&resolved.args[index + 1]);
+        assert_eq!(path, file.path());
         assert!(path.starts_with(home.path()), "{path:?}");
-        assert!(
-            path.is_file(),
-            "the invocation names an interpolation file the VM can read"
-        );
+        assert_eq!(mode(&compose_dir(home.path())), 0o700);
+        assert_eq!(mode(&path), 0o600);
         assert_eq!(
-            std::fs::read_to_string(&path).expect("interpolation file"),
+            fs::read_to_string(&path).expect("interpolation file"),
             "DATABASE_URL=postgres://db/app\n",
             "a plain value is unquoted, so nerdctl's container copy stays exact"
         );
-        assert_eq!(
-            std::fs::metadata(&path)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
+        assert!(
+            !path
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .contains("postgres"),
+            "the name carries no value"
         );
     }
 
     #[test]
-    fn the_same_values_name_the_same_file_and_new_values_add_one() {
+    fn each_invocation_names_its_own_file_and_its_drop_removes_it() {
         let home = tempfile::tempdir().expect("home");
-        let first = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("one"))
-        })
-        .expect("interpolation file");
-        let same = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("one"))
-        })
-        .expect("interpolation file");
-        let changed = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("two"))
-        })
-        .expect("interpolation file");
-        assert_eq!(first, same, "an unchanged plan names the same file");
-        assert_ne!(first, changed, "a changed secret names its own file");
+        let first = invoke(home.path(), &args(&["up"]), &secret("one")).expect("first");
+        let second = invoke(home.path(), &args(&["up"]), &secret("one")).expect("second");
+        let first_path = env_path(&first);
+        let second_path = env_path(&second);
+        assert_ne!(
+            first_path, second_path,
+            "identical values never share a name"
+        );
+        assert_eq!(entries(home.path()).len(), 2, "both live files exist");
+        drop(first);
+        drop(second);
+        assert!(
+            entries(home.path()).is_empty(),
+            "no file survives its invocation"
+        );
+    }
+
+    #[test]
+    fn remove_confirms_the_file_is_gone() {
+        let home = tempfile::tempdir().expect("home");
+        let resolved =
+            invoke(home.path(), &args(&["ps"]), &secret("sentinel-value")).expect("file");
+        let path = env_path(&resolved);
+        let file = resolved.interpolation.expect("held file");
+        assert!(path.is_file());
+        file.remove().expect("confirmed removal");
+        assert!(!path.exists(), "the secret-bearing file is gone");
     }
 
     #[test]
@@ -296,9 +760,10 @@ mod tests {
             )
         })
         .expect("unchanged invocation");
-        assert_eq!(resolved, invocation);
+        assert_eq!(resolved.args, invocation);
+        assert!(resolved.interpolation.is_none());
         assert!(
-            !home.path().join(DIRECTORY).exists(),
+            !compose_dir(home.path()).exists(),
             "a host backend writes no interpolation file"
         );
     }
@@ -307,11 +772,9 @@ mod tests {
     fn an_invocation_with_nothing_to_deliver_is_unchanged() {
         let home = tempfile::tempdir().expect("home");
         let invocation = args(&["ps"]);
-        let resolved = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(OsStr::new("colima"), &invocation, &[])
-        })
-        .expect("unchanged invocation");
-        assert_eq!(resolved, invocation);
+        let resolved = invoke(home.path(), &invocation, &[]).expect("unchanged invocation");
+        assert_eq!(resolved.args, invocation);
+        assert!(resolved.interpolation.is_none());
     }
 
     #[test]
@@ -324,11 +787,321 @@ mod tests {
             OsString::from("--"),
             OsString::from("ps"),
         ];
-        let resolved = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(OsStr::new("colima"), &invocation, &secret("secret"))
-        })
-        .expect("unchanged runtime invocation");
-        assert_eq!(resolved, invocation);
+        let resolved = invoke(home.path(), &invocation, &secret("secret"))
+            .expect("unchanged runtime invocation");
+        assert_eq!(resolved.args, invocation);
+        assert!(resolved.interpolation.is_none());
+    }
+
+    #[test]
+    fn a_legacy_file_is_never_removed_however_old() {
+        let home = tempfile::tempdir().expect("home");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let old = compose_dir(home.path()).join("0123456789abcdef.env");
+        let recent = compose_dir(home.path()).join("fedcba9876543210.env");
+        let other = compose_dir(home.path()).join("notes.env");
+        for path in [&old, &recent, &other] {
+            fs::write(path, "LEGACY=secret\n").expect("legacy fixture");
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("mode");
+        }
+        File::options()
+            .write(true)
+            .open(&old)
+            .expect("open")
+            .set_modified(SystemTime::now() - Duration::from_secs(2 * 365 * 24 * 60 * 60))
+            .expect("age");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            old.exists(),
+            "age alone never proves a lockless legacy file idle"
+        );
+        assert!(recent.exists(), "a legacy file is never removed");
+        assert!(
+            other.exists(),
+            "a name outside the legacy pattern is never touched"
+        );
+    }
+
+    #[test]
+    fn a_hardlinked_compose_file_is_never_swept() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "1".repeat(32));
+        let shared = compose_dir(home.path()).join(&name);
+        let target = outside.path().join("victim.env");
+        fs::write(&target, "KEEP=me\n").expect("target");
+        fs::hard_link(&target, &shared).expect("hardlink");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            shared.exists(),
+            "a hard-linked compose file is not single-link and is kept"
+        );
+        assert_eq!(fs::read_to_string(&target).expect("target"), "KEEP=me\n");
+    }
+
+    #[test]
+    fn a_failed_write_removes_the_partial_file() {
+        let home = tempfile::tempdir().expect("home");
+        FAIL_NEXT_WRITE.with(|armed| armed.set(true));
+        let result = invoke(home.path(), &args(&["up"]), &secret("partial-secret"));
+        assert!(result.is_err(), "the injected write failure is reported");
+        assert!(
+            entries(home.path()).is_empty(),
+            "a file that may hold a value is removed before the error returns"
+        );
+    }
+
+    #[test]
+    fn a_hardlinked_or_symlinked_legacy_name_is_never_swept() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let target = outside.path().join("victim.env");
+        fs::write(&target, "KEEP=me\n").expect("target");
+        let hardlink = compose_dir(home.path()).join("aaaaaaaaaaaaaaaa.env");
+        fs::hard_link(&target, &hardlink).expect("hardlink");
+        let symlink = compose_dir(home.path()).join("bbbbbbbbbbbbbbbb.env");
+        std::os::unix::fs::symlink(&target, &symlink).expect("symlink");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            hardlink.exists(),
+            "a hard-linked name is not single-link and is kept"
+        );
+        assert!(
+            symlink.symlink_metadata().is_ok(),
+            "a symlink is never followed or removed"
+        );
+        assert_eq!(fs::read_to_string(&target).expect("target"), "KEEP=me\n");
+    }
+
+    #[test]
+    fn a_held_file_survives_a_sweep_and_crash_residue_is_swept() {
+        let home = tempfile::tempdir().expect("home");
+        let live = invoke(home.path(), &args(&["up"]), &secret("live")).expect("live");
+        let live_path = env_path(&live);
+        let residue =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "0".repeat(32)));
+        fs::write(&residue, "CRASH=residue\n").expect("residue");
+        fs::set_permissions(&residue, fs::Permissions::from_mode(0o600)).expect("mode");
+        let _next = invoke(home.path(), &args(&["logs"]), &secret("next")).expect("next");
+        assert_eq!(
+            fs::read_to_string(&live_path).expect("live file"),
+            "DATABASE_URL=live\n",
+            "a held file is never swept"
+        );
+        assert!(
+            !residue.exists(),
+            "an unlocked crash residue is swept by the next invocation"
+        );
+    }
+
+    #[test]
+    fn a_replaced_name_is_restored_and_never_unlinked() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("held")).expect("held");
+        let path = env_path(&held);
+        let other = compose_dir(home.path()).join("stand-in.env");
+        fs::write(&other, "REPLACEMENT=kept\n").expect("replacement");
+        fs::rename(&other, &path).expect("replace the name");
+        let file = held.interpolation.expect("held file");
+        assert!(
+            file.remove().is_err(),
+            "a replaced name is reported, not confirmed"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("replacement"),
+            "REPLACEMENT=kept\n",
+            "the replacement is restored, not unlinked"
+        );
+    }
+
+    #[test]
+    fn a_symlinked_compose_env_directory_is_refused() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        std::os::unix::fs::symlink(outside.path(), compose_dir(home.path())).expect("symlink");
+        let result = invoke(home.path(), &args(&["up"]), &secret("secret"));
+        assert!(result.is_err(), "a symlinked directory is never followed");
+        assert!(
+            fs::read_dir(outside.path())
+                .expect("outside")
+                .next()
+                .is_none(),
+            "nothing is written through the link"
+        );
+    }
+
+    #[test]
+    fn an_unsafe_compose_env_mode_is_repaired_to_private() {
+        let home = tempfile::tempdir().expect("home");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o755))
+            .expect("mode");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("secret")).expect("repaired");
+        assert_eq!(mode(&compose_dir(home.path())), 0o700);
+    }
+
+    #[test]
+    fn concurrent_invocations_hold_distinct_files_that_no_sweep_removes() {
+        let home = tempfile::tempdir().expect("home");
+        let root = home.path().to_path_buf();
+        let workers = (0..8)
+            .map(|_| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    crate::with_test_effigy_home(&root, || {
+                        (0..5)
+                            .map(|_| {
+                                invoke(&root, &args(&["up"]), &secret("concurrent"))
+                                    .expect("concurrent invocation")
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let held = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("worker"))
+            .collect::<Vec<_>>();
+        let paths = held.iter().map(env_path).collect::<Vec<_>>();
+        let distinct = paths.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            distinct.len(),
+            40,
+            "every concurrent invocation names its own file"
+        );
+        assert!(
+            paths.iter().all(|path| path.is_file()),
+            "no sweep removed a held file"
+        );
+        assert_eq!(entries(home.path()).len(), 40);
+        drop(held);
+        assert!(
+            entries(home.path()).is_empty(),
+            "every file is removed with its invocation"
+        );
+    }
+
+    #[test]
+    fn a_failed_write_whose_removal_also_fails_reports_the_unknown_state() {
+        let home = tempfile::tempdir().expect("home");
+        FAIL_NEXT_WRITE.with(|armed| armed.set(true));
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        let error = invoke(home.path(), &args(&["up"]), &secret("partial-secret"))
+            .err()
+            .expect("the write failure is reported");
+        let message = error.to_string();
+        assert!(message.contains("injected write failure"), "{message}");
+        assert!(
+            message.contains("cleanup state is unknown"),
+            "a failed removal is never silent: {message}"
+        );
+        assert_eq!(
+            entries(home.path()).len(),
+            1,
+            "the unremoved file is left named, not hidden"
+        );
+    }
+
+    #[test]
+    fn a_name_gone_before_removal_is_not_reported_as_confirmed() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("gone")).expect("held");
+        fs::remove_file(env_path(&held)).expect("the name is removed out from under the holder");
+        let file = held.interpolation.expect("held file");
+        let error = file
+            .remove()
+            .expect_err("a missing name is not a confirmed removal");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_quarantine_that_vanishes_after_the_move_is_reported_unknown() {
+        let home = tempfile::tempdir().expect("home");
+        let held = invoke(home.path(), &args(&["up"]), &secret("vanish")).expect("held");
+        let file = held.interpolation.expect("held file");
+        VANISH_NEXT_QUARANTINE.with(|armed| armed.set(true));
+        let error = file
+            .remove()
+            .expect_err("a vanished quarantine is not a confirmed removal");
+        assert!(error.to_string().contains("state is unknown"), "{error}");
+    }
+
+    #[test]
+    fn a_symlinked_compose_candidate_is_never_followed_or_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let victim = outside.path().join("victim.env");
+        fs::write(&victim, "KEEP=me\n").expect("victim");
+        let link =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "2".repeat(32)));
+        std::os::unix::fs::symlink(&victim, &link).expect("symlink");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(link.symlink_metadata().is_ok(), "the symlink is kept");
+        assert_eq!(fs::read_to_string(&victim).expect("victim"), "KEEP=me\n");
+    }
+
+    #[test]
+    fn a_fifo_candidate_neither_blocks_the_sweep_nor_gets_removed() {
+        let home = tempfile::tempdir().expect("home");
+        fs::create_dir_all(compose_dir(home.path())).expect("compose-env");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let fifo =
+            compose_dir(home.path()).join(format!("{FILE_PREFIX}{}{FILE_SUFFIX}", "3".repeat(32)));
+        nix::unistd::mkfifo(&fifo, Mode::from_bits_truncate(0o600)).expect("fifo fixture");
+        let _held = invoke(home.path(), &args(&["up"]), &secret("fresh")).expect("invocation");
+        assert!(
+            fifo.symlink_metadata().is_ok(),
+            "a non-regular candidate is kept"
+        );
+    }
+
+    #[test]
+    fn the_owner_predicates_refuse_a_foreign_owner() {
+        let root = tempfile::tempdir().expect("root");
+        let file = root.path().join("owned");
+        fs::write(&file, "x").expect("file");
+        let file_stat = fstat(File::open(&file).expect("open")).expect("stat");
+        let dir_stat = fstat(File::open(root.path()).expect("open dir")).expect("dir stat");
+        let me = geteuid().as_raw();
+        let foreign = me.wrapping_add(1);
+        assert!(
+            owned_file_for(&file_stat, me),
+            "the operator's own file is owned"
+        );
+        assert!(
+            !owned_file_for(&file_stat, foreign),
+            "a foreign-owned file is refused"
+        );
+        assert!(owned_directory_for(&dir_stat, me));
+        assert!(
+            !owned_directory_for(&dir_stat, foreign),
+            "a foreign-owned directory is refused"
+        );
+    }
+
+    #[test]
+    fn a_home_with_group_or_other_write_is_refused_before_anything_is_created() {
+        let home = tempfile::tempdir().expect("home");
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o775)).expect("mode");
+        let result = invoke(home.path(), &args(&["up"]), &secret("secret"));
+        assert!(result.is_err(), "a group-writable Effigy home is refused");
+        assert!(
+            !compose_dir(home.path()).exists(),
+            "nothing is created under a refused home"
+        );
     }
 
     #[test]

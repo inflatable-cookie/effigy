@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use effigy_containers::policy::render::InterpolationFile;
 use effigy_containers::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 #[cfg(unix)]
 use nix::libc;
@@ -74,18 +75,21 @@ pub fn spawn_runtime_plan_inherit(
         &plan.label,
         &[],
     )
+    .map(|(child, _)| child)
 }
 
 pub fn spawn_compose_plan_inherit(
     plan: &ContainerComposeInvocationPlan,
 ) -> Result<std::process::Child, EffigyRuntimeError> {
-    spawn_compose_plan_inherit_with_env(plan, &[])
+    spawn_compose_plan_inherit_with_env(plan, &[]).map(|(child, _)| child)
 }
 
+/// The child and, when a VM-hosted backend needed interpolation, the file it
+/// reads. Keep the file alive until the child has exited and been reaped.
 pub fn spawn_compose_plan_inherit_with_env(
     plan: &ContainerComposeInvocationPlan,
     env: &[(String, OsString)],
-) -> Result<std::process::Child, EffigyRuntimeError> {
+) -> Result<(std::process::Child, Option<InterpolationFile>), EffigyRuntimeError> {
     spawn_command_inherit_os(
         &plan.repo_root,
         &plan.program.to_string_lossy(),
@@ -101,7 +105,7 @@ fn spawn_command_inherit_os(
     args: &[OsString],
     label: &str,
     env: &[(String, OsString)],
-) -> Result<std::process::Child, EffigyRuntimeError> {
+) -> Result<(std::process::Child, Option<InterpolationFile>), EffigyRuntimeError> {
     let launch = |error: std::io::Error| EffigyRuntimeError::TaskCommandLaunch {
         command: format!("{label} ({program} {})", format_args(args)),
         error,
@@ -109,9 +113,10 @@ fn spawn_command_inherit_os(
     // A VM-hosted Compose backend cannot inherit the host environment; the
     // shared transform names a file its VM can read. A host backend keeps the
     // process environment unchanged.
-    let args =
+    let invocation =
         effigy_containers::policy::render::compose_invocation_args(program.as_ref(), args, env)
             .map_err(launch)?;
+    let args = invocation.args;
     let mut command = Command::new(program);
     command
         .current_dir(repo_root)
@@ -133,12 +138,13 @@ fn spawn_command_inherit_os(
         command
             .pre_exec(|| setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(std::io::Error::from));
     }
-    command
+    let child = command
         .spawn()
         .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
             command: format!("{label} ({program} {})", format_args(&args)),
             error,
-        })
+        })?;
+    Ok((child, invocation.interpolation))
 }
 
 pub fn terminate_inherited_child_graceful(child: &mut std::process::Child) {
@@ -239,7 +245,7 @@ pub fn run_compose_plan_inherit_with_stop_flag_and_env(
     stop_flag: &AtomicBool,
     env: &[(String, OsString)],
 ) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
-    let child = spawn_compose_plan_inherit_with_env(plan, env)?;
+    let (child, _interpolation) = spawn_compose_plan_inherit_with_env(plan, env)?;
     run_compose_inherit_child_with_stop_flag(child, &plan.label, stop_flag)
 }
 
