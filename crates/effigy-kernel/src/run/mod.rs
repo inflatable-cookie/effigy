@@ -83,7 +83,7 @@ use crate::observe::UnknownReason;
 use crate::outcome::{Invocation, Outcome, WorkloadOutcome};
 use crate::root::StateRoot;
 use crate::store::{BusyWait, Store, StoreError, SETTLE_BUSY_WAIT};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -450,6 +450,67 @@ impl<'a> GuardedWorkspaceCleanup<'a> {
 }
 
 impl<'a> ParkedWorkspaceRun<'a> {
+    fn verify_session(&self) -> Result<(), RunError> {
+        let session = self
+            .snapshot
+            .session
+            .as_ref()
+            .ok_or_else(|| RunError::refused("parked activation has no staged session"))?;
+        let row: Option<(i64, String, Option<String>)> = self
+            .run
+            .store
+            .conn()
+            .query_row(
+                "SELECT generation,phase,owner_identity FROM runs WHERE run_id=?1 AND owner=?2",
+                params![session.run.to_string(), session.owner.name().to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let (generation, phase, identity) =
+            row.ok_or_else(|| RunError::refused("parked workspace session is no longer live"))?;
+        if generation != session.generation.get() as i64
+            || !matches!(phase.as_str(), "admitted" | "starting" | "active")
+        {
+            return Err(RunError::refused(
+                "parked workspace session is no longer live",
+            ));
+        }
+        let identity: crate::ident::ProcessIdentity =
+            serde_json::from_str(identity.as_deref().ok_or_else(|| {
+                RunError::unavailable("workspace session owner identity unavailable")
+            })?)?;
+        if identity != self.identity {
+            return Err(RunError::refused(
+                "workspace session has another owning process",
+            ));
+        }
+        let slot = crate::workspace_session::session_run_gate(
+            self.run.store.conn(),
+            &session.owner,
+            session.run,
+        )?;
+        if slot == session.owner {
+            return Err(RunError::unavailable(
+                "workspace session private liveness slot unavailable",
+            ));
+        }
+        let observe = self
+            .run
+            .cx
+            .child_until(self.deadline)
+            .operation()
+            .observe()
+            .map_err(|_| {
+                RunError::unavailable("workspace session liveness observation unavailable")
+            })?;
+        match Gate::probe(&observe, self.run.root, &slot) {
+            crate::observe::Observed::Verified(crate::gate::GateState::Held(_), _) => Ok(()),
+            _ => Err(RunError::unavailable(
+                "workspace session private liveness slot is not verified held",
+            )),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn expire_for_test(&mut self) {
         self.deadline = std::time::Instant::now();
@@ -535,6 +596,7 @@ impl<'a> ParkedWorkspaceRun<'a> {
                     "workspace reservation changed while parked",
                 ));
             }
+            self.verify_session()?;
             self.run
                 .cx
                 .operation()

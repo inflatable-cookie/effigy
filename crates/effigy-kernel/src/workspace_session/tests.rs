@@ -1657,6 +1657,34 @@ fn parked_reacquisition_refuses_advanced_environment_generation() {
 }
 
 #[test]
+fn parked_reacquisition_refuses_stopped_session() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(251));
+    let run = admit_activation(&cx, &root, &reservation, run_id(252));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    let (error, _custody) = parked.reacquire().expect_err("stopped session refuses");
+    assert!(
+        error.to_string().contains("session is no longer live"),
+        "{error}"
+    );
+    let gate = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .unwrap();
+    drop(gate);
+}
+
+#[test]
 fn parked_run_can_settle_after_activation_deadline_expires() {
     let fixture = home();
     let cx = context();
