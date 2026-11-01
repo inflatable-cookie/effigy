@@ -1053,7 +1053,16 @@ fn reserve_ticket(
     let cx = kernel::effects();
     let state = kernel::effects_root(root).expect("effects root");
     let run = RunId::new(1_760_000_000_000, [marker; 10]).expect("run id");
-    effigy_kernel::run::reserve(
+    let target = TaskTarget::for_catalog(root, "build", &catalog(root, "", "", 0));
+    let checkout = super::checkout::mint(root).expect("checkout");
+    let resolved = super::run::invocation(
+        &target.task_id(checkout).unwrap(),
+        target.owner(checkout).unwrap(),
+        vec!["build".into()],
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
+    effigy_kernel::run::reserve_resolved(
         &cx,
         state,
         AdmissionKey {
@@ -1062,6 +1071,7 @@ fn reserve_ticket(
         },
         Digest::of(digest),
         run,
+        &resolved,
     )
     .expect("the host records this request")
 }
@@ -1079,7 +1089,10 @@ fn ticketed(
         args: &[],
         key: None,
         admission: None,
-        workspace_admission: Some(ticket),
+        workspace_admission: Some(super::WorkspaceAdmission {
+            ticket,
+            catalog_snapshot: None,
+        }),
         cwd: None,
     })
 }
@@ -1175,10 +1188,6 @@ fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
         run: session_run.id(),
         generation: effigy_kernel::id::Generation::new(1),
     };
-    let ticket = match reserve_ticket(&checkout, session, 79, b"workspace drift") {
-        Reservation::Fresh(ticket) => ticket,
-        other => panic!("fresh reservation: {other:?}"),
-    };
     let mut dispatch = crate::runner::workspace_client::host_dispatch::HostDispatch::new(
         checkout.clone(),
         state.clone(),
@@ -1191,6 +1200,26 @@ fn reserved_engine_refuses_changed_task_before_any_fallback_effect() {
         output: OutputMode::Text,
     };
     let resolved = dispatch.resolve(&cx, &body).unwrap();
+    let run_id = effigy_kernel::id::RunId::new(1_760_000_000_000, [79; 10]).unwrap();
+    let admitted = dispatch
+        .admission_invocation(&body, &resolved, run_id)
+        .unwrap();
+    let ticket = match effigy_kernel::run::reserve_resolved(
+        &cx,
+        &state,
+        effigy_kernel::run::AdmissionKey {
+            session,
+            request: effigy_kernel::run::RequestId::new([79; 16]),
+        },
+        effigy_kernel::id::Digest::of(b"workspace drift"),
+        run_id,
+        &admitted,
+    )
+    .unwrap()
+    {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("fresh reservation: {other:?}"),
+    };
     let resolution = crate::runner::managed_run::WorkspaceResolution {
         invocation: serde_json::to_vec(&resolved).unwrap(),
         checkout: checkout.clone(),
@@ -1278,14 +1307,6 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             &default_marker,
         ),
     ] {
-        let ticket = match reserve_ticket(&checkout, session, request_id, b"workspace profile") {
-            Reservation::Fresh(ticket) => ticket,
-            other => {
-                failures.push(format!("fresh reservation: {other:?}"));
-                continue;
-            }
-        };
-        let expected_run = ticket.run();
         let body = InvocationBody {
             selector: Selector::Task("build".into()),
             cwd: ".".into(),
@@ -1300,6 +1321,31 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
                 continue;
             }
         };
+        let proposed_run =
+            effigy_kernel::id::RunId::new(1_760_000_000_000, [request_id; 10]).unwrap();
+        let admitted = dispatch
+            .admission_invocation(&body, &resolved, proposed_run)
+            .unwrap();
+        let ticket = match effigy_kernel::run::reserve_resolved(
+            &cx,
+            &state,
+            effigy_kernel::run::AdmissionKey {
+                session,
+                request: effigy_kernel::run::RequestId::new([request_id; 16]),
+            },
+            effigy_kernel::id::Digest::of(b"workspace profile"),
+            proposed_run,
+            &admitted,
+        )
+        .unwrap()
+        {
+            Reservation::Fresh(ticket) => ticket,
+            other => {
+                failures.push(format!("fresh reservation: {other:?}"));
+                continue;
+            }
+        };
+        let expected_run = ticket.run();
         let resolution = crate::runner::managed_run::WorkspaceResolution {
             invocation: serde_json::to_vec(&resolved).unwrap(),
             checkout: checkout.clone(),
@@ -1338,11 +1384,15 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             effigy_kernel::observe::Observed::Verified(reader, _) => {
                 match effigy_kernel::run::summary(&reader, expected_run) {
                     effigy_kernel::observe::Observed::Verified(summary, _)
-                        if summary
-                            .invocation
-                            .as_ref()
-                            .and_then(|inv| inv.spec().task.profile())
-                            == Some(profile) => {}
+                        if summary.invocation.as_ref().is_some_and(|inv| {
+                            inv.spec().task.profile() == Some(profile)
+                                && inv.digest() == admitted.digest()
+                                && inv.spec().provenance.get(super::MANAGED_RUN_PROVENANCE)
+                                    == Some(&effigy_kernel::id::Digest::of(
+                                        effigy_kernel::run::workspace_managed_token(expected_run)
+                                            .as_bytes(),
+                                    ))
+                        }) => {}
                     other => {
                         failures.push(format!("{profile}: wrong journal invocation: {other:?}"))
                     }

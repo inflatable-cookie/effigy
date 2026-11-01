@@ -633,10 +633,13 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
     .unwrap();
     let digest = Digest::of(b"effigy.supervise.admission.v1");
     let run = RunId::new(1, [5; 10]).unwrap();
-    let ticket = match crate::run::reserve(&cx, &root, key, digest, run).unwrap() {
-        crate::run::Reservation::Fresh(ticket) => ticket,
-        other => panic!("expected the one reservation, saw {other:?}"),
-    };
+    let ticket =
+        match crate::run::reserve_resolved(&cx, &root, key, digest, run, &inv("workspace-session"))
+            .unwrap()
+        {
+            crate::run::Reservation::Fresh(ticket) => ticket,
+            other => panic!("expected the one reservation, saw {other:?}"),
+        };
     let config = SupervisorConfig {
         protocol: HELPER_PROTOCOL,
         home: fixture.path().into(),
