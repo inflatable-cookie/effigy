@@ -1716,7 +1716,7 @@ fn the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_pu
         );
         files.insert(
             directory.join("fixtures/app.env").to_str().unwrap().into(),
-            b"FROZEN_ENV=from-sealed-file\n".to_vec(),
+            b"FROZEN_ENV=from-sealed-file\nFROZEN_LITERAL='literal$UNSET_IN_FIXTURE'\n".to_vec(),
         );
         files.insert(directory.join("fixtures/base.yml").to_str().unwrap().into(), b"services:\n  base:\n    build:\n      context: ./build\n      dockerfile: Dockerfile\n".to_vec());
         files.insert(
