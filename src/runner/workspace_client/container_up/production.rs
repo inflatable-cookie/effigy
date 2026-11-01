@@ -14,9 +14,7 @@ use effigy_kernel::supervise::EngineSession;
 use super::integrations::DEFAULT_INTEGRATION_BUDGET;
 use super::supervisor_preflight::PrevalidatedContainer;
 use super::{plan, ContainerUpRequest, ServingHostRequest};
-use crate::runner::container_command::{
-    reserved_input::ContainerBackendObservation, WorkspacePreparedEffects, WorkspaceUpEffects,
-};
+use crate::runner::container_command::{WorkspacePreparedEffects, WorkspaceUpEffects};
 use crate::runner::environment::workspace::{
     integrated::{self, IntegratedFailure},
     phase_a::PhaseARequest,
@@ -73,11 +71,10 @@ pub(super) fn activate_with(
             RunError::unavailable("workspace secret integration preparation unavailable")
         })?;
     let compose_env = prepared_effects.compose_env();
-    let mut predecessor = ContainerBackendObservation::prepare(planned.plan.policy())
+    let mut predecessor = plan::prepare_observation(planned.plan.policy())
         .map_err(|_| RunError::unavailable("workspace predecessor observation unavailable"))?;
-    let mut publication_observation =
-        ContainerBackendObservation::prepare(planned.plan.policy())
-            .map_err(|_| RunError::unavailable("workspace publication observation unavailable"))?;
+    let mut publication_observation = plan::prepare_observation(planned.plan.policy())
+        .map_err(|_| RunError::unavailable("workspace publication observation unavailable"))?;
     let supervisor_id = host_run.id().to_string();
     let request = PhaseARequest {
         plan: Arc::clone(&planned.plan),
@@ -90,14 +87,14 @@ pub(super) fn activate_with(
     let selected = integrated::run(
         request,
         &compose_env,
-        &mut predecessor,
+        predecessor.as_mut(),
         DEFAULT_INTEGRATION_BUDGET,
         |owner| {
             plan::publication_input(
                 owner,
                 &planned.plan,
                 &planned.context,
-                &mut publication_observation,
+                publication_observation.as_mut(),
             )
         },
         |target| Ok(prepared_effects.bind(target.clone())),

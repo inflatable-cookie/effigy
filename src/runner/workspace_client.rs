@@ -77,7 +77,7 @@ pub(crate) mod serving_host;
 
 pub(crate) use serving_facts::ServingFacts;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "workspace-serving-fixture"))]
 pub(crate) mod guest_fake;
 
 use effigy_cli::Command;

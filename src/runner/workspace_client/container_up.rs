@@ -13,6 +13,8 @@ use super::supervisor::ServiceOwner;
 
 mod cli_preflight;
 mod declaration;
+#[cfg(feature = "workspace-serving-fixture")]
+mod fake_io;
 pub(in crate::runner) mod integrations;
 mod plan;
 mod production;

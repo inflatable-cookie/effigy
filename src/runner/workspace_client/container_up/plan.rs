@@ -7,8 +7,9 @@ use effigy_kernel::run::RunError;
 use super::supervisor_preflight::PrevalidatedContainer;
 use super::PostPrepDeclaration;
 use crate::runner::container_command::reserved_input::{
-    self as inputs, ContainerBackendObservation, PublicationDeadline, ReservedDecisionFacts,
-    ReservedObservationRequest, ReservedPlanRequest, ReservedProbeFactory, ReservedPublicationPlan,
+    self as inputs, ContainerBackendObservation, PublicationDeadline, ReservedBackendObservation,
+    ReservedDecisionFacts, ReservedObservationRequest, ReservedPlanRequest, ReservedProbeFactory,
+    ReservedPublicationPlan,
 };
 use crate::runner::environment::workspace::phase_a;
 use crate::runner::workspace_command::provisioning::reserved_guest::ReservedGuestInput;
@@ -26,14 +27,14 @@ pub(super) fn build(
     declaration: &PostPrepDeclaration,
 ) -> Result<SupervisorPlan, RunError> {
     validation.recheck_directory()?;
-    let mut observation = ContainerBackendObservation::prepare(&validation.policy)
+    let mut observation = prepare_observation(&validation.policy)
         .map_err(|_| unavailable("workspace planning backend observation unavailable"))?;
     let plan = inputs::plan(
         ReservedPlanRequest {
             policy: &validation.policy,
             deadline: PublicationDeadline::new(validation.until),
         },
-        &mut observation,
+        observation.as_mut(),
     )
     .map_err(|_| unavailable("workspace frozen publication planning refused"))?
     .ok_or_else(|| RunError::refused("workspace declaration changed before sealing"))?;
@@ -66,7 +67,7 @@ impl SupervisorPlan {
     /// It independently observes the target/artifact instead of accepting CLI facts.
     pub(super) fn decision(&self) -> Result<phase_a::DecisionObserver, RunError> {
         let plan = Arc::clone(&self.plan);
-        let mut observation = ContainerBackendObservation::prepare(plan.policy())
+        let mut observation = prepare_observation(plan.policy())
             .map_err(|_| unavailable("workspace decision backend observation unavailable"))?;
         let root = self.context.root;
         let environment = self.environment.clone();
@@ -77,7 +78,7 @@ impl SupervisorPlan {
             }
             inputs::observe_decision_inputs(
                 &plan,
-                &mut observation,
+                observation.as_mut(),
                 &preflight,
                 root,
                 &environment,
@@ -94,11 +95,15 @@ pub(super) fn publication_input<'a>(
     owner: &mut WorkspaceActivation<'static>,
     plan: &'a Arc<ReservedPublicationPlan>,
     context: &EnvContext<'static>,
-    observation: &'a mut ContainerBackendObservation,
+    observation: &'a mut dyn ReservedBackendObservation,
 ) -> Result<ReservedGuestInput<'a>, EnvError> {
     let facts = Arc::new(ReservedDecisionFacts::of(owner, context)?);
     let policy = plan.policy();
     let probe: ReservedProbeFactory<'a> = Box::new(move |target| {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if super::fake_io::configured() {
+            return Ok(Box::new(super::fake_io::Probe::new(target)?));
+        }
         Ok(Box::new(StagedGuestProbe::new(
             &policy.repo_root,
             policy,
@@ -116,7 +121,7 @@ pub(super) fn publication_input<'a>(
         observation,
     )?;
     let reobserve_plan = Arc::clone(plan);
-    let mut reobserve_backend = ContainerBackendObservation::prepare(policy).map_err(|_| {
+    let mut reobserve_backend = prepare_observation(policy).map_err(|_| {
         EnvError::Kernel(unavailable(
             "workspace fresh backend observation unavailable",
         ))
@@ -130,10 +135,20 @@ pub(super) fn publication_input<'a>(
             &reobserve_plan,
             policy,
             &facts,
-            &mut reobserve_backend,
+            reobserve_backend.as_mut(),
             until,
         )
     })))
+}
+
+pub(super) fn prepare_observation(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<Box<dyn ReservedBackendObservation + Send>, crate::runner::error::RunnerError> {
+    #[cfg(feature = "workspace-serving-fixture")]
+    if super::fake_io::configured() {
+        return Ok(Box::new(super::fake_io::Observation::new(policy)?));
+    }
+    Ok(Box::new(ContainerBackendObservation::prepare(policy)?))
 }
 
 fn unavailable(message: &'static str) -> RunError {
