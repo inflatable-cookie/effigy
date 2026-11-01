@@ -36,19 +36,6 @@ fn private_prepare_failure(step: &str, status: &str) -> RunnerError {
     RunnerError::task_invocation(format!("workspace preparation unavailable: code=private-output-unavailable step={step} status={status}"))
 }
 
-/// The one error boundary; only concrete audited operations below may enter it.
-fn workspace_prepare_step<T, E>(
-    step: WorkspacePreparationStep,
-    operation: impl FnOnce() -> Result<T, E>,
-) -> Result<T, RunnerError> {
-    match step {
-        WorkspacePreparationStep::Validation | WorkspacePreparationStep::Mounts => {
-            operation().map_err(|_| private_prepare_failure(step.name(), "failed"))
-        }
-        _ => Err(private_prepare_failure(step.name(), "unsupported")),
-    }
-}
-
 #[allow(
     dead_code,
     reason = "workspace lifecycle adopts this reviewed seam separately"
@@ -77,14 +64,7 @@ pub(in crate::runner) fn workspace_prepare_mounts(
 pub(in crate::runner) fn workspace_prepare_unavailable(
     step: WorkspacePreparationStep,
 ) -> Result<(), RunnerError> {
-    match step {
-        WorkspacePreparationStep::Validation | WorkspacePreparationStep::Mounts => {
-            Err(private_prepare_failure(step.name(), "invalid-step"))
-        }
-        _ => workspace_prepare_step(step, || -> Result<(), ()> {
-            unreachable!("unavailable step cannot execute")
-        }),
-    }
+    Err(private_prepare_failure(step.name(), "unsupported"))
 }
 
 /// Source preparation remains unavailable until manifest and overlay identity
@@ -1681,44 +1661,31 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn workspace_preparation_adapter_refuses_direct_output_sinks_and_hides_errors() {
-        use super::{workspace_prepare_step, WorkspacePreparationStep as Step};
+    fn workspace_preparation_adapter_refuses_before_helper_effects() {
+        use super::WorkspacePreparationStep as Step;
+        let fixture = tempfile::tempdir().unwrap();
+        let sentinel = fixture.path().join("sentinel");
+        std::fs::write(&sentinel, "unchanged").unwrap();
+        let policy = test_policy();
         for step in [
+            Step::Validation,
+            Step::Mounts,
             Step::Policy,
             Step::SecretResolution,
             Step::Runtime,
             Step::SharedServices,
         ] {
-            let mut called = false;
-            let error = workspace_prepare_step(step, || -> Result<(), String> {
-                called = true;
-                Err("private-secret-value".into())
-            })
-            .unwrap_err();
-            assert!(
-                !called,
-                "unsupported step must refuse before its direct output"
-            );
-            for rendered in [error.to_string(), format!("{error:?}")] {
-                assert!(!rendered.contains("private-secret-value"));
-                assert!(rendered.contains("code=private-output-unavailable"));
-                assert!(rendered.contains("status=unsupported"));
-            }
+            let error = super::workspace_prepare_unavailable(step).unwrap_err();
+            assert!(error.to_string().contains("status=unsupported"));
         }
-        for step in [Step::Validation, Step::Mounts] {
-            let error = workspace_prepare_step(step, || -> Result<(), String> {
-                Err("private-secret-value".into())
-            })
-            .unwrap_err();
-            for rendered in [error.to_string(), format!("{error:?}")] {
-                assert!(!rendered.contains("private-secret-value"));
-                assert!(rendered.contains("status=failed"));
-            }
-            assert_eq!(
-                workspace_prepare_step(step, || -> Result<u8, ()> { Ok(7) }).unwrap(),
-                7
-            );
+        for error in [
+            super::workspace_prepare_validation(fixture.path(), &policy).unwrap_err(),
+            super::workspace_prepare_mounts(&policy).unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("status=unsupported"));
         }
+        assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "unchanged");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 1);
     }
 
     #[test]
