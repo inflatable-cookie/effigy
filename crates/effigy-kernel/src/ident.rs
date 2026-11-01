@@ -263,6 +263,23 @@ fn tty_name(fd: libc::c_int) -> Option<String> {
 }
 
 /// The device number a character-device descriptor refers to.
+///
+/// `st_rdev` is `u64` on Linux and `u32` on macOS, so a single `as u64` is
+/// necessary on one platform and `clippy::unnecessary_cast` on the other
+/// (effigy#520). Neither arm casts: the narrow platform widens with `u64::from`
+/// and the wide one needs nothing. The value is identical on both.
+#[cfg(all(test, target_os = "linux"))]
+fn device_number(device: libc::dev_t) -> u64 {
+    device
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+fn device_number(device: libc::dev_t) -> u64 {
+    // `dev_t` is a signed 32-bit value on macOS, so this widening is required
+    // there; the Linux arm above would make the same cast redundant.
+    device as u64
+}
+
 #[cfg(test)]
 fn device_of(fd: libc::c_int) -> Option<u64> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -272,7 +289,7 @@ fn device_of(fd: libc::c_int) -> Option<u64> {
     }
     // SAFETY: a successful fstat initialized the full output structure.
     let stat = unsafe { stat.assume_init() };
-    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(stat.st_rdev as u64)
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(device_number(stat.st_rdev))
 }
 
 /// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor
