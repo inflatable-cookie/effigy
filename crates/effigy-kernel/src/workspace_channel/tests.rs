@@ -380,6 +380,107 @@ fn peer() -> Option<ServerIdentity> {
     Some(ServerIdentity { digest: pinned() })
 }
 
+#[cfg(feature = "fault-injection")]
+struct ArmReleaseOnAttach {
+    inner: Pipe,
+    point: crate::fault::Point,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmReleaseOnAttach {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(decode_frame(&bytes[4..]), Ok(Frame::Response(Response { id, outcome: ResponseOutcome::Observed(_), .. })) if id == RequestId::new([1; 16]))
+        {
+            crate::fault::arm_point(self.point, crate::fault::Fault::Eperm);
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections() {
+    use crate::fault::{self, Point};
+    for (point, still_attached) in [
+        (Point::RunAttachReleaseBefore, true),
+        (Point::RunAttachReleaseAfter, false),
+    ] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-secondary-release-fault");
+        let (_run, live) = admitted_run(&cx, &root, session, 92, &[172]);
+        let mut host = server(session, &[173]);
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Attach(AttachBody {
+                            run: live,
+                            streams: vec![StreamKind::Stdout],
+                            cursor: None,
+                            cursors: None,
+                        }),
+                        1,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("release uncertainty");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired(), "the intended release fault must fire");
+        fault::arm(None);
+        let handle = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("exact handle retained");
+        assert_eq!(handle.run(), live);
+        assert_eq!(handle.client(), Client::Secondary);
+        assert_eq!(
+            handle.attached(&cx, &root).expect("durable row read"),
+            still_attached
+        );
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let live_slots: i64 = reader.conn().query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
+            [live.to_string()], |row| row.get(0),
+        ).expect("secondary slots");
+        assert_eq!(live_slots, i64::from(still_attached));
+        let stops: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .expect("stop requests");
+        assert_eq!(stops, 0, "secondary release never stops the owner");
+        let mut retry = Pipe::new(
+            stream(&[Frame::Hello(hello()), Frame::Authenticate(capability())]),
+            peer(),
+        );
+        assert_eq!(
+            host.serve(&mut retry, &cx, &observe_context(), &root, &mut NoStreams)
+                .expect_err("unsettled cleanup fences service")
+                .code,
+            RefusalCode::Unknown
+        );
+    }
+}
+
 /// A run admitted through the kernel's own reservation, so attachment and
 /// control proofs act on a live owner.
 fn admitted_run<'a>(
