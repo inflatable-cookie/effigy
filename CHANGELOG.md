@@ -711,6 +711,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Workspace-client command coverage is staged: v0.15 requires the Level 1
+  surface in [contract 052 §8.6](docs/knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
+  Shared-lock task admission, pause, gateway/config/install/release over the
+  channel and the remaining command matrix follow after v0.15. Unsupported
+  guest requests refuse by name with guidance to invoke the host CLI
+  independently; an unknown request is not retried locally or resent. This
+  decision does not claim that the remaining production path or native backend
+  qualifications have passed.
+
 - Clarify workspace artifact source selection, the separate dev and workspace
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.
@@ -718,10 +727,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **A container-mode guest runs Effigy through its published context and the one
   host channel.** Static reads (`effigy tasks`, the pinned identity and the
   pinned sources) are answered locally from the immutable context generation and
-  never open a connection or write anything. Every command with host authority
-  is classified and sent as one typed channel request that the host re-resolves,
-  gates and journals; a host refusal is returned as an error and never falls
-  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
+  never open a connection or write anything. Supported Level 1 commands with
+  host authority are sent as typed channel requests that the host re-resolves,
+  gates and journals; unsupported guest commands refuse by name. Neither path
+  falls back to guest state or a guest engine. `effigy skill run --stdio passthrough`
   is refused in a guest because it would run a task without host authority.
   The guest transport, the guest-local container observation and the published
   session generation are merged; what remains missing is the production
@@ -733,9 +742,9 @@ During v0.x, MINOR bumps may include breaking changes.
   A guest client compares the server identity the context pinned against the
   identity its transport verified before writing a single byte, so a mispinned
   peer receives no hello, version, digest or capability. A connection that dies
-  before answering is replayed under the same request id, an attach is resumed
-  by that id at the cursor the client actually consumed, and a gap never
-  advances it.
+  before answering reports `Unknown`; it is not resent or run locally. An
+  attach may reconnect under the session protocol at the cursor the client
+  actually consumed, and a gap never advances it.
 
 - **The frozen workspace activation hands its channel to a serving owner.** The
   environment's committed session run, listener, key and advertised locator

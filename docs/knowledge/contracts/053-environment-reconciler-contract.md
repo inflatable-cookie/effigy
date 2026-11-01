@@ -335,6 +335,15 @@ transition refuses `HostAuthorityRequired` before touching state (R1), and
 the record reads as kept on the host. Reading it through the host authority
 channel waits for that channel (052 §8.3).
 
+**Operator ruling (Tom, 2026-11-01):** v0.15 requires Level 1 of
+[052 §8.6](052-runtime-kernel-contract.md#86-coverage); unsupported Level 2
+guest operations refuse by name. Channel or identity failure never permits
+guest-state mutation, local fallback or resending an indeterminate request
+after `Unknown`. An independently invoked host CLI is not a guest retry and
+remains subject to the owning engine's session/reservation, canonical-gate,
+custody and authorization checks. The session-aware down and reserved
+outside-gate ordering in §3 remain mandatory.
+
 ### 8.1 Host sidecars (adopted)
 
 Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
@@ -417,10 +426,11 @@ a projection, never authority (effigy#458).
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
-- The production workspace activation caller, the wider guest Observe surface
-  beyond `runs:list` and `runs:status`, and native backend qualification (052
-  §8.11, §8.12). The workspace session run and its host authority channel are
-  themselves implemented at the kernel and runner seam, not pending here.
+- The production workspace activation caller, remaining Level 1 command and
+  Observe coverage beyond `runs:list` and `runs:status`, and native backend
+  qualification (052 §8.6, §8.11, §8.12). Level 2 command coverage follows
+  v0.15. The session run and channel are implemented as kernel and runner
+  seams; those seams do not qualify the production caller or a backend.
 
 ## 10. Proofs
 
