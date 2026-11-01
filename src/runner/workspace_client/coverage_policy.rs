@@ -31,7 +31,13 @@ const UNKNOWN_TASK: &str = "workspace task policy unknown; no operation admitted
 /// producer entries are refused before they can reach the host.
 pub(crate) fn unsupported(cmd: &Command) -> Option<&'static str> {
     match cmd {
-        Command::Version | Command::Task(_) | Command::Help(_) | Command::HelpGroup(_) => None,
+        Command::Version | Command::Help(_) | Command::HelpGroup(_) => None,
+        Command::Task(task)
+            if effigy_cli::runtime_flag_present_before_passthrough(&task.args, "--repo") =>
+        {
+            Some(CHECKOUT_OVERRIDE)
+        }
+        Command::Task(_) => None,
         Command::Workspace(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
         Command::Workspace(_) => None,
         Command::Tasks(args) if args.repo_override.is_some() => Some(CHECKOUT_OVERRIDE),
