@@ -13,6 +13,31 @@ guest PTY, attach, reconnect and detach acknowledgement are deferred to
 Level 2 as specified in 052 §8.11. This does not remove the environment
 activation or its detached session supervisor.
 
+### Workspace apply boundary (effigy#533, 2026-11-02)
+
+The one ordinary Compose apply is an explicit boundary
+(`src/runner/environment_workspace/private_apply.rs`). The owner resolves the
+frozen command and the guarded Env run hands the strategy its own `Run`, child
+`EffectContext` and absolute deadline through
+`WorkspaceActivation::apply_sealed_with_owner`; nothing downstream can reopen a
+budget. Production supplies `private_apply::qualified`. A proof substitutes a
+fake backend at that same external process boundary, so the publication
+sequence is exercised against the real owner — journal, gate order, binding,
+gated re-observation, commit, selector switch and recovery — while the process
+custody of the apply is not claimed.
+
+The qualified invocation is still refused. A same-Env private apply needs the
+Env run to own kernel custody (`Custody::spawn_auxiliary` refuses a run without
+a sentinel), and the workspace activation admits that run through
+`Run::begin_claimed_recoverable`, which refuses an activation that would carry
+one (`crates/effigy-kernel/src/run/mod.rs`, "recoverable claimed admission
+requires an environment activation without a sentinel"). Resident Env custody,
+its sentinel placement and its owner-death/old-reader recovery are the deferred
+S1 item from #512; `Terminal::Discard`, the other way to keep backend bytes out
+of retained logs, is refused until helper identities carry a verified image
+(`crates/effigy-kernel/src/custody.rs`). Until those land, no workspace apply
+starts a backend and every deferred proof that needs one states that by name.
+
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and
@@ -27,6 +52,37 @@ Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
 Related: [006](006-compose-backend-compatibility.md),
 [049](049-heavy-validation-admission-contract.md), [questions](../questions.md)
 Q-004, Q-005 and Q-010
+
+### Inherited dispositions (effigy#533, 2026-11-02)
+
+Every item #533's brief named has one recorded disposition. "In place" means
+the mechanism exists in this tree and the cited proof passes at this head;
+"deferred" names the owner or capability that can finish it. Nothing below
+claims native qualification, Discard, or a workspace apply.
+
+| Item | Disposition and evidence |
+| --- | --- |
+| Exact original-root worker | In place. `WorkspaceOwner` carries the checkout `StateRoot` (`root: &'static StateRoot`) and the whole sequence runs under it; the reserved proofs drive that owner. |
+| Host/session/Env admission once | In place and proven. The session is admitted before Env and one activation holds it: `workspace_activation::tests::reserved_owner_admits_task_before_env_and_refuses_concurrent_or_unselected_success`. |
+| Consuming transition and unwind ownership | In place. `WorkspaceFinishCustody::{Activation,Session}`, `GuardedAbortCustody` and `ParkedWorkspaceActivation` hand the exact owner back on every failure; `WorkspaceUpError::{Owner,Finish}` names which one. |
+| Bounded truly read-only external observation | In place. `TargetProbe`/`ServingProbe` facts and backend reads run under `observation_deadline`/`bounded_until`; the gated re-observation proofs read no selector. |
+| Owner-local finalization | In place. `finish_selected` ends Env before the session is handed over; `recover_selection` completes a committed obligation; proven by the crash-after-commit and partial-switch resume proof. |
+| One sealed original-root lease | In place. `Objects::seal_for_preflight`, the retained `predecessor_seal`, `SealedPreflight::matches(&closure)` and the "decision differs from its frozen plan" refusal. |
+| Attempt-scoped stage, tag/claim, cancellation, competing-attempt fencing | In place in the kernel. `ActivationClaim::{Environment,Session}` admits only the session staged by this attempt; staging is a prediction under `Gate(owner)`; a competing activation is refused. `test:kernel:workspace-session` covers the stage/claim/cancel families; `workspace_stage_crash_retry_keeps_predecessor_selectors_and_immutable_bytes` covers staging retry. |
+| Reserved activation gate ordering/deadline | In place and now proven at the apply too. `apply_sealed_with_owner` hands the activation's own absolute deadline, and `workspace_reserved_callback_keeps_the_original_activation_deadline` asserts the strategy received exactly that deadline. Gated re-observation refuses a replaced target, another valid id, and a spent deadline before any read. |
+| Reverse unwind | In place. `unwind_workspace_integrations` unwinds in reverse in the integrated sequence; a failure keeps the exact guarded or parked owner (`integrated::IntegratedFailure`). |
+| Idempotent recovery | In place. `unfinished_selection`/`selection_recovered`/`selection_abandoned` with `workspace_reserved_crash_after_commit_and_each_partial_switch_resumes_under_real_env_guard` and the unknown-liveness/dead-listener proof. |
+| Authenticated receipts | Guest publication receipts are authenticated (pinned TLS-only dial, `WorkspaceContextV2::verify`, canonical enrolment credential, `SelectionReceipt`/`SessionRef`). Integration effects are reconcilable, not authenticated receipts, as the slice interface records — an intent, not a claim. |
+| Absent ChildGrant real startup | Implemented. `task_engine::tests::reserved_engine_admits_default_and_named_profile_under_the_reserved_id` proves the real reserved engine starts with no ChildGrant, but it is `#[ignore]`d because it needs a built binary (`test:workspace:effigy-build`). Not claimed at this head. |
+| Checkout symlink/catalog identity | Not proven here. Source pins are frozen at reservation (`workspace_source_closure`, `PostPrepDeclaration::verify_sources`) and source refresh rechecks workspace mode, but a canonical symlink/catalog identity proof across guest routes needs the qualified private apply plus the native identity gate (052 §8.11). Deferred with them; no claim. |
+| Frozen plan/manifest drift | In place. Planned-policy equality, `plan.publish_inputs` equality, the retained seal match, and `PostPrepDeclaration::verify_policy`/`verify_sources` at the supervisor boundary all refuse drift. |
+| Observe status/context | Partly in place, proof deferred. The channel carries `ObserveQuery`/`ObserveBody` under `ObserveContext` and `run::status` returns `Observed<RunStatus>`; v2 context verification binds the exact session generation. The production-route exact-status/context proof needs the same apply capability as the production E2E, so it stays with #531; unproved adapters refuse by name (052 §8.6). |
+| Level 1 coverage and missing adapters | Recorded and implemented as policy. Tom's 2026-11-01 ruling in 052 §8.6, `workspace_client/coverage_policy.rs` and `tests/workspace_client_coverage_policy.rs`: Level 1 forwards; every other guest request refuses with a stable unsupported diagnostic. |
+| Level 2 PTY work | Not conflated. 052 §8.6/§8.11 keep attach, reconnect, terminal input and real PTY as Level 2; nothing in #533 claims them. |
+| #529 helper custody | Not this task's owner and untouched. `Terminal::Discard` stays refused pending verified helper-image capability (`supervise/image_identity.rs` is still unwired). |
+| #526 interpolation cleanup | Not this task's owner and untouched. Interpolation files are already per-invocation with a lock and a sweep (`policy/render/vm.rs`); #533 neither changes nor claims them. |
+| Discard refused | Unchanged. `run_private_detached_command`, `support/workspace_private.rs` and `Terminal::Discard` all still refuse; no Discard route was enabled. |
+| Production workspace apply | Refused by name, as the section above records. No backend process starts. |
 
 ## 1. Purpose
 

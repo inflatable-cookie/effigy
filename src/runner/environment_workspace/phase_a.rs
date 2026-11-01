@@ -4,8 +4,8 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use effigy_containers::environment::{
-    BackendError, CreationOutcome, CreationPreflight, EnvContext, EnvError, EnvironmentBackend,
-    Retention, Up, WorkspaceActivation, WorkspaceBegin,
+    CreationOutcome, CreationPreflight, EnvContext, EnvError, EnvironmentBackend, Retention, Up,
+    WorkspaceActivation, WorkspaceBegin,
 };
 use effigy_kernel::run::{BeginOpts, RunError};
 use effigy_kernel::workspace_session::PublishInputs;
@@ -197,7 +197,7 @@ fn apply_guarded(
             EnvError::Kernel(RunError::refused("workspace apply lost its retained seal"))
         })?
         .receipt();
-    let applied = owner.activation.apply_sealed_with(
+    let applied = owner.activation.apply_sealed_with_owner(
         Up {
             render: policy.render.as_ref().map(|render| &render.closure),
             project: &policy.project_name,
@@ -209,18 +209,19 @@ fn apply_guarded(
         },
         seal,
         preflight,
-        || {
-            effigy_containers::exec::run_backend_invocation_private_until(
-                &policy.repo_root,
-                &program,
-                &args,
-                "apply frozen workspace render",
-                compose_env,
-                plan.deadline().at(),
+        |run, effect, deadline| {
+            super::private_apply::qualified(
+                run,
+                effect,
+                &super::PrivateApplyCommand {
+                    workdir: &policy.repo_root,
+                    program: &program,
+                    args: &args,
+                    label: "apply frozen workspace render",
+                    env: compose_env,
+                    until: deadline,
+                },
             )
-            .map_err(|_| {
-                BackendError::Uncertain("workspace sealed apply outcome unavailable".into())
-            })
         },
     )?;
     owner.creation = applied.creation;
