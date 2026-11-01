@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::serving_host::ServingHostRequest;
 
+mod cleanup_integrations;
 mod cli_preflight;
 mod declaration;
 #[cfg(feature = "workspace-serving-fixture")]
@@ -27,6 +28,11 @@ pub(crate) fn fixture_diagnostic(message: &str) {
     if fake_io::configured() {
         fake_io::diagnostic(message);
     }
+}
+
+#[cfg(feature = "workspace-serving-fixture")]
+pub(in crate::runner) fn fixture_delay_final_revalidation(until: Instant) {
+    fake_io::delay_final_revalidation(until);
 }
 
 const PREPARATION_UNAVAILABLE: &str =

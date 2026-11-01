@@ -3,9 +3,10 @@
 use effigy_containers::environment::WorkspaceBeginFailure;
 use effigy_kernel::gate::Wait;
 
+use super::cleanup_integrations::CleanupAdapter;
 use super::integrations::{IntegrationAdapter, IntegrationEffects};
 use crate::runner::environment::workspace::integrated::{
-    GuardedCleanup, IntegratedFailure, ParkedCleanupSupport,
+    CleanupPhase, GuardedCleanup, IntegratedFailure, ParkedCleanupSupport,
 };
 use crate::runner::environment::workspace::phase_a::{
     AdmissionFailure, GuardedPhaseA, PhaseAFailure,
@@ -58,15 +59,43 @@ pub(super) fn cleanup<'a, E: IntegrationEffects>(
             bound,
             effects,
         } => {
-            if effects.is_some() {
-                // Releasing the exact guard under cleanup authority is an
-                // A-owned capability. Until that reviewed seam is available,
-                // keep EVERY handle and journal entry; do not settle either run.
-                return Err(IntegratedFailure::Guarded {
+            if let Some(effects) = effects {
+                let GuardedPhaseA {
+                    activation,
+                    context,
+                    backend,
+                    plan,
+                    creation,
+                } = *owner;
+                let owner = match activation.park_for_cleanup(&context) {
+                    Ok(owner) => owner,
+                    Err((_, activation)) => {
+                        return Err(IntegratedFailure::Guarded {
+                            cause,
+                            owner: Box::new(GuardedPhaseA {
+                                activation,
+                                context,
+                                backend,
+                                plan,
+                                creation,
+                            }),
+                            bound,
+                            effects: Some(effects),
+                        })
+                    }
+                };
+                return cleanup(IntegratedFailure::CleanupOnly {
                     cause,
-                    owner,
-                    bound,
-                    effects,
+                    custody: Box::new(CleanupPhase {
+                        owner,
+                        support: Box::new(ParkedCleanupSupport {
+                            context,
+                            backend,
+                            plan,
+                            bound,
+                            effects,
+                        }),
+                    }),
                 });
             }
             let GuardedPhaseA {
@@ -161,9 +190,30 @@ pub(super) fn cleanup<'a, E: IntegrationEffects>(
                         context,
                         backend,
                         plan,
-                        bound,
-                        effects,
+                        bound: Some(Box::new(bound)),
+                        effects: Box::new(effects),
                     }),
+                }),
+            }
+        }
+        IntegratedFailure::CleanupOnly { cause, mut custody } => {
+            let until = std::time::Instant::now() + effigy_containers::environment::CLEANUP_BUDGET;
+            let mut adapter = CleanupAdapter {
+                owner: &mut custody.owner,
+                context: &custody.support.context,
+                effects: custody.support.effects.as_mut(),
+                until,
+            };
+            if adapter.unwind().is_err() {
+                return Err(IntegratedFailure::CleanupOnly { cause, custody });
+            }
+            let CleanupPhase { owner, support } = *custody;
+            match owner.abort(&support.context, Wait::FailFast) {
+                Ok(()) => Ok(()),
+                Err((cleanup_error, custody)) => Err(IntegratedFailure::ParkedCleanup {
+                    cause: cleanup_error,
+                    custody,
+                    support,
                 }),
             }
         }

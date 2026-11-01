@@ -83,8 +83,8 @@ fn unavailable(message: impl Into<String>) -> EnvError {
 fn refused(message: impl Into<String>) -> EnvError {
     EnvError::Kernel(RunError::refused(message))
 }
-fn io(error: RunnerError) -> EnvError {
-    unavailable(error.to_string())
+fn io(_error: RunnerError) -> EnvError {
+    unavailable("workspace guest I/O unavailable")
 }
 fn evidence() -> Evidence {
     Evidence::new("exact reserved guest publication".into(), None).expect("fixed evidence")
@@ -339,7 +339,7 @@ pub(in crate::runner) fn bind_reserved_guest<'a>(
         Err(error) => {
             activation.environment_mut().unknown_workspace_publication(
                 &ticket,
-                UnknownReason::Inconsistent(error.to_string()),
+                UnknownReason::Inconsistent("workspace reserved target binding failed".into()),
             )?;
             return Err(error);
         }
@@ -640,10 +640,12 @@ pub(in crate::runner) fn publish_bound_reserved_guest<'a>(
             guest: Box::new(reader),
         })
     })();
-    if let Err(error) = &result {
+    if result.is_err() {
+        // Backend/guest failures may include credential bytes, command output
+        // or user paths. Persist only this fixed classification.
         activation.environment_mut().unknown_workspace_publication(
             &ticket,
-            UnknownReason::Inconsistent(error.to_string()),
+            UnknownReason::Inconsistent("workspace guest publication failed".into()),
         )?;
     }
     result
@@ -719,7 +721,9 @@ impl WorkspaceSelectionIo for OwnedSelectionIo<'_> {
             Ok(_) => Observed::Absent(effigy_kernel::observe::AbsenceProof::ContainerGone {
                 id: self.target.container_id.clone(),
             }),
-            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+            Err(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "workspace guest liveness unavailable".into(),
+            )),
         }
     }
     fn switch(

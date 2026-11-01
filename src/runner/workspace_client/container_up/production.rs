@@ -11,6 +11,7 @@ use effigy_kernel::id::{
 use effigy_kernel::run::{BeginOpts, Run, RunError};
 use effigy_kernel::supervise::EngineSession;
 
+#[cfg(not(feature = "workspace-serving-fixture"))]
 use super::integrations::DEFAULT_INTEGRATION_BUDGET;
 use super::supervisor_preflight::PrevalidatedContainer;
 use super::{plan, ContainerUpRequest, ServingHostRequest};
@@ -85,11 +86,15 @@ pub(super) fn activate_with(
         supervisor_id: &supervisor_id,
         decide: planned.decision()?,
     };
+    #[cfg(feature = "workspace-serving-fixture")]
+    let integration_budget = super::fake_io::integration_budget();
+    #[cfg(not(feature = "workspace-serving-fixture"))]
+    let integration_budget = DEFAULT_INTEGRATION_BUDGET;
     let selected = integrated::run(
         request,
         &compose_env,
         predecessor.as_mut(),
-        DEFAULT_INTEGRATION_BUDGET,
+        integration_budget,
         |owner| {
             plan::publication_input(
                 owner,

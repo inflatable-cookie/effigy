@@ -51,8 +51,14 @@ pub(in crate::runner) struct ParkedCleanupSupport<'a, E> {
     pub(in crate::runner) backend: Box<dyn EnvironmentBackend>,
     pub(in crate::runner) plan:
         std::sync::Arc<crate::runner::container_command::reserved_input::ReservedPublicationPlan>,
-    pub(in crate::runner) bound: BoundReservedGuest<'a>,
-    pub(in crate::runner) effects: E,
+    pub(in crate::runner) bound: Option<Box<BoundReservedGuest<'a>>>,
+    pub(in crate::runner) effects: Box<E>,
+}
+
+pub(in crate::runner) struct CleanupPhase<'a, E> {
+    pub(in crate::runner) owner:
+        effigy_containers::environment::CleanupParkedWorkspaceActivation<'static>,
+    pub(in crate::runner) support: Box<ParkedCleanupSupport<'a, E>>,
 }
 
 pub(in crate::runner) enum IntegratedFailure<'a, E> {
@@ -67,6 +73,10 @@ pub(in crate::runner) enum IntegratedFailure<'a, E> {
     Parked {
         cause: EnvError,
         custody: Box<ParkedPhase<'a, E>>,
+    },
+    CleanupOnly {
+        cause: EnvError,
+        custody: Box<CleanupPhase<'a, E>>,
     },
     ParkedCleanup {
         cause: EnvError,
@@ -228,6 +238,10 @@ pub(in crate::runner) fn run<'a, E: IntegrationEffects>(
     };
     let revalidated =
         revalidate_for_publication(integration_until, phase.plan.deadline().at(), || {
+            #[cfg(feature = "workspace-serving-fixture")]
+            crate::runner::workspace_client::container_up::fixture_delay_final_revalidation(
+                integration_until,
+            );
             bound.revalidate(&mut phase.activation, phase.backend.as_mut())
         });
     if let Err(cause) = revalidated {

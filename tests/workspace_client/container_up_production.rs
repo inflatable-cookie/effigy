@@ -467,3 +467,165 @@ fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() 
         "forced teardown cannot be recovery evidence"
     );
 }
+
+fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
+    let fixture = BackendFixture::new();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.config).expect("configuration"))
+            .expect("JSON");
+    config[case] = true.into();
+    std::fs::write(
+        &fixture.config,
+        serde_json::to_vec(&config).expect("fault input"),
+    )
+    .expect("fault");
+    let output = fixture
+        .command()
+        .args(["container", "up", "--detach", "--json"])
+        .output()
+        .expect("actual CLI");
+    assert!(
+        !output.status.success(),
+        "failure must not acknowledge Serving"
+    );
+    let public = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        public.contains("integration effects unsettled; re-run up"),
+        "{public}"
+    );
+    assert!(!public.contains("cleanup settled"), "{public}");
+    assert!(
+        !public.contains("adversarial-secret-backend-diagnostic"),
+        "{public}"
+    );
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        1,
+        "single apply"
+    );
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        let trace = std::fs::read_to_string(fixture.fixture.path().join("guest-files.unwind"))
+            .unwrap_or_default();
+        if trace.lines().count() >= 5 {
+            assert!(
+                trace.starts_with("HostIntegrations\nRoutes\nSecrets\nPermissions\nReadiness\n"),
+                "reverse canonical order: {trace}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "ordinary reverse unwind was not attempted: {trace}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if case == "delay_final_revalidation" {
+        assert!(
+            fixture
+                .fixture
+                .path()
+                .join("guest-files.revalidation")
+                .exists(),
+            "delay was inside final revalidation"
+        );
+    }
+    let connection = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let diagnostics: Vec<String> = connection
+        .prepare("SELECT error FROM events WHERE error IS NOT NULL")
+        .expect("error journal")
+        .query_map([], |r| r.get(0))
+        .expect("diagnostics")
+        .collect::<Result<_, _>>()
+        .expect("error rows");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|text| !text.contains("adversarial-secret-backend-diagnostic")),
+        "backend error bytes leaked into durable diagnostics"
+    );
+    let (state, environment, session): (String, String, String) = connection
+        .query_row(
+            "SELECT state,environment_run,session_run FROM workspace_activation_reservations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("original reservation");
+    assert_eq!(state, "reserved", "no publication commit or cancellation");
+    for id in [&environment, &session] {
+        let (phase, closed): (String, Option<i64>) = connection
+            .query_row(
+                "SELECT phase,closed_at FROM runs WHERE run_id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("exact owner");
+        assert_ne!(phase, "closed", "unsettled effects must retain exact owner");
+        assert_eq!(closed, None);
+    }
+    let records: Vec<String> = connection.prepare("SELECT target FROM events WHERE run_id=?1 AND kind='kernel:workspace-integration-step'").expect("steps").query_map([&session], |row| row.get(0)).expect("journal rows").collect::<Result<_,_>>().expect("records");
+    let records: Vec<effigy_kernel::run::EffectSpec> = records
+        .iter()
+        .map(|r| serde_json::from_str(r).expect("typed effect"))
+        .collect();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r.payload["state"] == "completed")
+            .count(),
+        5,
+        "all five effects completed before failure"
+    );
+    assert!(
+        records.iter().all(|r| r.payload["state"] != "cleared"
+            || !matches!(
+                r.payload["step"].as_str(),
+                Some("permissions" | "host_integrations")
+            )),
+        "Unknown mutations must retain their journal markers"
+    );
+    let cx = super::super::effects();
+    let observe = super::super::observation();
+    let root = super::super::state_root(&cx, &fixture.home, &fixture.project);
+    let summary = super::super::read_summary(&observe, &root, environment.parse().expect("Env ID"))
+        .expect("Env summary");
+    let resource = &summary
+        .invocation
+        .expect("actual admitted invocation")
+        .spec()
+        .owner
+        .clone();
+    assert_eq!(resource.kind(), effigy_kernel::id::ResourceKind::Env);
+    let gate = effigy_kernel::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(resource),
+        effigy_kernel::gate::Wait::FailFast,
+    )
+    .expect("cleanup unwind runs outside Env gate");
+    drop(gate);
+    // Exact Unknown custody is deliberately unsettled. Fixture teardown stops
+    // recorded PIDs; forced teardown is NOT cleanup or convergence evidence.
+}
+
+#[test]
+fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
+    guarded_effect_failure_retains_exact_gate_free_custody("delay_final_revalidation");
+}
+
+#[test]
+fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
+    guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
+}

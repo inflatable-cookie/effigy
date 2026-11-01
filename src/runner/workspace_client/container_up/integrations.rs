@@ -152,7 +152,7 @@ impl<E: IntegrationEffects> WorkspaceIntegrationAdapter for IntegrationAdapter<'
     }
 }
 
-fn to_journal(step: Step) -> JournalStep {
+pub(super) fn to_journal(step: Step) -> JournalStep {
     match step {
         Step::Readiness => JournalStep::Readiness,
         Step::Permissions => JournalStep::Permissions,
@@ -162,7 +162,7 @@ fn to_journal(step: Step) -> JournalStep {
     }
 }
 
-fn from_journal(step: JournalStep) -> Step {
+pub(super) fn from_journal(step: JournalStep) -> Step {
     match step {
         JournalStep::Readiness => Step::Readiness,
         JournalStep::Permissions => Step::Permissions,

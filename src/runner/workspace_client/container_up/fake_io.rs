@@ -46,6 +46,10 @@ struct Config {
     fail_handoff: bool,
     #[serde(default)]
     fail_adoption_cleanup: bool,
+    #[serde(default)]
+    delay_final_revalidation: bool,
+    #[serde(default)]
+    fail_publication: bool,
 }
 
 pub(super) fn configured() -> bool {
@@ -56,6 +60,41 @@ pub(super) fn fail_handoff() -> bool {
 }
 pub(super) fn fail_adoption_cleanup() -> bool {
     configured() && config().is_ok_and(|config| config.fail_adoption_cleanup)
+}
+pub(super) fn integration_budget() -> Duration {
+    if config().is_ok_and(|c| c.delay_final_revalidation) {
+        Duration::from_secs(2)
+    } else {
+        super::integrations::DEFAULT_INTEGRATION_BUDGET
+    }
+}
+pub(super) fn delay_final_revalidation(until: std::time::Instant) {
+    if let Ok(c) = config() {
+        if c.delay_final_revalidation {
+            let _ = std::fs::write(
+                c.export.with_extension("revalidation"),
+                b"entered with live integration budget",
+            );
+            std::thread::sleep(
+                until.saturating_duration_since(std::time::Instant::now())
+                    + Duration::from_millis(1),
+            );
+        }
+    }
+}
+pub(super) fn record_unwind(
+    step: crate::runner::container_command::workspace_integrations::WorkspaceIntegrationStep,
+) {
+    use std::io::Write;
+    if let Ok(c) = config() {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(c.export.with_extension("unwind"))
+        {
+            let _ = writeln!(f, "{step:?}");
+        }
+    }
 }
 fn failure() -> RunnerError {
     RunnerError::task_invocation("workspace fake I/O unavailable")
@@ -276,6 +315,11 @@ impl SharedGuest {
         mode: u32,
         exclusive: bool,
     ) -> Result<(), RunnerError> {
+        if config().is_ok_and(|c| c.fail_publication) && path.ends_with("/context.json") {
+            return Err(RunnerError::task_invocation(
+                "adversarial-secret-backend-diagnostic",
+            ));
+        }
         let mut state = self.0.lock().map_err(|_| failure())?;
         if exclusive {
             state.guest.write_no_replace(path, bytes, mode)?;
@@ -447,6 +491,7 @@ pub(super) fn activation_failure<E>(
         IntegratedFailure::Guarded { cause, .. } => ("bind/reacquire", cause),
         IntegratedFailure::Parked { cause, .. } => ("integrations/resume", cause),
         IntegratedFailure::Cleanup(custody) => ("guarded cleanup", &custody.cleanup),
+        IntegratedFailure::CleanupOnly { cause, .. } => ("cleanup integrations", cause),
         IntegratedFailure::ParkedCleanup { cause, .. } => ("parked cleanup", cause),
         IntegratedFailure::Publication {
             cause: PublicationFailure::Guarded { cause, .. },
