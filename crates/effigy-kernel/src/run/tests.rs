@@ -1155,6 +1155,39 @@ fn gateway_operator_events_write_one_private_record_per_action() {
 }
 
 #[test]
+fn workspace_recoverable_settlement_refuses_machine_run_without_releasing_owner() {
+    let home = effigy_test_support::Fixture::new("workspace-machine-refusal-").unwrap();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let resource = ResourceId::gateway("workspace-refusal").unwrap();
+    let mut specification = inv(resource.clone()).spec().clone();
+    specification.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway",
+        None,
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(specification).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = Run::begin(&cx, &root, &invocation, opts(83), &cleanup(&cx), &mut fake).unwrap();
+    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let action = releases.clone();
+    run.on_settle(move || {
+        action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let (error, run) = run
+        .settle_workspace_recoverable(&cleanup(&cx), &mut fake)
+        .expect_err("machine store is outside workspace settlement domain");
+    assert!(error.to_string().contains("checkout workspace"));
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(Gate::acquire(&cx, &root, &[resource], Wait::FailFast).is_err());
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
 fn gateway_custody_settlement_logs_caller_and_owner_loss() {
     let home = effigy_test_support::Fixture::new("g382-").unwrap();
     let cx = context();

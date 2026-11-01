@@ -2336,14 +2336,22 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// Settle an existing workspace owner without losing its exact gate when
-    /// effects remain unresolved. Listener/key release actions run first.
-    /// This consumes the same owner and returns it on an incomplete cleanup.
+    /// Settle an existing checkout workspace owner without losing its exact
+    /// gate when effects remain unresolved. Listener/key release actions run
+    /// first. This returns the same owner on an incomplete cleanup.
     pub fn settle_workspace_recoverable(
         mut self,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, (RunError, Box<Self>)> {
+        if self.root.is_machine() || self.machine_lifecycle() {
+            return Err((
+                RunError::refused(
+                    "recoverable workspace settlement requires a checkout workspace run",
+                ),
+                Box::new(self),
+            ));
+        }
         if let Err(error) = self.require_environment_gate() {
             return Err((error, Box::new(self)));
         }
