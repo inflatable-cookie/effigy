@@ -1093,7 +1093,9 @@ primary_service = "app"
     }
 
     assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(error.to_string().contains("estimated nerdctl/mounts label size"));
+    assert!(error
+        .to_string()
+        .contains("estimated nerdctl/mounts label size"));
     assert!(error
         .to_string()
         .contains("reduce optional mounts or workspace isolation mounts"));

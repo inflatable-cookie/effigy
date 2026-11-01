@@ -85,8 +85,7 @@ fn validate_compose_backend_mount_budget(
     {
         return Ok(());
     }
-    let Some(estimate) = estimate_primary_service_mount_label_size(policy)?
-    else {
+    let Some(estimate) = estimate_primary_service_mount_label_size(policy)? else {
         return Ok(());
     };
     if nerdctl_mounts_label_fits(estimate.total_bytes) {
@@ -154,9 +153,7 @@ fn estimate_primary_service_mount_label_size(
                 services.get(serde_yaml::Value::String(policy.primary_service.clone()))
             })
             .and_then(serde_yaml::Value::as_mapping)
-            .and_then(|service| {
-                service.get(serde_yaml::Value::String("volumes".to_owned()))
-            })
+            .and_then(|service| service.get(serde_yaml::Value::String("volumes".to_owned())))
             .and_then(serde_yaml::Value::as_sequence)
         else {
             continue;
@@ -214,15 +211,18 @@ fn parse_effective_mount(
             Some(target) => (first, target),
             None => ("", first),
         };
-        let kind = if source.starts_with('/')
-            || source.starts_with("./")
-            || source.starts_with("../")
-        {
-            "bind"
-        } else {
-            "volume"
-        };
-        (source, target, kind, mode.split(',').any(|part| part == "ro"))
+        let kind =
+            if source.starts_with('/') || source.starts_with("./") || source.starts_with("../") {
+                "bind"
+            } else {
+                "volume"
+            };
+        (
+            source,
+            target,
+            kind,
+            mode.split(',').any(|part| part == "ro"),
+        )
     } else {
         let mapping = value.as_mapping()?;
         let get = |name: &str| mapping.get(serde_yaml::Value::String(name.to_owned()));
@@ -368,7 +368,10 @@ mod tests {
             ordinal: 1,
             bytes: NERDCTL_MOUNTS_LABEL_BUDGET_BYTES - "nerdctl/mounts".len() - 2,
         };
-        assert_eq!(nerdctl_mounts_label_size(std::slice::from_ref(&entry)), 3900);
+        assert_eq!(
+            nerdctl_mounts_label_size(std::slice::from_ref(&entry)),
+            3900
+        );
         assert!(!nerdctl_mounts_label_fits(nerdctl_mounts_label_size(
             std::slice::from_ref(&entry)
         )));
