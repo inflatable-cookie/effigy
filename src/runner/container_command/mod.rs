@@ -82,6 +82,48 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
     }
 }
 
+/// How one `container up` invocation selected its environment.
+///
+/// This is the reviewed intent boundary between the two `up` surfaces
+/// (contract 052 §8, §8.11): naming a container or accepting
+/// `[containers].default` is the ordinary Compose invocation this command has
+/// always performed, including for a container a legacy bundle declares as its
+/// default system/workspace. Selecting the environment through `--system`
+/// (`effigy container up --system <NAME>`, resolved through that system's
+/// default workspace) is the explicit workspace activation request, which is
+/// routed to the guarded preparation that currently refuses by name.
+///
+/// The selection is the invocation's, never the declaration's: a source
+/// refresh can add or remove a workspace declaration, and that must not turn an
+/// ordinary Compose invocation into a private workspace apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum UpSelection {
+    /// A named container or `[containers].default`.
+    Direct,
+    /// `--system <NAME>` selected the container through a system workspace.
+    Workspace,
+}
+
+impl UpSelection {
+    /// The selection this `container up` invocation asked for. Only `--system`
+    /// names a system/workspace; a container name and the default container are
+    /// the ordinary invocation.
+    fn from_system_selection(system: Option<&str>) -> Self {
+        match system {
+            Some(_) => Self::Workspace,
+            None => Self::Direct,
+        }
+    }
+
+    /// Whether this invocation asks for the guarded workspace activation.
+    /// Private workspace preparation, the private Compose entrypoint and
+    /// Discard stay refused where this is true; the ordinary reconciler serves
+    /// every other invocation.
+    pub(super) fn requests_workspace_activation(self) -> bool {
+        self == Self::Workspace
+    }
+}
+
 /// CLI entry for `effigy container`. An explicit `up` owns its
 /// environment persistently: no run's end idle-stops it until `down`.
 /// Task activation brings environments up through [`run_container_up_held`].
@@ -101,6 +143,7 @@ pub(in crate::runner) fn run_container_up_held(
     run_container_up(
         &context.resolved.resolved_root,
         name.as_deref(),
+        UpSelection::Direct,
         false,
         true,
         false,
@@ -133,12 +176,14 @@ fn run_container_with(
             attach,
             detach,
         } => {
+            let selection = UpSelection::from_system_selection(system.as_deref());
             let name =
                 resolve_selected_container_name(&args.repo_override, name, system, "container up")?;
             let context = resolve_active_command_context(args.repo_override.clone())?;
             run_container_up(
                 &context.resolved.resolved_root,
                 name.as_deref(),
+                selection,
                 attach,
                 detach,
                 args.output_json,
@@ -396,6 +441,24 @@ mod tests {
     use super::*;
     use crate::runner::container_command::support::repo_root_has_effigy_manifest;
     use effigy_cli::{ContainerSubcommand, ContainerVolumeSubcommand};
+
+    /// The guarded workspace activation is the explicit system/workspace
+    /// selection's route. A container name or the default container is the
+    /// ordinary Compose invocation, which a refreshed declaration cannot
+    /// promote (effigy#535).
+    #[test]
+    fn container_up_selection_separates_ordinary_compose_from_an_explicit_workspace() {
+        assert_eq!(
+            UpSelection::from_system_selection(None),
+            UpSelection::Direct
+        );
+        assert!(!UpSelection::from_system_selection(None).requests_workspace_activation());
+        assert_eq!(
+            UpSelection::from_system_selection(Some("dev")),
+            UpSelection::Workspace
+        );
+        assert!(UpSelection::from_system_selection(Some("dev")).requests_workspace_activation());
+    }
 
     #[test]
     fn container_stats_all_rejects_repo_override() {

@@ -1328,6 +1328,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A plain `effigy container up` is the ordinary Compose invocation again for a
+  container a legacy bundle declares as its default system/workspace, so a
+  consumer whose export writes `[systems.<s>] container`,
+  `default_workspace` and an empty `[systems.<s>.workspaces.<w>]` while
+  `[containers].default` names the same container prepares and applies its
+  stack instead of refusing on the private workspace preparation capability.
+  The guarded workspace activation is now the explicit system/workspace
+  selection's route: `effigy container up --system <NAME>` resolves through
+  that system's default workspace and still refuses by name before preparation
+  or apply, as do private Compose and Discard. A task's own ensure and the
+  workspace handoff keep the ordinary path, and a source refresh cannot turn an
+  ordinary invocation into a private apply (effigy#535).
 - Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
   label from recognized explicit primary-service bind and volume mounts across
   compose overlays, including resolved bind sources and JSON escaping. It
