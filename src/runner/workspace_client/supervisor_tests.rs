@@ -69,6 +69,7 @@ fn published(prepared: &PreparedHostChannel) -> ServingLease {
 /// the session run and the first context generation.
 fn guest_hello(session: RunId) -> Frame {
     Frame::Hello(Hello {
+        capabilities: Vec::new(),
         schema: SCHEMA.to_owned(),
         protocol_versions: vec![PROTOCOL_V1],
         effigy_version: "fixture".to_owned(),

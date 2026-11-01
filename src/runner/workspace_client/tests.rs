@@ -1050,6 +1050,7 @@ impl MuteTransport {
     /// to send nothing at all.
     fn answering_negotiation_with_peer(peer: Digest) -> Self {
         let hello_ok = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+            capabilities: vec![host::ChannelCapability::ObserveQueryV1],
             protocol: host::PROTOCOL_V1,
             effigy_version: running_binary().version,
         }))
@@ -1255,7 +1256,7 @@ fn a_repeated_intent_is_answered_from_the_hosts_record() {
 }
 
 #[test]
-fn an_unanswered_attempt_is_unknown_and_replayable() {
+fn an_unanswered_attempt_is_unknown_and_never_resends() {
     let mut client = WorkspaceClient::connect(
         MuteTransport::answering_negotiation(),
         verified(),
@@ -1266,6 +1267,7 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
         .authenticate(GuestAuth::Capability(capability()))
         .expect("authenticated");
     let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
         run_id: None,
         op: "doctor".to_owned(),
         target: Some(Target::Host),
@@ -1274,9 +1276,7 @@ fn an_unanswered_attempt_is_unknown_and_replayable() {
     let error = client.send(&intent).expect_err("the host went silent");
 
     match error {
-        ChannelError::Unknown { replayable, .. } => {
-            assert!(replayable, "the same id answers from the record");
-        }
+        ChannelError::Unknown { .. } => {}
         other => panic!("an unanswered request is Unknown, not {other:?}"),
     }
 }
@@ -2168,6 +2168,7 @@ fn serving_connection() -> (ScriptedTransport, Arc<Mutex<Vec<u8>>>) {
     let written = Arc::new(Mutex::new(Vec::new()));
     let input = framed(&[
         host::Frame::Hello(host::Hello {
+            capabilities: Vec::new(),
             schema: host::SCHEMA.to_owned(),
             protocol_versions: vec![host::PROTOCOL_V1],
             effigy_version: binary.version,
@@ -3035,6 +3036,7 @@ fn terminal_hello(capability: Secret) -> Vec<host::Frame> {
     let binary = running_binary();
     vec![
         host::Frame::Hello(host::Hello {
+            capabilities: Vec::new(),
             schema: host::SCHEMA.to_owned(),
             protocol_versions: vec![host::PROTOCOL_V1],
             effigy_version: binary.version,
@@ -5079,4 +5081,141 @@ fn the_retained_service_hands_over_a_session_bound_terminal_custody() {
 
 fn runs_admitted(calls: &SharedCalls) -> Vec<RunId> {
     calls.lock().expect("calls").admitted.clone()
+}
+
+#[test]
+fn level_one_query_requires_selected_peer_capability_before_sending_inputs() {
+    let reply = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
+        capabilities: vec![],
+        protocol: host::PROTOCOL_V1,
+        effigy_version: running_binary().version,
+    }))
+    .unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    transport.input = (reply.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(reply)
+        .collect();
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    let before = written.lock().unwrap().len();
+    let intent = Intent::new(RequestBody::Observe(ObserveBody {
+        query: Some(host::ObserveQuery {
+            cwd: "private-cwd".into(),
+            args: vec!["doctor".into(), "private-argument".into()],
+            output: host::OutputMode::Json,
+        }),
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let error = client.send(&intent).unwrap_err();
+    assert!(
+        matches!(&error, ChannelError::Refused { code: "forbidden", message } if message.contains("observe_query_v1"))
+    );
+    assert!(!format!("{error:?}").contains("private"));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "unnegotiated query wrote private inputs"
+    );
+}
+
+#[test]
+fn level_one_dispatch_never_reopens_after_unknown_or_uses_guest_fallback() {
+    struct CountingOpener {
+        opened: usize,
+    }
+    impl ChannelOpener for CountingOpener {
+        fn open(
+            &mut self,
+            verified: &VerifiedWorkspaceContext,
+            live: &LiveGuestRun,
+        ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+            self.opened += 1;
+            Ok(Box::new(WorkspaceClient::connect(
+                MuteTransport::answering_negotiation(),
+                verified.clone(),
+                live.clone(),
+            )?))
+        }
+    }
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let mut checkout = FakeCheckout::default();
+    let mut opener = CountingOpener { opened: 0 };
+    let error = dispatch_in(
+        &parsed(&["build"]),
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("unknown"));
+    assert_eq!(opener.opened, 1, "Unknown reopened and resent the request");
+    assert_eq!(
+        checkout.reads, 0,
+        "Unknown fell back to guest-local checkout reads"
+    );
+}
+
+#[test]
+fn level_one_hidden_user_request_refuses_but_trusted_producer_probe_bypasses_channel() {
+    struct ReadForbidden;
+    impl GuestReader for ReadForbidden {
+        fn read_file(&mut self, _: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+            panic!("hidden request read guest authority");
+        }
+        fn file_sha256(&mut self, _: &str) -> Result<Option<String>, RunnerError> {
+            panic!("hidden request hashed guest authority");
+        }
+    }
+    let probe = Command::InternalGuestProbe(effigy_cli::GuestProbeArgs::Identity);
+    assert!(
+        guest_command(&probe, Path::new("/private-producer"))
+            .unwrap()
+            .is_none(),
+        "trusted producer probe must retain its ordinary guest dispatch"
+    );
+    let context = workspace_document(Some(session_run()), None);
+    let mut checkout = FakeCheckout::default();
+    for command in [
+        probe,
+        Command::InternalScriptRun(effigy_cli::InternalScriptRunArgs {
+            file: "/private-script".into(),
+            repo_root: None,
+            task_name: None,
+            args: vec![],
+        }),
+    ] {
+        let error = dispatch_in(
+            &command,
+            &published(&context),
+            &mut ReadForbidden,
+            &mut checkout,
+            &mut NoChannel,
+            Path::new(GUEST_CHECKOUT),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("hidden internal"));
+        assert!(!error.to_string().contains("private"));
+    }
+    assert_eq!(checkout.reads, 0);
+}
+
+#[test]
+fn level_one_qa_status_and_stop_route_to_read_and_existing_control() {
+    assert!(
+        matches!(classify(&parsed(&["tasks", "qa-group", "status", "run"])), GuestOperation::Observe { op, .. } if op == "tasks:qa-group:status")
+    );
+    assert!(
+        matches!(classify(&parsed(&["tasks", "qa-group", "stop", "run"])), GuestOperation::Invoke { selector: Selector::Operation(op), .. } if op == "tasks:qa-group:stop")
+    );
 }

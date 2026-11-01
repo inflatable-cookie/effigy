@@ -50,6 +50,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod context;
+pub(crate) mod coverage_policy;
 // #482's producer side: the staged guest probe and the guest's own identity
 // observation, which the v2 context verification takes.
 pub(crate) mod guest_probe;
@@ -483,6 +484,10 @@ pub(crate) enum GuestOperation {
 pub(crate) fn classify(cmd: &Command) -> GuestOperation {
     use effigy_cli::{ContainerSubcommand, RunsAction};
 
+    if let Some(message) = coverage_policy::unsupported(cmd) {
+        return GuestOperation::Refused(message.to_owned());
+    }
+
     let operation = |label: &str| GuestOperation::Invoke {
         selector: Selector::Operation(label.to_owned()),
         target: Target::Host,
@@ -497,8 +502,12 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
         // context's composed manifest snapshot carries.
         Command::Version => GuestOperation::Local(LocalRead::Version),
         Command::Tasks(args) => {
-            if args.qa.is_some() {
-                operation("tasks:qa-group")
+            if let Some(qa) = &args.qa {
+                match qa {
+                    effigy_cli::TasksQaCommand::GroupStatus { .. } => observation("tasks:qa-group:status"),
+                    effigy_cli::TasksQaCommand::GroupStop { .. } => operation("tasks:qa-group:stop"),
+                    _ => operation("tasks:qa-group"),
+                }
             } else if args.status_selector.is_some() || args.status_all {
                 observation("tasks:status")
             } else if args.resolve_selector.is_some() || args.task_name.is_some() {
@@ -600,9 +609,8 @@ pub(crate) enum ChannelError {
     /// code is lane A's stable refusal code (§8.11).
     Refused { code: &'static str, message: String },
     /// The connection failed or ended before the host answered. Whether the
-    /// host acted is `Unknown` and is never guessed; [`ChannelRequest::retry`]
-    /// replays the same request id so the host answers from its record.
-    Unknown { message: String, replayable: bool },
+    /// host acted is `Unknown` and is never guessed. It authorizes no resend.
+    Unknown { message: String },
     /// The client would not form or send this request at all.
     Local(String),
 }
@@ -620,11 +628,10 @@ impl ChannelError {
     }
 
     /// A transport failure: the request may or may not have been admitted, so
-    /// the caller keeps its id and replays rather than admitting again.
+    /// the caller inspects the outcome without resending the request.
     fn unknown(message: impl Into<String>) -> Self {
         Self::Unknown {
             message: message.into(),
-            replayable: true,
         }
     }
 
@@ -637,21 +644,10 @@ impl ChannelError {
             )),
             Self::Unknown { message, .. } => RunnerError::task_invocation(format!(
                 "the workspace host did not answer, so whether it acted is unknown: {message}; \
-                 retry the same command — the host answers a retry from its own record instead of \
-                 admitting a second run"
+                 inspect its recorded status from an independent host CLI; do not submit it as a new request"
             )),
             Self::Local(message) => RunnerError::task_invocation(message),
         }
-    }
-
-    fn is_replayable(&self) -> bool {
-        matches!(
-            self,
-            Self::Unknown {
-                replayable: true,
-                ..
-            }
-        )
     }
 }
 
@@ -738,8 +734,7 @@ pub(crate) trait ChannelRequest {
     /// connection whose peer is not the pinned host (§8.11).
     fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError>;
     /// Send one intent. A transport failure returns [`ChannelError::Unknown`];
-    /// the caller replays the same intent, whose id the host has already
-    /// recorded or will record exactly once.
+    /// the caller may inspect the outcome or attach safely, never resend it.
     fn send(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError>;
     /// Acknowledge detach of a run this client admitted. A run this client did
     /// not admit is refused locally: no frame, so a secondary terminal can
@@ -966,6 +961,7 @@ impl GuestIdentity for ObservedGuest {
 /// transport an integration supplies.
 pub(crate) struct WorkspaceClient<T: Transport> {
     transport: T,
+    observe_query_v1: bool,
     verified: VerifiedWorkspaceContext,
     live: LiveGuestRun,
     /// The one run this connection admitted. Only it may detach.
@@ -1012,6 +1008,7 @@ impl<T: Transport> WorkspaceClient<T> {
             .map_err(ChannelError::from_refusal)?;
         let session_run_id = parse_run_id(&verified.session_run_id)?;
         let hello = Hello {
+            capabilities: vec![channel::ChannelCapability::ObserveQueryV1],
             schema: channel::SCHEMA.to_owned(),
             protocol_versions: vec![channel::PROTOCOL_V1],
             effigy_version: live.binary.version.clone(),
@@ -1021,17 +1018,26 @@ impl<T: Transport> WorkspaceClient<T> {
         };
         channel::write_frame(&mut transport, &Frame::Hello(hello))
             .map_err(ChannelError::from_refusal)?;
-        match read_frame(&mut transport)? {
-            Frame::HelloOk(_) => {}
+        let observe_query_v1 = match read_frame(&mut transport)? {
+            Frame::HelloOk(ok) => {
+                if ok.protocol != channel::PROTOCOL_V1 || ok.effigy_version != live.binary.version {
+                    return Err(ChannelError::local(
+                        "the host selected an incompatible protocol",
+                    ));
+                }
+                ok.capabilities
+                    .contains(&channel::ChannelCapability::ObserveQueryV1)
+            }
             Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
             _ => {
                 return Err(ChannelError::local(
                     "the workspace host did not answer the protocol negotiation",
                 ))
             }
-        }
+        };
         Ok(Self {
             transport,
+            observe_query_v1,
             verified,
             live,
             admitted: None,
@@ -1132,6 +1138,13 @@ impl<T: Transport> WorkspaceClient<T> {
     }
 
     fn exchange_authenticated(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+        if matches!(&intent.body, RequestBody::Observe(body) if body.query.is_some())
+            && !self.observe_query_v1
+        {
+            return Err(ChannelError::from_refusal(channel::Refusal::forbidden(
+                "observe_query_v1 is unsupported by this peer; use an independent host CLI",
+            )));
+        }
         let id = intent.id();
         let request = self.request_for(intent);
         channel::write_frame(&mut self.transport, &Frame::Request(request))
@@ -1468,6 +1481,15 @@ pub(crate) fn dispatch_in(
         GuestOperation::Refused(message) => Err(RunnerError::task_invocation(message)),
         GuestOperation::Observe { op, target, run_id } => {
             let body = RequestBody::Observe(ObserveBody {
+                query: Some(channel::ObserveQuery {
+                    cwd: checkout_relative(&published.document.paths, cwd)?,
+                    args: invocation_args(cmd)?,
+                    output: if wants_json {
+                        ChannelOutputMode::Json
+                    } else {
+                        ChannelOutputMode::Text
+                    },
+                }),
                 op,
                 target: Some(target),
                 run_id,
@@ -1511,9 +1533,8 @@ fn run_local(
     Ok(render_local(outcome, wants_json))
 }
 
-/// Ask the host, once. A connection that dies before answering is replayed on
-/// one fresh connection under the same request id, so the host answers from its
-/// record rather than admitting a second run (§8.11).
+/// Ask the host once. An unanswered request remains Unknown: only separately
+/// authorized observation or a fresh safe attachment may follow it.
 ///
 /// Order is the contract's: verify the strict context against this guest's own
 /// observation, open the pinned connection and let it check the server pin and
@@ -1557,21 +1578,9 @@ fn ask_host(
         }
     };
     let intent = Intent::new(body);
-    let outcome = match client
-        .authenticate(auth.clone())
-        .and_then(|()| client.send(&intent))
-    {
-        Ok(outcome) => Ok(outcome),
-        Err(error) if error.is_replayable() => {
-            let mut replay = opener
-                .open(&verified, &live)
-                .map_err(ChannelError::into_runner)?;
-            replay
-                .authenticate(auth)
-                .and_then(|()| replay.send(&intent))
-        }
-        Err(error) => Err(error),
-    };
+    let outcome = client
+        .authenticate(auth)
+        .and_then(|()| client.send(&intent));
     outcome
         .map(|outcome| render_outcome(outcome, wants_json))
         .map_err(ChannelError::into_runner)
@@ -1807,3 +1816,17 @@ pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
 #[cfg(test)]
 #[path = "workspace_client/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod level_one_unknown_tests {
+    use super::*;
+
+    #[test]
+    fn level_one_unknown_never_authorizes_a_resend() {
+        let error = ChannelError::unknown("reply lost");
+        assert!(matches!(error, ChannelError::Unknown { .. }));
+        let message = error.into_runner().to_string();
+        assert!(message.contains("independent host CLI"));
+        assert!(!message.contains("retry the same command"));
+    }
+}

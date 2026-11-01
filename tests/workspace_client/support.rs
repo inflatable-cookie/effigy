@@ -330,6 +330,7 @@ pub fn pin() -> Digest {
 }
 pub fn hello(session: Session) -> Hello {
     Hello {
+        capabilities: Vec::new(),
         schema: SCHEMA.into(),
         protocol_versions: vec![1],
         effigy_version: "0.15.0".into(),
