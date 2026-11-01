@@ -355,38 +355,28 @@ Behavior:
 - open workspace shell
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
-- a local upgrade automatically rebuilds a stale Linux artifact through
-  `workspace:linux:artifact`. A running, strictly owned Linux builder is
-  reused. Effigy checks
-  the immutable container identity and writable checkout bind before building;
-  it keeps the original cache volumes, and leaves the
-  builder detached for reuse. No manual down/up or marker deletion is needed
-  for this supported case. The one-time move from `effigy-linux-release` to
-  `effigy-artifact-builder-v1` creates a separate labelled builder with the usual
-  checkout/worktree isolation. It leaves old containers, admissions and caches
-  untouched, including ambiguous pre-label builders. Future upgrades reuse the
-  same new project; separate caches can require downloads and extra disk space.
-  Foreign, missing, stopped, unlabelled or changing builders in the selected
-  new project still refuse. If the retained image cannot compile current source,
-  the build fails without accepting the old artifact. See the
-  [builder ownership contract](../knowledge/contracts/006-compose-backend-compatibility.md).
-- if the handoff refuses a stale Linux workspace artifact, the refusal names the
-  host and artifact versions, the target, and the rebuild command, for example
-  `EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact`.
-  Run that from the Effigy checkout, then retry `effigy workspace`.
-- current local reuse requires matching install identity, active version and
-  target receipt. Successful rebuilds must produce changed output and the
-  current version; touching old bytes or exiting zero leaves handoff refused.
-  The temporary content comparison rejects unchanged output and does not attest
-  source or create distribution provenance. The same checks apply to bounded
-  preparation, whose recovery command names the actual target and retains its
-  original deadline and cumulative output limits. An in-progress build is
-  checked again after its lock releases.
-- legacy builder cleanup is optional and separate from automatic rebuilds.
-  No manual reset, relabel or retirement is needed for the namespace migration.
-  Missing legacy ownership labels cannot safely establish its association, so
-  Effigy applies no lifecycle or exec effects to those old objects. See
-  [the scoped recovery boundary](../knowledge/contracts/006-compose-backend-compatibility.md#primary-service-exec-readiness).
+- Prepare consumes a produced Linux artifact; it never builds one at consumer
+  runtime. `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto` (default) first checks
+  a discovered Effigy checkout's artifact for the current active version and
+  target receipt. Otherwise it requires a release cache with current version
+  and release identity before entering release acquisition. With no such cache,
+  it refuses rather than starting a first download.
+- To produce an artifact, run
+  `EFFIGY_LINUX_RELEASE_TRIPLE=<triple> effigy workspace:linux:artifact` from the
+  Effigy checkout. To allow a first release download, set
+  `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=download` on the host Prepare command
+  (for example `effigy workspace`). `download` skips local discovery and reuses
+  a verified current release cache before fetching bytes.
+- `local` refuses a stale/missing artifact when a checkout is discovered. With
+  no discovered checkout it can still enter release acquisition if the release
+  cache has current version and identity. Both that path and `auto` may replace
+  cached bytes that fail verification. See the precise
+  [source selection rules](../knowledge/contracts/052-runtime-kernel-contract.md#89-binary-provisioning).
+  Entry verification afterwards is pure reads; it never builds, downloads or
+  reinstalls the guest.
+- the checkout-local builder, its cache volumes and its namespace migration
+  belong to the explicit `workspace:linux:artifact` task. See the
+  [builder ownership contract](../knowledge/contracts/006-compose-backend-compatibility.md#workspace-artifact-builder-execution).
 
 ### Manual substrate control
 

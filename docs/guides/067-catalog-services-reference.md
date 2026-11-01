@@ -37,8 +37,8 @@ effigy bundle inspect
 effigy bundle sync
 ```
 
-Catalog-driven services land in generated compose under
-`.effigy/runtime/compose/`; see
+Catalog-driven services are rendered into the environment's immutable object
+generation; see
 [`063-container-system-guide.md`](063-container-system-guide.md) for the
 runtime layout.
 

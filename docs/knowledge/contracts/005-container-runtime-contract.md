@@ -940,8 +940,10 @@ the default command shell keeps its existing unbounded behavior.
 While the bounded option is present, the operation enforces one absolute
 deadline created before discovery and one cumulative stdout/stderr retention
 budget. Runtime liveness and identity discovery, primary workspace Effigy
-identity/architecture probes, artifact build or download, service copies and
-install captures all use the same bounded reader and consume that same budget.
+identity/architecture probes, pinned guest verification and the user command
+all use the same bounded reader and consume that same budget. Bounded
+preparation never builds, downloads or copies a workspace artifact: an
+unprepared or stale guest refuses and names the host re-prepare command.
 Their network request and process execution use the remaining absolute
 deadline; the deadline is checked before each spawn/request, through process
 draining and at phase boundaries. A phase that returns after expiry refuses

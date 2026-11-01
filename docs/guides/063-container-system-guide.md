@@ -205,9 +205,11 @@ Each bound is a strictly parsed positive integer validated before any effect
 (`--deadline-ms` 1..3600000, stream limits 1..67108864). One absolute deadline
 is created before runtime discovery and carried through runtime liveness and
 identity inspection, primary workspace Effigy identity and architecture
-probes, artifact build or download, service copies and install captures, user
-command execution and the final drain. Each process capture uses the same
-bounded reader; requests and processes use the remaining deadline. A phase that
+probes, pinned guest verification, user command execution and the final drain.
+It never builds, downloads or copies a workspace artifact: an unprepared or
+stale guest refuses and names the host re-prepare command. Each process capture
+uses the same bounded reader; requests and processes use the remaining deadline.
+A phase that
 returns after expiry refuses before the next phase or user command is spawned.
 Synchronous local filesystem calls cannot be interrupted mid-call; the shared
 deadline is checked before the next external operation and at phase boundaries.
@@ -215,10 +217,10 @@ deadline is checked before the next external operation and at phase boundaries.
 Discovery also proves which container the command will reach: one compact,
 budgeted runtime listing must show exactly one running, non-oneoff container of
 the selected service whose checkout and scope labels name this checkout. Every
-later effect (workspace artifact and catalog copies, and the command itself)
-targets that container by full ID, so a same-named project in another checkout
-is never used. The listing is one extra preparation capture of roughly a
-hundred bytes.
+later effect that needs the container (the pinned guest verification and the
+command itself) targets it by full ID, so a same-named project in another
+checkout is never used. The listing is one extra preparation capture of roughly
+a hundred bytes.
 
 Workspace identity refresh keeps the existing primary-service repair selection,
 but the bounded runtime may refuse a repair that the plain shell would have
@@ -790,8 +792,8 @@ relatively inside it, and Compose resolves that against the project directory,
 so neither a container environment nor the Compose command line carries an
 Effigy interpolation value. A catalog service's Dockerfile is rendered inline
 (`dockerfile_inline`) from that content instead of a path, because Compose
-reads `build.dockerfile` against the build context. The former mutable output
-under `.effigy/runtime/compose` is replaced automatically on the next Prepare.
+reads `build.dockerfile` against the build context. Anything left under the
+former mutable `.effigy/runtime/compose` is ignored and never rewritten.
 
 A shared service is rendered outside any checkout's generation, into one
 machine-wide content-addressed directory under the Effigy home
