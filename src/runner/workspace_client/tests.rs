@@ -5544,13 +5544,14 @@ enum LevelOnePostwriteReply {
         method: host::Method,
         outcome: host::ResponseOutcome,
     },
+    RequestAttachment { run: RunId, cursor: u64, client: effigy_kernel::run::Client, wrong_id: bool },
 }
 
 fn level_one_postwrite_peer_exchange(
     reply: LevelOnePostwriteReply,
 ) -> (Intent, Result<ChannelOutcome, ChannelError>, Option<RunId>) {
     let method = match &reply {
-        LevelOnePostwriteReply::UnreadableAttach => host::Method::Attach,
+        LevelOnePostwriteReply::UnreadableAttach | LevelOnePostwriteReply::RequestAttachment { .. } => host::Method::Attach,
         LevelOnePostwriteReply::Typed { method, .. } => *method,
         _ => host::Method::Invoke,
     };
@@ -5648,6 +5649,10 @@ fn level_one_postwrite_peer_exchange(
             LevelOnePostwriteReply::Typed { outcome, .. } => Frame::Response(host::Response {
                 id: request.id,
                 outcome,
+            }),
+            LevelOnePostwriteReply::RequestAttachment { run, cursor, client, wrong_id } => Frame::Response(host::Response {
+                id: request.id,
+                outcome: level_one_request_attachment_reply(request.id, run, cursor, client, wrong_id),
             }),
             LevelOnePostwriteReply::UnreadableAttach => Frame::Response(host::Response {
                 id: request.id,
@@ -5817,69 +5822,57 @@ fn level_one_wrong_same_id_outcome_payload_is_unknown() {
     }
 }
 
+fn level_one_request_attachment_reply(id: RequestId, run: RunId, cursor: u64, client: effigy_kernel::run::Client, wrong_id: bool) -> host::ResponseOutcome {
+    let mut attachment = *id.bytes();
+    if wrong_id { attachment[0] ^= 1; }
+    host::ResponseOutcome::Observed(serde_json::to_value(host::AttachView {
+        attachment: effigy_kernel::run::AttachmentId::new(attachment), run, client, cursor,
+    }).unwrap())
+}
+
+#[test]
+fn level_one_secondary_attachment_wrong_identity_is_unknown() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Secondary, wrong_id: true });
+}
+
+#[test]
+fn level_one_nonadmitting_connection_cannot_accept_owner_role() {
+    level_one_postwrite_unknown_control(LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Owner, wrong_id: false });
+}
+
 #[test]
 fn level_one_valid_method_outcome_matrix_and_definitive_refusals_stay_sendable() {
+    let typed = |method, outcome| LevelOnePostwriteReply::Typed { method, outcome };
     let mut cases = vec![
-        (host::Method::Invoke, level_one_accepted_reply()),
-        (host::Method::Invoke, level_one_completed_reply()),
-        (
-            host::Method::Observe,
-            host::ResponseOutcome::Observed(serde_json::json!({"observed":true})),
-        ),
-        (
-            host::Method::Attach,
-            level_one_attachment_reply(session_run(), 0),
-        ),
-        (
-            host::Method::Cancel,
-            host::ResponseOutcome::Observed(serde_json::Value::Null),
-        ),
-        (
-            host::Method::Detach,
-            host::ResponseOutcome::Observed(serde_json::Value::Null),
-        ),
+        typed(host::Method::Invoke, level_one_accepted_reply()),
+        typed(host::Method::Invoke, level_one_completed_reply()),
+        typed(host::Method::Observe, host::ResponseOutcome::Observed(serde_json::json!({"observed":true}))),
+        LevelOnePostwriteReply::RequestAttachment { run: session_run(), cursor: 0, client: effigy_kernel::run::Client::Secondary, wrong_id: false },
+        typed(host::Method::Cancel, host::ResponseOutcome::Observed(serde_json::Value::Null)),
+        typed(host::Method::Detach, host::ResponseOutcome::Observed(serde_json::Value::Null)),
     ];
-    for method in [
-        host::Method::Invoke,
-        host::Method::Observe,
-        host::Method::Attach,
-        host::Method::Cancel,
-        host::Method::Detach,
-    ] {
-        cases.push((
-            method,
-            host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal")),
-        ));
+    for method in [host::Method::Invoke, host::Method::Observe, host::Method::Attach, host::Method::Cancel, host::Method::Detach] {
+        cases.push(typed(method, host::ResponseOutcome::Refused(host::Refusal::forbidden("known refusal"))));
     }
-    for (method, response) in cases {
-        let (intent, outcome, _) =
-            level_one_postwrite_peer_exchange(LevelOnePostwriteReply::Typed {
-                method,
-                outcome: response.clone(),
-            });
+    for reply in cases {
+        let (intent, outcome, _) = level_one_postwrite_peer_exchange(reply.clone());
+        let response = match reply {
+            LevelOnePostwriteReply::Typed { outcome, .. } => outcome,
+            LevelOnePostwriteReply::RequestAttachment { run, cursor, client, wrong_id } => level_one_request_attachment_reply(intent.id(), run, cursor, client, wrong_id),
+            _ => panic!("positive matrix has only typed responses"),
+        };
         match &response {
-            host::ResponseOutcome::Refused(_) => assert!(matches!(
-                outcome,
-                Err(ChannelError::Refused {
-                    code: "forbidden",
-                    ..
-                })
-            )),
-            _ => assert!(outcome.is_ok(), "{method:?} {response:?}: {outcome:?}"),
+            host::ResponseOutcome::Refused(_) => assert!(matches!(outcome, Err(ChannelError::Refused { code: "forbidden", .. }))),
+            _ => assert!(outcome.is_ok(), "{response:?}: {outcome:?}"),
         }
         let mut transport = MuteTransport::answering_negotiation();
         level_one_append_response(&mut transport, &intent, response);
         let written = transport.written.clone();
         let mut replay = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
-        replay
-            .authenticate(GuestAuth::Capability(capability()))
-            .unwrap();
+        replay.authenticate(GuestAuth::Capability(capability())).unwrap();
         let before = written.lock().unwrap().len();
         let replayed = replay.send(&intent.clone());
-        assert!(
-            !matches!(replayed, Err(ChannelError::Unknown { .. })),
-            "valid answer fenced replay"
-        );
+        assert!(!matches!(replayed, Err(ChannelError::Unknown { .. })), "valid answer fenced replay");
         assert!(written.lock().unwrap().len() > before);
     }
 }
