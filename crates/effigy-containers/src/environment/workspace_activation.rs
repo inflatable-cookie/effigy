@@ -76,6 +76,13 @@ enum GuardedAbortState<'r> {
         reservation: WorkspaceActivationReservation,
         attempt: effigy_kernel::run::RequestId,
     },
+    GuardedEnvironment {
+        root: &'r effigy_kernel::root::StateRoot,
+        environment: Box<effigy_kernel::run::GuardedWorkspaceCleanup<'r>>,
+        supervisor: Box<SessionSupervisor<'r>>,
+        reservation: WorkspaceActivationReservation,
+        attempt: effigy_kernel::run::RequestId,
+    },
     Session {
         root: &'r effigy_kernel::root::StateRoot,
         supervisor: Box<SessionSupervisor<'r>>,
@@ -115,6 +122,7 @@ impl<'r> GuardedAbortState<'r> {
         let root = match &self_ {
             Self::Activation(_) => unreachable!(),
             Self::Environment { root, .. }
+            | Self::GuardedEnvironment { root, .. }
             | Self::AdmissionUnknown { root, .. }
             | Self::RawSession { root, .. }
             | Self::Session { root, .. }
@@ -128,6 +136,48 @@ impl<'r> GuardedAbortState<'r> {
         }
         match self_ {
             Self::Activation(_) => unreachable!(),
+            Self::GuardedEnvironment {
+                environment,
+                supervisor,
+                reservation,
+                attempt,
+                ..
+            } => {
+                let cleanup = match ctx.cleanup() {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Box::new(Self::GuardedEnvironment {
+                                root,
+                                environment,
+                                supervisor,
+                                reservation,
+                                attempt,
+                            }),
+                        ))
+                    }
+                };
+                match environment.settle(&cleanup, &mut EnvSettlement) {
+                    Ok(_) => Self::Session {
+                        root,
+                        supervisor,
+                        reservation,
+                        attempt,
+                    }
+                    .retry(ctx, wait),
+                    Err((error, environment)) => Err((
+                        EnvError::Kernel(error),
+                        Box::new(Self::GuardedEnvironment {
+                            root,
+                            environment,
+                            supervisor,
+                            reservation,
+                            attempt,
+                        }),
+                    )),
+                }
+            }
             Self::RawSession {
                 run,
                 reservation,
@@ -915,14 +965,25 @@ impl<'r> WorkspaceActivation<'r> {
             match EnvRun::begin_claimed_recoverable(ctx, env, Operation::Up, wait, &reservation) {
                 Ok(environment) => environment,
                 Err(failure) => {
-                    let custody = match failure.run {
-                        Some(environment) => GuardedAbortState::Environment {
-                            root: ctx.root,
-                            environment,
-                            supervisor: Box::new(supervisor),
-                            reservation,
-                            attempt,
-                        },
+                    let custody = match failure.owner {
+                        Some(super::reconcile::EnvAdmissionOwner::Guarded(environment)) => {
+                            GuardedAbortState::GuardedEnvironment {
+                                root: ctx.root,
+                                environment,
+                                supervisor: Box::new(supervisor),
+                                reservation,
+                                attempt,
+                            }
+                        }
+                        Some(super::reconcile::EnvAdmissionOwner::Run(environment)) => {
+                            GuardedAbortState::Environment {
+                                root: ctx.root,
+                                environment,
+                                supervisor: Box::new(supervisor),
+                                reservation,
+                                attempt,
+                            }
+                        }
                         None => GuardedAbortState::AdmissionUnknown {
                             root: ctx.root,
                             supervisor: Box::new(supervisor),
@@ -1696,12 +1757,17 @@ mod tests {
 
     #[cfg(feature = "fault-injection")]
     #[test]
-    fn ambiguous_env_admission_keeps_session_and_refuses_cleanup() {
+    fn admitted_env_failure_retries_without_a_second_owner() {
         use effigy_kernel::gate::OwnerState;
         use effigy_kernel::observe::Observed;
         let fixture = home();
         let state = root(fixture.path());
-        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
         let env = env("workspace");
         let options = options(49);
         let session = options.id;
@@ -1711,7 +1777,7 @@ mod tests {
                 if point == "SessionSupervisorAdoptAfter" {
                     adopted = true;
                 }
-                if adopted && point == "BeginAdmitted" {
+                if adopted && (point == "BeginAdmitted" || point == "SettleCloseBefore") {
                     return Err(std::io::Error::other("injected"));
                 }
                 Ok(())
@@ -1731,12 +1797,6 @@ mod tests {
         let custody = failure
             .custody
             .expect("retain session on ambiguous admission");
-        let (error, custody) = custody
-            .retry(&ctx, Wait::FailFast)
-            .expect_err("bound Env run requires recovery");
-        assert!(error
-            .to_string()
-            .contains("environment admission uncertain"));
         let Observed::Verified(reader, _) =
             effigy_kernel::store::Store::read(&ctx.observe(), &state)
         else {
@@ -1747,7 +1807,64 @@ mod tests {
             Observed::Verified(OwnerState::Held, _)
         ));
         drop(reader);
-        drop(custody);
+        custody
+            .retry(&ctx, Wait::FailFast)
+            .expect("exact owners settle on retry");
+    }
+
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn admitted_env_fault_retains_both_exact_owners_for_retry() {
+        let fixture = home();
+        let state = root(fixture.path());
+        let ctx = EnvContext::with_cleanup_budget(
+            &state,
+            CancelToken::default(),
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap();
+        let env = env("workspace");
+        let mut adopted = false;
+        let failure = effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "SessionSupervisorAdoptAfter" {
+                    adopted = true;
+                }
+                if adopted && (point == "BeginAdmitted" || point == "SettleCloseBefore") {
+                    return Err(std::io::Error::other("injected"));
+                }
+                Ok(())
+            },
+            || {
+                WorkspaceActivation::begin_recoverable(
+                    &ctx,
+                    &env,
+                    &inputs(),
+                    &invocation(),
+                    options(52),
+                    "fixture-supervisor",
+                )
+            },
+        )
+        .expect_err("injected admitted Env failure");
+        let custody = failure.custody.expect("retain cleanup custody");
+        let retained = matches!(&custody.state, GuardedAbortState::GuardedEnvironment { .. });
+        let held = effigy_kernel::gate::Gate::acquire(
+            &ctx.cx,
+            &state,
+            std::slice::from_ref(&env.resource),
+            Wait::FailFast,
+        )
+        .is_err();
+        if retained {
+            custody
+                .retry(&ctx, Wait::FailFast)
+                .expect("same owners settle on retry");
+        }
+        assert!(
+            retained && held,
+            "admitted Env and session owners remain held"
+        );
     }
 
     #[cfg(feature = "fault-injection")]

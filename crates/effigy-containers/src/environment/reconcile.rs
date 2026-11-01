@@ -609,12 +609,17 @@ pub struct ParkedEnvRun<'r> {
 
 pub(super) struct EnvAdmissionFailure<'r> {
     pub error: EnvError,
-    pub run: Option<Box<Run<'r>>>,
+    pub owner: Option<EnvAdmissionOwner<'r>>,
+}
+
+pub(super) enum EnvAdmissionOwner<'r> {
+    Run(Box<Run<'r>>),
+    Guarded(Box<effigy_kernel::run::GuardedWorkspaceCleanup<'r>>),
 }
 
 impl From<EnvError> for EnvAdmissionFailure<'_> {
     fn from(error: EnvError) -> Self {
-        Self { error, run: None }
+        Self { error, owner: None }
     }
 }
 
@@ -985,9 +990,16 @@ impl<'r> EnvRun<'r> {
         claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
     ) -> Result<Self, EnvError> {
         Self::admit_recoverable(ctx, env, op, wait, claim).map_err(|failure| {
-            if let Some(run) = failure.run {
+            if let Some(owner) = failure.owner {
                 if let Ok(cleanup) = ctx.cleanup() {
-                    let _ = run.settle(&cleanup, &mut EnvSettlement);
+                    match owner {
+                        EnvAdmissionOwner::Run(run) => {
+                            let _ = run.settle(&cleanup, &mut EnvSettlement);
+                        }
+                        EnvAdmissionOwner::Guarded(guarded) => {
+                            let _ = guarded.settle(&cleanup, &mut EnvSettlement);
+                        }
+                    }
                 }
             }
             failure.error
@@ -1042,7 +1054,7 @@ impl<'r> EnvRun<'r> {
             custody: None,
         };
         let admitted = admit_under_gate_probe(ctx.root, env, &progress, || match claim {
-            Some(claim) => Run::begin_claimed(
+            Some(claim) => Run::begin_claimed_recoverable(
                 &ctx.cx,
                 ctx.root,
                 &invocation,
@@ -1053,7 +1065,11 @@ impl<'r> EnvRun<'r> {
                 },
                 &mut EnvSettlement,
                 claim,
-            ),
+            )
+            .map_err(|(error, guarded)| EnvAdmissionFailure {
+                error: admission_error(env, wait, started, error),
+                owner: guarded.map(EnvAdmissionOwner::Guarded),
+            }),
             None => Run::begin_with_fresh_cleanup(
                 &ctx.cx,
                 ctx.root,
@@ -1064,9 +1080,12 @@ impl<'r> EnvRun<'r> {
                         .map_err(|error| RunError::broken(error.to_string()))
                 },
                 &mut EnvSettlement,
-            ),
-        })
-        .map_err(|error| admission_error(env, wait, started, error));
+            )
+            .map_err(|error| EnvAdmissionFailure {
+                error: admission_error(env, wait, started, error),
+                owner: None,
+            }),
+        });
         let run = match admitted {
             Ok(run) => {
                 progress.update(
@@ -1078,7 +1097,7 @@ impl<'r> EnvRun<'r> {
             }
             Err(error) => {
                 step.fail(&format!("environment `{}` was not entered", env.name));
-                return Err(error.into());
+                return Err(error);
             }
         };
         // The gate is held: only this run writes the row until it settles.
@@ -1097,7 +1116,7 @@ impl<'r> EnvRun<'r> {
                     error: EnvError::Invalid(format!(
                         "environment record unreadable after admission: {reason}"
                     )),
-                    run: Some(Box::new(run)),
+                    owner: Some(EnvAdmissionOwner::Run(Box::new(run))),
                 });
             }
         };
