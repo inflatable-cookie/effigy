@@ -369,6 +369,8 @@ mod tests {
         crate::fault::set_helper_log(None);
         let run_id = run.id();
         let child_id = run.partial_sentinel.as_ref().map(|child| child.child_id());
+        let prechecks = run.require_environment_gate().is_ok()
+            && journal::check_run_fence(run.store.conn(), run.id, &run.owner).is_ok();
         let expired = cx.operation().cleanup(Duration::ZERO).unwrap();
         let expired_result = run.close_partial_workspace_sentinel(&expired);
         let input_after_expiry = run
@@ -408,6 +410,7 @@ mod tests {
         drop(settlement); // Fixture teardown only; not a settlement receipt.
         assert!(start.is_err() && first.is_err() && fired);
         assert!(expired_result.is_err() && input_after_expiry);
+        assert!(prechecks, "gate and fence must pass before expired cleanup");
         assert_eq!(after_expiry, child_id);
         assert_eq!(identities.len(), 1);
         assert_eq!(child_id, Some(identities[0].pid));
@@ -475,6 +478,15 @@ mod tests {
         let settlement =
             run.settle_workspace_recoverable(&super::super::tests::cleanup(&cx), &mut fake);
         let unsettled = settlement.is_err();
+        let retained = settlement.as_ref().err().and_then(|(_, run)| {
+            run.partial_sentinel.as_ref().map(|child| {
+                (
+                    child.child_id(),
+                    child.input_open(),
+                    run.guard.covers(&owner),
+                )
+            })
+        });
         let log = std::fs::read_to_string(helper_log).unwrap();
         let identities: Vec<ProcessIdentity> = log
             .lines()
@@ -486,6 +498,7 @@ mod tests {
         drop(settlement); // Fixture teardown only.
         assert!(start.is_err() && close.is_err());
         assert!(unsettled && exact_run_guard);
+        assert_eq!(retained, before.map(|id| (id, true, true)));
         assert_eq!(identities.len(), 1);
         assert_eq!(before, Some(identities[0].pid));
         assert_eq!(after, before);
