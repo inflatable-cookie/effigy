@@ -2522,6 +2522,11 @@ impl WorkspaceActivationReservation {
                 table: RESERVATIONS.into(),
             });
         };
+        if stored.id != self.record.id {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "workspace activation reservation identity changed".into(),
+            ));
+        }
         match activation_plan(reader.conn(), &stored) {
             Ok(Some(plan)) => Observed::Verified(Some(plan), activation_evidence()),
             Ok(None) => Observed::Absent(AbsenceProof::NoRow {

@@ -1038,6 +1038,25 @@ fn plan_of(
 }
 
 #[test]
+fn an_activation_plan_refuses_a_foreign_reservation_identity() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (_session_run, _) = admit_staged(&cx, &root, &reservation, run_id(221));
+    let _environment_run = admit_activation(&cx, &root, &reservation, run_id(222));
+    let reader = read_journal(&cx, &root);
+    assert!(plan_of(&reservation, &reader).is_some());
+    let mut foreign = reservation.clone();
+    foreign.record.id = ActivationReservationId::parse(&"ff".repeat(16)).expect("id");
+    assert!(
+        foreign.plan(&reader).verified().is_none(),
+        "a different reservation id cannot recover this plan"
+    );
+}
+
+#[test]
 fn the_first_activation_commits_mapping_active_and_borrow_together() {
     let cx = context();
     let fixture = home();
