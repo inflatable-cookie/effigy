@@ -616,6 +616,21 @@ fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
             i64::from(!detach && !still_attached),
             "only a committed EOF queues a stop"
         );
+        if !detach && !still_attached {
+            let encoded: String = reader
+                .conn()
+                .query_row(
+                    "SELECT action FROM requests WHERE run_id=?1",
+                    [live.to_string()],
+                    |row| row.get(0),
+                )
+                .expect("owner EOF request");
+            let request: crate::run::Request =
+                serde_json::from_str(&encoded).expect("typed request");
+            assert_eq!(request.run, live);
+            assert_eq!(&request.expected, handle.fence());
+            assert!(matches!(request.action, crate::run::RequestAction::Stop));
+        }
         drop(reader);
         for run in host.dispatcher.admission.runs.drain(..) {
             run.settle(&cleanup(&cx), &mut NoEffects)
