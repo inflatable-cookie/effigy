@@ -1242,9 +1242,10 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
     let fixture = tempfile::tempdir().unwrap();
     let checkout = fixture.path().join("checkout");
     std::fs::create_dir(&checkout).unwrap();
-    let marker = checkout.join("ran");
+    let default_marker = checkout.join("default-ran");
+    let admin_marker = checkout.join("admin-ran");
     std::fs::write(checkout.join("effigy.toml"), format!(
-        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", marker.display(), marker.display(),
+        "[tasks.build]\nmode = 'tui'\nconcurrent = [{{ name = 'one', run = 'touch {} ; sleep 2' }}]\n[tasks.build.profiles.admin]\nconcurrent = [{{ name = 'two', run = 'touch {} ; sleep 2' }}]\n", default_marker.display(), admin_marker.display(),
     )).unwrap();
     let cx = kernel::effects();
     let state = kernel::effects_root(&checkout).unwrap();
@@ -1266,10 +1267,23 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
         checkout.clone(),
         state.clone(),
     );
-    for (request_id, args) in [(80, vec![]), (81, vec!["admin".to_owned()])] {
+    let mut failures = Vec::new();
+    for (request_id, args, profile, wanted, unwanted) in [
+        (80, vec![], "default", &default_marker, &admin_marker),
+        (
+            81,
+            vec!["admin".to_owned()],
+            "admin",
+            &admin_marker,
+            &default_marker,
+        ),
+    ] {
         let ticket = match reserve_ticket(&checkout, session, request_id, b"workspace profile") {
             Reservation::Fresh(ticket) => ticket,
-            other => panic!("fresh reservation: {other:?}"),
+            other => {
+                failures.push(format!("fresh reservation: {other:?}"));
+                continue;
+            }
         };
         let expected_run = ticket.run();
         let body = InvocationBody {
@@ -1279,7 +1293,13 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             args: args.clone(),
             output: OutputMode::Text,
         };
-        let resolved = dispatch.resolve(&cx, &body).unwrap();
+        let resolved = match dispatch.resolve(&cx, &body) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                failures.push(format!("resolve {profile}: {error:?}"));
+                continue;
+            }
+        };
         let resolution = crate::runner::managed_run::WorkspaceResolution {
             invocation: serde_json::to_vec(&resolved).unwrap(),
             checkout: checkout.clone(),
@@ -1289,34 +1309,81 @@ fn reserved_engine_admits_default_and_named_profile_under_the_reserved_id() {
             name: "build".into(),
             args,
         };
-        let mut started = crate::runner::managed_run::start_reserved_with_executable(
+        let mut started = match crate::runner::managed_run::start_reserved_with_executable(
             &checkout,
             &invocation,
             checkout.clone(),
             ticket,
             Some(resolution),
             &executable,
-        )
-        .expect("reserved engine starts");
-        assert_eq!(started.run, expected_run);
-        assert_eq!(
-            started.client.run, expected_run,
-            "engine acknowledged the reserved run"
-        );
+        ) {
+            Ok(started) => started,
+            Err(error) => {
+                failures.push(format!("start {profile}: {error}"));
+                continue;
+            }
+        };
+        if started.run != expected_run || started.client.run != expected_run {
+            failures.push(format!("{profile}: wrong admitted run"));
+        }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !marker.exists() && std::time::Instant::now() < deadline {
+        while !wanted.exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        let observed = marker.exists();
+        if !wanted.exists() || unwanted.exists() {
+            failures.push(format!("{profile}: wrong workload marker"));
+        }
+        let observation = kernel::observe();
+        match effigy_kernel::store::Store::read(&observation, &started.root) {
+            effigy_kernel::observe::Observed::Verified(reader, _) => {
+                match effigy_kernel::run::summary(&reader, expected_run) {
+                    effigy_kernel::observe::Observed::Verified(summary, _)
+                        if summary
+                            .invocation
+                            .as_ref()
+                            .and_then(|inv| inv.spec().task.profile())
+                            == Some(profile) => {}
+                    other => {
+                        failures.push(format!("{profile}: wrong journal invocation: {other:?}"))
+                    }
+                }
+            }
+            other => failures.push(format!("{profile}: cannot read journal: {other:?}")),
+        }
         started.client.close_input();
-        started
+        if let Err(error) = started
             .client
             .wait(cx.child(std::time::Duration::from_secs(30)).operation())
-            .expect("reap reserved supervisor");
-        assert!(observed, "reserved workload ran");
-        std::fs::remove_file(&marker).unwrap();
+        {
+            failures.push(format!("{profile}: supervisor reap: {error}"));
+        }
+        match effigy_kernel::store::Store::read(&observation, &started.root) {
+            effigy_kernel::observe::Observed::Verified(reader, _) => {
+                match effigy_kernel::run::summary(&reader, expected_run) {
+                    effigy_kernel::observe::Observed::Verified(summary, _)
+                        if summary.cleanup_complete == Some(true) => {}
+                    other => failures.push(format!("{profile}: cleanup not complete: {other:?}")),
+                }
+            }
+            other => failures.push(format!("{profile}: cannot read cleanup: {other:?}")),
+        }
+        if wanted.exists() {
+            if let Err(error) = std::fs::remove_file(wanted) {
+                failures.push(format!("{profile}: remove marker: {error}"));
+            }
+        }
+        if unwanted.exists() {
+            if let Err(error) = std::fs::remove_file(unwanted) {
+                failures.push(format!("{profile}: remove unexpected marker: {error}"));
+            }
+        }
     }
-    assert!(session_run.close(WorkloadOutcome::Succeeded).is_empty());
+    let warnings = session_run.close(WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "session cleanup: {warnings:?}");
+    assert!(
+        failures.is_empty(),
+        "reserved profile proof failures: {failures:?}"
+    );
 }
 
 #[test]
