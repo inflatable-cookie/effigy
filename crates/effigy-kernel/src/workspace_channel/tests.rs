@@ -494,10 +494,24 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
 fn replacement_release_fault_retains_both_secondary_handles() {
     use crate::fault::{self, Point};
     for (point, fail_new_cleanup) in [
-        (Point::RunAttachReleaseBefore, false),
-        (Point::RunAttachReleaseAfter, false),
-        (Point::RunAttachReleaseBefore, true),
-        (Point::RunAttachReleaseAfter, true),
+        (Point::RunAttachReleaseBefore, None),
+        (Point::RunAttachReleaseAfter, None),
+        (
+            Point::RunAttachReleaseBefore,
+            Some(Point::RunAttachReleaseBefore),
+        ),
+        (
+            Point::RunAttachReleaseAfter,
+            Some(Point::RunAttachReleaseBefore),
+        ),
+        (
+            Point::RunAttachReleaseBefore,
+            Some(Point::RunAttachReleaseAfter),
+        ),
+        (
+            Point::RunAttachReleaseAfter,
+            Some(Point::RunAttachReleaseAfter),
+        ),
     ] {
         let (_fixture, cx, root, session) = journal("effigy-channel-replacement-fault");
         let (_run, live) = admitted_run(&cx, &root, session, 93, &[175]);
@@ -565,8 +579,8 @@ fn replacement_release_fault_retains_both_secondary_handles() {
             .operation()
             .effects()
             .expect("fresh cleanup authority");
-        if fail_new_cleanup {
-            fault::arm_nth(Point::RunAttachReleaseBefore, 1, fault::Fault::Eperm);
+        if let Some(new_fault) = fail_new_cleanup {
+            fault::arm_nth(new_fault, 1, fault::Fault::Eperm);
             assert_eq!(
                 host.retry_cleanup(&fresh, &root)
                     .expect_err("new release fails")
@@ -583,6 +597,14 @@ fn replacement_release_fault_retains_both_secondary_handles() {
             assert_eq!(
                 host.unsettled_replacement.as_ref().map(Attachment::id),
                 Some(AttachmentId::new([2; 16]))
+            );
+            assert_eq!(
+                host.unsettled_replacement
+                    .as_ref()
+                    .unwrap()
+                    .attached(&cx, &root)
+                    .unwrap(),
+                new_fault == Point::RunAttachReleaseBefore
             );
         }
         host.retry_cleanup(&fresh, &root)
