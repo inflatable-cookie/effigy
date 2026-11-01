@@ -362,3 +362,6 @@ fn unknown_cleanup_retains_same_session_until_verified_explicit_recovery() {
     );
     super::settle_fixture(&fixture);
 }
+
+#[path = "container_up_production.rs"]
+mod production;
