@@ -198,6 +198,19 @@ A transition waits up to 10 minutes for the gate; idle stop does not wait.
   exposed, and the activation still publishes `active`. A detached command
   reports that partial exposure per route rather than the whole activation's
   readiness and exposure as unverified (effigy#455).
+- **Reserved workspace ordering.** A container-mode workspace follows the
+  same outside-gate integration order (Supervisor, 2026-11-01). Its first
+  phase holds `Gate(Env)` for the one apply, target observation, creator
+  attribution and reserved target binding, then releases the gate. The same
+  reservation-owning run journals and completes readiness, permissions,
+  secrets, routes and declared host integrations before publication. The
+  second phase stages guest publication, reacquires `Gate(Env)`, and
+  revalidates the reservation id, generation, created-id set, selection
+  receipt inputs and original absolute deadline before committing and
+  switching the selection. A mismatch or expired deadline refuses; uncertain
+  cleanup retains a recoverable reservation. Integrations unwind in the
+  ordinary reverse order on failure, and neither another apply nor another
+  owner may stand in for the original activation.
 - **One apply.** `compose up -d --build --remove-orphans`, with no recreate
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
