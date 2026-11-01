@@ -2190,6 +2190,57 @@ impl<'a> Run<'a> {
             Some(format!("{reason}")),
         )
     }
+
+    /// Record an unresolved workspace process intent before a possible fork.
+    /// The opaque marker is not a process receipt and grants no signal or
+    /// spawn authority. Legacy receipt readers reject it as unresolved.
+    /// This scaffold is not connected to a production spawn path.
+    #[allow(dead_code)]
+    pub(crate) fn mark_workspace_partial_fork(
+        &mut self,
+        ticket: &EffectTicket,
+    ) -> Result<(), RunError> {
+        if self.root.is_machine()
+            || self.owner.resource.kind() != crate::id::ResourceKind::Env
+            || ticket.run != self.id
+            || ticket.owner != self.owner
+        {
+            return Err(RunError::refused("workspace process intent required"));
+        }
+        self.can_effect()?;
+        let marker = serde_json::json!({ "workspace_partial_fork_v1": {} });
+        let result = (|| {
+            crate::fault_point!(AppliedBefore)?;
+            self.store
+                .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
+                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                    let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
+                    journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
+                    if effect.spec.kind != crate::custody::KIND
+                        || effect.state != EffectState::Intended
+                        || effect.receipt.is_some()
+                    {
+                        return Err(RunError::refused(
+                            "unstarted workspace process intent required",
+                        ));
+                    }
+                    journal::write_effect(
+                        txn,
+                        self.id,
+                        ticket.sequence,
+                        EffectState::Unknown,
+                        Some(&marker),
+                        Some("workspace process fork may be unsettled"),
+                    )
+                })?;
+            crate::fault_point!(AppliedAfter)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
     fn callback(
         &mut self,
         ticket: &EffectTicket,
