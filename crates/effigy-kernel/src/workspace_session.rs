@@ -1925,11 +1925,10 @@ impl WorkspaceActivationReservation {
         Self::decide_held(&bounded, root, environment, &publishing)
     }
 
-    /// Observe owned external data off-thread, then finalize read-only inputs
-    /// on the original gate holder. The local callback must bound its own I/O;
-    /// the kernel checks the deadline again before accepting its result but
-    /// cannot interrupt a callback that does not return.
-    pub fn decide_observing_split<T: Send + 'static>(
+    /// Test-only candidate: neither callback is yet constrained to bounded,
+    /// read-only I/O, so this does not grant production observation authority.
+    #[cfg(test)]
+    fn decide_observing_split<T: Send + 'static>(
         cx: &EffectContext,
         root: &StateRoot,
         environment: &ResourceId,

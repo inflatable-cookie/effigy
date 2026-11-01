@@ -9252,6 +9252,48 @@ fn split_decision_refuses_failed_observation_and_cancelled_finalization() {
 }
 
 #[test]
+fn split_decision_times_out_external_observation_without_finalizing() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let finalized = std::cell::Cell::new(false);
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (done, completed) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(200),
+        move |_| {
+            let _ = blocked.recv_timeout(Duration::from_secs(5));
+            let _ = done.send(());
+            Ok(1)
+        },
+        |input, _| {
+            finalized.set(true);
+            Ok(decision_inputs(input))
+        },
+    );
+    let competing = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    );
+    let _ = release.send(());
+    completed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("external observer exited");
+    assert!(result.is_err(), "expired external observation must refuse");
+    assert!(!finalized.get(), "expired data must not be finalized");
+    assert!(competing.is_ok(), "refusal must release the decision gate");
+    assert_eq!(reservation_rows(&read_journal(&cx, &root), &environment), 0);
+}
+
+#[test]
 fn decision_observes_inputs_while_holding_the_environment_gate() {
     let cx = context();
     let fixture = home();
