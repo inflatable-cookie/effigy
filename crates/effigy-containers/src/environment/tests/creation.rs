@@ -996,7 +996,7 @@ fn target_observer_facade_refuses_mismatches_and_retains_owner() {
     let stack = env("stack");
     let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
     let session = parked.session().clone();
-    for _ in 0..4 {
+    for _ in 0..8 {
         fake.inventories
             .push_back(verified(vec![row(PRIMARY, 'a')]));
     }
@@ -1011,6 +1011,22 @@ fn target_observer_facade_refuses_mismatches_and_retains_owner() {
     assert!(error
         .to_string()
         .contains("workspace resume observation changed"));
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            let mut platform = view.facts().platform.clone();
+            platform.platform.architecture = "different-architecture".into();
+            verified((view.facts().target.clone(), platform))
+        })
+        .expect_err("changed platform refuses");
+    assert!(error
+        .to_string()
+        .contains("workspace resume observation changed"));
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |_, _, _| {
+            Observed::Unknown(UnknownReason::Injected)
+        })
+        .expect_err("unknown target refuses");
+    assert!(error.to_string().contains("observation is unknown"));
     let activation = parked
         .reacquire_target(&mut fake, |view, _, _| {
             // Fixture plumbing only, not a backend-observation proof.
