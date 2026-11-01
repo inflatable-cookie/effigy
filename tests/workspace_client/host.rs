@@ -755,6 +755,12 @@ fn a_settled_crash_is_recovered_by_a_fresh_host() {
         assert!(Instant::now() < until, "the crashed host did not settle");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // A settled run's supervisor still leaves its own process, and it is that
+    // exit that frees the checkout's serving gate. A successor launched before
+    // it would be refused by a gate no host is going to keep, which reads as a
+    // recovery failure instead of the handover it is.
+    effigy_test_support::process::wait_kernel_helpers(&project)
+        .expect("the crashed host's processes leave");
 
     // The successor starts, announces and serves in its own process.
     let recovered = initiate("__workspace-serving-fixture", &request);
