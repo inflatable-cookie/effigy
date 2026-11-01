@@ -622,6 +622,9 @@ impl Attachment {
     pub fn released(&self) -> bool {
         self.released
     }
+    pub(crate) fn pending_release(&self) -> Option<Release> {
+        self.pending_release
+    }
     /// Whether this attachment is still attached in the journal.
     pub fn attached(&self, cx: &EffectContext, root: &StateRoot) -> Result<bool, RunError> {
         let cx = cx.child(std::time::Duration::from_secs(30));

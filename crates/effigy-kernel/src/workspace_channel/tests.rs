@@ -479,6 +479,13 @@ fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections(
                 .code,
             RefusalCode::Unknown
         );
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        host.retry_cleanup(&fresh, &root)
+            .expect("same attachment retry");
+        assert!(!host.cleanup_pending());
     }
 }
 
@@ -549,6 +556,17 @@ fn replacement_release_fault_retains_both_secondary_handles() {
                 .code,
             RefusalCode::Unknown
         );
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        assert_eq!(
+            host.retry_cleanup(&fresh, &root)
+                .expect_err("two handles remain fenced")
+                .code,
+            RefusalCode::Unknown
+        );
+        assert!(host.cleanup_pending());
     }
 }
 
@@ -704,6 +722,13 @@ fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
             assert!(matches!(request.action, crate::run::RequestAction::Stop));
         }
         drop(reader);
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        host.retry_cleanup(&fresh, &root)
+            .expect("same owner release retry");
+        assert!(!host.cleanup_pending());
         for run in host.dispatcher.admission.runs.drain(..) {
             run.settle(&cleanup(&cx), &mut NoEffects)
                 .expect("test-owned run cleanup");

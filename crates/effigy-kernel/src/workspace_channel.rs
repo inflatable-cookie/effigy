@@ -2601,6 +2601,42 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.owner_cleanup_unsettled
     }
 
+    /// Retry a retained single attachment's exact release with fresh cleanup
+    /// authority. Unknown, malformed-owner and multi-attachment states remain
+    /// fenced; this does not settle the session or any child run.
+    pub fn retry_cleanup(&mut self, cx: &EffectContext, root: &StateRoot) -> Result<(), Refusal> {
+        if !self.owner_cleanup_unsettled {
+            return Err(Refusal::forbidden("there is no retained channel cleanup"));
+        }
+        if self.unsettled_replacement.is_some() {
+            return Err(Refusal::unknown(
+                "attachment replacement cleanup is unsettled",
+            ));
+        }
+        let Some(handle) = self.unsettled_attachment.as_mut() else {
+            return Err(Refusal::unknown(
+                "channel cleanup has no retryable attachment",
+            ));
+        };
+        let Some(cause) = handle.pending_release() else {
+            return Err(Refusal::unknown(
+                "attachment release cause is not established",
+            ));
+        };
+        handle
+            .release_recoverable(cx, root, cause)
+            .map_err(|_| Refusal::unknown("attachment cleanup is unsettled"))?;
+        if handle.client() == Client::Owner {
+            self.dispatcher.admitted.remove(&handle.run());
+        }
+        self.unsettled_attachment = None;
+        if !self.dispatcher.admitted.is_empty() {
+            return Err(Refusal::unknown("other admitted owners remain unsettled"));
+        }
+        self.owner_cleanup_unsettled = false;
+        Ok(())
+    }
+
     /// Serve one connection: pin check, hello, negotiation, authentication,
     /// then requests. Nothing is read or written before the pin check, and no
     /// request is answered before authentication.
