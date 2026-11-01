@@ -9294,7 +9294,7 @@ fn split_decision_times_out_external_observation_without_finalizing() {
 }
 
 #[test]
-fn split_timeout_reacquires_gate_before_releasing_stalled_observer() {
+fn split_timeout_observer_acknowledges_release_after_gate_reacquisition() {
     let cx = context();
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("root");
@@ -9310,8 +9310,8 @@ fn split_timeout_reacquires_gate_before_releasing_stalled_observer() {
         Instant::now() + Duration::from_millis(300),
         move |_| {
             let _ = started.send(());
-            let _ = blocked.recv_timeout(Duration::from_secs(5));
-            let _ = done.send(());
+            let received_release = blocked.recv_timeout(Duration::from_secs(5)).is_ok();
+            let _ = done.send(received_release);
             Ok(1)
         },
         |_, _| panic!("expired data must not be finalized"),
@@ -9328,7 +9328,9 @@ fn split_timeout_reacquires_gate_before_releasing_stalled_observer() {
         Err(std::sync::mpsc::TryRecvError::Empty)
     );
     let was_released = release.send(()).is_ok();
-    let finished = completed.recv_timeout(Duration::from_secs(5)).is_ok();
+    let received_release = completed
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or(false);
     match result {
         Err(RunError::Unavailable(reason)) => {
             assert!(reason.contains("deadline expired"), "{reason}");
@@ -9339,8 +9341,8 @@ fn split_timeout_reacquires_gate_before_releasing_stalled_observer() {
     assert!(was_started, "the observer must have started");
     assert!(was_still_blocked, "observer completed before release");
     assert!(
-        was_released && finished,
-        "release and completion must succeed"
+        was_released && received_release,
+        "observer must receive release"
     );
     assert!(competing.is_ok(), "the decision gate must be available");
 }
