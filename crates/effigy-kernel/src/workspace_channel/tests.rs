@@ -1564,11 +1564,12 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
         ]),
         peer(),
     );
-    let served = host
+    // This synthetic admission never creates its Run row, so EOF cannot
+    // establish owner cleanup. The real-admission integration covers success.
+    let error = host
         .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
-        .expect("served");
-    assert_eq!(served.responses, 3);
-    assert!(served.closed);
+        .expect_err("a fabricated admission cannot settle owner EOF");
+    assert_eq!(error.code, RefusalCode::Unknown);
     let frames = written_frames(&pipe);
     assert!(matches!(frames[0], Frame::HelloOk(_)));
     let responses: Vec<&Frame> = frames

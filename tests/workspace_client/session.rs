@@ -186,6 +186,11 @@ fn reused_server_does_not_transfer_owner_to_a_fresh_connection() {
             1,
             RequestBody::Invoke(body()),
         )));
+        first.push(Frame::Request(request(
+            session.session(),
+            9,
+            RequestBody::Detach(RunBody { run: id(10) }),
+        )));
         server
             .serve(
                 &mut Pipe::new(&first),
@@ -229,6 +234,16 @@ fn reused_server_does_not_transfer_owner_to_a_fresh_connection() {
         Frame::Response(Response { id: request_id, outcome: ResponseOutcome::Accepted(accepted) })
             if *request_id == RequestId::new([1; 16]) && accepted.run == id(10))
         });
+        let attached_as_secondary = pipe.frames().iter().any(|frame| match frame {
+            Frame::Response(Response {
+                id: request_id,
+                outcome: ResponseOutcome::Observed(value),
+            }) if *request_id == RequestId::new([2; 16]) => {
+                serde_json::from_value::<AttachView>(value.clone())
+                    .is_ok_and(|view| view.client == Client::Secondary)
+            }
+            _ => false,
+        });
         let stops = host.stops(id(10));
         settle(&host, &runs);
         owner
@@ -237,6 +252,10 @@ fn reused_server_does_not_transfer_owner_to_a_fresh_connection() {
         host.assert_foreign();
         ledger.borrow().done();
         assert!(replayed, "replay must return the original admission");
+        assert!(
+            attached_as_secondary,
+            "a fresh connection must attach as secondary"
+        );
         assert_eq!(
             stops, 0,
             "a fresh connection's EOF stopped the first connection's run"
@@ -263,6 +282,11 @@ fn fresh_connection_cannot_detach_another_connections_owner() {
         session.session(),
         1,
         RequestBody::Invoke(body()),
+    )));
+    first.push(Frame::Request(request(
+        session.session(),
+        9,
+        RequestBody::Detach(RunBody { run: id(10) }),
     )));
     server
         .serve(
@@ -365,6 +389,186 @@ fn refused_wrong_run_detach_preserves_the_current_owner_until_eof() {
         stops, 1,
         "wrong-run detach lost the owning attachment before EOF"
     );
+}
+
+#[test]
+fn eof_before_attach_stops_the_newly_admitted_owner() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut frames = authenticated(session.session());
+    frames.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    server
+        .serve(
+            &mut Pipe::new(&frames),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("admit before EOF");
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert_eq!(stops, 1, "EOF lost an admitted owner before Attach");
+}
+
+#[test]
+fn wrong_run_detach_keeps_secondary_until_its_eof_release() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut first = authenticated(session.session());
+    first.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    first.push(Frame::Request(request(
+        session.session(),
+        9,
+        RequestBody::Detach(RunBody { run: id(10) }),
+    )));
+    server
+        .serve(
+            &mut Pipe::new(&first),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("admit and detach");
+    let mut second = authenticated(session.session());
+    second.push(Frame::Request(request(
+        session.session(),
+        2,
+        RequestBody::Attach(AttachBody {
+            run: id(10),
+            streams: vec![StreamKind::TerminalOutput],
+            cursor: None,
+            cursors: None,
+        }),
+    )));
+    second.push(Frame::Request(request(
+        session.session(),
+        3,
+        RequestBody::Detach(RunBody { run: id(99) }),
+    )));
+    server
+        .serve(
+            &mut Pipe::new(&second),
+            &host.cx,
+            &host.observe(),
+            &host.root,
+            &mut NoStreams,
+        )
+        .expect("secondary connection");
+    let still_attached = run::resume_secondary(
+        &host.cx,
+        &host.root,
+        session.session(),
+        id(10),
+        run::AttachmentId::new([2; 16]),
+    )
+    .is_ok();
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert!(!still_attached, "secondary row was not released on EOF");
+    assert_eq!(stops, 0, "secondary EOF stopped the detached owner");
+}
+
+struct FailAcceptedWrite(Pipe);
+impl Transport for FailAcceptedWrite {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        if matches!(
+            decode_frame(&bytes[4..]),
+            Ok(Frame::Response(Response {
+                outcome: ResponseOutcome::Accepted(_),
+                ..
+            }))
+        ) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "injected write failure",
+            ));
+        }
+        self.0.write_all(bytes)
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.0.verified_peer()
+    }
+}
+
+#[test]
+fn failed_accepted_write_stops_the_newly_admitted_owner() {
+    let host = Host::new();
+    let (owner, session) = host.session();
+    let ledger = Rc::new(RefCell::new(Ledger::default()));
+    let runs = Rc::new(RefCell::new(vec![]));
+    expect_admission(&ledger);
+    let mut server = server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
+    let mut frames = authenticated(session.session());
+    frames.push(Frame::Request(request(
+        session.session(),
+        1,
+        RequestBody::Invoke(body()),
+    )));
+    let result = server.serve(
+        &mut FailAcceptedWrite(Pipe::new(&frames)),
+        &host.cx,
+        &host.observe(),
+        &host.root,
+        &mut NoStreams,
+    );
+    let stops = host.stops(id(10));
+    settle(&host, &runs);
+    owner
+        .settle(&cleanup(&host.cx), &mut NoEffects)
+        .expect("session cleanup");
+    ledger.borrow().done();
+    host.assert_foreign();
+    assert!(result.is_err(), "accepted response write must fail");
+    assert_eq!(stops, 1, "lost response left admitted owner running");
 }
 fn input() -> StreamFrame {
     StreamFrame {

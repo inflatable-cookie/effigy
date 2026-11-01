@@ -2530,6 +2530,8 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     pinned: Digest,
     grants: GrantBook,
     dispatcher: Dispatcher<A, R, O, I>,
+    /// Do not serve another client while an owner's EOF cleanup is uncertain.
+    owner_cleanup_unsettled: bool,
     /// Data frames this connection has queued and the client has not yet
     /// acknowledged, plus the request id they name.
     outbound: Outbound,
@@ -2574,6 +2576,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             pinned,
             grants,
             dispatcher,
+            owner_cleanup_unsettled: false,
             outbound: Outbound::new(),
             attach: None,
             carry: None,
@@ -2598,6 +2601,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         root: &StateRoot,
         streams: &mut impl Streams,
     ) -> Result<Served, Refusal> {
+        if self.owner_cleanup_unsettled {
+            return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+        }
         // A server may serve successive connections, so each one starts with no
         // queued stream state: a previous connection's window, carry or request
         // id never reaches this one.
@@ -2722,6 +2728,21 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 let _ = handle.release(cx, root, Release::Eof);
             }
         }
+        if state.closed
+            || outcome
+                .as_ref()
+                .is_err_and(|error| error.code == RefusalCode::Unavailable)
+        {
+            for run in self.dispatcher.admitted.clone() {
+                let cleanup = run::resume_owner(cx, root, self.fence.session, run)
+                    .and_then(|mut owner| owner.release(cx, root, Release::Eof));
+                if cleanup.is_err() {
+                    self.owner_cleanup_unsettled = true;
+                    return Err(Refusal::unknown("owner disconnect cleanup is unsettled"));
+                }
+                self.dispatcher.admitted.remove(&run);
+            }
+        }
         outcome
     }
 
@@ -2785,13 +2806,15 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // End of stream is the client going away: the kernel records the
         // owner's stop or releases this client's own row, and a secondary never
         // stops the owner's run. A detached handle is already gone.
+        state.closed = true;
         if let Some(mut handle) = attachment.take() {
             handle
                 .release(cx, root, Release::Eof)
                 .map_err(refusal_from)?;
+            if handle.client() == Client::Owner {
+                self.dispatcher.admitted.remove(&handle.run());
+            }
         }
-        self.begin_connection();
-        state.closed = true;
         Ok(())
     }
 
