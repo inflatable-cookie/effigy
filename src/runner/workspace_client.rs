@@ -684,9 +684,12 @@ pub(crate) struct Intent {
     delivery: std::sync::Arc<std::sync::Mutex<IntentDelivery>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntentDelivery {
     Sendable,
+    /// Historical acceptance survives clones; it never grants a new connection ownership.
+    Accepted(RunId),
+    Completed,
     Indeterminate,
 }
 
@@ -699,11 +702,11 @@ impl Intent {
         }
     }
 
-    /// One attach, at a caller's retained cursor. Replaying this same intent on
-    /// a fresh connection names the same request id, so the host resumes the
-    /// attachment it already recorded rather than opening a second one
-    /// (§8.11). The cursor is where the caller's own stream reader stopped;
-    /// `None` starts at the beginning.
+    /// One attach, at a caller's retained cursor. A known definitive answer
+    /// permits replay under the same request id; an indeterminate request is
+    /// never resent. A fresh connection is secondary, even if it knows an
+    /// earlier admission. The cursor is where the caller's own stream reader
+    /// stopped; `None` starts at the beginning.
     pub(crate) fn attach(
         run: RunId,
         streams: Vec<StreamKind>,
@@ -970,10 +973,12 @@ impl GuestIdentity for ObservedGuest {
 pub(crate) struct WorkspaceClient<T: Transport> {
     transport: T,
     observe_query_v1: bool,
+    authentication_sent: bool,
     verified: VerifiedWorkspaceContext,
     live: LiveGuestRun,
-    /// The one run this connection admitted. Only it may detach.
-    admitted: Option<RunId>,
+    /// Fresh accepts observed on this connection, keyed by the original request.
+    /// This validates reply roles; the host kernel remains the authority.
+    admitted: std::collections::BTreeMap<RequestId, RunId>,
     /// The highest sequence this client consumed and acknowledged per stream,
     /// so a resume asks from where it stopped. A `gap` leaves a stream where it
     /// was: missing bytes are never reported as consumed.
@@ -1053,9 +1058,10 @@ impl<T: Transport> WorkspaceClient<T> {
         Ok(Self {
             transport,
             observe_query_v1,
+            authentication_sent: false,
             verified,
             live,
-            admitted: None,
+            admitted: std::collections::BTreeMap::new(),
             cursors: std::collections::BTreeMap::new(),
             enrolled: None,
         })
@@ -1067,6 +1073,11 @@ impl<T: Transport> WorkspaceClient<T> {
     /// arrives as the connection's refusal on the first response read, so no
     /// request can be built on an unauthenticated connection.
     pub(crate) fn authenticate(&mut self, auth: GuestAuth) -> Result<(), ChannelError> {
+        if self.authentication_sent {
+            return Err(ChannelError::local(
+                "this connection already presented its credential; open a fresh connection to change clients",
+            ));
+        }
         let frame = match auth {
             GuestAuth::Capability(capability) => Frame::Authenticate(capability),
             GuestAuth::Enrolment {
@@ -1100,7 +1111,10 @@ impl<T: Transport> WorkspaceClient<T> {
             }
         };
         match channel::write_frame(&mut self.transport, &frame) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.authentication_sent = true;
+                Ok(())
+            }
             // The host may have refused during authentication and closed
             // before this frame landed. Its sentence is the answer; a
             // connection that simply failed is `unknown`, never a silent
@@ -1162,6 +1176,23 @@ impl<T: Transport> WorkspaceClient<T> {
             }
             outcome => outcome,
         };
+        if let RequestBody::Detach(body) = &intent.body {
+            if outcome.is_ok() || *delivery == IntentDelivery::Indeterminate {
+                self.admitted.retain(|_, run| *run != body.run);
+            }
+        }
+        if matches!(
+            &outcome,
+            Err(ChannelError::Refused {
+                code: "unauthenticated"
+                    | "stale_context"
+                    | "identity_mismatch"
+                    | "version_mismatch",
+                ..
+            })
+        ) {
+            self.admitted.clear();
+        }
         if outcome.is_ok() {
             self.keep_capability();
         }
@@ -1187,6 +1218,14 @@ impl<T: Transport> WorkspaceClient<T> {
         intent: &Intent,
         delivery: &mut IntentDelivery,
     ) -> Result<ChannelOutcome, ChannelError> {
+        if !self.authentication_sent {
+            return Err(ChannelError::from_refusal(
+                channel::Refusal::unauthenticated(
+                    "present this connection's credential before sending requests",
+                ),
+            ));
+        }
+        let previous = *delivery;
         if matches!(&intent.body, RequestBody::Observe(body) if body.query.is_some())
             && !self.observe_query_v1
         {
@@ -1250,6 +1289,25 @@ impl<T: Transport> WorkspaceClient<T> {
                                         "the attachment view does not match the requested run and cursor",
                                     ));
                                 }
+                                let owns_here = self.admitted.values().any(|run| *run == body.run);
+                                let (expected_client, expected_attachment) = if owns_here {
+                                    (
+                                        effigy_kernel::run::Client::Owner,
+                                        effigy_kernel::run::owner_attachment_id(body.run),
+                                    )
+                                } else {
+                                    (
+                                        effigy_kernel::run::Client::Secondary,
+                                        effigy_kernel::run::AttachmentId::new(*id.bytes()),
+                                    )
+                                };
+                                if view.client != expected_client
+                                    || view.attachment != expected_attachment
+                                {
+                                    return Err(ChannelError::unknown(
+                                        "the attachment identity or role does not match this connection's request",
+                                    ));
+                                }
                                 Ok(ChannelOutcome::Attached(view))
                             } else {
                                 if matches!(
@@ -1270,7 +1328,22 @@ impl<T: Transport> WorkspaceClient<T> {
                                     "the host admission reply names a non-host placement",
                                 ));
                             }
-                            self.admitted = Some(accepted.run);
+                            match previous {
+                                IntentDelivery::Completed => {
+                                    return Err(ChannelError::unknown(
+                                        "a completed invocation cannot return a fresh admission",
+                                    ))
+                                }
+                                IntentDelivery::Accepted(run) if run != accepted.run => {
+                                    return Err(ChannelError::unknown(
+                                        "the replayed admission names a different run",
+                                    ))
+                                }
+                                IntentDelivery::Sendable => {
+                                    self.admitted.insert(id, accepted.run);
+                                }
+                                _ => {}
+                            }
                             Ok(ChannelOutcome::Accepted {
                                 run: accepted.run,
                                 placement: match accepted.placement {
@@ -1280,6 +1353,7 @@ impl<T: Transport> WorkspaceClient<T> {
                             })
                         }
                         channel::ResponseOutcome::Completed(completed) => {
+                            self.admitted.remove(&id);
                             Ok(ChannelOutcome::Completed {
                                 outcome: completed.outcome,
                                 exit: completed.exit,
@@ -1296,7 +1370,13 @@ impl<T: Transport> WorkspaceClient<T> {
                             ..
                         })
                     ) {
-                        *delivery = IntentDelivery::Sendable;
+                        *delivery = match &outcome {
+                            Ok(ChannelOutcome::Accepted { run, .. }) => {
+                                IntentDelivery::Accepted(*run)
+                            }
+                            Ok(ChannelOutcome::Completed { .. }) => IntentDelivery::Completed,
+                            _ => previous,
+                        };
                     }
                     return outcome;
                 }
@@ -1309,7 +1389,7 @@ impl<T: Transport> WorkspaceClient<T> {
                 // was dispatched, so nothing was admitted (§8.11).
                 Frame::Refuse(refusal) => {
                     if refusal.code != channel::RefusalCode::Unknown {
-                        *delivery = IntentDelivery::Sendable;
+                        *delivery = previous;
                     }
                     return Err(ChannelError::from_refusal(refusal));
                 }
@@ -1354,7 +1434,7 @@ impl<T: Transport> ChannelRequest for WorkspaceClient<T> {
     }
 
     fn detach(&mut self, run: RunId) -> Result<(), ChannelError> {
-        if self.admitted != Some(run) {
+        if !self.admitted.values().any(|admitted| *admitted == run) {
             return Err(ChannelError::Refused {
                 code: channel::RefusalCode::Forbidden.as_str(),
                 message: "this terminal did not admit that run, so it cannot detach it; a \

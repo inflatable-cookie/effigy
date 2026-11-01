@@ -1678,9 +1678,8 @@ fn an_attach_intent_replays_to_the_same_attachment() {
         first.cursor, 0,
         "the attachment starts at the host's beginning"
     );
-    // The same intent is the same attachment, never a second one: the request
-    // id is the attachment's identity, so a lost response is resumed rather
-    // than allocated twice (§8.11).
+    // This definitive answer permits a known-safe replay on the same
+    // connection. An indeterminate delivery is fenced instead.
     let second = attach_view(&owner.send(&attach).expect("replayed"));
     assert_eq!(second.attachment, first.attachment);
     drop(owner);
@@ -5568,7 +5567,14 @@ enum LevelOnePostwriteReply {
 
 fn level_one_postwrite_peer_exchange(
     reply: LevelOnePostwriteReply,
-) -> (Intent, Result<ChannelOutcome, ChannelError>, Option<RunId>) {
+) -> (Intent, Result<ChannelOutcome, ChannelError>, Vec<RunId>) {
+    level_one_postwrite_peer_exchange_in(reply, false)
+}
+
+fn level_one_postwrite_peer_exchange_in(
+    reply: LevelOnePostwriteReply,
+    admit_first: bool,
+) -> (Intent, Result<ChannelOutcome, ChannelError>, Vec<RunId>) {
     let method = match &reply {
         LevelOnePostwriteReply::UnreadableAttach
         | LevelOnePostwriteReply::RequestAttachment { .. } => host::Method::Attach,
@@ -5622,6 +5628,24 @@ fn level_one_postwrite_peer_exchange(
             Frame::Authenticate(_)
         ) {
             return Err("expected authentication".into());
+        }
+        if admit_first {
+            let Frame::Request(admission) =
+                read_frame(&mut transport).map_err(|error| format!("{error:?}"))?
+            else {
+                return Err("expected admission request".into());
+            };
+            if !matches!(admission.body, RequestBody::Invoke(_)) {
+                return Err("expected invoke before attach".into());
+            }
+            host::write_frame(
+                &mut transport,
+                &Frame::Response(host::Response {
+                    id: admission.id,
+                    outcome: level_one_accepted_reply(),
+                }),
+            )
+            .map_err(|error| error.to_string())?;
         }
         let Frame::Request(request) =
             read_frame(&mut transport).map_err(|error| format!("{error:?}"))?
@@ -5694,10 +5718,17 @@ fn level_one_postwrite_peer_exchange(
             Ok(mut client) => {
                 let outcome = client
                     .authenticate(GuestAuth::Capability(capability()))
+                    .and_then(|()| {
+                        if admit_first {
+                            client.send(&level_one_build_intent()).map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    })
                     .and_then(|()| client.send(&intent));
-                (outcome, client.admitted)
+                (outcome, client.admitted.values().copied().collect())
             }
-            Err(error) => (Err(error), None),
+            Err(error) => (Err(error), Vec::new()),
         };
     let received = peer
         .join()
@@ -5710,13 +5741,20 @@ fn level_one_postwrite_peer_exchange(
 fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
     let (intent, outcome, admitted) = level_one_postwrite_peer_exchange(reply.clone());
     assert!(
-        admitted.is_none(),
+        admitted.is_empty(),
         "an invalid reply changed the admitted run"
     );
+    level_one_unknown_has_no_clone_write(&intent, outcome);
+}
+
+fn level_one_unknown_has_no_clone_write(
+    intent: &Intent,
+    outcome: Result<ChannelOutcome, ChannelError>,
+) {
     let error = outcome.expect_err("invalid post-delivery answer");
     assert!(
         matches!(&error, ChannelError::Unknown { .. }),
-        "{reply:?} was reported as {error:?} after host delivery"
+        "reported as {error:?} after host delivery"
     );
     let message = error.into_runner().to_string();
     assert!(
@@ -5742,6 +5780,16 @@ fn level_one_postwrite_unknown_control(reply: LevelOnePostwriteReply) {
         before,
         "post-delivery Unknown clone resent"
     );
+}
+
+fn level_one_build_intent() -> Intent {
+    Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".into()),
+        cwd: ".".into(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }))
 }
 
 #[test]
@@ -5856,7 +5904,11 @@ fn level_one_request_attachment_reply(
     client: effigy_kernel::run::Client,
     wrong_id: bool,
 ) -> host::ResponseOutcome {
-    let mut attachment = *id.bytes();
+    let mut attachment = if client == effigy_kernel::run::Client::Owner {
+        *effigy_kernel::run::owner_attachment_id(run).bytes()
+    } else {
+        *id.bytes()
+    };
     if wrong_id {
         attachment[0] ^= 1;
     }
@@ -5889,6 +5941,213 @@ fn level_one_nonadmitting_connection_cannot_accept_owner_role() {
         client: effigy_kernel::run::Client::Owner,
         wrong_id: false,
     });
+}
+
+#[test]
+fn level_one_admitting_connection_validates_owner_identity_and_role() {
+    for (client, wrong_id) in [
+        (effigy_kernel::run::Client::Owner, false),
+        (effigy_kernel::run::Client::Owner, true),
+        (effigy_kernel::run::Client::Secondary, false),
+    ] {
+        let (intent, outcome, admitted) = level_one_postwrite_peer_exchange_in(
+            LevelOnePostwriteReply::RequestAttachment {
+                run: session_run(),
+                cursor: 0,
+                client,
+                wrong_id,
+            },
+            true,
+        );
+        assert_eq!(admitted, vec![session_run()]);
+        if client == effigy_kernel::run::Client::Owner && !wrong_id {
+            let view = attach_view(&outcome.expect("the admitting connection's owner"));
+            assert_eq!(view.client, effigy_kernel::run::Client::Owner);
+            assert_eq!(
+                view.attachment,
+                effigy_kernel::run::owner_attachment_id(session_run())
+            );
+        } else {
+            level_one_unknown_has_no_clone_write(&intent, outcome);
+        }
+    }
+}
+
+#[test]
+fn level_one_known_admission_replay_does_not_grant_fresh_connection_ownership() {
+    for client_role in [
+        effigy_kernel::run::Client::Secondary,
+        effigy_kernel::run::Client::Owner,
+    ] {
+        let invoke = level_one_build_intent();
+        let attach = Intent::attach(session_run(), vec![StreamKind::Stdout], Default::default());
+        // The first connection receives a definitive acceptance. Replaying
+        // that known request is safe, but conveys no new owner authority.
+        let mut initial_transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut initial_transport, &invoke, level_one_accepted_reply());
+        let mut initial =
+            WorkspaceClient::connect(initial_transport, verified(), live_run()).unwrap();
+        initial
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        initial.send(&invoke).unwrap();
+        assert_eq!(
+            initial.admitted.values().copied().collect::<Vec<_>>(),
+            vec![session_run()]
+        );
+        drop(initial);
+
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        level_one_append_response(
+            &mut transport,
+            &attach,
+            level_one_request_attachment_reply(attach.id(), session_run(), 0, client_role, false),
+        );
+        let mut reconnect = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        reconnect
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        reconnect.send(&invoke.clone()).unwrap();
+        assert!(reconnect.admitted.is_empty());
+        let outcome = reconnect.send(&attach);
+        if client_role == effigy_kernel::run::Client::Secondary {
+            assert_eq!(attach_view(&outcome.unwrap()).client, client_role);
+        } else {
+            level_one_unknown_has_no_clone_write(&attach, outcome);
+        }
+    }
+}
+
+#[test]
+fn level_one_detach_retires_owner_eligibility_without_replay_revival() {
+    for response in [
+        host::ResponseOutcome::Observed(serde_json::Value::Null),
+        host::ResponseOutcome::Refused(host::Refusal::unknown("detach outcome unknown")),
+        host::ResponseOutcome::Refused(host::Refusal::forbidden("detach not allowed")),
+    ] {
+        let invoke = level_one_build_intent();
+        let detach = Intent::new(RequestBody::Detach(host::RunBody { run: session_run() }));
+        let mut transport = MuteTransport::answering_negotiation();
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        level_one_append_response(&mut transport, &detach, response.clone());
+        level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+        let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+        client
+            .authenticate(GuestAuth::Capability(capability()))
+            .unwrap();
+        client.send(&invoke).unwrap();
+        let outcome = client.send(&detach);
+        let definite_refusal = matches!(
+            response,
+            host::ResponseOutcome::Refused(host::Refusal {
+                code: host::RefusalCode::Forbidden,
+                ..
+            })
+        );
+        assert_eq!(client.admitted.is_empty(), !definite_refusal);
+        assert_eq!(
+            outcome.is_ok(),
+            matches!(response, host::ResponseOutcome::Observed(_))
+        );
+        client.send(&invoke.clone()).unwrap();
+        assert_eq!(
+            client.admitted.is_empty(),
+            !definite_refusal,
+            "replay revived a retired owner"
+        );
+    }
+}
+
+#[test]
+fn level_one_completion_retires_only_its_own_admission() {
+    let first = level_one_build_intent();
+    let second = level_one_build_intent();
+    let other_run = RunId::new(1, [66; 10]).unwrap();
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &first, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &second,
+        host::ResponseOutcome::Accepted(host::Accepted {
+            run: other_run,
+            placement: effigy_kernel::ctx::Placement::Host,
+        }),
+    );
+    level_one_append_response(&mut transport, &first, level_one_completed_reply());
+    level_one_append_response(&mut transport, &first, level_one_accepted_reply());
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.send(&first).unwrap();
+    client.send(&second).unwrap();
+    assert_eq!(client.admitted.len(), 2);
+    client.send(&first).unwrap();
+    assert_eq!(
+        client.admitted.values().copied().collect::<Vec<_>>(),
+        vec![other_run]
+    );
+    let error = client
+        .send(&first)
+        .expect_err("a completed request cannot admit again");
+    assert!(matches!(error, ChannelError::Unknown { .. }));
+    assert_eq!(
+        client.admitted.values().copied().collect::<Vec<_>>(),
+        vec![other_run]
+    );
+}
+
+#[test]
+fn level_one_connection_cannot_change_its_authenticated_client() {
+    let invoke = level_one_build_intent();
+    let observe = Intent::new(RequestBody::Observe(ObserveBody {
+        query: None,
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+    }));
+    let mut transport = MuteTransport::answering_negotiation();
+    level_one_append_response(&mut transport, &invoke, level_one_accepted_reply());
+    level_one_append_response(
+        &mut transport,
+        &observe,
+        host::ResponseOutcome::Refused(host::Refusal::unauthenticated("credential revoked")),
+    );
+    let written = transport.written.clone();
+    let mut client = WorkspaceClient::connect(transport, verified(), live_run()).unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(matches!(
+        client.send(&invoke),
+        Err(ChannelError::Refused {
+            code: "unauthenticated",
+            ..
+        })
+    ));
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "request sent without authentication"
+    );
+    client
+        .authenticate(GuestAuth::Capability(capability()))
+        .unwrap();
+    client.send(&invoke).unwrap();
+    let before = written.lock().unwrap().len();
+    assert!(client
+        .authenticate(GuestAuth::Capability(Secret::new([88; 32])))
+        .is_err());
+    assert_eq!(
+        written.lock().unwrap().len(),
+        before,
+        "credential changed on a live connection"
+    );
+    assert_eq!(client.admitted.len(), 1);
+    assert!(client.send(&observe).is_err());
+    assert!(
+        client.admitted.is_empty(),
+        "revoked authority retained owner eligibility"
+    );
 }
 
 #[test]
