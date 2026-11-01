@@ -222,6 +222,7 @@ pub struct InterpolationFile {
     /// writer sees the name as taken. No sweep removes a file on the lock alone.
     _lock: Flock<File>,
     removed: bool,
+    attempted: bool,
 }
 
 impl InterpolationFile {
@@ -230,12 +231,15 @@ impl InterpolationFile {
         &self.path
     }
 
-    /// Remove the file now. `Ok` means the entry this invocation created is gone
-    /// or was already removed; `Err` means its state is unknown.
-    pub fn remove(mut self) -> io::Result<()> {
-        self.removed = true;
+    /// Attempt removal without consuming this owner. `Err` leaves the file and
+    /// lock with the caller; dropping after an error never retries implicitly.
+    /// A partially moved entry may remain in quarantine and still needs recovery.
+    pub fn remove(&mut self) -> io::Result<()> {
+        self.attempted = true;
         let _directory_lock = lock_directory(&self.directory)?;
-        remove_owned(&self.directory, &self.name, &self.stat)
+        remove_owned(&self.directory, &self.name, &self.stat)?;
+        self.removed = true;
+        Ok(())
     }
 
     /// Sweep stale files, then write one fresh file for `body`.
@@ -326,6 +330,7 @@ impl InterpolationFile {
             stat,
             _lock: locked,
             removed: false,
+            attempted: false,
         }))
     }
 }
@@ -356,6 +361,7 @@ fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
 impl Drop for InterpolationFile {
     fn drop(&mut self) {
         if !self.removed
+            && !self.attempted
             && lock_directory(&self.directory)
                 .and_then(|_guard| remove_owned(&self.directory, &self.name, &self.stat))
                 .is_err()
@@ -805,12 +811,42 @@ mod tests {
     }
 
     #[test]
+    fn failed_removal_keeps_the_exact_owner_for_retry() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let identity = fstat(&*file._lock).expect("file identity");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        assert_eq!(
+            fstat(&*file._lock).expect("same owner").st_ino,
+            identity.st_ino
+        );
+        assert!(path.exists());
+        file.remove().expect("retry same owner");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn dropping_an_owner_after_failed_removal_does_not_retry() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        drop(file);
+        assert!(path.exists(), "failed cleanup remains visible");
+    }
+
+    #[test]
     fn remove_confirms_the_file_is_gone() {
         let home = tempfile::tempdir().expect("home");
         let resolved =
             invoke(home.path(), &args(&["ps"]), &secret("sentinel-value")).expect("file");
         let path = env_path(&resolved);
-        let file = resolved.interpolation.expect("held file");
+        let mut file = resolved.interpolation.expect("held file");
         assert!(path.is_file());
         file.remove().expect("confirmed removal");
         assert!(!path.exists(), "the secret-bearing file is gone");
@@ -993,7 +1029,7 @@ mod tests {
         let other = compose_dir(home.path()).join("stand-in.env");
         fs::write(&other, "REPLACEMENT=kept\n").expect("replacement");
         fs::rename(&other, &path).expect("replace the name");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         assert!(
             file.remove().is_err(),
             "a replaced name is reported, not confirmed"
@@ -1058,7 +1094,7 @@ mod tests {
         let home = tempfile::tempdir().expect("home");
         let invocation = invoke(home.path(), &args(&["up"]), &secret("value")).expect("invocation");
         let path = env_path(&invocation);
-        let file = invocation.interpolation.expect("file");
+        let mut file = invocation.interpolation.expect("file");
         let directory = open_private_directory(home.path()).expect("directory");
         let held = lock_directory(&directory).expect("directory lock");
         let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -1146,7 +1182,7 @@ mod tests {
         let home = tempfile::tempdir().expect("home");
         let held = invoke(home.path(), &args(&["up"]), &secret("gone")).expect("held");
         fs::remove_file(env_path(&held)).expect("the name is removed out from under the holder");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         let error = file
             .remove()
             .expect_err("a missing name is not a confirmed removal");
@@ -1157,7 +1193,7 @@ mod tests {
     fn a_quarantine_that_vanishes_after_the_move_is_reported_unknown() {
         let home = tempfile::tempdir().expect("home");
         let held = invoke(home.path(), &args(&["up"]), &secret("vanish")).expect("held");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         VANISH_NEXT_QUARANTINE.with(|armed| armed.set(true));
         let error = file
             .remove()
@@ -1175,7 +1211,7 @@ mod tests {
         fs::write(&occupant, "FOREIGN=kept\n").expect("occupant");
         fs::set_permissions(&occupant, fs::Permissions::from_mode(0o600)).expect("mode");
         FORCE_NEXT_QUARANTINE.with(|forced| *forced.borrow_mut() = Some(quarantine));
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         assert!(
             file.remove().is_err(),
             "an occupied quarantine name is refused, not confirmed"

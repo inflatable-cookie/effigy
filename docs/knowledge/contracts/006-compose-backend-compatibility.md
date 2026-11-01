@@ -337,9 +337,10 @@ Effigy ownership:
 - Tom’s ruling for #534: every secret-bearing VM Compose invocation moves to a
   retained kernel Run; if it cannot be admitted, refuse before spawn. Resident
   Env custody and production Discard remain refused until separately qualified.
-- limits of this slice: a removal that fails still consumes its owner, so
-  `remove(self)` and `Drop` do not retain the file for retry; there is no
-  durable attempt or group binding and no caller-drop Unknown lifecycle.
+- limits of this slice: explicit removal borrows the file owner, retaining its
+  descriptor and lock after failure, and drop does not retry a failed removal.
+  Partial quarantine phases are not retained for recovery; there is no durable
+  attempt or group binding and no caller-drop Unknown lifecycle.
   Discard stays refused. These belong to the retained-lifecycle follow-up, #534,
   which depends on #532 and #533
 - a value both readers can take literally stays unquoted, and anything
