@@ -30,6 +30,61 @@ impl<'a> Run<'a> {
     }
 }
 impl Run<'_> {
+    /// Inspect the same retained Env sentinel after an ambiguous registration.
+    /// This does not clear poison, start a backup, qualify a helper birth or
+    /// grant permission for any new effect.
+    #[allow(dead_code)]
+    pub(crate) fn inspect_workspace_lifecycle(&self) -> Result<(), RunError> {
+        if self.root.is_machine() || self.owner.resource.kind() != crate::id::ResourceKind::Env {
+            return Err(RunError::refused(
+                "workspace lifecycle needs a checkout environment",
+            ));
+        }
+        self.require_environment_gate()?;
+        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
+        let row = journal::run(self.store.conn(), self.id)?;
+        if row.owner != self.owner.resource.name().to_string()
+            || row.generation != self.owner.generation
+            || matches!(row.phase, Phase::Stopping | Phase::Closed)
+        {
+            return Err(RunError::unavailable("workspace lifecycle run differs"));
+        }
+        let lease = self
+            .sentinel
+            .as_ref()
+            .ok_or_else(|| RunError::unavailable("retained sentinel unavailable"))?;
+        lease.verify_retained()?;
+        let owner = ident::process_identity(std::process::id())
+            .verified()
+            .cloned()
+            .ok_or_else(|| RunError::unavailable("workspace owner identity unavailable"))?;
+        let (kind, placement, recorded_owner, recorded_supervisor, recorded_sentinel): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = self.store.conn().query_row(
+            "SELECT kind, placement, owner_identity, supervisor_identity, sentinel_identity FROM runs WHERE run_id=?1",
+            [self.id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+        let parse = |raw: Option<String>| -> Result<Option<ProcessIdentity>, RunError> {
+            Ok(raw.map(|value| serde_json::from_str(&value)).transpose()?)
+        };
+        if kind != "custody"
+            || placement != "detached"
+            || parse(recorded_owner)? != Some(owner.clone())
+            || parse(recorded_supervisor)? != Some(owner)
+            || parse(recorded_sentinel)? != Some(lease.identity.clone())
+        {
+            return Err(RunError::unavailable(
+                "workspace lifecycle evidence differs",
+            ));
+        }
+        Ok(())
+    }
+
     /// The lease is transferred only after the one fenced transaction commits.
     /// On refusal its sole write end closes, so an unregistered helper cannot
     /// outlive the failed registration. No second journal writer is exposed.
@@ -38,17 +93,29 @@ impl Run<'_> {
         lease: SentinelLease,
         plan: &LifecyclePlan,
     ) -> Result<(), RunError> {
-        self.can_effect()?;
         if self.sentinel.is_some() {
             return Err(RunError::broken("sentinel already registered"));
         }
-        if !self.holds_owner_gate()? {
-            return Err(RunError::broken("registration needs owner gate"));
-        }
-        let identity = ident::process_identity(std::process::id())
-            .verified()
-            .cloned()
-            .ok_or_else(|| RunError::unavailable("owner identity unavailable"))?;
+        let identity = (|| {
+            self.can_effect()?;
+            if !self.holds_owner_gate()? {
+                return Err(RunError::broken("registration needs owner gate"));
+            }
+            ident::process_identity(std::process::id())
+                .verified()
+                .cloned()
+                .ok_or_else(|| RunError::unavailable("owner identity unavailable"))
+        })();
+        let identity = match identity {
+            Ok(identity) => identity,
+            Err(error) => {
+                // The helper already started. Retain it for cleanup even when
+                // the original operation can no longer register it.
+                self.poisoned = true;
+                self.sentinel = Some(lease);
+                return Err(error);
+            }
+        };
         if let Some(startup) = self.machine_startup.as_mut() {
             startup.lifecycle = Some((identity, lease.identity.clone(), plan.placement));
             self.sentinel = Some(lease);
@@ -74,16 +141,32 @@ impl Run<'_> {
         if result.is_err() {
             self.poisoned = true;
             if let Some(mut lease) = lease {
-                let cleanup = self
+                let cleanup = match self
                     .cx
                     .operation()
                     .cleanup(std::time::Duration::from_secs(30))
-                    .map_err(|_| RunError::broken("cleanup overflow"))?;
-                lease.close(&cleanup)?;
+                {
+                    Ok(cleanup) => cleanup,
+                    Err(_) => {
+                        self.sentinel = Some(lease);
+                        return Err(RunError::broken("cleanup overflow"));
+                    }
+                };
+                if let Err(error) = lease.close(&cleanup) {
+                    // A failed close is not proof that the exact helper has
+                    // exited. Keep its lease in the original gated Run so a
+                    // recoverable settlement can continue owning it.
+                    self.sentinel = Some(lease);
+                    return Err(error);
+                }
             }
         }
         result?;
-        self.start_checkout_backup()
+        let backup = self.start_checkout_backup();
+        if backup.is_err() {
+            self.poisoned = true;
+        }
+        backup
     }
 }
 /// Pure reads of persisted identities plus fresh process facts. A dead,
@@ -135,74 +218,5 @@ pub fn metadata(cx: &ObserveContext, root: &StateRoot, id: RunId) -> Observed<Ru
 }
 
 #[cfg(all(test, feature = "fault-injection"))]
-mod tests {
-    use super::*;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-    #[test]
-    fn descriptor_closes_once_after_closed_commit_before_gate_release() {
-        let home = super::super::tests::home();
-        let cx = super::super::tests::context();
-        let root = Arc::new(StateRoot::effects(&cx, home.path()).unwrap());
-        let mut options = super::super::tests::opts(1);
-        options.custody = Some(LifecyclePlan {
-            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
-                .unwrap(),
-            placement: crate::supervise::Placement::Inline,
-        });
-        let mut fake = super::super::tests::Fake::new(home.path());
-        let run = Run::begin(
-            &cx,
-            &root,
-            &super::super::tests::inv(super::super::tests::owner()),
-            options,
-            &super::super::tests::cleanup(&cx),
-            &mut fake,
-        )
-        .unwrap();
-        let fd = run.sentinel.as_ref().unwrap().writer_fd();
-        let count = Arc::new(AtomicUsize::new(0));
-        let observed_count = count.clone();
-        let observed_root = root.clone();
-        let observed_cx = cx.clone();
-        crate::fault::hook(Some(Box::new(move |point| {
-            if point == crate::fault::Point::SentinelClose {
-                // Check before opening the reader, which could reuse this fd number.
-                assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, -1);
-                assert_eq!(
-                    std::io::Error::last_os_error().raw_os_error(),
-                    Some(libc::EBADF)
-                );
-                let observe = observed_cx.operation().observe().unwrap();
-                assert!(matches!(
-                    metadata(&observe, &observed_root, super::super::tests::id(1))
-                        .verified()
-                        .unwrap()
-                        .sentinel_status,
-                    SentinelStatus::Closed
-                ));
-                assert!(matches!(
-                    Gate::probe(&observe, &observed_root, &super::super::tests::owner()),
-                    Observed::Verified(crate::gate::GateState::Held(_), _)
-                ));
-                observed_count.fetch_add(1, Ordering::SeqCst);
-            }
-        })));
-        run.settle(&super::super::tests::cleanup(&cx), &mut fake)
-            .unwrap();
-        settle_interrupted(
-            &cx,
-            &root,
-            &super::super::tests::owner(),
-            super::super::tests::id(1),
-            super::super::tests::next(),
-            &super::super::tests::cleanup(&cx),
-            &mut fake,
-        )
-        .unwrap();
-        crate::fault::hook(None);
-        assert_eq!(count.load(Ordering::SeqCst), 1);
-    }
-}
+#[path = "lifecycle/tests.rs"]
+mod tests;

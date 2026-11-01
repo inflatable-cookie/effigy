@@ -44,6 +44,13 @@ pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// showing in argv or outliving the read. The child owns the copy; the parent
 /// keeps its own descriptor and closes it when the spawn returns.
 pub const HANDOFF_FD: i32 = 11;
+
+/// Reported when a group's closure cannot be positively established: an
+/// inventory row vanished or moved inside the round, so a member forked and
+/// orphaned in that window cannot be excluded. The anchor stays alive as the
+/// group's evidence and the group is never signalled on a guess. This is a best
+/// effort observation, not a proof (effigy#520; contract 052).
+pub const UNPROVEN_GROUP_CLOSURE: &str = "unproven group closure";
 #[derive(Clone)]
 pub struct SecretValue(Vec<u8>);
 impl std::fmt::Debug for SecretValue {
@@ -83,6 +90,8 @@ pub enum Lifetime {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Terminal {
     None,
+    /// Close stdin and discard both output streams before the child executes.
+    Discard,
     /// The child's stdin is a pipe whose write end the owner keeps, so an
     /// engine can send it framed messages. The owner can write bounded bytes
     /// and the child sees EOF when the owner drops it. Stdout and stderr are
@@ -176,6 +185,23 @@ struct ProcessRecord {
     process: ProcessReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     anchor: Option<ProcessIdentity>,
+}
+// A distinct outer envelope makes a discard receipt unreadable to an older
+// process-record reader. In particular, an old sentinel must not acknowledge
+// a new output policy it cannot interpret.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StoredProcessRecord {
+    Discard { discard_v1: ProcessRecord },
+    Legacy(ProcessRecord),
+}
+impl StoredProcessRecord {
+    fn into_record(self) -> ProcessRecord {
+        match self {
+            Self::Discard { discard_v1 } => discard_v1,
+            Self::Legacy(record) => record,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Exit {
@@ -968,6 +994,14 @@ impl Custody {
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
+        // A discard receipt needs every recovery helper to understand the
+        // disposition before this owner records an intent or forks. Existing
+        // helper identities do not yet carry a verified image capability.
+        if matches!(spec.terminal, Terminal::Discard) {
+            return Err(SpawnError::Refused(
+                "workspace discard helper capability unavailable".into(),
+            ));
+        }
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
         if crate::store::in_transaction() {
@@ -1037,13 +1071,19 @@ impl Custody {
                 })
                 .transpose()?;
             crate::fault_point!(AnchorSpawn)?;
+            let record = ProcessRecord {
+                process: receipt.clone(),
+                anchor: anchor.clone(),
+            };
+            let record = if matches!(spec.terminal, Terminal::Discard) {
+                StoredProcessRecord::Discard { discard_v1: record }
+            } else {
+                StoredProcessRecord::Legacy(record)
+            };
             run.applied(
                 &ticket,
-                serde_json::to_value(ProcessRecord {
-                    process: receipt.clone(),
-                    anchor: anchor.clone(),
-                })
-                .map_err(|_| SpawnError::Refused("receipt encoding".into()))?,
+                serde_json::to_value(record)
+                    .map_err(|_| SpawnError::Refused("receipt encoding".into()))?,
             )
             .map_err(SpawnError::Unrecorded)?;
             crate::fault_point!(AnchorRecord)?;
@@ -1058,8 +1098,13 @@ impl Custody {
             }
             let (stdout, stderr, terminal) = pending.take_streams();
             let stdin = pending.take_input();
-            let logs = [Stream::Stdout, Stream::Stderr]
-                .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
+            let logs = if matches!(spec.terminal, Terminal::Discard) {
+                [Ok(None), Ok(None)]
+            } else {
+                [Stream::Stdout, Stream::Stderr].map(|stream| {
+                    run.capture_log(ticket.sequence(), stream, cx.operation().limits())
+                })
+            };
             let capture = if logs.iter().all(Result::is_ok) {
                 CaptureState::Complete
             } else {
@@ -1550,7 +1595,7 @@ impl ProcessCore {
             let state = anchor::closed(
                 &self.receipt,
                 self.anchor.as_ref(),
-                self.exit.map(|_| self.receipt.identity.pid),
+                self.exit.map(|_| &self.receipt.identity),
             );
             if matches!(state, Observed::Verified(..) | Observed::Absent(_)) {
                 break state;
@@ -1646,12 +1691,13 @@ pub(crate) fn verify_foreground_receipt(
     effect: &Effect,
     run: crate::id::RunId,
 ) -> Result<(), RunError> {
-    let record: ProcessRecord = serde_json::from_value(
+    let record: StoredProcessRecord = serde_json::from_value(
         effect
             .receipt
             .clone()
             .ok_or_else(|| RunError::broken("missing foreground receipt"))?,
     )?;
+    let record = record.into_record();
     if record.process.nonce != format!("{}:{}", run, effect.sequence)
         || record.process.pgid != record.process.identity.pid
         || platform::generation(&record.process.identity)
@@ -1701,9 +1747,15 @@ pub(crate) fn settle_effect(
     let receipt = match effect
         .receipt
         .as_ref()
-        .map(|v| serde_json::from_value::<ProcessRecord>(v.clone()))
+        .map(|v| serde_json::from_value::<StoredProcessRecord>(v.clone()))
     {
-        Some(Ok(r)) => r,
+        Some(Ok(r)) => r.into_record(),
+        None if matches!(effect.state, EffectState::Unknown | EffectState::Residue) => {
+            return (
+                EffectState::Residue,
+                Some("unknown process custody has no receipt".into()),
+            );
+        }
         None => return (EffectState::Released, None), // no receipt: barrier never released
         _ => return (EffectState::Residue, Some("invalid custody receipt".into())),
     };

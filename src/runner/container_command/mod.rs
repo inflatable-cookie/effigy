@@ -31,6 +31,7 @@ pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_credentials,
     run_container_exec_operation_capture, run_container_exec_stream,
 };
+pub(in crate::runner) use lifecycle::{WorkspacePreparedEffects, WorkspaceUpEffects};
 pub(in crate::runner) use liveness::{
     is_primary_service_running, is_primary_service_running_with_deadline,
 };
@@ -71,6 +72,7 @@ pub(in crate::runner) mod support;
 pub(super) mod test_support;
 mod volume;
 pub(in crate::runner) mod workspace_artifact_builder;
+pub(in crate::runner) mod workspace_integrations;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
     if output_json {

@@ -207,6 +207,30 @@ fn active_environment(cx: &EffectContext, root: &StateRoot, fake: &mut Fake) -> 
     run.settle(&cleanup(cx), fake).unwrap();
     fence
 }
+
+#[test]
+fn an_environment_run_without_its_owner_gate_cannot_record_effects() {
+    let fixture = effigy_test_support::Fixture::new("effigy-unguarded-env-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let mut run = begin(&cx, &root, env(), 209, &mut fake);
+    let empty = Gate::acquire(&cx, &root, &[], Wait::FailFast).unwrap();
+    let old = std::mem::replace(&mut run.guard, empty);
+    drop(old);
+    assert!(
+        run.advance(Phase::Stopping).is_err(),
+        "an unguarded environment run must not mutate"
+    );
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+    assert!(run
+        .interrupt(&cleanup(&cx), WorkloadOutcome::NotStarted)
+        .is_err());
+    let (_, run) = run
+        .settle_recoverable(&cleanup(&cx), &mut fake)
+        .expect_err("settlement retains unguarded custody");
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+}
 fn reader(cx: &EffectContext, root: &StateRoot) -> crate::store::StoreReader {
     match Store::read(&cx.operation().observe().unwrap(), root) {
         Observed::Verified(reader, _) => reader,
@@ -1131,6 +1155,39 @@ fn gateway_operator_events_write_one_private_record_per_action() {
 }
 
 #[test]
+fn workspace_recoverable_settlement_refuses_machine_run_without_releasing_owner() {
+    let home = effigy_test_support::Fixture::new("workspace-machine-refusal-").unwrap();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let resource = ResourceId::gateway("workspace-refusal").unwrap();
+    let mut specification = inv(resource.clone()).spec().clone();
+    specification.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway",
+        None,
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(specification).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = Run::begin(&cx, &root, &invocation, opts(83), &cleanup(&cx), &mut fake).unwrap();
+    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let action = releases.clone();
+    run.on_settle(move || {
+        action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let (error, run) = run
+        .settle_workspace_recoverable(&cleanup(&cx), &mut fake)
+        .expect_err("machine store is outside workspace settlement domain");
+    assert!(error.to_string().contains("checkout workspace"));
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(Gate::acquire(&cx, &root, &[resource], Wait::FailFast).is_err());
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
 fn gateway_custody_settlement_logs_caller_and_owner_loss() {
     let home = effigy_test_support::Fixture::new("g382-").unwrap();
     let cx = context();
@@ -1492,6 +1549,39 @@ fn environment_exempt_permit_admits_only_the_settling_holder_own_stop() {
         holder.settle(&cleanup(&cx), &mut fake).unwrap().cleanup(),
         CleanupOutcome::Complete
     );
+}
+
+#[test]
+fn settling_one_environment_holder_preserves_the_other_run_fence() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let active = active_environment(&cx, &root, &mut fake);
+    let mut first = begin(&cx, &root, owner(), 1, &mut fake);
+    let mut second = begin(
+        &cx,
+        &root,
+        TaskId::new(checkout(), "", Surface::Published, "other", None)
+            .unwrap()
+            .resource(),
+        2,
+        &mut fake,
+    );
+    Attachments::attach(&mut first, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    Attachments::attach(&mut second, &active, AttachMode::Borrow, Wait::FailFast).unwrap();
+    let second_id = second.id();
+    first.finish(WorkloadOutcome::Succeeded).unwrap();
+    first.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut down = begin(&cx, &root, env(), 91, &mut fake);
+    let blocked = Attachments::permit(&mut down);
+    assert!(
+        matches!(blocked, Err(RunError::HeldBy(ref holders)) if holders.len() == 1 && holders[0].run == second_id)
+    );
+    second.finish(WorkloadOutcome::Succeeded).unwrap();
+    second.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(Attachments::permit(&mut down).is_ok());
+    down.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 
 #[test]

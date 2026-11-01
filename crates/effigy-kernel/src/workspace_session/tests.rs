@@ -861,6 +861,74 @@ fn admit_activation<'a>(
     run
 }
 
+/// Admit the reserved Env run in an actual child, then exit without dropping
+/// its owner. The parent reaps it before exercising dead-owner recovery.
+#[test]
+fn reserved_environment_crash_fixture() {
+    let Some(home) = std::env::var_os("EFFIGY_RESERVED_CRASH_HOME") else {
+        return;
+    };
+    let mode = std::env::var("EFFIGY_RESERVED_CRASH_MODE").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, std::path::Path::new(&home)).unwrap();
+    let reader = read_journal(&cx, &root);
+    let reservation = WorkspaceActivationReservation::recover(&reader, &environment())
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reserved activation");
+    drop(reader);
+    match mode.as_str() {
+        "published" => {
+            let _run = admit_activation(&cx, &root, &reservation, run_id(73));
+            std::process::exit(0);
+        }
+        "stopping" => {
+            let mut run = admit_activation(&cx, &root, &reservation, run_id(151));
+            run.interrupt(
+                &cleanup(&cx),
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            )
+            .unwrap();
+            std::process::exit(0);
+        }
+        "unknown" => {
+            let mut run = Run::begin_claimed(
+                &cx,
+                &root,
+                &inv(environment(), "environment:up"),
+                opts(run_id(153)),
+                || Ok(cleanup(&cx)),
+                &mut adapter(),
+                reservation.claim().unwrap(),
+            )
+            .unwrap();
+            let ticket = Attachments::intend_guest_publication(&mut run).unwrap();
+            Attachments::guest_publication_unknown(&mut run, &ticket, UnknownReason::Injected)
+                .unwrap();
+            std::process::exit(0);
+        }
+        _ => panic!("unknown crash fixture"),
+    }
+}
+
+fn crash_reserved_environment(home: &std::path::Path, mode: &str) {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "workspace_session::tests::reserved_environment_crash_fixture",
+            "--nocapture",
+        ])
+        .env("EFFIGY_RESERVED_CRASH_HOME", home)
+        .env("EFFIGY_RESERVED_CRASH_MODE", mode)
+        .status()
+        .expect("start and reap the reserved owner");
+    assert!(status.success(), "reserved owner fixture failed: {status}");
+}
+
 /// One complete activation: reserve, freeze and admit the successor, admit the
 /// environment run at E, publish and commit.
 fn activate<'a>(
@@ -967,6 +1035,31 @@ fn plan_of(
     reader: &StoreReader,
 ) -> Option<ActivationPlan> {
     reservation.plan(reader).verified().cloned().flatten()
+}
+
+#[test]
+fn an_activation_plan_refuses_a_foreign_reservation_identity() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (_session_run, _) = admit_staged(&cx, &root, &reservation, run_id(221));
+    let environment_run = admit_activation(&cx, &root, &reservation, run_id(222));
+    assert!(environment_run
+        .verify_workspace_reservation(&reservation)
+        .is_ok());
+    let reader = read_journal(&cx, &root);
+    assert!(plan_of(&reservation, &reader).is_some());
+    let mut foreign = reservation.clone();
+    foreign.record.id = ActivationReservationId::parse(&"ff".repeat(16)).expect("id");
+    assert!(environment_run
+        .verify_workspace_reservation(&foreign)
+        .is_err());
+    assert!(
+        foreign.plan(&reader).verified().is_none(),
+        "a different reservation id cannot recover this plan"
+    );
 }
 
 #[test]
@@ -1155,6 +1248,1379 @@ fn a_competing_environment_activation_is_fenced_by_name() {
     )
     .expect("an unreserved generation is admitted as before");
     drop(plain);
+}
+
+#[test]
+fn a_competitor_must_not_recover_a_reserved_environment_run() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let environment = pending_environment(&cx, &root);
+    let reservation =
+        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+            .expect("reservation");
+    let run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(23)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().unwrap(),
+    )
+    .expect("reserved run");
+    let reader = read_journal(&cx, &root);
+    let recorded: Option<String> = reader
+        .conn()
+        .query_row(
+            "SELECT owner_identity FROM runs WHERE run_id=?1",
+            [run_id(23).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let recorded: crate::ident::ProcessIdentity = serde_json::from_str(
+        recorded
+            .as_deref()
+            .expect("reserved owner identity must be recorded"),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::ident::process_identity(std::process::id()).verified(),
+        Some(&recorded)
+    );
+    drop(reader);
+    // Simulate the gate-free interval; do not settle the reserved run.
+    drop(run);
+    let recovery = crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(23),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        recovery.is_err(),
+        "explicit recovery must not settle a live owner"
+    );
+    let result = Run::begin(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:down"),
+        opts(run_id(24)),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(result, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "competitor must refuse before recovery"
+    );
+    let duplicate = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(environment.clone(), "environment:up"),
+        opts(run_id(25)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().unwrap(),
+    );
+    assert!(
+        matches!(duplicate, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "a duplicate claim must not recover the owner"
+    );
+    let alias = environment
+        .with_checkout(CheckoutId::new(CheckoutKind::Primary, [8; 16]))
+        .unwrap();
+    let mut spec = inv(alias, "environment:down").spec().clone();
+    spec.gates.push(environment.clone());
+    let alias_invocation = ResolvedInvocation::new(spec).unwrap();
+    let aliased = Run::begin(
+        &cx,
+        &root,
+        &alias_invocation,
+        opts(run_id(26)),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(aliased, Err(RunError::Refused(ref text)) if text.contains("reserved by a workspace activation")),
+        "an alias must not recover the owner"
+    );
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(23).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "admitted", "the reserved run was not settled");
+}
+
+#[test]
+fn a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+
+    const CHILD_HOME: &str = "EFFIGY_RESERVED_OWNER_RECOVERY_TEST_HOME";
+    let cx = context();
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        let root = StateRoot::effects(&cx, std::path::Path::new(&home)).unwrap();
+        let reservation =
+            WorkspaceActivationReservation::reserve(&cx, &root, &environment(), Wait::FailFast)
+                .unwrap();
+        let run = Run::begin_claimed(
+            &cx,
+            &root,
+            &inv(environment(), "environment:up"),
+            opts(run_id(27)),
+            || Ok(cleanup(&cx)),
+            &mut adapter(),
+            reservation.claim().unwrap(),
+        )
+        .unwrap();
+        // The real owner remains live and retains the exact run while Env is free.
+        let _parked = run
+            .park_workspace(
+                &reservation,
+                std::time::Instant::now() + std::time::Duration::from_secs(60),
+            )
+            .expect("park reserved owner");
+        println!("effigy-reserved-owner-ready");
+        std::io::stdout().flush().unwrap();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        return;
+    }
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = pending_environment(&cx, &root);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "workspace_session::tests::a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can", "--nocapture"])
+        .env(CHILD_HOME, fixture.path())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    let ready = loop {
+        line.clear();
+        match stdout.read_line(&mut line) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) if line.contains("effigy-reserved-owner-ready") => break true,
+            _ => {}
+        }
+    };
+    let gate_free = ready.then(|| {
+        crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast,
+        )
+        .map(drop)
+    });
+    let live = ready.then(|| {
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &environment,
+            run_id(27),
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let competing = ready.then(|| {
+        Run::begin(
+            &cx,
+            &root,
+            &inv(environment.clone(), "environment:down"),
+            opts(run_id(28)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let aliased = ready.then(|| {
+        let alias = environment
+            .with_checkout(CheckoutId::new(CheckoutKind::Primary, [8; 16]))
+            .unwrap();
+        let mut spec = inv(alias, "environment:down").spec().clone();
+        spec.gates.push(environment.clone());
+        Run::begin(
+            &cx,
+            &root,
+            &ResolvedInvocation::new(spec).unwrap(),
+            opts(run_id(30)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+    });
+    let _ = child.kill();
+    let status = child
+        .wait()
+        .expect("reap exactly the child this test started");
+    assert!(ready, "child admitted the reserved run");
+    assert!(matches!(gate_free, Some(Ok(()))), "park releases Env");
+    assert!(
+        matches!(live, Some(Err(RunError::Refused(_)))),
+        "live owner is protected"
+    );
+    assert!(
+        matches!(competing, Some(Err(RunError::Refused(_)))),
+        "competitor cannot recover live owner"
+    );
+    assert!(
+        matches!(aliased, Some(Err(RunError::Refused(_)))),
+        "alias competitor cannot recover live owner"
+    );
+    assert!(!status.success());
+    crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(27),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("exact dead owner can be settled");
+    let reader = read_journal(&cx, &root);
+    let reservation = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reservation remains recoverable");
+    drop(reader);
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("settled reservation can be cancelled");
+    let successor = Run::begin(
+        &cx,
+        &root,
+        &inv(environment, "environment:down"),
+        opts(run_id(29)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("recovery does not permanently wedge the environment");
+    drop(successor);
+}
+
+#[test]
+fn parked_reservation_reacquires_only_before_its_original_deadline() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(231));
+    let run = admit_activation(&cx, &root, &reservation, run_id(232));
+    let parked = run
+        .park_workspace(
+            &reservation,
+            std::time::Instant::now() + std::time::Duration::from_secs(120),
+        )
+        .expect("park");
+    let guarded = parked.reacquire().expect("same reservation reacquires");
+    assert!(crate::gate::Gate::acquire(&cx, &root, &[environment()], Wait::FailFast).is_err());
+    drop(guarded);
+
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(233));
+    let run = admit_activation(&cx, &root, &reservation, run_id(234));
+    let mut parked = run
+        .park_workspace(
+            &reservation,
+            std::time::Instant::now() + std::time::Duration::from_secs(120),
+        )
+        .expect("park");
+    parked.expire_for_test();
+    let (_error, _custody) = parked.reacquire().expect_err("expired deadline refuses");
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn session_supervisor_retries_after_durable_close_without_replaying_effects() {
+    struct CountRelease(usize);
+    impl SettlementAdapter for CountRelease {
+        fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            self.0 += 1;
+            Observed::Verified((), evidence())
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            panic!("fixture uses release")
+        }
+    }
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
+    let spec = EffectSpec {
+        target: session.fence().clone(),
+        kind: "fixture:release-once".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        let seq: i64 = txn.conn().query_row("SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1", [run_id(240).to_string()], |row| row.get(0))?;
+        txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'applied',?7)", rusqlite::params![run_id(240).to_string(), seq, seq.to_string(), spec.kind, serde_json::to_string(&spec)?, serde_json::to_string(&spec.settlement)?, txn.now()])?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    let mut adapter = CountRelease(0);
+    let first_cleanup = cleanup(&cx);
+    let cancel = first_cleanup.operation().cancel_token().clone();
+    crate::fault::hook(Some(Box::new(move |point| {
+        if point == crate::fault::Point::SettleCloseAfter {
+            cancel.cancel(StopCause::Requested);
+        }
+    })));
+    crate::fault::arm_point(
+        crate::fault::Point::SettleCloseAfter,
+        crate::fault::Fault::Eperm,
+    );
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&first_cleanup, &mut adapter)
+        .expect_err("fault lands after durable close");
+    crate::fault::hook(None);
+    crate::fault::arm(None);
+    assert!(!error.to_string().is_empty());
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='incomplete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect_err("inconsistent durable close retains custody");
+    assert!(error.to_string().contains("closed outcome is inconsistent"));
+    assert_eq!(adapter.0, 1);
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET cleanup_outcome='complete' WHERE run_id=?1",
+                [run_id(240).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let outcome = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter)
+        .expect("same owner finishes durable close");
+    assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
+    assert_eq!(adapter.0, 1, "retry must not replay released effects");
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn session_supervisor_retains_exact_slot_on_unknown_cleanup() {
+    struct UnknownRelease;
+    impl SettlementAdapter for UnknownRelease {
+        fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            Observed::Verified(effect.spec.target.clone(), evidence())
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            Observed::Unknown(UnknownReason::Injected)
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            Observed::Unknown(UnknownReason::Injected)
+        }
+    }
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let releases = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let release_action = releases.clone();
+    session.on_settle(move || {
+        release_action.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let fence = session.fence().clone();
+    let supervisor = SessionSupervisor::adopt(session, "supervisor-1").unwrap();
+    let spec = EffectSpec {
+        target: fence.clone(),
+        kind: "fixture:uncertain-cleanup".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        let seq: i64 = txn.conn().query_row("SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1", [run_id(246).to_string()], |row| row.get(0))?;
+        txn.conn().execute("INSERT INTO events(run_id,seq,effect_id,kind,target,settlement,state,wall_time) VALUES (?1,?2,?3,?4,?5,?6,'applied',?7)", rusqlite::params![run_id(246).to_string(), seq, seq.to_string(), spec.kind, serde_json::to_string(&spec)?, serde_json::to_string(&spec.settlement)?, txn.now()])?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    let (error, supervisor) = supervisor
+        .settle_recoverable(&cleanup(&cx), &mut UnknownRelease)
+        .expect_err("unknown cleanup must retain the exact supervisor");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(246).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "stopping");
+    let custody: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM workspace_session_custody WHERE run_id=?1",
+            [run_id(246).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(custody, 1);
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let slot = session_run_gate(reader.conn(), &fence.resource, run_id(246)).unwrap();
+    drop(reader);
+    assert!(Gate::acquire(&cx, &root, &[slot], Wait::FailFast).is_err());
+    supervisor
+        .settle_recoverable(&cleanup(&cx), &mut adapter())
+        .expect("same owner retries cleanup");
+    assert_eq!(releases.load(std::sync::atomic::Ordering::SeqCst), 1);
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "fixture:uncertain-environment-cleanup".into(),
+        payload: serde_json::Value::Null,
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit.applied(&ticket, serde_json::Value::Null).unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let (error, custody) = parked
+        .settle(&cleanup(&cx), &mut UnknownRelease)
+        .expect_err("unknown environment cleanup retains its guarded run");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let crate::run::WorkspaceCleanupCustody::Guarded(owner) = custody else {
+        panic!("retain reacquired Env gate")
+    };
+    assert!(Gate::acquire(&cx, &root, &[environment()], Wait::FailFast).is_err());
+    owner
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("same environment owner retries cleanup");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn parked_integration_owner_death_preserves_reservation_and_journal() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    use effigy_test_support::process::FixtureCommandExt;
+    const CHILD_HOME: &str = "EFFIGY_INTEGRATION_DEATH_CHILD_HOME";
+    const CHILD_STAGE: &str = "EFFIGY_INTEGRATION_DEATH_CHILD_STAGE";
+    if let Some(path) = std::env::var_os(CHILD_HOME) {
+        let stage: u8 = std::env::var(CHILD_STAGE).unwrap().parse().unwrap();
+        let cx = context().patience(Duration::from_secs(120));
+        let root = StateRoot::effects(&cx, std::path::Path::new(&path)).unwrap();
+        let reservation = decided(&cx, &root, &environment());
+        let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(241));
+        let run = admit_activation(&cx, &root, &reservation, run_id(242));
+        let parked = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+            .unwrap();
+        parked
+            .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+            .unwrap();
+        if stage >= 1 {
+            std::fs::write(
+                std::path::Path::new(&path).join("fixture-effect"),
+                b"same inputs",
+            )
+            .unwrap();
+        }
+        if stage >= 2 {
+            parked
+                .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+                .unwrap();
+        }
+        if stage >= 3 {
+            parked
+                .record_integration_step(&mut session, &cx, Step::Routes, State::Cleared)
+                .unwrap();
+        }
+        std::fs::write(std::path::Path::new(&path).join("ready"), b"ready").unwrap();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        panic!("parent should terminate the exact fixture owner");
+    }
+    for stage in 0..4 {
+        let fixture = home();
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "workspace_session::tests::parked_integration_owner_death_preserves_reservation_and_journal", "--nocapture"])
+            .env(CHILD_HOME, fixture.path()).env(CHILD_STAGE, stage.to_string())
+            .stdin(std::process::Stdio::piped()).stdout(output).spawn_owned().unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        let marker = fixture.path().join("ready");
+        while !marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let ready = marker.exists();
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+        }
+        child.wait().unwrap();
+        assert!(ready, "fixture owner did not reach stage {stage}");
+        let cx = context().patience(Duration::from_secs(120));
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let reader = read_journal(&cx, &root);
+        let reservation = match WorkspaceActivationReservation::recover(&reader, &environment()) {
+            Observed::Verified(Some(reservation), _) => reservation,
+            other => panic!("reservation missing after owner death: {other:?}"),
+        };
+        assert_eq!(reservation.state(), ActivationReservationState::Reserved);
+        assert_eq!(reservation.record().environment_run, Some(run_id(242)));
+        let mut stmt = reader.conn().prepare("SELECT target FROM events WHERE run_id=?1 AND kind='kernel:workspace-integration-step' ORDER BY seq").unwrap();
+        let payloads: Vec<String> = stmt
+            .query_map([run_id(241).to_string()], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let states: Vec<String> = payloads
+            .iter()
+            .map(|value| {
+                let spec: EffectSpec = serde_json::from_str(value).unwrap();
+                spec.payload["state"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        let expected = match stage {
+            0 | 1 => vec!["attempted"],
+            2 => vec!["attempted", "completed"],
+            _ => vec!["attempted", "completed", "cleared"],
+        };
+        assert_eq!(states, expected);
+        assert_eq!(fixture.path().join("fixture-effect").exists(), stage >= 1);
+        drop(stmt);
+        drop(reader);
+        let error = Run::begin(
+            &cx,
+            &root,
+            &inv(environment(), "environment:down"),
+            opts(run_id(243)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect_err("a dead owner does not silently admit a second activation");
+        assert!(error.to_string().contains(if stage < 3 {
+            "integration effects unsettled; re-run up"
+        } else {
+            "reserved by a workspace activation"
+        }));
+        let binding = reservation.record().session.as_ref().unwrap();
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &environment(),
+            run_id(242),
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .unwrap();
+        crate::run::settle_interrupted(
+            &cx,
+            &root,
+            &binding.owner,
+            binding.run,
+            next(),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .unwrap();
+        let cancellation = reservation.cancel(&cx, &root, Wait::FailFast);
+        if stage < 3 {
+            let error =
+                cancellation.expect_err("settling owner runs cannot claim integration cleanup");
+            assert!(error
+                .to_string()
+                .contains("integration effects unsettled; re-run up"));
+        } else {
+            assert_eq!(
+                cancellation.unwrap().state(),
+                ActivationReservationState::Cancelled
+            );
+        }
+    }
+}
+
+#[test]
+fn parked_integration_cleanup_survives_session_context_expiry_and_cancel() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    for expired in [true, false] {
+        for attempted in [false, true] {
+            let fixture = home();
+            let cx = context().patience(Duration::from_secs(120));
+            let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+            let reservation = decided(&cx, &root, &environment());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let session_cx = context().child_until(deadline);
+            let (mut session, _) = admit_staged(&session_cx, &root, &reservation, run_id(247));
+            let run = admit_activation(&cx, &root, &reservation, run_id(248));
+            let parked = run
+                .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+                .unwrap();
+            if attempted {
+                parked
+                    .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+                    .unwrap();
+            }
+            if expired {
+                while Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            } else {
+                session_cx
+                    .operation()
+                    .cancel_token()
+                    .cancel(StopCause::Requested);
+            }
+            let error = parked
+                .record_integration_step(&mut session, &cx, Step::Secrets, State::Attempted)
+                .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains(if expired { "timed out" } else { "cancelled" }));
+            if attempted {
+                let error = parked
+                    .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+                    .unwrap_err();
+                assert!(error.to_string().contains(if expired {
+                    "timed out"
+                } else {
+                    "cancelled"
+                }));
+            }
+            let steps = parked
+                .integration_snapshot(&session, &cx)
+                .expect("cleanup snapshot must survive the original session context");
+            assert_eq!(steps.contains_key(&Step::Routes), attempted);
+            let fresh = cleanup(&cx);
+            if attempted {
+                parked
+                    .record_integration_step(
+                        &mut session,
+                        &fresh.operation().effects().unwrap(),
+                        Step::Routes,
+                        State::Cleared,
+                    )
+                    .expect("fresh cleanup must clear the attempted step");
+            }
+            parked.settle(&fresh, &mut adapter()).unwrap();
+            session.settle(&fresh, &mut adapter()).unwrap();
+            reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+        }
+    }
+}
+
+#[test]
+fn parked_integration_journal_uses_fresh_cleanup_after_expiry() {
+    use crate::run::{WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step};
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let reservation = decided(&cx, &root, &environment());
+    let (mut session, _) = admit_staged(&cx, &root, &reservation, run_id(249));
+    let run = admit_activation(&cx, &root, &reservation, run_id(250));
+    let mut parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .expect("a reconciled retry records the same step again");
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+        .unwrap();
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Attempted)
+        .expect("a completed step can be retried before publication");
+    parked
+        .record_integration_step(&mut session, &cx, Step::Routes, State::Completed)
+        .unwrap();
+    assert_eq!(
+        parked
+            .integration_snapshot(&session, &cx)
+            .unwrap()
+            .get(&Step::Routes),
+        Some(&State::Completed)
+    );
+    parked.expire_for_test();
+    let error = parked
+        .record_integration_step(&mut session, &cx, Step::Secrets, State::Attempted)
+        .unwrap_err();
+    assert!(error.to_string().contains("deadline expired"));
+    let fresh = cleanup(&cx);
+    let cleanup_effects = fresh.operation().effects().unwrap();
+    parked
+        .record_integration_step(&mut session, &cleanup_effects, Step::Routes, State::Cleared)
+        .unwrap();
+    assert!(parked
+        .integration_snapshot(&session, &cx)
+        .unwrap()
+        .is_empty());
+    parked.settle(&fresh, &mut adapter()).unwrap();
+    session.settle(&fresh, &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn parked_resume_requires_matching_observed_creator_and_target_facts() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                    "engine": "docker", "context": "fixture", "project": "fixture", "primary_service": "workspace",
+                    "workdir": ".", "expected_created": {"workspace": null}, "workspace_predecessor": null,
+                    "compose_files": [], "attached": [], "reference_resolutions": {"fixture:latest": "image"},
+                    "image_identities": {"workspace": {"rendered_reference": "fixture:latest", "observed_reference": "fixture:latest", "resolved_id": "image", "config_hash": null, "capability": "container_image_id"}},
+                    "observed": [{"id": target.identity.container_id, "name": "workspace", "running": true,
+                        "labels": {"com.docker.compose.project": "fixture", "com.docker.compose.service": "workspace"}, "binds": [], "image": "image", "image_reference": "fixture:latest"}],
+                    "created": [{"container_id": target.identity.container_id, "name": "workspace", "service": "workspace", "image_id": "image", "image_reference": "fixture:latest", "image_capability": "container_image_id"}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let facts = guarded.view().unwrap().facts().clone();
+    let (error, guarded) = guarded
+        .resume(&session, Observed::Unknown(UnknownReason::Injected))
+        .expect_err("unknown never resumes");
+    assert!(error.to_string().contains("observation is unknown"));
+    let (error, mut guarded) = guarded
+        .resume(
+            &session,
+            Observed::Absent(AbsenceProof::NoRow {
+                table: "fixture".into(),
+            }),
+        )
+        .expect_err("absent observation never resumes");
+    assert!(error.to_string().contains("observation is absent"));
+    let mut changed_ids = facts.clone();
+    changed_ids.created_ids.clear();
+    let mut changed_target = facts.clone();
+    changed_target.target.vm_boot_id = "changed-boot".into();
+    let mut changed_platform = facts.clone();
+    changed_platform.platform.platform.architecture = "changed-arch".into();
+    let mut changed_receipt = facts.clone();
+    changed_receipt.creator_receipt["record"]["generation"] = serde_json::json!(999);
+    let mut changed_selection = facts.clone();
+    changed_selection.selection = Digest::of(b"different selection");
+    for changed in [
+        changed_ids,
+        changed_target,
+        changed_platform,
+        changed_receipt,
+        changed_selection,
+    ] {
+        let (error, retained) = guarded
+            .resume(&session, Observed::Verified(changed, evidence()))
+            .expect_err("changed resume evidence never resumes");
+        assert!(error.to_string().contains("observation changed"));
+        guarded = retained;
+    }
+    let mut store = Store::open(&cx, &root).unwrap();
+    let mut conflicting_receipt = facts.creator_receipt.clone();
+    conflicting_receipt["record"]["project"] = serde_json::json!("foreign-project");
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&conflicting_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, retained) = guarded
+        .resume(&session, Observed::Verified(facts.clone(), evidence()))
+        .expect_err("conflicting creator project never resumes");
+    assert!(error.to_string().contains("creator project"));
+    guarded = retained;
+    let mut changed_receipt = facts.creator_receipt.clone();
+    changed_receipt["record"]["extra"] = serde_json::json!("changed after reobservation");
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&changed_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (error, retained) = guarded
+        .resume(&session, Observed::Verified(facts.clone(), evidence()))
+        .expect_err("changed journal receipt never resumes");
+    assert!(error
+        .to_string()
+        .contains("journalled resume evidence changed"));
+    guarded = retained;
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE events SET receipt=?3 WHERE run_id=?1 AND kind=?2",
+                rusqlite::params![
+                    run_id(254).to_string(),
+                    "environment:gate-scoped-id-difference",
+                    serde_json::to_string(&facts.creator_receipt)?
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    let run = guarded
+        .resume(&session, Observed::Verified(facts, evidence()))
+        .expect("matching fixture observation resumes");
+    assert_eq!(run.id(), run_id(254));
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn parked_resume_refuses_incomplete_creator_receipt() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                           "created": [{"container_id": target.identity.container_id}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let error = guarded
+        .view()
+        .expect_err("incomplete v5 creator receipt must never restore authority");
+    assert!(error.to_string().contains("evidence was incomplete"));
+    drop(session);
+}
+
+#[test]
+fn parked_resume_refuses_foreign_holder_of_session_slot() {
+    let fixture = home();
+    let cx = context().patience(Duration::from_secs(120));
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(253));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(254));
+    let target = target_candidate(run.id());
+    reservation
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![target.clone()], evidence()),
+        )
+        .unwrap();
+    reservation
+        .bind_platform(
+            &mut run,
+            Observed::Verified(binary_binding(run_id(254)), evidence()),
+        )
+        .unwrap();
+    // A synthetic journal fixture exercises the kernel's structural checks;
+    // it does not qualify an engine creator receipt.
+    let spec = EffectSpec {
+        target: run.fence().clone(),
+        kind: "environment:gate-scoped-id-difference".into(),
+        payload: serde_json::json!({}),
+        settlement: Settlement::Retain,
+        required: false,
+    };
+    let mut permit = Attachments::permit(&mut run).unwrap();
+    let ticket = permit.intend(spec).unwrap();
+    permit
+        .applied(
+            &ticket,
+            serde_json::json!({
+                "schema": "effigy.environment.gate-scoped-creation.v5",
+                "record": {"state": "attributed", "generation": reservation.generation().get(),
+                    "engine": "docker", "context": "fixture", "project": "fixture", "primary_service": "workspace",
+                    "workdir": ".", "expected_created": {"workspace": null}, "workspace_predecessor": null,
+                    "compose_files": [], "attached": [], "reference_resolutions": {"fixture:latest": "image"},
+                    "image_identities": {"workspace": {"rendered_reference": "fixture:latest", "observed_reference": "fixture:latest", "resolved_id": "image", "config_hash": null, "capability": "container_image_id"}},
+                    "observed": [{"id": target.identity.container_id, "name": "workspace", "running": true,
+                        "labels": {"com.docker.compose.project": "fixture", "com.docker.compose.service": "workspace"}, "binds": [], "image": "image", "image_reference": "fixture:latest"}],
+                    "created": [{"container_id": target.identity.container_id, "name": "workspace", "service": "workspace", "image_id": "image", "image_reference": "fixture:latest", "image_capability": "container_image_id"}]}
+            }),
+        )
+        .unwrap();
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(120))
+        .unwrap();
+    let foreign_task = TaskId::new(checkout(), "", Surface::Published, "foreign", None).unwrap();
+    let foreign = Run::begin(
+        &cx,
+        &root,
+        &inv(foreign_task.resource(), "foreign"),
+        opts(run_id(255)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .unwrap();
+    let guarded = parked.reacquire().unwrap();
+    let facts = guarded.view().unwrap().facts().clone();
+    let slot = {
+        let reader = read_journal(&cx, &root);
+        session_run_gate(reader.conn(), &facts.session.owner, facts.session.run).unwrap()
+    };
+    drop(session);
+    let _impostor = crate::gate::Gate::acquire(&cx, &root, &[slot], Wait::FailFast).unwrap();
+    let (_error, _custody) = guarded
+        .resume(&foreign, Observed::Verified(facts, evidence()))
+        .expect_err("a raw slot holder is not the retained session owner");
+    assert!(_error
+        .to_string()
+        .contains("retained workspace session owner"));
+    foreign.settle(&cleanup(&cx), &mut adapter()).unwrap();
+}
+
+#[test]
+fn parked_reacquisition_refuses_changed_session_and_releases_gate() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(235));
+    let run = admit_activation(&cx, &root, &reservation, run_id(236));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE workspace_activation_reservations SET session_run=?2 WHERE environment=?1",
+                rusqlite::params![environment.name().to_string(), run_id(237).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let (_error, _custody) = parked.reacquire().expect_err("changed session refuses");
+    let gate = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .expect("failed revalidation released the gate");
+    drop(gate);
+}
+
+#[test]
+fn parked_reacquisition_refuses_changed_reservation_facts() {
+    for (column, value, expected) in [
+        ("state", "cancelled".to_owned(), "session is frozen"),
+        (
+            "environment_run",
+            run_id(250).to_string(),
+            "another environment run",
+        ),
+        (
+            "reservation_id",
+            "ff".repeat(16),
+            "not the one this caller holds",
+        ),
+        (
+            "inputs",
+            serde_json::to_string(&decision_inputs(201)).unwrap(),
+            "reservation changed while parked",
+        ),
+    ] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let environment = environment();
+        let reservation = decided(&cx, &root, &environment);
+        let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(248));
+        let run = admit_activation(&cx, &root, &reservation, run_id(249));
+        let parked = run
+            .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+            .unwrap();
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .transaction(&cx, |txn| {
+                let sql = format!(
+                    "UPDATE workspace_activation_reservations SET {column}=?2 WHERE environment=?1"
+                );
+                txn.conn().execute(
+                    &sql,
+                    rusqlite::params![environment.name().to_string(), value],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        let (error, _custody) = parked.reacquire().expect_err("changed reservation refuses");
+        assert!(error.to_string().contains(expected), "{column}: {error}");
+        let gate = crate::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&environment),
+            Wait::FailFast,
+        )
+        .unwrap();
+        drop(gate);
+    }
+}
+
+#[test]
+fn parked_reacquisition_refuses_advanced_environment_generation() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (_session, _) = admit_staged(&cx, &root, &reservation, run_id(238));
+    let run = admit_activation(&cx, &root, &reservation, run_id(239));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.next_generation(&environment))
+        .unwrap();
+    let (_error, _custody) = parked.reacquire().expect_err("advanced generation refuses");
+    let gate = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .expect("failed revalidation released the gate");
+    drop(gate);
+}
+
+#[test]
+fn parked_reacquisition_refuses_stopped_session() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(251));
+    let run = admit_activation(&cx, &root, &reservation, run_id(252));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    let (error, _custody) = parked.reacquire().expect_err("stopped session refuses");
+    assert!(
+        error.to_string().contains("session is no longer live"),
+        "{error}"
+    );
+    let gate = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .unwrap();
+    drop(gate);
+}
+
+#[test]
+fn parked_run_can_settle_after_activation_deadline_expires() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(240));
+    let run = admit_activation(&cx, &root, &reservation, run_id(241));
+    let mut parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    parked.expire_for_test();
+    parked
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("cleanup uses a fresh budget");
+    session
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("session settles");
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("reservation can be cancelled");
+}
+
+#[test]
+fn parked_cleanup_gate_timeout_returns_custody_for_retry() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(242));
+    let run = admit_activation(&cx, &root, &reservation, run_id(243));
+    let parked = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let guard = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    )
+    .unwrap();
+    let short_cleanup = cx.operation().cleanup(Duration::from_millis(40)).unwrap();
+    let (_, custody) = parked
+        .settle(&short_cleanup, &mut adapter())
+        .expect_err("held gate refuses cleanup");
+    let crate::run::WorkspaceCleanupCustody::Parked(parked) = custody else {
+        panic!("parked owner must remain")
+    };
+    drop(guard);
+    parked
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("retry settles the same run");
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn park_refuses_release_callbacks_and_retains_guarded_run() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(244));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(245));
+    let released = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&released);
+    run.on_settle(move || flag.store(true, Ordering::SeqCst));
+    let (error, run) = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .expect_err("release action cannot be parked");
+    assert!(error.to_string().contains("release actions"));
+    assert!(!released.load(Ordering::SeqCst));
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    assert!(released.load(Ordering::SeqCst));
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn park_refuses_shared_gate_and_retains_guarded_run() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = environment();
+    let reservation = decided(&cx, &root, &environment);
+    let (session, _) = admit_staged(&cx, &root, &reservation, run_id(246));
+    let mut run = admit_activation(&cx, &root, &reservation, run_id(247));
+    let copies = run.share_workspace_gate_for_test().unwrap();
+    let (error, run) = run
+        .park_workspace(&reservation, Instant::now() + Duration::from_secs(10))
+        .expect_err("shared gate cannot be parked");
+    assert!(error.to_string().contains("shared custody"));
+    assert!(crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast
+    )
+    .is_err());
+    drop(copies);
+    run.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    session.settle(&cleanup(&cx), &mut adapter()).unwrap();
+    reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+}
+
+#[test]
+fn a_legacy_reserved_owner_without_identity_remains_recoverable() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let environment = pending_environment(&cx, &root);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "workspace_session::tests::a_live_reserved_owner_cannot_be_recovered_but_a_dead_owner_can", "--nocapture"])
+        .env("EFFIGY_RESERVED_OWNER_RECOVERY_TEST_HOME", fixture.path())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    let ready = loop {
+        line.clear();
+        match output.read_line(&mut line) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) if line.contains("effigy-reserved-owner-ready") => break true,
+            _ => {}
+        }
+    };
+    let _ = child.kill();
+    child
+        .wait()
+        .expect("reap exactly the child this test started");
+    assert!(ready, "child admitted the reserved run");
+    // The historical schema allowed a bound Env run with no owner identity.
+    // Removing it here models that legacy row; it grants no death evidence.
+    Store::open(&cx, &root)
+        .unwrap()
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET owner_identity=NULL WHERE run_id=?1",
+                [run_id(27).to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    let result = crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &environment,
+        run_id(27),
+        next(),
+        &cleanup(&cx),
+        &mut adapter(),
+    );
+    assert!(
+        matches!(result, Err(RunError::Unavailable(ref message)) if message.contains("owner identity") && message.contains("recoverable")),
+        "missing identity cannot prove death"
+    );
+    let reader = read_journal(&cx, &root);
+    let phase: String = reader
+        .conn()
+        .query_row(
+            "SELECT phase FROM runs WHERE run_id=?1",
+            [run_id(27).to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(phase, "admitted", "refusal must not settle the run");
 }
 
 #[test]
@@ -1648,7 +3114,7 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
     // Boundary: the guest pointer is published, before the commit. The
     // activation run advances the environment to E; the predecessor's record is
     // still authoritative.
-    let environment_run = admit_activation(&cx, &root, &reservation, run_id(73));
+    crash_reserved_environment(fixture.path(), "published");
     assert_eq!(resource_row(&reader, &environment).0, 2);
     let reader = read_journal(&cx, &root);
     let (_, state, _) = resource_row(&reader, &environment);
@@ -1658,8 +3124,7 @@ fn a_crash_after_reserve_before_commit_leaves_the_predecessor_authoritative() {
         "an uncommitted publication advertises nothing"
     );
     authoritative(&reader);
-    // Crash here: the run is gone and nothing was committed.
-    drop(environment_run);
+    // The child has exited with its run unsettled and nothing committed.
     let reader = read_journal(&cx, &root);
     authoritative(&reader);
     assert_eq!(mapping(&reader, &environment).map(|row| row.2), Some(1));
@@ -2352,15 +3817,11 @@ fn cancellation_waits_for_stopping_and_incomplete_runs_to_settle() {
         WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
             .expect("reserve");
     let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(150));
-    let mut activation = admit_activation(&cx, &root, &reservation, run_id(151));
+    crash_reserved_environment(fixture.path(), "stopping");
     let cancelled = || WorkloadOutcome::Cancelled {
         cause: StopCause::Requested,
         signal: None,
     };
-    activation
-        .interrupt(&cleanup(&cx), cancelled())
-        .expect("activation stopping");
-    drop(activation);
     assert!(
         reservation.cancel(&cx, &root, Wait::FailFast).is_err(),
         "a dropped Stopping activation still needs settlement"
@@ -2530,21 +3991,7 @@ fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work()
     );
     let reservation = decided(&cx, &root, &environment);
     let (successor, _) = admit_staged(&cx, &root, &reservation, run_id(152));
-    let mut activation = Run::begin_claimed(
-        &cx,
-        &root,
-        &inv(environment.clone(), "environment:up"),
-        opts(run_id(153)),
-        || Ok(cleanup(&cx)),
-        &mut adapter(),
-        reservation.claim().expect("claim"),
-    )
-    .expect("successor Env admission advances transition fence");
-    let ticket =
-        Attachments::intend_guest_publication(&mut activation).expect("publication intent");
-    Attachments::guest_publication_unknown(&mut activation, &ticket, UnknownReason::Injected)
-        .expect("uncertain publication");
-    drop(activation); // crash before commit; the successor never becomes active
+    crash_reserved_environment(fixture.path(), "unknown");
     let fence = Fence {
         resource: environment.clone(),
         generation: first.environment_generation(),
@@ -5024,11 +6471,11 @@ fn a_session_key_never_prints_its_secret() {
     assert!(ServingKey::new(vec![1u8; 8], Digest([0u8; 32])).is_err());
 }
 
-/// Fail each boundary of one decision-driven activation and lose both handles,
-/// as a crash does. The mapping, the session's `Borrow` attachment, `active(E)`
+/// Fail each boundary of one decision-driven activation, then settle its exact
+/// owners in this process. The mapping, the session's `Borrow` attachment, `active(E)`
 /// and the `Pending` selection obligation are all committed or none is; a
-/// committed generation whose switch never ran is recovered from its own
-/// obligation, never from a guess.
+/// committed generation whose switch never ran remains fenced by its own
+/// obligation after the owners settle.
 #[cfg(feature = "fault-injection")]
 #[test]
 fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
@@ -5039,6 +6486,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
         (Point::SelectionCommitBefore, false, None),
         (Point::ActivationMappingBefore, false, None),
         (Point::ActivationAttachmentBefore, false, None),
+        (Point::ActivationCommitAfter, true, Some("pending")),
         (Point::SelectionCommitAfter, true, Some("pending")),
         (Point::SelectionSwitchBefore, true, Some("pending")),
         (Point::SelectionSwitchAfter, true, Some("switched")),
@@ -5109,9 +6557,6 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
         assert!(fired(), "fault {point:?} must fire");
         assert!(result.is_err(), "fault {point:?} must not report success");
         arm(None);
-        drop(activation_run);
-        drop(session_run);
-
         let reader = read_journal(&cx, &root);
         let generation = 1;
         if committed {
@@ -5158,10 +6603,32 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 "{point:?}: the obligation records exactly what ran"
             );
         }
+        // These are still this test process's exact owners. Settle them as
+        // owners instead of treating dropped handles as proof of process death.
+        if let Some(run) = activation_run.take() {
+            end_run(
+                &cx,
+                run,
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            );
+        }
+        if let Some(run) = session_run.take() {
+            end_run(
+                &cx,
+                run,
+                WorkloadOutcome::Cancelled {
+                    cause: StopCause::Requested,
+                    signal: None,
+                },
+            );
+        }
+        let reader = read_journal(&cx, &root);
         if state == Some("pending") {
-            // Both runs died, so the committed successor has no live owner:
-            // recovery refuses to complete a selection nothing is serving, and
-            // the obligation stays exactly where it was (recoverable, not lost).
+            // Both owners settled, so the committed successor has no live
+            // serving session and cannot complete the pending selection.
             let pending = una_finished(&reader, &environment).expect("unfinished selection");
             let error = selection_recovered(
                 &cx,
@@ -5194,25 +6661,6 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 Some("pending".to_owned()),
                 "{point:?}: the obligation is preserved for a live recovery"
             );
-        }
-        // No replay: settle the exact dead runs, then release an uncommitted
-        // fence. Nothing about a failed activation is retried as a guest effect.
-        for (owner, id) in [
-            (environment.clone(), run_id(231)),
-            (workspace_entry(), run_id(230)),
-        ] {
-            if run::summary(&reader, id).verified().is_some() {
-                run::settle_interrupted(
-                    &cx,
-                    &root,
-                    &owner,
-                    id,
-                    next(),
-                    &cleanup(&cx),
-                    &mut adapter(),
-                )
-                .unwrap_or_else(|error| panic!("recover {id} after {point:?}: {error}"));
-            }
         }
         if !committed {
             // A decision that never reserved leaves no fence to release; one
@@ -6248,7 +7696,7 @@ fn custody_survives_the_activation_clients_eof() {
                 .unwrap();
             let lease = launch.publish(&supervisor).unwrap().lease().clone();
             launch.serve(&supervisor).unwrap();
-            let ticket = match run::reserve(
+            let ticket = match run::reserve_resolved(
                 &fixture.cx,
                 &fixture.root,
                 run::AdmissionKey {
@@ -6257,6 +7705,7 @@ fn custody_survives_the_activation_clients_eof() {
                 },
                 Digest::of(b"secondary task"),
                 run_id(82),
+                &inv(task("secondary-task"), "secondary-task"),
             )
             .unwrap()
             {
@@ -7688,4 +9137,554 @@ fn guest_locator_challenge_binds_alias_target_peer_pin_session_and_lifetime() {
         ))
         .is_err());
     assert!(launch.publish(&run).is_err());
+}
+
+#[test]
+fn split_decision_finalizes_on_owner_thread_under_the_same_gate() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let owner_thread = std::thread::current().id();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| {
+            assert_ne!(std::thread::current().id(), owner_thread);
+            Ok(1)
+        },
+        |input, _| {
+            assert_eq!(std::thread::current().id(), owner_thread);
+            assert!(
+                crate::gate::Gate::acquire(
+                    &cx,
+                    &root,
+                    std::slice::from_ref(&environment),
+                    Wait::FailFast,
+                )
+                .is_err(),
+                "the environment gate must remain held during local finalization"
+            );
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(matches!(result, Ok(ActivationDecision::Activate(_))));
+}
+
+#[test]
+fn split_decision_rejects_expiry_during_local_finalization() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let entered = std::cell::Cell::new(false);
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(500),
+        |_| Ok(1),
+        |input, deadline| {
+            entered.set(true);
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(20),
+            );
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(
+        entered.get(),
+        "local finalization must run for this control"
+    );
+    assert!(matches!(result, Err(RunError::Unavailable(_))));
+    assert_eq!(reservation_rows(&read_journal(&cx, &root), &environment), 0);
+}
+
+#[test]
+fn split_decision_refuses_failed_observation_and_cancelled_finalization() {
+    let cancel = CancelToken::default();
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(10)),
+        cancel.clone(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        crate::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("effects");
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let failed = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(5),
+        |_| Err::<u8, _>(RunError::unavailable("fixture observation unavailable")),
+        |_, _| panic!("failed observation must not be finalized"),
+    );
+    assert!(matches!(failed, Err(RunError::Unavailable(_))));
+    let cancelled = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(5),
+        |_| Ok(1),
+        |input, _| {
+            cancel.cancel(StopCause::Requested);
+            Ok(decision_inputs(input))
+        },
+    );
+    assert!(matches!(cancelled, Err(RunError::Interrupted(_))));
+    let fresh = context();
+    assert_eq!(
+        reservation_rows(&read_journal(&fresh, &root), &environment),
+        0
+    );
+}
+
+#[test]
+fn split_decision_times_out_external_observation_without_finalizing() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    drop(Store::open(&cx, &root).expect("initialize journal"));
+    let finalized = std::cell::Cell::new(false);
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (done, completed) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(200),
+        move |_| {
+            let _ = blocked.recv_timeout(Duration::from_secs(5));
+            let _ = done.send(());
+            Ok(1)
+        },
+        |input, _| {
+            finalized.set(true);
+            Ok(decision_inputs(input))
+        },
+    );
+    let competing = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    );
+    let _ = release.send(());
+    completed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("external observer exited");
+    assert!(result.is_err(), "expired external observation must refuse");
+    assert!(!finalized.get(), "expired data must not be finalized");
+    assert!(competing.is_ok(), "refusal must release the decision gate");
+    assert_eq!(reservation_rows(&read_journal(&cx, &root), &environment), 0);
+}
+
+#[test]
+fn split_timeout_observer_acknowledges_release_after_gate_reacquisition() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (done, completed) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing_split(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(300),
+        move |_| {
+            let _ = started.send(());
+            let received_release = blocked.recv_timeout(Duration::from_secs(5)).is_ok();
+            let _ = done.send(received_release);
+            Ok(1)
+        },
+        |_, _| panic!("expired data must not be finalized"),
+    );
+    let competing = crate::gate::Gate::acquire(
+        &cx,
+        &root,
+        std::slice::from_ref(&environment),
+        Wait::FailFast,
+    );
+    let was_started = ready.try_recv().is_ok();
+    let was_still_blocked = matches!(
+        completed.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    );
+    let was_released = release.send(()).is_ok();
+    let received_release = completed
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or(false);
+    match result {
+        Err(RunError::Unavailable(reason)) => {
+            assert!(reason.contains("deadline expired"), "{reason}");
+        }
+        Err(RunError::Interrupted(crate::ctx::Interrupt::TimedOut { .. })) => {}
+        _ => panic!("expected a named timeout"),
+    }
+    assert!(was_started, "the observer must have started");
+    assert!(was_still_blocked, "observer completed before release");
+    assert!(
+        was_released && received_release,
+        "observer must receive release"
+    );
+    assert!(competing.is_ok(), "the decision gate must be available");
+}
+
+#[test]
+fn decision_observes_inputs_while_holding_the_environment_gate() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let observe_cx = cx.clone();
+    let observe_root = root.clone();
+    let observe_environment = environment.clone();
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| {
+            assert!(
+                crate::gate::Gate::acquire(
+                    &observe_cx,
+                    &observe_root,
+                    std::slice::from_ref(&observe_environment),
+                    Wait::FailFast
+                )
+                .is_err(),
+                "another actor must not hold the decision gate during observation"
+            );
+            Ok(decision_inputs(1))
+        },
+    );
+    assert!(matches!(result, Ok(ActivationDecision::Activate(_))));
+}
+
+#[test]
+fn gated_decision_refuses_changed_unknown_and_expired_observations_without_reservation() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = pending_environment(&cx, &root);
+    let inputs = publish_inputs(7, None);
+    let activated =
+        activate_with_selection(&cx, &root, &environment, run_id(220), run_id(221), &inputs);
+    let count = reservation_rows(&read_journal(&cx, &root), &environment);
+    let mut replaced = published_target();
+    replaced.container_id = "bb".repeat(32);
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        move |_| Ok(publish_inputs(7, Some(replaced))),
+    );
+    assert!(
+        result.is_err(),
+        "a newly observed replacement cannot attach"
+    );
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_secs(10),
+        |_| Err(RunError::unavailable("target identity unknown")),
+    );
+    assert!(result.is_err(), "an unknown observation refuses");
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() - Duration::from_millis(1),
+        |_| panic!("expired decision must not observe"),
+    );
+    assert!(result.is_err());
+    let (release, blocked) = std::sync::mpsc::channel();
+    let result = WorkspaceActivationReservation::decide_observing(
+        &cx,
+        &root,
+        &environment,
+        Wait::FailFast,
+        Instant::now() + Duration::from_millis(100),
+        move |_| {
+            let _ = blocked.recv();
+            Ok(publish_inputs(7, Some(published_target())))
+        },
+    );
+    release.send(()).expect("release timed-out observer");
+    assert!(
+        result.is_err(),
+        "an observation returned after its deadline must refuse"
+    );
+    assert_eq!(
+        reservation_rows(&read_journal(&cx, &root), &environment),
+        count
+    );
+    end_run(
+        &cx,
+        activated.session_run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+}
+
+#[test]
+fn cancelled_decision_releases_gate_while_observer_is_stalled() {
+    let cancel = CancelToken::default();
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(10)),
+        cancel.clone(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        crate::ctx::Placement::Host,
+    )
+    .effects()
+    .expect("effects");
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker_cx = cx.clone();
+    let worker_root = root.clone();
+    let worker_env = env.clone();
+    let worker = std::thread::spawn(move || {
+        let result = WorkspaceActivationReservation::decide_observing(
+            &worker_cx,
+            &worker_root,
+            &worker_env,
+            Wait::FailFast,
+            Instant::now() + Duration::from_secs(5),
+            move |_| {
+                started_tx.send(()).expect("observer started");
+                let _ = release_rx.recv();
+                Ok(decision_inputs(1))
+            },
+        );
+        done_tx.send(result.is_err()).expect("decision result");
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("observer starts");
+    cancel.cancel(StopCause::Signal(2));
+    let prompt = done_rx.recv_timeout(Duration::from_millis(700));
+    let fresh = context();
+    let competing = if prompt.is_ok() {
+        Some(crate::gate::Gate::acquire(
+            &fresh,
+            &root,
+            std::slice::from_ref(&env),
+            Wait::FailFast,
+        ))
+    } else {
+        None
+    };
+    let _ = release_tx.send(());
+    worker.join().expect("decision joined");
+    assert!(prompt.expect("cancelled decision must return promptly"));
+    competing
+        .expect("decision returned")
+        .expect("gate is free while observer remains stalled");
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn decision_after_commit_fault_recovers_the_exact_reservation() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let environment = environment();
+    let inputs = decision_inputs(81);
+    let result = crate::fault_injection::with_hook(
+        |name| {
+            if name == "ActivationDecisionAfter" {
+                Err(std::io::Error::other("fault"))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            WorkspaceActivationReservation::decide(
+                &cx,
+                &root,
+                &environment,
+                &inputs,
+                Wait::FailFast,
+            )
+        },
+    );
+    assert!(result.is_err());
+    let reader = read_journal(&cx, &root);
+    let recovered = WorkspaceActivationReservation::recover(&reader, &environment)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("committed reservation remains recoverable");
+    let replay = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &inputs,
+        Wait::FailFast,
+    )
+    .expect("retry")
+    {
+        ActivationDecision::Activate(reservation) => reservation,
+        _ => panic!("unpublished selection cannot attach"),
+    };
+    assert_eq!(replay.id(), recovered.id());
+    assert_eq!(replay.generation(), recovered.generation());
+    replay
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("cancel exact reservation");
+}
+
+#[test]
+fn attempts_cannot_stage_or_cancel_each_others_session() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let inputs = decision_inputs(96);
+    let decision =
+        || match WorkspaceActivationReservation::decide(&cx, &root, &env, &inputs, Wait::FailFast)
+            .expect("decision")
+        {
+            ActivationDecision::Activate(reservation) => *reservation,
+            _ => panic!("fresh decision"),
+        };
+    let first = decision();
+    let recovered = decision();
+    assert_eq!(
+        first.id(),
+        recovered.id(),
+        "an unstaged reservation is recoverable"
+    );
+    let a = run::RequestId::new([1; 16]);
+    let b = run::RequestId::new([2; 16]);
+    assert!(
+        first
+            .cancel_for_attempt(&cx, &root, Wait::FailFast, a)
+            .is_err(),
+        "crash before staging leaves a recoverable untagged reservation"
+    );
+    let owner = workspace_entry();
+    let id = run_id(95);
+    first
+        .stage_for_attempt(&cx, &root, &owner, id, a)
+        .expect("first attempt stages");
+    assert!(
+        recovered.claim_session(&cx, &root).is_err(),
+        "a legacy claimant cannot bypass the creating attempt"
+    );
+    assert!(
+        recovered
+            .claim_session_with_attempt(&cx, &root, Some(b))
+            .is_err(),
+        "a different attempt cannot claim the staged run"
+    );
+    assert!(
+        first
+            .claim_session_with_attempt(&cx, &root, Some(a))
+            .is_ok(),
+        "the creating attempt can claim the staged run"
+    );
+    assert!(
+        recovered
+            .stage_for_attempt(&cx, &root, &owner, id, b)
+            .is_err(),
+        "a different attempt cannot claim even the same run"
+    );
+    assert!(
+        recovered
+            .cancel_for_attempt(&cx, &root, Wait::FailFast, b)
+            .is_err(),
+        "a contender cannot cancel"
+    );
+    let reader = read_journal(&cx, &root);
+    let current = WorkspaceActivationReservation::recover(&reader, &env)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("reservation");
+    assert_eq!(current.state(), ActivationReservationState::Reserved);
+    first
+        .cancel_for_attempt(&cx, &root, Wait::FailFast, a)
+        .expect("staging attempt cancels");
+}
+
+#[test]
+fn tagged_cleanup_refuses_legacy_untagged_staging() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let env = environment();
+    let reservation = decided_with(&cx, &root, &env, 97);
+    reservation
+        .stage_session_binding(&cx, &root, &workspace_entry(), run_id(97))
+        .expect("legacy stage");
+    let attempt = run::RequestId::new([3; 16]);
+    assert!(reservation
+        .cancel_for_attempt(&cx, &root, Wait::FailFast, attempt)
+        .is_err());
+    let current = WorkspaceActivationReservation::recover(&read_journal(&cx, &root), &env)
+        .verified()
+        .cloned()
+        .flatten()
+        .expect("recover");
+    assert_eq!(current.state(), ActivationReservationState::Reserved);
+    reservation
+        .cancel(&cx, &root, Wait::FailFast)
+        .expect("legacy cleanup");
+}
+
+#[test]
+fn staged_attempt_refuses_an_existing_run_identity() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("root");
+    let owner = workspace_entry();
+    let id = run_id(98);
+    let run = Run::begin(
+        &cx,
+        &root,
+        &inv(owner.clone(), "workspace"),
+        opts(id),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("prior run");
+    end_run(&cx, run, WorkloadOutcome::NotStarted);
+    let reservation = decided_with(&cx, &root, &environment(), 98);
+    assert!(
+        reservation
+            .stage_for_attempt(&cx, &root, &owner, id, run::RequestId::new([4; 16]))
+            .is_err(),
+        "a prior run must not become this attempt's cleanup target"
+    );
 }

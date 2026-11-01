@@ -262,6 +262,35 @@ pub fn parse_running_compose_containers(
     Ok(rows)
 }
 
+/// Parse a complete, project-filtered inventory for an absence decision.
+pub(super) fn strict_project_inventory(
+    stdout: &str,
+    project: &str,
+) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
+    let refusal = || ContainerExecError::Failure {
+        command: "runtime ps decision inventory".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: "incomplete or inconsistent project inventory".to_owned(),
+    };
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields.len() != 7
+            || fields[0].trim().is_empty()
+            || fields[1].trim().is_empty()
+            || fields[3].trim() != project
+            || fields[5].trim().is_empty()
+            || !matches!(
+                fields[6].trim().to_ascii_lowercase().as_str(),
+                "" | "false" | "0" | "no" | "true" | "1" | "yes"
+            )
+        {
+            return Err(refusal());
+        }
+    }
+    parse_running_compose_containers(stdout)
+}
+
 type RunningComposeContainerRow = (
     String,
     String,
@@ -528,6 +557,14 @@ mod tests {
             assert_eq!(row.ports.len(), expected.ports, "{name}");
             assert_eq!(row.oneoff, expected.oneoff, "{name}");
         }
+    }
+
+    #[test]
+    fn decision_inventory_refuses_rows_without_provable_service_and_project() {
+        assert!(strict_project_inventory("app Up\n", "demo").is_err());
+        assert!(strict_project_inventory("app\tUp\t\tdemo\t/tmp\t\tfalse\n", "demo").is_err());
+        assert!(strict_project_inventory("app\tUp\t\tother\t/tmp\tapp\tfalse\n", "demo").is_err());
+        assert!(strict_project_inventory("", "demo").unwrap().is_empty());
     }
 
     #[test]

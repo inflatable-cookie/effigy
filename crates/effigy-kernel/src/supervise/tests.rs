@@ -191,6 +191,145 @@ fn fixture() -> PathBuf {
     crate::fixture::custody_fixture()
 }
 
+#[test]
+fn refused_engine_handshake_reaps_its_live_child() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let event = serde_json::to_vec(&Event::Refused {
+        category: crate::human::Category::Refused,
+        detail: "fixture refusal".into(),
+    })
+    .unwrap();
+    let frame = (event.len() as u32)
+        .to_be_bytes()
+        .into_iter()
+        .chain(event)
+        .map(|byte| format!("\\{byte:03o}"))
+        .collect::<String>();
+    let helper = world.helper(&format!("printf '{frame}'; exec sleep 60"));
+    let result = start_engine_at(
+        &cx,
+        &root,
+        EngineLaunch {
+            payload: vec![],
+            cwd: world.home(),
+            env: vec![],
+            handoff: None,
+            admission: None,
+        },
+        &helper.executable,
+        ClientMode::Owning,
+    );
+    let pid: i32 = std::fs::read_to_string(world.pid_file())
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // A failed assertion must not leave this test's helper alive.
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    if alive {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+    }
+    assert!(result.is_err(), "fixture refused admission");
+    assert!(!alive, "a refused helper must be reaped before returning");
+}
+
+#[test]
+fn timed_out_wait_keeps_exact_child_for_fresh_budget_reap() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let helper = world.helper("exec sleep 1");
+    let mut child = Command::new(&helper.executable.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let writer = child.stdin.take().unwrap();
+    let events = child.stdout.take().unwrap();
+    nonblocking(events.as_raw_fd()).unwrap();
+    let mut client = SupervisorClient {
+        child,
+        writer: Some(writer),
+        events,
+        buffer: Vec::new(),
+        run: RunId::new(1, [5; 10]).unwrap(),
+        fence: Fence {
+            resource: owner("wait-retry"),
+            generation: Generation::new(1),
+        },
+        root,
+        active: false,
+        closed: false,
+    };
+    let short = cx.operation().child(Duration::from_millis(20));
+    let timed_out = client.wait_recoverable(&short).is_err();
+    let retained = client.child.id() == pid;
+    let fresh = cx.operation().child(Duration::from_secs(5));
+    let reaped =
+        client.wait_recoverable(&fresh).is_err() && client.child.try_wait().unwrap().is_some();
+    if !reaped {
+        let _ = client.child.kill();
+        let _ = client.child.wait();
+    }
+    assert!(timed_out && retained, "timeout retains the exact child");
+    assert!(reaped, "fresh budget reaps the same child after EOF");
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn exhausted_fixture_waits_terminate_and_reap_exact_child() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let helper = world.helper("exec sleep 60");
+    let mut child = Command::new(&helper.executable.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let writer = child.stdin.take().unwrap();
+    let events = child.stdout.take().unwrap();
+    nonblocking(events.as_raw_fd()).unwrap();
+    let mut client = SupervisorClient {
+        child,
+        writer: Some(writer),
+        events,
+        buffer: Vec::new(),
+        run: RunId::new(1, [6; 10]).unwrap(),
+        fence: Fence {
+            resource: owner("wait-exhaustion"),
+            generation: Generation::new(1),
+        },
+        root,
+        active: false,
+        closed: false,
+    };
+    let first = client
+        .wait_recoverable(&cx.operation().child(Duration::from_millis(20)))
+        .is_err();
+    let second = client
+        .wait_recoverable(&cx.operation().child(Duration::from_millis(20)))
+        .is_err();
+    let retained = client.child.id() == pid;
+    let cleanup = client.fixture_terminate_and_reap();
+    let reaped = client.child.try_wait().unwrap().is_some();
+    assert!(
+        first && second && retained,
+        "both exhausted waits retain the same child"
+    );
+    assert!(
+        cleanup.is_ok() && reaped,
+        "fixture cleanup kills and reaps that child"
+    );
+}
+
 /// A helper death reads as unavailable and names the helper, how it ended and
 /// the stderr tail it left.
 fn helper_exited(error: RunError, helper: &str, exit: &HelperExit) {
@@ -494,10 +633,13 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
     .unwrap();
     let digest = Digest::of(b"effigy.supervise.admission.v1");
     let run = RunId::new(1, [5; 10]).unwrap();
-    let ticket = match crate::run::reserve(&cx, &root, key, digest, run).unwrap() {
-        crate::run::Reservation::Fresh(ticket) => ticket,
-        other => panic!("expected the one reservation, saw {other:?}"),
-    };
+    let ticket =
+        match crate::run::reserve_resolved(&cx, &root, key, digest, run, &inv("workspace-session"))
+            .unwrap()
+        {
+            crate::run::Reservation::Fresh(ticket) => ticket,
+            other => panic!("expected the one reservation, saw {other:?}"),
+        };
     let config = SupervisorConfig {
         protocol: HELPER_PROTOCOL,
         home: fixture.path().into(),
@@ -675,4 +817,62 @@ fn canonical_supervisor_stop_is_bounded_with_an_inherited_pipe_holder() {
         panic!("truncation metadata missing");
     };
     assert!(read.truncated && read.bytes.is_empty());
+}
+
+/// The anchor retires only on a round it positively resolved: a live member keeps
+/// it, a zombie (positively not live) does not, and an ambiguous row — including
+/// one that was live and then vanished, or that the kernel lists with no readable
+/// identity — keeps it alive. An inventory without the anchor's own row is never
+/// closure (effigy#520).
+#[test]
+fn anchor_closure_round_only_retires_on_positive_evidence() {
+    use crate::custody::platform::MembershipRow as Row;
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    let me = identity.pid;
+    let mut member = identity.clone();
+    member.pid = me + 1;
+    let member_pid = member.pid;
+
+    assert_eq!(
+        anchor::closure_round(&[Row::Live(identity.clone()), Row::Live(member)], me),
+        anchor::ClosureRound::Live,
+        "a second live member is never closure"
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::Live(identity.clone())], me),
+        anchor::ClosureRound::Empty
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::Live(identity.clone()), Row::NotLive(member_pid)], me),
+        anchor::ClosureRound::Empty,
+        "a zombie cannot fork, so it is positively not live"
+    );
+    // The fork race the review names: the row was live at the state read and is
+    // unreadable afterwards, so a child it forked may be invisible.
+    assert_eq!(
+        anchor::closure_round(
+            &[Row::Live(identity.clone()), Row::Unproven(member_pid)],
+            me
+        ),
+        anchor::ClosureRound::Unproven,
+        "an unresolved row leaves the fork race open"
+    );
+    assert_eq!(
+        anchor::closure_round(&[], me),
+        anchor::ClosureRound::Unknown,
+        "an empty inventory without the anchor's own row is never closure"
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::NotLive(me)], me),
+        anchor::ClosureRound::Unknown,
+        "the anchor's own row must be positively observed live"
+    );
+    assert_eq!(
+        anchor::closure_round(&[Row::Unproven(me)], me),
+        anchor::ClosureRound::Unknown,
+        "an unresolved anchor row is not the anchor's own evidence"
+    );
 }

@@ -222,6 +222,21 @@ fn main() {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    if entry == "handoff-reader" {
+        // Read the one-shot handoff slot directly. A shell cannot name a
+        // two-digit descriptor: dash rejects `cat <&11` ("Bad fd number", exit 2)
+        // and even `exec 11<&0`, so the fixture is the reader (effigy#520).
+        use std::io::Read as _;
+        use std::os::fd::FromRawFd as _;
+        let out = Path::new(args.get(1).expect("handoff output path"));
+        // SAFETY: the custody spawn placed the caller's one-shot reader at slot
+        // 11 and cleared the slot's CLOEXEC flag before exec.
+        let mut reader = unsafe { std::fs::File::from_raw_fd(HANDOFF_FD) };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read the handoff");
+        std::fs::write(out, bytes).expect("write the handoff payload");
+        return;
+    }
     if entry == "anchor-no-children" {
         let mut status = 0;
         // SAFETY: WNOHANG observes only this disposable workload's children;
@@ -279,6 +294,71 @@ fn main() {
         let _ = child.wait(&op);
         run.settle(&cleanup, &mut Strict).unwrap();
         return;
+    }
+    if entry == "anchor-owner-loss" {
+        // effigy#520: the owner spawns a genuine custody child itself, so it holds
+        // the receipt (identity, group, nonce) and the anchor identity, and the run
+        // also has its own registered sentinel. It then stays alive and settles
+        // nothing: the proof kills only this recorded owner, by pid.
+        let home = Path::new(args.get(1).expect("fixture home"));
+        let op = op(router.root_cancel());
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let id = RunId::new(1, [9; 10]).unwrap();
+        let inv = invocation();
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &inv,
+            BeginOpts {
+                id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+            &cleanup,
+            &mut Strict,
+        )
+        .unwrap();
+        let mut workload = spec(home);
+        workload.label = "owner loss".into();
+        let child = Custody::spawn(&mut run, workload, &cx).unwrap();
+        run.advance(Phase::Active).unwrap();
+        let observe = cx.operation().observe().unwrap();
+        let meta = metadata(&observe, &root, id)
+            .verified()
+            .cloned()
+            .expect("run metadata");
+        std::fs::write(
+            home.join("owner-loss.pending"),
+            serde_json::to_vec(&serde_json::json!({
+                "run": id,
+                "owner": std::process::id(),
+                "process": child.identity(),
+                "anchor": child.anchor(),
+                "sentinel": meta.sentinel,
+                "supervisor": meta.supervisor,
+                "sentinel_status": format!("{:?}", meta.sentinel_status),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            home.join("owner-loss.pending"),
+            home.join("owner-loss.json"),
+        )
+        .unwrap();
+        std::fs::write(home.join("ready"), b"ready").unwrap();
+        loop {
+            // The owner never settles. Its sentinel recovers the run once this
+            // process is killed by the recorded pid.
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     if entry == "nonce-workload" {
         std::thread::sleep(Duration::from_secs(40));

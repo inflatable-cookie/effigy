@@ -678,6 +678,23 @@ impl Run<'_> {
 const WORKSPACE_TARGET_KIND: &str = "kernel:workspace-target";
 
 impl Run<'_> {
+    /// Read the uniquely journalled target under this exact claimed Env run.
+    pub fn workspace_bound_target(
+        &self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<crate::workspace_session::ContainerIdentity, RunError> {
+        self.verify_workspace_reservation(reservation)?;
+        workspace_fact(self.store.conn(), self.id, WORKSPACE_TARGET_KIND)
+    }
+
+    pub(crate) fn workspace_bound_platform(
+        &self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<crate::workspace_session::BoundPlatform, RunError> {
+        self.verify_workspace_reservation(reservation)?;
+        workspace_fact(self.store.conn(), self.id, WORKSPACE_PLATFORM_KIND)
+    }
+
     pub(crate) fn bind_workspace_target(
         &mut self,
         reservation: &crate::workspace_session::WorkspaceActivationReservation,

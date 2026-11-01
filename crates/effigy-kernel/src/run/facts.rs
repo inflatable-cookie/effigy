@@ -73,6 +73,7 @@ impl MachineFacts {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
+                partial_sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
                 checkout_custody: None,

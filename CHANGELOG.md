@@ -8,6 +8,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Container-mode `up` validates checkout and backend identity, then refuses
+  before preparation while private workspace preparation diagnostics are
+  unavailable. Detached requests also refuse before admission. Private Compose
+  entrypoints refuse before interpolation files or child launch. Startup intent
+  accepts declarative prepared-input fingerprints and rejects serialized seals,
+  backend evidence and session credentials. The production-shaped fake-backend
+  proof does not qualify a native backend or the currently guarded path.
+- Workspace startup refusal preserves primary and cleanup errors. A settlement
+  error retains the stopped serving owner until explicit recovery or an
+  owner-loss transition retries with a fresh cleanup budget.
 - Compose interpolation files for the VM-hosted Colima backend are per
   invocation: a fresh random name, `O_EXCL|O_NOFOLLOW`, mode 0600 inside a
   verified 0700 `$EFFIGY_HOME/compose-env/` directory, removed when the Compose
@@ -746,18 +756,41 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Group closure and anchor retirement are honest about their limits.** An anchor
+  retires only when one inventory round positively accounts for every in-group row
+  (a zombie cannot fork) and positively observes the anchor itself. A listed row
+  unreadable at its state or identity read, a failed read, or an inventory without
+  the anchor's own row keeps it alive. An unresolved row reports `unproven group
+  closure`. Group closure observed through an inventory follows the same rule.
+  Group signals keep their authority rules unchanged:
+  a verified anchor (member by member), a leader whose live identity is verified
+  immediately before the signal, or an owner that holds its unreaped child; on
+  macOS and Linux before 6.9 the numeric check-to-signal window remains and is
+  documented rather than papered over, so Effigy makes no absolute
+  no-recycled-PGID guarantee there (leads `0453e055`, `b013f65a`).
+
+- Workspace-client command coverage is staged: v0.15 requires the Level 1
+  surface in [contract 052 §8.6](docs/knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
+  Shared-lock task admission, pause, gateway/config/install/release over the
+  channel and the remaining command matrix follow after v0.15. Unsupported
+  guest requests refuse by name with guidance to invoke the host CLI
+  independently; an unknown request is not retried locally or resent. This
+  decision does not claim that the remaining production path or native backend
+  qualifications have passed.
+
 - Clarify workspace artifact source selection, the separate dev and workspace
   session runs, and the implemented workspace seams and outstanding production
   activation and native qualification requirements.
 
-- **A container-mode guest runs Effigy through its published context and the one
-  host channel.** Static reads (`effigy tasks`, the pinned identity and the
-  pinned sources) are answered locally from the immutable context generation and
-  never open a connection or write anything. Every command with host authority
-  is classified and sent as one typed channel request that the host re-resolves,
-  gates and journals; a host refusal is returned as an error and never falls
-  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
-  is refused in a guest because it would run a task without host authority.
+- **Workspace-client host-channel coverage is staged for v0.15.** The required
+  design serves static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) locally from the immutable context generation, without
+  opening a connection or writing. Level 1 requires typed channel requests
+  that the host re-resolves, gates and journals; unsupported guest commands must
+  refuse by name. Neither path may fall back to guest state or a guest engine.
+  Guest `effigy skill run --stdio passthrough` must refuse because it would run
+  a task without host authority. This is a release requirement, not a claim that
+  all Level 1 routes are implemented or qualified.
   The guest transport, the guest-local container observation and the published
   session generation are merged; what remains missing is the production
   activation caller that publishes a qualified locator and the recorded native
@@ -767,10 +800,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **The workspace channel checks its pinned host identity before it speaks.**
   A guest client compares the server identity the context pinned against the
   identity its transport verified before writing a single byte, so a mispinned
-  peer receives no hello, version, digest or capability. A connection that dies
-  before answering is replayed under the same request id, an attach is resumed
-  by that id at the cursor the client actually consumed, and a gap never
-  advances it.
+  peer receives no hello, version, digest or capability. The v0.15 policy requires
+  a connection that dies before answering to report `Unknown` without resending
+  or running locally; full policy enforcement remains in progress. An attachment
+  may reconnect at its consumed cursor, and a gap never advances it.
 
 - **The frozen workspace activation hands its channel to a serving owner.** The
   environment's committed session run, listener, key and advertised locator
@@ -1277,6 +1310,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Colima's nerdctl compose preflight estimates the serialized `nerdctl/mounts`
+  label from recognized explicit primary-service bind and volume mounts across
+  compose overlays, including resolved bind sources and JSON escaping. It
+  models nerdctl v2.3.1's `Type`, `Source`, `Destination`, `Mode`, `RW`, and
+  `Propagation` row shape, plus the label key and JSON delimiters. A sanitized
+  21-row structure fixture matches the observed 3630 bytes. Preflight adds a
+  2% reserve rounded up and refuses at the guarded 3900-byte budget. Unsupported
+  volume syntax, known unmodelled service mount inputs and referenced
+  top-level named-volume options refuse before apply. The estimate does not
+  inspect image metadata for implicit `VOLUME` entries and the measured reserve
+  is not a universal runtime bound. Docker backends keep their existing
+  behavior; this guard does not consolidate mounts or make a consumer whose
+  declared mounts exceed the budget runnable. An empty/null service entry in a
+  runtime DNS overlay is treated as an empty mapping; other non-mapping
+  primary-service definitions still refuse.
 - Keep the workspace alias override and canonical environment identity in frozen
   publication inputs. Enrolment credentials use the reserved environment
   generation independently of the guest context generation.

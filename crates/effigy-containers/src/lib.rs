@@ -129,7 +129,9 @@ const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
 pub(crate) use catalog_sources::PROJECT_LOCAL_CATALOG_DIR;
 pub use catalog_sources::{catalog_resolver, catalog_service_sources, CatalogServiceSource};
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
-const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
+// Keep headroom below containerd's 4096-byte label value limit. nerdctl owns
+// and serializes `nerdctl/mounts`; this is a conservative preflight only.
+const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 3900;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogNetworkContract {

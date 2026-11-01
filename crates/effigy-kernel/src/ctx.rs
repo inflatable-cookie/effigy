@@ -207,6 +207,19 @@ impl OperationContext {
             ..self.clone()
         }
     }
+    /// A child whose absolute deadline never extends its parent's budget.
+    pub fn child_until(&self, deadline: Instant) -> Self {
+        let deadline = match self.deadline {
+            Deadline::At(parent) => parent.min(deadline),
+            Deadline::Open(_) => deadline,
+        };
+        Self {
+            deadline: Deadline::At(deadline),
+            started: Instant::now(),
+            ..self.clone()
+        }
+    }
+
     /// A fresh finite wait budget that keeps this operation's cancellation,
     /// limits, class and placement. Unlike `child` it may be *longer* than
     /// the parent's remaining time: the store's own writer window must not
@@ -385,6 +398,11 @@ impl EffectContext {
     /// cancellation. Open workload lifetime never implies an unbounded DB wait.
     pub fn child(&self, budget: Duration) -> Self {
         Self(self.0.child(budget))
+    }
+
+    /// A child bounded by the exact supplied absolute deadline.
+    pub fn child_until(&self, deadline: Instant) -> Self {
+        Self(self.0.child_until(deadline))
     }
 
     pub fn operation(&self) -> &OperationContext {

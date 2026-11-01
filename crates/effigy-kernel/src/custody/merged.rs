@@ -166,7 +166,7 @@ mod tests {
     fn append_preserves_existing_follower_offsets() {
         let home = effigy_test_support::short_tempdir("ml-").unwrap();
         let path = home.path().join("host.log");
-        std::fs::write(&path, b"old\n").unwrap();
+        effigy_test_support::write_private(&path, b"old\n").unwrap();
         let mut log = MergedLog::prepare_test(&path).unwrap();
         assert_eq!(log.committed_offset(), 0);
         log.append(b"next\n").unwrap();
@@ -183,7 +183,7 @@ mod tests {
     fn failed_append_does_not_acknowledge_and_poison_is_sticky() {
         let home = effigy_test_support::short_tempdir("ml-").unwrap();
         let path = home.path().join("host.log");
-        std::fs::write(&path, b"old\n").unwrap();
+        effigy_test_support::write_private(&path, b"old\n").unwrap();
         let mut log = MergedLog::prepare_test(&path).unwrap();
         log.append(b"old\n").unwrap();
         log.file = File::open(&path).unwrap(); // a deterministic EBADF writer
@@ -199,7 +199,7 @@ mod tests {
         let home = effigy_test_support::short_tempdir("ml-").unwrap();
         let path = home.path().join("host.log");
         let link = home.path().join("link");
-        std::fs::write(&path, b"old\n").unwrap();
+        effigy_test_support::write_private(&path, b"old\n").unwrap();
         std::os::unix::fs::symlink(&path, &link).unwrap();
         assert!(MergedLog::open(&link).is_err());
         assert!(MergedLog::open(home.path()).is_err());

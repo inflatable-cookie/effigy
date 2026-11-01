@@ -168,7 +168,7 @@ const OUTPUT_CHUNK: usize = 16 * 1024;
 const OUTPUT_POLL: Duration = Duration::from_millis(50);
 
 /// How many output reads pass between two terminal-outcome checks. The outcome
-/// is a replay of the same intent, which the host answers from its own record;
+/// reads the recorded outcome without resending the invocation;
 /// the interval bounds how long the client can wait to notice a closed run.
 const OUTCOME_CHECK_EVERY: u32 = 5;
 
@@ -395,11 +395,11 @@ impl CommandSinks for ProcessSinks {
     }
 }
 
-/// The terminal status a replayed admission recorded, or `None` when it cannot
+/// The terminal status recorded for an admission, or `None` when it cannot
 /// be established.
 ///
 /// The kernel's `Completed` response carries the host's `RecordedOutcome`; its
-/// `exit` field is `UNKNOWN` for a replayed admission today, so the recorded
+/// `exit` field is `UNKNOWN` for an observed outcome, so the recorded
 /// workload outcome is the host's own statement of the status. Nothing here is
 /// inferred from the guest's own view:
 ///
@@ -466,12 +466,7 @@ struct Delivered {
     incomplete: bool,
 }
 
-/// Opens one guest connection, and can replace it when the current one must be
-/// replayed.
-///
-/// A production forwarder opens a pinned, negotiated connection from the
-/// verified context; a proof supplies scripted connections through the same
-/// seam, so the replay state machine below is the one that runs in both.
+/// Opens the pinned and negotiated guest connection used for one command.
 pub(crate) trait Connections {
     fn open(&mut self) -> Result<Box<dyn ChannelRequest>, ChannelError>;
 }
@@ -515,45 +510,33 @@ impl ChannelRequest for LevelOneChannel {
     }
 }
 
-/// The Level 1 forwarder's authenticated connection, with the replay that
-/// recovers an indeterminate send on a fresh connection.
-///
-/// The credential is presented lazily by the first request, exactly as
-/// `ask_host` orders it: negotiation is already done, so a mispinned peer has
-/// learned nothing and the credential is read only after the pin check. An
-/// indeterminate delivery opens a fresh connection, presents the same
-/// credential once there, and adopts it — and the session records that the
-/// replacement presented it, so a later request never presents it twice. The
-/// two operations are asked for per use, never borrowed across a replay.
+/// The Level 1 forwarder's one authenticated connection. An indeterminate
+/// invocation is never resent, and terminal outcome polls are read-only.
 pub(crate) trait ForwardChannel {
     /// The live connection.
     fn client(&mut self) -> &mut dyn ChannelRequest;
-    /// Send the same intent, replaying on a fresh authenticated connection when
-    /// this one's delivery became indeterminate.
-    fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError>;
+    /// Authenticate and send the invocation once.
+    fn send_initial(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError>;
 }
 
 /// One forwarder's authenticated connection and the state that keeps it honest.
-pub(crate) struct Session<'a> {
-    connections: Box<dyn Connections + 'a>,
+pub(crate) struct Session {
     /// The credential, read only after the first connection's pin check and
     /// negotiation. The first request presents it.
     auth: Option<super::GuestAuth>,
     client: LevelOneChannel,
-    /// The credential was presented on the live connection. A replacement
-    /// presents it itself, so this is set for the replacement too.
+    /// The credential was presented on the live connection.
     presented: bool,
 }
 
-impl<'a> Session<'a> {
+impl Session {
     /// Open the first connection: the pinned peer check and the protocol
     /// negotiation happen here, before any credential is read.
     pub(crate) fn connect(
-        mut connections: Box<dyn Connections + 'a>,
+        mut connections: Box<dyn Connections + '_>,
     ) -> Result<Self, ChannelError> {
         let client = connections.open()?;
         Ok(Self {
-            connections,
             auth: None,
             client: LevelOneChannel(client),
             presented: false,
@@ -581,7 +564,7 @@ impl<'a> Session<'a> {
     }
 }
 
-impl ForwardChannel for Session<'_> {
+impl ForwardChannel for Session {
     fn client(&mut self) -> &mut dyn ChannelRequest {
         debug_assert!(
             self.presented,
@@ -590,44 +573,10 @@ impl ForwardChannel for Session<'_> {
         &mut self.client
     }
 
-    fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
-        let sent = self.present().and_then(|()| self.client.send(intent));
-        match sent {
-            Ok(outcome) => Ok(outcome),
-            Err(error) if replayable(&error) => {
-                let fresh = self.connections.open()?;
-                let mut client = LevelOneChannel(fresh);
-                let auth = self.auth.clone().ok_or_else(|| {
-                    ChannelError::Local(
-                        "the workspace client has no credential to present after negotiation"
-                            .to_owned(),
-                    )
-                })?;
-                client.authenticate(auth)?;
-                let outcome = client.send(intent)?;
-                self.client = client;
-                // The replacement presented the credential itself. Without this
-                // the next request would present it again on an already
-                // authenticated connection, and the host would refuse it.
-                self.presented = true;
-                Ok(outcome)
-            }
-            Err(error) => Err(error),
-        }
+    fn send_initial(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+        self.present()?;
+        self.client.send(intent)
     }
-}
-
-/// Whether a failure may be replayed under the same request id: the delivery is
-/// indeterminate, so the host answers from its own record rather than admitting
-/// again.
-fn replayable(error: &ChannelError) -> bool {
-    matches!(
-        error,
-        ChannelError::Unknown {
-            replayable: true,
-            ..
-        }
-    )
 }
 
 /// One forwarded task, as the guest dispatch resolved it.
@@ -699,7 +648,9 @@ fn drive(
     let mut delivered = Delivered::default();
 
     // Admission is not success: only the terminal outcome decides the result.
-    let accepted = channel.replay(intent).map_err(ChannelError::into_runner)?;
+    let accepted = channel
+        .send_initial(intent)
+        .map_err(ChannelError::into_runner)?;
     let run =
         match accepted {
             ChannelOutcome::Accepted {
@@ -754,7 +705,7 @@ fn drive(
         // the answer. A live run with no custody would outlive this connection,
         // so it is never adopted silently.
         Err(refused) => {
-            return match channel.replay(intent) {
+            return match poll_outcome(channel.client(), intent.id(), run) {
                 Ok(ChannelOutcome::Completed { outcome, exit }) => {
                     let (outcome, status) = run_from_outcome(&outcome, exit)?;
                     drain(channel.client(), run, sinks, &mut delivered)?;
@@ -772,7 +723,7 @@ fn drive(
 
     // Deliver the run's captured output while it runs, and keep asking for its
     // terminal outcome on the same connection. Output comes from the session's
-    // retained log; the replay is only the outcome check.
+    // retained log; outcome checks are read-only observations.
     let mut completed: Option<(serde_json::Value, ExitStatus)> = None;
     loop {
         let drained = poll_output(channel.client(), run, sinks, &mut delivered)?;
@@ -787,7 +738,9 @@ fn drive(
             continue;
         }
         if delivered.turns % OUTCOME_CHECK_EVERY == 0 {
-            match channel.replay(intent).map_err(ChannelError::into_runner)? {
+            match poll_outcome(channel.client(), intent.id(), run)
+                .map_err(ChannelError::into_runner)?
+            {
                 ChannelOutcome::Accepted { .. } => {}
                 ChannelOutcome::Completed { outcome, exit } => {
                     completed = Some((outcome, exit));
@@ -817,6 +770,36 @@ fn drain(
     Ok(())
 }
 
+fn poll_outcome(
+    client: &mut dyn ChannelRequest,
+    request: effigy_kernel::run::RequestId,
+    run: RunId,
+) -> Result<ChannelOutcome, ChannelError> {
+    let intent = Intent::new(channel::RequestBody::Observe(channel::ObserveBody {
+        op: format!("runs:outcome:{request}:{run}"),
+        target: Some(channel::Target::Host),
+        query: None,
+        run_id: None,
+    }));
+    match client.send(&intent)? {
+        ChannelOutcome::Observed(value) if value["state"] == "pending" => {
+            Ok(ChannelOutcome::Accepted {
+                run,
+                placement: RunPlacement::Host,
+            })
+        }
+        ChannelOutcome::Observed(value) if value["state"] == "completed" => {
+            Ok(ChannelOutcome::Completed {
+                outcome: value["outcome"].clone(),
+                exit: ExitStatus::UNKNOWN,
+            })
+        }
+        _ => Err(ChannelError::unknown(
+            "the recorded outcome observation was not understood",
+        )),
+    }
+}
+
 /// One bounded output read, delivered to the command's sinks.
 ///
 /// `true` means both streams were empty. Data is only advanced past a stream's
@@ -831,6 +814,8 @@ fn poll_output(
     let intent = Intent::new(channel::RequestBody::Observe(channel::ObserveBody {
         op,
         target: Some(channel::Target::Host),
+        query: None,
+        run_id: None,
     }));
     delivered.turns = delivered.turns.wrapping_add(1);
     let value = match client.send(&intent).map_err(ChannelError::into_runner)? {

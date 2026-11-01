@@ -77,6 +77,15 @@ fn digest() -> Digest {
 fn other_digest() -> Digest {
     Digest::of(b"effigy.workspace.test.invoke.v2")
 }
+fn reserve(
+    cx: &EffectContext,
+    root: &StateRoot,
+    key: AdmissionKey,
+    digest: Digest,
+    run: RunId,
+) -> Result<Reservation, RunError> {
+    reserve_resolved(cx, root, key, digest, run, &inv(owner()))
+}
 /// A second task owner, so a run outside the workspace channel can begin while
 /// the admitted run still holds its own owner gate.
 fn foreign_owner() -> ResourceId {
@@ -170,6 +179,273 @@ fn admitted<'a>(
         ticket,
     )
     .expect("admitted run")
+}
+
+#[test]
+fn workspace_ticket_rejects_a_different_resolved_invocation_before_admission() {
+    assert_eq!(
+        workspace_managed_token(id(91)),
+        format!("effigy-workspace-managed-v1-{}", id(91))
+    );
+    assert_ne!(
+        workspace_managed_token(id(91)),
+        workspace_managed_token(id(92))
+    );
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let key = admission_key(91);
+    let mut expected_spec = inv(owner()).spec().clone();
+    expected_spec.provenance.insert(
+        "managed-run-token".into(),
+        Digest::of(workspace_managed_token(id(91)).as_bytes()),
+    );
+    expected_spec
+        .provenance
+        .insert("workspace:catalog-snapshot".into(), Digest::of(b"catalog"));
+    let expected = ResolvedInvocation::new(expected_spec).unwrap();
+    let mut changed_argv = expected.spec().clone();
+    changed_argv.argv.push("different".into());
+    let mut changed_provenance = expected.spec().clone();
+    changed_provenance
+        .provenance
+        .insert("manifest".into(), Digest::of(b"changed"));
+    let mut changed_token = expected.spec().clone();
+    changed_token.provenance.insert(
+        "managed-run-token".into(),
+        Digest::of(workspace_managed_token(id(92)).as_bytes()),
+    );
+    let mut changed_catalog = expected.spec().clone();
+    changed_catalog.provenance.insert(
+        "workspace:catalog-snapshot".into(),
+        Digest::of(b"different catalog"),
+    );
+    let mut changed_profile = expected.spec().clone();
+    changed_profile.task = TaskId::new(
+        changed_profile.task.checkout(),
+        changed_profile.task.catalog(),
+        changed_profile.task.surface(),
+        changed_profile.task.task(),
+        Some("other"),
+    )
+    .unwrap();
+    let alternatives = [
+        inv(foreign_owner()),
+        ResolvedInvocation::new(changed_argv).unwrap(),
+        ResolvedInvocation::new(changed_provenance).unwrap(),
+        ResolvedInvocation::new(changed_token).unwrap(),
+        ResolvedInvocation::new(changed_catalog).unwrap(),
+        ResolvedInvocation::new(changed_profile).unwrap(),
+    ];
+    let ticket = match reserve_resolved(&cx, &root, key, digest(), id(91), &expected).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected fresh reservation: {other:?}"),
+    };
+    let mut fake = Fake::new(fixture.path());
+    for different in &alternatives {
+        assert_ne!(expected.digest(), different.digest());
+        let error = Run::begin_admitted(
+            &cx,
+            &root,
+            different,
+            begin_opts(id(91)),
+            &cleanup(&cx),
+            &mut fake,
+            ticket.clone(),
+        )
+        .expect_err("a reservation for a different resolution must refuse");
+        assert!(error.to_string().contains("resolved invocation"));
+        assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+        assert_eq!(runs(&cx, &root), 0);
+        assert_eq!(
+            scalar(&cx, &root, "SELECT count(*) FROM run_attachments"),
+            0
+        );
+    }
+    assert!(matches!(
+        reserve_resolved(&cx, &root, key, digest(), id(92), &alternatives[0]).unwrap(),
+        Reservation::Recorded(_)
+    ));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &expected,
+        begin_opts(id(91)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .expect("original resolution admits exact run");
+    assert_eq!(run.id(), id(91));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("admitted"));
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+
+#[test]
+fn resolved_admission_migrates_legacy_rows_without_rebinding_them() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let legacy_key = admission_key(93);
+    let legacy = fresh(&cx, &root, legacy_key, id(93));
+    let store = Store::open(&cx, &root).unwrap();
+    store
+        .conn()
+        .execute_batch("ALTER TABLE workspace_admissions DROP COLUMN resolution_digest")
+        .unwrap();
+    drop(store);
+    assert!(matches!(
+        lookup_now(&cx, &root, legacy_key),
+        Observed::Verified(_, _)
+    ));
+    let bound_key = admission_key(94);
+    let expected = inv(owner());
+    let bound = match reserve_resolved(&cx, &root, bound_key, digest(), id(94), &expected).unwrap()
+    {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected fresh reservation: {other:?}"),
+    };
+    let reader = reader(&cx, &root);
+    let legacy_digest: Option<Vec<u8>> = reader
+        .conn()
+        .query_row(
+            "SELECT resolution_digest FROM workspace_admissions WHERE run_id=?1",
+            [legacy.run().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let bound_digest: Option<Vec<u8>> = reader
+        .conn()
+        .query_row(
+            "SELECT resolution_digest FROM workspace_admissions WHERE run_id=?1",
+            [bound.run().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(legacy_digest.is_none());
+    assert_eq!(
+        bound_digest.as_deref(),
+        Some(expected.digest().0.as_slice())
+    );
+    drop(reader);
+    let mut fake = Fake::new(fixture.path());
+    for invocation in [inv(owner()), inv(foreign_owner())] {
+        let error = Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation,
+            begin_opts(id(93)),
+            &cleanup(&cx),
+            &mut fake,
+            legacy.clone(),
+        )
+        .expect_err("a pre-upgrade ticket cannot admit");
+        assert!(error
+            .to_string()
+            .contains("ticket predates digest binding; re-run up or down"));
+        assert_eq!(
+            state_of(&cx, &root, legacy_key).as_deref(),
+            Some("reserved")
+        );
+        assert_eq!(runs(&cx, &root), 0);
+    }
+    let session_owner = TaskId::new(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+        "",
+        Surface::Published,
+        "session-200",
+        None,
+    )
+    .unwrap()
+    .resource();
+    let outcome = crate::run::settle_interrupted(
+        &cx,
+        &root,
+        &session_owner,
+        id(200),
+        next(),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .expect("ordinary session cleanup remains available");
+    assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
+}
+
+#[test]
+fn concurrent_resolutions_bind_only_the_winning_reservation() {
+    let fixture = home();
+    let path = fixture.path().to_path_buf();
+    let key = admission_key(95);
+    let barrier = Arc::new(Barrier::new(2));
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2u8)
+            .map(|n| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, &path).unwrap();
+                    let resolved = inv(if n == 0 { owner() } else { foreign_owner() });
+                    barrier.wait();
+                    let result =
+                        reserve_resolved(&cx, &root, key, digest(), id(95 + n), &resolved).unwrap();
+                    (resolved, result)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    let mut winner = None;
+    let mut loser = None;
+    for (resolved, result) in results {
+        match result {
+            Reservation::Fresh(ticket) => {
+                assert!(winner.replace((resolved, ticket)).is_none());
+            }
+            Reservation::Recorded(Recovered::Unknown {
+                reason: UnknownAdmission::ReservedNotAdmitted,
+            }) => {
+                assert!(loser.replace(resolved).is_none());
+            }
+            other => panic!("unexpected concurrent reservation: {other:?}"),
+        }
+    }
+    let (expected, ticket) = winner.expect("one reservation winner");
+    let different = loser.expect("one recorded loser");
+    let cx = context();
+    let root = StateRoot::effects(&cx, &path).unwrap();
+    let mut fake = Fake::new(&path);
+    let run_id = ticket.run();
+    let error = Run::begin_admitted(
+        &cx,
+        &root,
+        &different,
+        begin_opts(run_id),
+        &cleanup(&cx),
+        &mut fake,
+        ticket.clone(),
+    )
+    .expect_err("loser resolution must refuse");
+    assert!(error.to_string().contains("resolved invocation"));
+    assert_eq!(runs(&cx, &root), 0);
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &expected,
+        begin_opts(run_id),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 fn settled(cx: &EffectContext, root: &StateRoot, key: AdmissionKey, run: RunId, fake: &mut Fake) {
     let mut run = admitted(cx, root, key, run, fake);
@@ -430,6 +706,8 @@ fn workspace_admission_one_run_id_belongs_to_one_key() {
     // The run reports the session that admitted it, so no attachment can be
     // attributed to the session that lost the collision.
     let owner_attachment = resume_owner(&cx, &root, first.session, id(1)).expect("owner");
+    assert_eq!(owner_attachment.id(), owner_attachment_id(id(1)));
+    assert_ne!(owner_attachment.id(), owner_attachment_id(id(2)));
     assert_eq!(owner_attachment.session(), first.session);
     assert!(resume_owner(&cx, &root, second.session, id(1)).is_err());
     assert!(attach_secondary(
@@ -642,6 +920,187 @@ fn workspace_attachment_release_fences_the_other_owner_handle() {
         "a release must not be overtaken by a control"
     );
     assert_eq!(run.phase().expect("phase"), Phase::Admitted);
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn attachment_release_retry_compares_exact_durable_cause() {
+    for (point, cause, secondary) in [
+        (Point::RunAttachReleaseBefore, Release::Eof, false),
+        (Point::RunAttachReleaseAfter, Release::Eof, false),
+        (Point::RunAttachReleaseBefore, Release::Detach, false),
+        (Point::RunAttachReleaseAfter, Release::Detach, false),
+        (Point::RunAttachReleaseBefore, Release::Eof, true),
+        (Point::RunAttachReleaseAfter, Release::Eof, true),
+        (Point::RunAttachReleaseBefore, Release::Detach, true),
+        (Point::RunAttachReleaseAfter, Release::Detach, true),
+    ] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let foreign = home();
+        let foreign_root = StateRoot::effects(&cx, foreign.path()).unwrap();
+        let mut fake = Fake::new(fixture.path());
+        let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+        let mut owner = if secondary {
+            attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([44; 16])).unwrap()
+        } else {
+            resume_owner(&cx, &root, session(), id(1)).unwrap()
+        };
+        assert!(
+            owner.release_recoverable(&cx, &root, cause).is_err(),
+            "a retry needs the original attempt"
+        );
+        fault::arm_point(point, Fault::Eperm);
+        assert!(owner.release(&cx, &root, cause).is_err());
+        assert!(fault::fired());
+        fault::arm(None);
+        assert!(
+            owner.release(&cx, &root, cause).is_err(),
+            "an ordinary repeat must preserve the pending retry"
+        );
+        let other = match cause {
+            Release::Eof => Release::Detach,
+            Release::Detach => Release::Eof,
+        };
+        assert!(
+            owner.release_recoverable(&cx, &root, other).is_err(),
+            "a retry cannot change cause"
+        );
+        assert!(
+            owner
+                .release_recoverable(&cx, &foreign_root, cause)
+                .is_err(),
+            "a retry cannot change state root"
+        );
+        if point == Point::RunAttachReleaseAfter {
+            let mut store = Store::open(&cx, &root).unwrap();
+            store
+                .transaction(&cx, |txn| {
+                    txn.conn().execute(
+                        "UPDATE run_attachments SET release=?2 WHERE attachment_id=?1",
+                        params![owner.id().to_string(), release_name(other)],
+                    )?;
+                    Ok::<_, RunError>(())
+                })
+                .unwrap();
+            assert!(
+                owner.release_recoverable(&cx, &root, cause).is_err(),
+                "a conflicting durable release cannot be accepted"
+            );
+            store
+                .transaction(&cx, |txn| {
+                    txn.conn().execute(
+                        "UPDATE run_attachments SET release=?2 WHERE attachment_id=?1",
+                        params![owner.id().to_string(), release_name(cause)],
+                    )?;
+                    Ok::<_, RunError>(())
+                })
+                .unwrap();
+        }
+        owner
+            .release_recoverable(&cx, &root, cause)
+            .expect("same release recovers");
+        assert!(!owner.attached(&cx, &root).unwrap());
+        assert_eq!(
+            scalar(
+                &cx,
+                &root,
+                "SELECT count(*) FROM requests WHERE state='pending'"
+            ),
+            usize::from(!secondary && matches!(cause, Release::Eof)) as i64
+        );
+        run.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn attachment_release_retry_refuses_replaced_state_directory() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    fault::arm_point(Point::RunAttachReleaseBefore, Fault::Eperm);
+    assert!(owner.release(&cx, &root, Release::Eof).is_err());
+    assert!(fault::fired());
+    fault::arm(None);
+    let original_path = root.path().to_path_buf();
+    let saved_path = fixture.path().join("retained-state");
+    let replacement_path = fixture.path().join("replacement-state");
+    std::fs::rename(&original_path, &saved_path).unwrap();
+    let replacement = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let refusal = owner.release_recoverable(&cx, &replacement, Release::Eof);
+    drop(replacement);
+    std::fs::rename(&original_path, &replacement_path).unwrap();
+    std::fs::rename(&saved_path, &original_path).unwrap();
+    let restored = owner.release_recoverable(&cx, &root, Release::Eof);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(
+        refusal.is_err(),
+        "a replacement state directory must refuse"
+    );
+    assert!(restored.is_ok(), "the retained original root may recover");
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn committed_owner_eof_retry_refuses_after_child_compacts_release_row() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(48), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    fault::arm_point(Point::RunAttachReleaseAfter, Fault::Eperm);
+    assert!(owner.release(&cx, &root, Release::Eof).is_err());
+    assert!(fault::fired());
+    fault::arm(None);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let result = owner.release_recoverable(&cx, &root, Release::Eof);
+    let counts = (
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM run_attachments WHERE state='released'",
+        ),
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM workspace_admissions WHERE state='closed'",
+        ),
+        scalar(&cx, &root, "SELECT count(*) FROM runs WHERE phase='closed'"),
+    );
+    assert!(
+        result.is_err(),
+        "a compacted release must remain unresolved"
+    );
+    assert_eq!(
+        counts,
+        (0, 1, 1),
+        "settlement removed the release row but retained the closed run and admission"
+    );
+    let requests_before = scalar(&cx, &root, "SELECT count(*) FROM requests");
+    assert!(owner.release_recoverable(&cx, &root, Release::Eof).is_err());
+    assert!(
+        resume_owner(&cx, &root, session(), id(1)).is_err(),
+        "closed owner cannot revive"
+    );
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM requests"),
+        requests_before,
+        "retry creates no additional stop"
+    );
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM workspace_admissions WHERE state='closed'"
+        ),
+        1
+    );
 }
 
 #[test]

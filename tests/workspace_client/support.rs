@@ -263,6 +263,13 @@ pub struct Engine<'a> {
     pub runs: Runs<'a>,
 }
 impl Admission for Engine<'_> {
+    fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<effigy_kernel::run::Fence> {
+        self.runs
+            .borrow()
+            .iter()
+            .find(|run| run.id() == ticket.run())
+            .map(|run| run.fence().clone())
+    }
     fn admit(
         &mut self,
         cx: &EffectContext,
@@ -330,6 +337,7 @@ pub fn pin() -> Digest {
 }
 pub fn hello(session: Session) -> Hello {
     Hello {
+        capabilities: Vec::new(),
         schema: SCHEMA.into(),
         protocol_versions: vec![1],
         effigy_version: "0.15.0".into(),

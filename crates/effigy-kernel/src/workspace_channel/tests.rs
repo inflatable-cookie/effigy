@@ -305,6 +305,7 @@ fn host() -> Negotiation {
 }
 fn hello() -> Hello {
     Hello {
+        capabilities: Vec::new(),
         schema: SCHEMA.into(),
         protocol_versions: vec![PROTOCOL_V1],
         effigy_version: "0.15.0".into(),
@@ -380,6 +381,958 @@ fn peer() -> Option<ServerIdentity> {
     Some(ServerIdentity { digest: pinned() })
 }
 
+#[cfg(feature = "fault-injection")]
+struct ArmReleaseOnAttach {
+    inner: Pipe,
+    point: crate::fault::Point,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmReleaseOnAttach {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(decode_frame(&bytes[4..]), Ok(Frame::Response(Response { id, outcome: ResponseOutcome::Observed(_), .. })) if id == RequestId::new([1; 16]))
+        {
+            crate::fault::arm_point(self.point, crate::fault::Fault::Eperm);
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn secondary_eof_release_fault_retains_exact_handle_and_refuses_new_connections() {
+    use crate::fault::{self, Point};
+    for (point, still_attached) in [
+        (Point::RunAttachReleaseBefore, true),
+        (Point::RunAttachReleaseAfter, false),
+    ] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-secondary-release-fault");
+        let (_run, live) = admitted_run(&cx, &root, session, 92, &[172]);
+        let mut host = server(session, &[173]);
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Attach(AttachBody {
+                            run: live,
+                            streams: vec![StreamKind::Stdout],
+                            cursor: None,
+                            cursors: None,
+                        }),
+                        1,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("release uncertainty");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired(), "the intended release fault must fire");
+        assert!(host.cleanup_pending());
+        fault::arm(None);
+        let handle = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("exact handle retained");
+        assert_eq!(handle.run(), live);
+        assert_eq!(handle.client(), Client::Secondary);
+        assert_eq!(
+            handle.attached(&cx, &root).expect("durable row read"),
+            still_attached
+        );
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let live_slots: i64 = reader.conn().query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
+            [live.to_string()], |row| row.get(0),
+        ).expect("secondary slots");
+        assert_eq!(live_slots, i64::from(still_attached));
+        let stops: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .expect("stop requests");
+        assert_eq!(stops, 0, "secondary release never stops the owner");
+        let mut retry = Pipe::new(
+            stream(&[Frame::Hello(hello()), Frame::Authenticate(capability())]),
+            peer(),
+        );
+        assert_eq!(
+            host.serve(&mut retry, &cx, &observe_context(), &root, &mut NoStreams)
+                .expect_err("unsettled cleanup fences service")
+                .code,
+            RefusalCode::Unknown
+        );
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        host.retry_cleanup(&fresh, &root)
+            .expect("same attachment retry");
+        assert!(!host.cleanup_pending());
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn replacement_release_fault_retains_both_secondary_handles() {
+    use crate::fault::{self, Point};
+    for (point, fail_new_cleanup) in [
+        (Point::RunAttachReleaseBefore, None),
+        (Point::RunAttachReleaseAfter, None),
+        (
+            Point::RunAttachReleaseBefore,
+            Some(Point::RunAttachReleaseBefore),
+        ),
+        (
+            Point::RunAttachReleaseAfter,
+            Some(Point::RunAttachReleaseBefore),
+        ),
+        (
+            Point::RunAttachReleaseBefore,
+            Some(Point::RunAttachReleaseAfter),
+        ),
+        (
+            Point::RunAttachReleaseAfter,
+            Some(Point::RunAttachReleaseAfter),
+        ),
+    ] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-replacement-fault");
+        let (_run, live) = admitted_run(&cx, &root, session, 93, &[175]);
+        let mut host = server(session, &[176]);
+        let attach = |id| {
+            Frame::Request(request(
+                session,
+                RequestBody::Attach(AttachBody {
+                    run: live,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                }),
+                id,
+            ))
+        };
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    attach(1),
+                    attach(2),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let _result = host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams);
+        let fired = fault::fired();
+        fault::arm(None);
+        assert!(fired, "replacement release fault must fire");
+        assert!(
+            host.cleanup_pending(),
+            "unsettled replacement must fence new service"
+        );
+        let old = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("old handle retained");
+        let new = host
+            .unsettled_replacement
+            .as_ref()
+            .expect("new handle retained");
+        assert_eq!(old.id(), AttachmentId::new([1; 16]));
+        assert_eq!(new.id(), AttachmentId::new([2; 16]));
+        assert_eq!(old.run(), live);
+        assert_eq!(new.run(), live);
+        assert_eq!(
+            old.attached(&cx, &root).unwrap(),
+            point == Point::RunAttachReleaseBefore
+        );
+        assert!(new.attached(&cx, &root).unwrap());
+        let mut retry = Pipe::new(
+            stream(&[Frame::Hello(hello()), Frame::Authenticate(capability())]),
+            peer(),
+        );
+        assert_eq!(
+            host.serve(&mut retry, &cx, &observe_context(), &root, &mut NoStreams)
+                .expect_err("replacement latch")
+                .code,
+            RefusalCode::Unknown
+        );
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        if let Some(new_fault) = fail_new_cleanup {
+            fault::arm_nth(new_fault, 1, fault::Fault::Eperm);
+            assert_eq!(
+                host.retry_cleanup(&fresh, &root)
+                    .expect_err("new release fails")
+                    .code,
+                RefusalCode::Unknown
+            );
+            assert!(fault::fired());
+            fault::arm(None);
+            assert!(host.cleanup_pending());
+            assert!(
+                host.unsettled_attachment.is_none(),
+                "old exact release was reconciled"
+            );
+            assert_eq!(
+                host.unsettled_replacement.as_ref().map(Attachment::id),
+                Some(AttachmentId::new([2; 16]))
+            );
+            assert_eq!(
+                host.unsettled_replacement
+                    .as_ref()
+                    .unwrap()
+                    .attached(&cx, &root)
+                    .unwrap(),
+                new_fault == Point::RunAttachReleaseBefore
+            );
+        }
+        host.retry_cleanup(&fresh, &root)
+            .expect("both exact secondaries recover");
+        assert!(!host.cleanup_pending());
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let remaining: i64 = reader.conn().query_row("SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'", [live.to_string()], |row| row.get(0)).unwrap();
+        let stops: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+        assert_eq!(stops, 0);
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+struct LiveAdmitter<'a> {
+    root: &'a StateRoot,
+    runs: Vec<Run<'a>>,
+}
+#[cfg(feature = "fault-injection")]
+impl Admission for LiveAdmitter<'_> {
+    fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+        self.runs
+            .iter()
+            .find(|run| run.id() == ticket.run())
+            .map(|run| run.fence().clone())
+    }
+    fn admit(
+        &mut self,
+        cx: &EffectContext,
+        ticket: &AdmissionTicket,
+        resolved: &ResolvedInvocation,
+    ) -> Result<(), Refusal> {
+        let run = Run::begin_admitted(
+            cx,
+            self.root,
+            resolved,
+            BeginOpts {
+                id: ticket.run(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next_argv(),
+                custody: None,
+            },
+            &cleanup(cx),
+            &mut NoEffects,
+            ticket.clone(),
+        )
+        .map_err(refusal_from)?;
+        self.runs.push(run);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn mismatched_supervisor_fence_retains_the_started_owner_without_authority() {
+    struct Mismatched<'a>(LiveAdmitter<'a>);
+    impl Admission for Mismatched<'_> {
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            self.0.admit(cx, ticket, resolved)
+        }
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            let mut fence = self.0.admitted_fence(ticket)?;
+            fence.generation = Generation::new(0);
+            Some(fence)
+        }
+    }
+    let (_fixture, cx, root, session) = journal("effigy-channel-ack-mismatch");
+    let mut dispatcher = Dispatcher::new(
+        Mismatched(LiveAdmitter {
+            root: &root,
+            runs: Vec::new(),
+        }),
+        Resolver::new(task("workspace-channel").resource()),
+        Observer::default(),
+        Ids::new(&[21, 22]),
+    );
+    let error = dispatcher
+        .invoke(
+            &cx,
+            &observe_context(),
+            &root,
+            session,
+            RequestId::new([21; 16]),
+            Digest::of(b"invite"),
+            &invocation_body("build"),
+        )
+        .expect_err("mismatched acknowledgement must fail closed");
+    assert_eq!(error.code, RefusalCode::Unknown);
+    assert_eq!(dispatcher.admission.0.runs.len(), 1);
+    let run_id = dispatcher.admission.0.runs[0].id();
+    assert!(dispatcher.admitted.contains(&run_id));
+    assert!(dispatcher.admitted_owners.is_empty());
+    assert_eq!(
+        dispatcher
+            .reopen_owner(&cx, &root, session, run_id)
+            .expect_err("no owner authority")
+            .code,
+        RefusalCode::Unknown
+    );
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    let stops: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM requests WHERE run_id=?1",
+            [run_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stops, 0);
+    drop(reader);
+    for run in dispatcher.admission.0.runs.drain(..) {
+        run.settle(&cleanup(&cx), &mut NoEffects)
+            .expect("fixture cleanup");
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+struct ArmReleaseOnInvoke {
+    inner: Pipe,
+    point: crate::fault::Point,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmReleaseOnInvoke {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(
+            decode_frame(&bytes[4..]),
+            Ok(Frame::Response(Response {
+                outcome: ResponseOutcome::Accepted(_),
+                ..
+            }))
+        ) {
+            crate::fault::arm_point(self.point, crate::fault::Fault::Eperm);
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn pre_attach_eof_fault_retains_exact_owner_handle() {
+    use crate::fault::{self, Point};
+    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-pre-attach-eof-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[177]),
+            ),
+        );
+        let live = RunId::new(7, [177; 10]).unwrap();
+        let mut pipe = ArmReleaseOnInvoke {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body("build")),
+                        1,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("EOF cleanup is uncertain");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired());
+        fault::arm(None);
+        let retained = host
+            .unsettled_attachment
+            .as_ref()
+            .map(|handle| (handle.run(), handle.fence().clone()));
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        let retry = host.retry_cleanup(&fresh, &root);
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let request = reader
+            .conn()
+            .query_row(
+                "SELECT action FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|encoded| serde_json::from_str::<crate::run::Request>(&encoded).ok());
+        drop(reader);
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+        }
+        assert_eq!(
+            retained.as_ref().map(|(run, _)| *run),
+            Some(live),
+            "the exact failed-release owner must remain held"
+        );
+        assert!(
+            retry.is_ok(),
+            "same owner cleanup should recover while the run is live"
+        );
+        assert_eq!(requests, 1, "retry must leave exactly one stop");
+        assert!(
+            request.is_some_and(|request| request.run == live
+                && retained
+                    .as_ref()
+                    .is_some_and(|(_, fence)| &request.expected == fence)
+                && matches!(request.action, crate::run::RequestAction::Stop)),
+            "stop must name the exact run and fence"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn pre_attach_detach_fault_retains_exact_owner_handle() {
+    use crate::fault::{self, Point};
+    for point in [Point::RunAttachReleaseBefore, Point::RunAttachReleaseAfter] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-pre-attach-detach-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[177]),
+            ),
+        );
+        let live = RunId::new(7, [177; 10]).unwrap();
+        let mut pipe = ArmReleaseOnInvoke {
+            inner: Pipe::new(
+                stream(&[
+                    Frame::Hello(hello()),
+                    Frame::Authenticate(capability()),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Invoke(invocation_body("build")),
+                        1,
+                    )),
+                    Frame::Request(request(
+                        session,
+                        RequestBody::Detach(RunBody { run: live }),
+                        2,
+                    )),
+                ]),
+                peer(),
+            ),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("detach cleanup is uncertain");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired());
+        fault::arm(None);
+        let retained = host
+            .unsettled_attachment
+            .as_ref()
+            .map(|handle| (handle.run(), handle.id(), handle.pending_release()));
+        let fresh = cleanup(&cx).operation().effects().unwrap();
+        let retry = host.retry_cleanup(&fresh, &root);
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(reader);
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+        }
+        assert_eq!(
+            retained,
+            Some((
+                live,
+                crate::run::owner_attachment_id(live),
+                Some(Release::Detach)
+            )),
+            "the exact failed-detach owner and cause must remain held"
+        );
+        assert!(retry.is_ok(), "same owner detach should recover while live");
+        assert_eq!(requests, 0, "detach must not record an EOF stop");
+    }
+}
+
+#[cfg(feature = "fault-injection")]
+struct MultiResolver;
+#[cfg(feature = "fault-injection")]
+impl super::Resolver for MultiResolver {
+    fn resolve(
+        &mut self,
+        _: &EffectContext,
+        body: &InvocationBody,
+    ) -> Result<ResolvedInvocation, Refusal> {
+        let Selector::Task(name) = &body.selector else {
+            return Err(Refusal::invalid("task required"));
+        };
+        Ok(invocation(task(name).resource()))
+    }
+}
+#[cfg(feature = "fault-injection")]
+struct ArmAfterTwoInvokes<'a> {
+    inner: Pipe,
+    accepted: usize,
+    cx: &'a EffectContext,
+    root: &'a StateRoot,
+}
+#[cfg(feature = "fault-injection")]
+impl Transport for ArmAfterTwoInvokes<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)?;
+        if matches!(
+            decode_frame(&bytes[4..]),
+            Ok(Frame::Response(Response {
+                outcome: ResponseOutcome::Accepted(_),
+                ..
+            }))
+        ) {
+            self.accepted += 1;
+            if self.accepted == 2 {
+                let mut writer = Store::open(self.cx, self.root)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                writer
+                    .transaction(self.cx, |txn| {
+                        txn.conn().execute(
+                            "UPDATE runs SET generation=generation+1 WHERE run_id=?1",
+                            [RunId::new(7, [181; 10]).unwrap().to_string()],
+                        )?;
+                        txn.conn().execute(
+                            "UPDATE resources SET generation=generation+1 WHERE name=?1",
+                            [task("second").resource().name().to_string()],
+                        )?;
+                        Ok::<_, crate::run::RunError>(())
+                    })
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                crate::fault::arm_point(
+                    crate::fault::Point::RunAttachReleaseBefore,
+                    crate::fault::Fault::Eperm,
+                );
+            }
+        }
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<ServerIdentity> {
+        self.inner.verified_peer()
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn multiple_admitted_owners_retry_after_first_eof_release_fault() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-multi-owner-eof");
+    let mut grants = GrantBook::new();
+    grants.issue(
+        capability(),
+        binding(session),
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        grants,
+        Dispatcher::new(
+            LiveAdmitter {
+                root: &root,
+                runs: vec![],
+            },
+            MultiResolver,
+            Observer::default(),
+            Ids::new(&[180, 181]),
+        ),
+    );
+    let mut pipe = ArmAfterTwoInvokes {
+        inner: Pipe::new(
+            stream(&[
+                Frame::Hello(hello()),
+                Frame::Authenticate(capability()),
+                Frame::Request(request(
+                    session,
+                    RequestBody::Invoke(invocation_body("first")),
+                    1,
+                )),
+                Frame::Request(request(
+                    session,
+                    RequestBody::Invoke(invocation_body("second")),
+                    2,
+                )),
+            ]),
+            peer(),
+        ),
+        accepted: 0,
+        cx: &cx,
+        root: &root,
+    };
+    let result = host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams);
+    let fired = crate::fault::fired();
+    crate::fault::arm(None);
+    let fresh = cleanup(&cx).operation().effects().unwrap();
+    let fences = host
+        .dispatcher
+        .admission
+        .runs
+        .iter()
+        .map(|run| (run.id(), run.fence().clone()))
+        .collect::<Vec<_>>();
+    let (_foreign_fixture, _, foreign_root, _) = journal("effigy-channel-foreign-retry");
+    let foreign = host.retry_cleanup(&fresh, &foreign_root);
+    let second = RunId::new(7, [181; 10]).unwrap();
+    let second_fence = fences
+        .iter()
+        .find(|(run, _)| *run == second)
+        .unwrap()
+        .1
+        .clone();
+    let mut writer = Store::open(&cx, &root).unwrap();
+    let stale = host.retry_cleanup(&fresh, &root);
+    let stale_requests: i64 = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [second.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    writer
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET generation=generation-1 WHERE run_id=?1",
+                [second.to_string()],
+            )?;
+            txn.conn().execute(
+                "UPDATE resources SET generation=generation-1 WHERE name=?1",
+                [second_fence.resource.name().to_string()],
+            )?;
+            Ok::<_, crate::run::RunError>(())
+        })
+        .unwrap();
+    let retry = host.retry_cleanup(&fresh, &root);
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal unavailable: {other:?}"),
+    };
+    let requests: i64 = reader
+        .conn()
+        .query_row("SELECT count(*) FROM requests", [], |row| row.get(0))
+        .unwrap();
+    let actions = {
+        let mut statement = reader
+            .conn()
+            .prepare("SELECT action FROM requests")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| serde_json::from_str::<crate::run::Request>(&row.unwrap()).unwrap())
+            .collect::<Vec<_>>()
+    };
+    drop(reader);
+    for run in host.dispatcher.admission.runs.drain(..) {
+        run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+    }
+    assert!(
+        result.is_err() && fired,
+        "first EOF release fault must fire"
+    );
+    assert!(foreign.is_err(), "foreign root must refuse");
+    assert!(stale.is_err(), "changed original fence must refuse");
+    assert_eq!(stale_requests, 0, "a replacement fence receives no stop");
+    assert!(
+        retry.is_ok(),
+        "all original owner EOF releases should recover"
+    );
+    assert!(!host.cleanup_pending());
+    assert_eq!(requests, 2, "each admitted owner gets one stop");
+    assert!(
+        actions.iter().all(
+            |request| matches!(request.action, crate::run::RequestAction::Stop)
+                && fences
+                    .iter()
+                    .any(|(run, fence)| *run == request.run && fence == &request.expected)
+        ),
+        "each stop must name its exact original run and fence"
+    );
+    assert_ne!(
+        actions[0].run, actions[1].run,
+        "the stops belong to distinct runs"
+    );
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn owner_release_fault_retains_exact_handle_and_reports_unknown() {
+    use crate::fault::{self, Point};
+    for (point, still_attached, detach, close_before_retry) in [
+        (Point::RunAttachReleaseBefore, true, true, false),
+        (Point::RunAttachReleaseAfter, false, true, false),
+        (Point::RunAttachReleaseBefore, true, false, false),
+        (Point::RunAttachReleaseAfter, false, false, false),
+        (Point::RunAttachReleaseAfter, false, false, true),
+    ] {
+        let (_fixture, cx, root, session) = journal("effigy-channel-owner-detach-fault");
+        let mut grants = GrantBook::new();
+        grants.issue(
+            capability(),
+            binding(session),
+            session_operations(),
+            [Target::Host].into_iter().collect(),
+        );
+        let mut host = Server::new(
+            host(),
+            fence(session),
+            pinned(),
+            grants,
+            Dispatcher::new(
+                LiveAdmitter {
+                    root: &root,
+                    runs: vec![],
+                },
+                Resolver::new(task("workspace-channel").resource()),
+                Observer::default(),
+                Ids::new(&[174]),
+            ),
+        );
+        let live = RunId::new(7, [174; 10]).expect("run id");
+        let mut frames = vec![
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Invoke(invocation_body("build")),
+                2,
+            )),
+            Frame::Request(request(
+                session,
+                RequestBody::Attach(AttachBody {
+                    run: live,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                }),
+                1,
+            )),
+        ];
+        if detach {
+            frames.push(Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                3,
+            )));
+        }
+        let mut pipe = ArmReleaseOnAttach {
+            inner: Pipe::new(stream(&frames), peer()),
+            point,
+        };
+        let error = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("detach uncertainty");
+        assert_eq!(error.code, RefusalCode::Unknown);
+        assert!(fault::fired(), "release fault must fire");
+        assert!(host.cleanup_pending());
+        fault::arm(None);
+        let handle = host
+            .unsettled_attachment
+            .as_ref()
+            .expect("exact owner retained");
+        assert_eq!(handle.run(), live);
+        assert_eq!(handle.client(), Client::Owner);
+        assert_eq!(
+            handle.attached(&cx, &root).expect("durable owner row"),
+            still_attached
+        );
+        if detach {
+            assert!(written_frames(&pipe.inner).iter().any(|frame| matches!(frame,
+                Frame::Response(Response { id, outcome: ResponseOutcome::Refused(refusal), .. }) if *id == RequestId::new([3;16]) && refusal.code == RefusalCode::Unknown)));
+        }
+        let reader = match Store::read(&observe_context(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("journal unavailable: {other:?}"),
+        };
+        let requests: i64 = reader
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1",
+                [live.to_string()],
+                |row| row.get(0),
+            )
+            .expect("requests");
+        assert_eq!(
+            requests,
+            i64::from(!detach && !still_attached),
+            "only a committed EOF queues a stop"
+        );
+        if !detach && !still_attached {
+            let encoded: String = reader
+                .conn()
+                .query_row(
+                    "SELECT action FROM requests WHERE run_id=?1",
+                    [live.to_string()],
+                    |row| row.get(0),
+                )
+                .expect("owner EOF request");
+            let request: crate::run::Request =
+                serde_json::from_str(&encoded).expect("typed request");
+            assert_eq!(request.run, live);
+            assert_eq!(&request.expected, handle.fence());
+            assert!(matches!(request.action, crate::run::RequestAction::Stop));
+        }
+        drop(reader);
+        if close_before_retry {
+            for run in host.dispatcher.admission.runs.drain(..) {
+                run.settle(&cleanup(&cx), &mut NoEffects)
+                    .expect("test-owned run closes");
+            }
+        }
+        let fresh = cleanup(&cx)
+            .operation()
+            .effects()
+            .expect("fresh cleanup authority");
+        if close_before_retry {
+            assert_eq!(
+                host.retry_cleanup(&fresh, &root)
+                    .expect_err("compacted release stays unresolved")
+                    .code,
+                RefusalCode::Unknown
+            );
+            assert!(host.cleanup_pending());
+            assert_eq!(
+                host.unsettled_attachment
+                    .as_ref()
+                    .expect("same handle retained")
+                    .run(),
+                live
+            );
+        } else {
+            host.retry_cleanup(&fresh, &root)
+                .expect("same owner release retry");
+            assert!(!host.cleanup_pending());
+        }
+        for run in host.dispatcher.admission.runs.drain(..) {
+            run.settle(&cleanup(&cx), &mut NoEffects)
+                .expect("test-owned run cleanup");
+        }
+    }
+}
+
 /// A run admitted through the kernel's own reservation, so attachment and
 /// control proofs act on a live owner.
 fn admitted_run<'a>(
@@ -391,28 +1344,22 @@ fn admitted_run<'a>(
 ) -> (Run<'a>, RunId) {
     // Its own owner gate, so two admitted runs in one proof do not contend.
     let owner = task(&format!("workspace-channel-{request}")).resource();
-    let mut dispatcher = Dispatcher::new(
-        Admitter::default(),
-        Resolver::new(owner.clone()),
-        Observer::default(),
-        Ids::new(ids),
-    );
     let id = RequestId::new([request; 16]);
-    let AdmissionReply::Accepted(accepted) = dispatcher
-        .invoke(
-            cx,
-            &observe_context(),
-            root,
+    let run_id = Ids::new(ids).next().expect("run id");
+    let Reservation::Fresh(ticket) = run::reserve_resolved(
+        cx,
+        root,
+        run::AdmissionKey {
             session,
-            id,
-            Digest::of(b"invite"),
-            &invocation_body("build"),
-        )
-        .expect("reserved")
-    else {
-        panic!("a fresh admission is accepted");
+            request: id,
+        },
+        Digest::of(b"invite"),
+        run_id,
+        &invocation(owner.clone()),
+    )
+    .expect("reserved") else {
+        panic!("a fresh reservation is required");
     };
-    let ticket = dispatcher.admission.tickets[0].clone();
     let run = Run::begin_admitted(
         cx,
         root,
@@ -429,7 +1376,196 @@ fn admitted_run<'a>(
         ticket,
     )
     .expect("admitted");
-    (run, accepted.run)
+    (run, run_id)
+}
+
+#[test]
+fn concurrent_recorded_admission_does_not_grant_the_loser_owner() {
+    use std::sync::{mpsc, Arc, Barrier};
+    struct RaceResolver {
+        barrier: Arc<Barrier>,
+        wait: Option<mpsc::Receiver<()>>,
+    }
+    impl super::Resolver for RaceResolver {
+        fn resolve(
+            &mut self,
+            _: &EffectContext,
+            _: &InvocationBody,
+        ) -> Result<ResolvedInvocation, Refusal> {
+            self.barrier.wait();
+            if let Some(wait) = self.wait.take() {
+                wait.recv_timeout(Duration::from_secs(10))
+                    .map_err(|_| Refusal::unknown("race timed out"))?;
+            }
+            Ok(invocation(task("workspace-channel").resource()))
+        }
+    }
+    struct RaceAdmission<'a> {
+        root: &'a StateRoot,
+        winner: Option<mpsc::Sender<()>>,
+        done: Option<mpsc::Receiver<()>>,
+        run: Option<Run<'a>>,
+    }
+    impl Admission for RaceAdmission<'_> {
+        fn admitted_fence(&self, ticket: &AdmissionTicket) -> Option<run::Fence> {
+            self.run
+                .as_ref()
+                .filter(|run| run.id() == ticket.run())
+                .map(|run| run.fence().clone())
+        }
+        fn admit(
+            &mut self,
+            cx: &EffectContext,
+            ticket: &AdmissionTicket,
+            resolved: &ResolvedInvocation,
+        ) -> Result<(), Refusal> {
+            let Some(winner) = self.winner.take() else {
+                return Err(Refusal::unknown("loser attempted admission"));
+            };
+            let run = Run::begin_admitted(
+                cx,
+                self.root,
+                resolved,
+                BeginOpts {
+                    id: ticket.run(),
+                    wait: Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next_argv(),
+                    custody: None,
+                },
+                &cleanup(cx),
+                &mut NoEffects,
+                ticket.clone(),
+            )
+            .map_err(refusal_from)?;
+            self.run = Some(run);
+            winner
+                .send(())
+                .map_err(|_| Refusal::unknown("race receiver closed"))?;
+            self.done
+                .take()
+                .expect("winner owns completion receiver")
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|_| Refusal::unknown("race timed out"))?;
+            Ok(())
+        }
+    }
+    let (fixture, _, _, session) = journal("effigy-channel-recorded-race");
+    let path = fixture.path().to_path_buf();
+    let barrier = Arc::new(Barrier::new(2));
+    let (admitted_tx, admitted_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let (winner, loser) = std::thread::scope(|scope| {
+        let winner_path = path.clone();
+        let winner_barrier = Arc::clone(&barrier);
+        let winner = scope.spawn(move || {
+            let cx = effects(Placement::Host);
+            let root = StateRoot::effects(&cx, &winner_path).unwrap();
+            let mut dispatcher = Dispatcher::new(
+                RaceAdmission {
+                    root: &root,
+                    winner: Some(admitted_tx),
+                    done: Some(done_rx),
+                    run: None,
+                },
+                RaceResolver {
+                    barrier: winner_barrier,
+                    wait: None,
+                },
+                Observer::default(),
+                Ids::new(&[178]),
+            );
+            let reply = dispatcher.invoke(
+                &cx,
+                &observe_context(),
+                &root,
+                session,
+                RequestId::new([7; 16]),
+                Digest::of(b"same race"),
+                &invocation_body("build"),
+            );
+            let owns = dispatcher
+                .admitted
+                .contains(&RunId::new(7, [178; 10]).unwrap());
+            if let Some(run) = dispatcher.admission.run.take() {
+                run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+            }
+            (reply, owns)
+        });
+        let loser = scope.spawn(move || {
+            let cx = effects(Placement::Host);
+            let root = StateRoot::effects(&cx, &path).unwrap();
+            let mut dispatcher = Dispatcher::new(
+                RaceAdmission {
+                    root: &root,
+                    winner: None,
+                    done: None,
+                    run: None,
+                },
+                RaceResolver {
+                    barrier,
+                    wait: Some(admitted_rx),
+                },
+                Observer::default(),
+                Ids::new(&[179]),
+            );
+            let reply = dispatcher.invoke(
+                &cx,
+                &observe_context(),
+                &root,
+                session,
+                RequestId::new([7; 16]),
+                Digest::of(b"same race"),
+                &invocation_body("build"),
+            );
+            let owns = dispatcher
+                .admitted
+                .contains(&RunId::new(7, [178; 10]).unwrap());
+            let expected = RunId::new(7, [178; 10]).unwrap();
+            let attached = dispatcher.attach(
+                &cx,
+                &root,
+                session,
+                RequestId::new([8; 16]),
+                &AttachBody {
+                    run: expected,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                    cursors: None,
+                },
+            );
+            let secondary = attached
+                .as_ref()
+                .is_ok_and(|handle| handle.client() == Client::Secondary);
+            let denied = dispatcher
+                .detach(&cx, &root, session, &RunBody { run: expected })
+                .is_err();
+            let released = match attached {
+                Ok(mut handle) => handle.release(&cx, &root, Release::Eof).is_ok(),
+                Err(_) => false,
+            };
+            let _ = done_tx.send(());
+            (reply, owns, secondary, denied, released)
+        });
+        (winner.join().unwrap(), loser.join().unwrap())
+    });
+    let expected = RunId::new(7, [178; 10]).unwrap();
+    assert!(matches!(winner.0, Ok(AdmissionReply::Accepted(ref value)) if value.run == expected));
+    assert!(
+        winner.1,
+        "fresh admission grants ownership to its own dispatcher"
+    );
+    assert!(matches!(loser.0, Ok(AdmissionReply::Accepted(ref value)) if value.run == expected));
+    assert!(
+        !loser.1,
+        "a recorded admission must not grant ownership to the loser"
+    );
+    assert!(loser.2, "the loser attaches only as secondary");
+    assert!(loser.3, "the loser cannot detach the owner");
+    assert!(
+        loser.4,
+        "the loser releases its own secondary before the winner finishes"
+    );
 }
 
 /// One connection's captured output, as the attachment's owner would publish it.
@@ -573,6 +1709,7 @@ fn version_and_digest_mismatch_refuse_before_authentication() {
             ..hello()
         },
         Hello {
+            capabilities: Vec::new(),
             schema: "effigy.workspace-channel.v0".into(),
             ..hello()
         },
@@ -607,6 +1744,8 @@ fn no_request_crosses_before_authentication() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -708,6 +1847,8 @@ fn observe_writes_nothing_and_retries_re_observe() {
         Frame::Request(request(
             session,
             RequestBody::Observe(ObserveBody {
+                query: None,
+                run_id: None,
                 op: "run:status".into(),
                 target: None,
             }),
@@ -840,6 +1981,8 @@ fn a_grant_scopes_the_operation_the_target_and_its_generation() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        query: None,
+                        run_id: None,
                         op: "run:status".into(),
                         target: None,
                     }),
@@ -873,7 +2016,7 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
     let id = RequestId::new([4; 16]);
     let digest = Digest::of(b"invite");
     // The first attempt reserves and hands exactly that ticket to the engine.
-    let reply = dispatcher
+    let refusal = dispatcher
         .invoke(
             &cx,
             &observe_context(),
@@ -883,13 +2026,10 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
             digest.clone(),
             &invocation_body("build"),
         )
-        .expect("admitted");
-    let AdmissionReply::Accepted(accepted) = reply else {
-        panic!("a fresh admission is accepted");
-    };
+        .expect_err("an engine without an acknowledged owner cannot grant authority");
+    assert_eq!(refusal.code, RefusalCode::Unknown);
     assert_eq!(dispatcher.admission.tickets.len(), 1);
-    assert_eq!(accepted.run, dispatcher.admission.tickets[0].run());
-    assert_eq!(accepted.placement, Placement::Host);
+    assert!(dispatcher.admitted_owners.is_empty());
 
     // The same id and digest after a reconnect, and after a restart, reads the
     // kernel's recorded reservation: the run was never admitted, so the answer
@@ -937,49 +2077,14 @@ fn a_fresh_invocation_reserves_once_and_a_retry_never_readmits() {
 fn a_recorded_admission_and_outcome_answer_retries_across_a_restart() {
     let (_fixture, cx, root, session) = journal("effigy-channel-recorded");
     let owner = task("workspace-channel").resource();
-    let mut dispatcher = Dispatcher::new(
-        Admitter::default(),
-        Resolver::new(owner.clone()),
-        Observer::default(),
-        Ids::new(&[81, 82]),
-    );
     let id = RequestId::new([10; 16]);
     let digest = Digest::of(b"invite");
     let body = invocation_body("build");
-    let reply = dispatcher
-        .invoke(
-            &cx,
-            &observe_context(),
-            &root,
-            session,
-            id,
-            digest.clone(),
-            &body,
-        )
-        .expect("reserved");
-    let AdmissionReply::Accepted(reserved) = reply else {
-        panic!("a fresh admission is accepted");
+    let (mut admitted, run_id) = admitted_run(&cx, &root, session, 10, &[81]);
+    let reserved = Accepted {
+        run: run_id,
+        placement: Placement::Host,
     };
-    let ticket = dispatcher.admission.tickets[0].clone();
-    assert_eq!(ticket.run(), reserved.run);
-
-    // The engine admits exactly the run the reservation named.
-    let mut admitted = Run::begin_admitted(
-        &cx,
-        &root,
-        &invocation(owner.clone()),
-        BeginOpts {
-            id: ticket.run(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next_argv(),
-            custody: None,
-        },
-        &cleanup(&cx),
-        &mut NoEffects,
-        ticket,
-    )
-    .expect("admitted");
 
     // A retry while the run is live recovers the recorded admission, and the
     // engine is never asked to admit again.
@@ -1056,8 +2161,8 @@ fn a_recorded_admission_and_outcome_answer_retries_across_a_restart() {
     let runs: i64 = reader
         .conn()
         .query_row(
-            "SELECT count(*) FROM runs WHERE owner=?1",
-            [owner.name().to_string()],
+            "SELECT count(*) FROM runs WHERE run_id=?1",
+            [run_id.to_string()],
             |row| row.get(0),
         )
         .expect("count");
@@ -1159,7 +2264,7 @@ fn an_unresolvable_selector_records_nothing_so_a_retry_is_judged_afresh() {
     assert_eq!(rows, 0);
     drop(reader);
     dispatcher.resolver.fail = false;
-    let AdmissionReply::Accepted(accepted) = dispatcher
+    let refusal = dispatcher
         .invoke(
             &cx,
             &observe_context(),
@@ -1169,12 +2274,13 @@ fn an_unresolvable_selector_records_nothing_so_a_retry_is_judged_afresh() {
             digest,
             &invocation_body("build"),
         )
-        .expect("admitted once the selector resolves")
-    else {
-        panic!("a fresh admission is accepted");
-    };
+        .expect_err("an unacknowledged owner is refused after resolution");
+    assert_eq!(refusal.code, RefusalCode::Unknown);
     assert_eq!(dispatcher.admission.tickets.len(), 1);
-    assert_eq!(accepted.run, dispatcher.admission.tickets[0].run());
+    assert_eq!(
+        dispatcher.admission.tickets[0].run(),
+        RunId::new(7, [31; 10]).unwrap()
+    );
 }
 
 #[test]
@@ -1249,39 +2355,16 @@ fn an_owner_detach_and_a_secondary_eof_both_leave_the_run_running() {
     );
     let id = RequestId::new([11; 16]);
     let digest = Digest::of(b"invite");
-    let body = invocation_body("build");
-    let AdmissionReply::Accepted(accepted) = connection
-        .invoke(
-            &cx,
-            &observe_context(),
-            &root,
-            session,
-            id,
-            digest.clone(),
-            &body,
-        )
-        .expect("reserved")
-    else {
-        panic!("a fresh admission is accepted");
+    let (mut run, run_id) = admitted_run(&cx, &root, session, 11, &[91]);
+    let accepted = Accepted {
+        run: run_id,
+        placement: Placement::Host,
     };
-    let ticket = connection.admission.tickets[0].clone();
-    let mut run = Run::begin_admitted(
-        &cx,
-        &root,
-        &invocation(owner.clone()),
-        BeginOpts {
-            id: ticket.run(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next_argv(),
-            custody: None,
-        },
-        &cleanup(&cx),
-        &mut NoEffects,
-        ticket,
-    )
-    .expect("admitted");
-    assert_eq!(accepted.run, run.id());
+    connection.admitted.insert(run_id);
+    connection.admitted_owners.insert(
+        run_id,
+        run::resume_owner(&cx, &root, session, run_id).expect("original owner"),
+    );
 
     // The connection that admitted the run is its owning client.
     let mut owner_handle = connection
@@ -1534,6 +2617,8 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1550,6 +2635,8 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
                 ..request(
                     session,
                     RequestBody::Observe(ObserveBody {
+                        query: None,
+                        run_id: None,
                         op: "run:status".into(),
                         target: None,
                     }),
@@ -1559,11 +2646,12 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
         ]),
         peer(),
     );
-    let served = host
+    // This synthetic admission never creates its Run row, so EOF cannot
+    // establish owner cleanup. The real-admission integration covers success.
+    let error = host
         .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
-        .expect("served");
-    assert_eq!(served.responses, 3);
-    assert!(served.closed);
+        .expect_err("a fabricated admission cannot settle owner EOF");
+    assert_eq!(error.code, RefusalCode::Unknown);
     let frames = written_frames(&pipe);
     assert!(matches!(frames[0], Frame::HelloOk(_)));
     let responses: Vec<&Frame> = frames
@@ -1581,8 +2669,8 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
     assert!(matches!(
         responses[1],
         Frame::Response(Response {
-            outcome: ResponseOutcome::Accepted(Accepted {
-                placement: Placement::Host,
+            outcome: ResponseOutcome::Refused(Refusal {
+                code: RefusalCode::Unknown,
                 ..
             }),
             ..
@@ -1648,6 +2736,8 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1775,6 +2865,8 @@ fn an_enrolment_cannot_name_another_session() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1833,6 +2925,8 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -1884,6 +2978,8 @@ fn a_grant_is_used_only_on_the_connection_its_binding_names() {
             Frame::Request(request(
                 session,
                 RequestBody::Observe(ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: "run:status".into(),
                     target: None,
                 }),
@@ -3772,4 +4868,359 @@ fn a_relative_working_directory_is_the_only_one_accepted() {
         selector.check().expect_err("bounded").code,
         RefusalCode::InvalidRequest
     );
+}
+
+#[test]
+fn observe_run_identity_wire_is_strict_and_preserves_legacy_list() {
+    let legacy = serde_json::json!({"op":"runs:list", "target":null});
+    let list: ObserveBody = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(list.check().is_ok());
+    assert_eq!(serde_json::to_value(&list).unwrap(), legacy);
+    assert!(serde_json::from_value::<ObserveBody>(
+        serde_json::json!({"op":"runs:list", "target":null, "extra":1})
+    )
+    .is_err());
+    let id = RunId::new(42, [1; 10]).unwrap().to_string();
+    let mut status = ObserveBody {
+        query: None,
+        op: "runs:status".into(),
+        target: None,
+        run_id: None,
+    };
+    assert!(status.check().is_err());
+    status.run_id = Some("not-an-id".into());
+    assert!(status.check().is_err());
+    status.run_id = Some(id.clone());
+    assert!(status.check().is_ok());
+    assert_eq!(serde_json::to_value(&status).unwrap()["run_id"], id);
+    status.op = "runs:list".into();
+    assert!(status.check().is_err());
+}
+
+#[test]
+fn observe_query_v1_roundtrips_exact_arguments_before_dispatch() {
+    let value = serde_json::json!({
+        "op":"doctor", "target":"host",
+        "query":{"cwd":"nested", "args":["doctor", "build", "--", "two words"], "output":"json"}
+    });
+    let body: ObserveBody =
+        serde_json::from_value(value.clone()).expect("a typed bounded Observe query must decode");
+    assert!(body.check().is_ok());
+    assert_eq!(serde_json::to_value(body).unwrap(), value);
+}
+
+#[test]
+fn observe_query_v1_capability_is_explicit_and_legacy_bytes_stay_identical() {
+    let mut client = hello();
+    let legacy_reply = negotiate(&client, &host()).unwrap();
+    assert_eq!(
+        serde_json::to_string(&legacy_reply).unwrap(),
+        r#"{"protocol":1,"effigy_version":"0.15.0"}"#
+    );
+    let legacy_body = r#"{"op":"runs:list","target":null}"#;
+    let legacy: ObserveBody = serde_json::from_str(legacy_body).unwrap();
+    assert_eq!(serde_json::to_string(&legacy).unwrap(), legacy_body);
+    let old_hello = serde_json::to_vec(&client).unwrap();
+    assert!(!String::from_utf8_lossy(&old_hello).contains("capabilities"));
+    assert_eq!(serde_json::from_slice::<Hello>(&old_hello).unwrap(), client);
+    client.capabilities = vec![ChannelCapability::ObserveQueryV1];
+    let selected = negotiate(&client, &host()).unwrap();
+    assert_eq!(selected.capabilities, client.capabilities);
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyReply {
+        protocol: u32,
+        effigy_version: String,
+    }
+    let old: LegacyReply =
+        serde_json::from_str(r#"{"protocol":1,"effigy_version":"0.15.0"}"#).unwrap();
+    assert_eq!(old.protocol, 1);
+    assert_eq!(old.effigy_version, "0.15.0");
+    assert!(
+        serde_json::from_value::<LegacyReply>(serde_json::to_value(selected).unwrap()).is_err()
+    );
+    client.capabilities.push(ChannelCapability::ObserveQueryV1);
+    assert_eq!(
+        negotiate(&client, &host()).unwrap_err().code,
+        RefusalCode::InvalidRequest
+    );
+}
+
+#[test]
+fn observe_query_v1_bounds_and_redaction_apply_before_encoding_or_dispatch() {
+    let session = Session {
+        run: hello().session_run_id,
+        generation: Generation::new(SESSION_GENERATION),
+    };
+    let query = ObserveQuery {
+        cwd: "private-cwd".into(),
+        args: vec!["private-argument".into()],
+        output: OutputMode::Json,
+    };
+    assert!(!format!("{query:?}").contains("private"));
+    let valid = ObserveBody {
+        op: "doctor".into(),
+        target: Some(Target::Host),
+        run_id: None,
+        query: Some(query),
+    };
+    let mut cases = Vec::new();
+    for cwd in ["../private-cwd", "/private-cwd", "a\\b"] {
+        let mut body = valid.clone();
+        body.query.as_mut().unwrap().cwd = cwd.into();
+        cases.push(body);
+    }
+    for args in [
+        vec!["x".into(); MAX_ARGUMENTS + 1],
+        vec!["x".repeat(MAX_PATH_BYTES + 1)],
+        vec!["private\0argument".into()],
+        vec!["x".repeat(MAX_PATH_BYTES); 17],
+    ] {
+        let mut body = valid.clone();
+        body.query.as_mut().unwrap().args = args;
+        cases.push(body);
+    }
+    for body in cases {
+        let request = request(session, RequestBody::Observe(body), 91);
+        let refusal = encode_frame(&Frame::Request(request)).expect_err("client bounds");
+        assert!(!refusal.diagnostic.contains("private"));
+    }
+    for edit in [
+        serde_json::json!({"cwd":"../private-cwd", "args":[], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":vec!["private"; MAX_ARGUMENTS + 1], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":["x".repeat(MAX_PATH_BYTES + 1)], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":["private\0argument"], "output":"text"}),
+        serde_json::json!({"cwd":".", "args":[], "output":"text", "private":1}),
+    ] {
+        let mut value: Value = serde_json::from_slice(
+            &encode_frame(&Frame::Request(request(
+                session,
+                RequestBody::Observe(valid.clone()),
+                92,
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        value["body"]["query"] = edit;
+        let refusal = decode_frame(&serde_json::to_vec(&value).unwrap()).expect_err("host bounds");
+        assert!(!refusal.diagnostic.contains("private"));
+    }
+}
+
+#[test]
+fn observe_query_v1_requires_negotiation_before_read_only_observer() {
+    let (_fixture, cx, root, session) = journal("effigy-query-capability");
+    for negotiated in [false, true] {
+        let mut host = server(session, &[]);
+        let mut hello = hello();
+        if negotiated {
+            hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+        }
+        let body = ObserveBody {
+            query: Some(ObserveQuery {
+                cwd: ".".into(),
+                args: vec!["doctor".into()],
+                output: OutputMode::Json,
+            }),
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        };
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello),
+                Frame::Authenticate(capability()),
+                Frame::Request(request(session, RequestBody::Observe(body), 90)),
+            ]),
+            peer(),
+        );
+        host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .unwrap();
+        assert!(host.dispatcher.admission.tickets.is_empty());
+        assert_eq!(host.dispatcher.resolver.calls, 0);
+        if negotiated {
+            assert_eq!(host.dispatcher.observer.calls, 1);
+        } else {
+            assert_eq!(host.dispatcher.observer.calls, 0);
+            assert!(written_frames(&pipe).iter().any(|frame| matches!(frame, Frame::Response(Response { outcome: ResponseOutcome::Refused(refusal), .. }) if refusal.diagnostic.contains("observe_query_v1"))));
+        }
+    }
+}
+
+fn observe_query_frame(session: Session, id: u8) -> Frame {
+    Frame::Request(request(
+        session,
+        RequestBody::Observe(ObserveBody {
+            query: Some(ObserveQuery {
+                cwd: ".".into(),
+                args: vec!["doctor".into()],
+                output: OutputMode::Json,
+            }),
+            op: "doctor".into(),
+            target: Some(Target::Host),
+            run_id: None,
+        }),
+        id,
+    ))
+}
+
+#[test]
+fn observe_query_negotiation_survives_attach_replacement_and_detach() {
+    let (_fixture, cx, root, session) = journal("effigy-query-attachment-lifetime");
+    let (_run, live) = admitted_run(&cx, &root, session, 41, &[121]);
+    let mut host = server(session, &[]);
+    let mut hello = hello();
+    hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+    let attach = |id| {
+        Frame::Request(request(
+            session,
+            RequestBody::Attach(AttachBody {
+                run: live,
+                streams: vec![StreamKind::Stdout],
+                cursor: None,
+                cursors: None,
+            }),
+            id,
+        ))
+    };
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello),
+            Frame::Authenticate(capability()),
+            attach(1),
+            observe_query_frame(session, 2),
+            attach(3),
+            observe_query_frame(session, 4),
+            Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                5,
+            )),
+            observe_query_frame(session, 6),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("the negotiated connection remains usable");
+    let replies: Vec<_> = written_frames(&pipe)
+        .into_iter()
+        .filter_map(|frame| match frame {
+            Frame::Response(response) => Some(response),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(replies.len(), 6);
+    for reply in &replies {
+        assert!(
+            matches!(reply.outcome, ResponseOutcome::Observed(_)),
+            "{reply:?}"
+        );
+    }
+    assert_eq!(host.dispatcher.observer.calls, 3);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
+}
+
+#[test]
+fn observe_query_negotiation_is_not_inherited_by_a_fresh_connection() {
+    let (_fixture, cx, root, session) = journal("effigy-query-connection-lifetime");
+    let mut host = server(session, &[]);
+    for (connection, negotiated) in [true, false, true].into_iter().enumerate() {
+        let mut hello = hello();
+        if negotiated {
+            hello.capabilities.push(ChannelCapability::ObserveQueryV1);
+        }
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello),
+                Frame::Authenticate(capability()),
+                observe_query_frame(session, 90 + connection as u8),
+            ]),
+            peer(),
+        );
+        host.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .unwrap();
+        let outcome = written_frames(&pipe)
+            .into_iter()
+            .find_map(|frame| match frame {
+                Frame::Response(response) => Some(response.outcome),
+                _ => None,
+            })
+            .expect("the query is answered");
+        if negotiated {
+            assert!(matches!(outcome, ResponseOutcome::Observed(_)));
+        } else {
+            assert!(matches!(outcome, ResponseOutcome::Refused(refusal)
+                if refusal.code == RefusalCode::Forbidden && refusal.diagnostic.contains("observe_query_v1")));
+        }
+    }
+    assert_eq!(host.dispatcher.observer.calls, 2);
+    assert_eq!(host.dispatcher.resolver.calls, 0);
+    assert!(host.dispatcher.admission.tickets.is_empty());
+}
+
+#[test]
+fn outcome_observation_is_bound_to_accepted_request_and_never_admits() {
+    let (_fixture, cx, root, session) = journal("effigy-outcome-observe");
+    let (mut run, run_id) = admitted_run(&cx, &root, session, 10, &[81]);
+    let mut host = server(session, &[]);
+    let id = RequestId::new([10; 16]);
+    host.observed_invocations
+        .insert(id, (run_id, Digest::of(b"invite")));
+    let grant = host.grants.authenticate(&capability()).unwrap().clone();
+    let observe = |id: RequestId, run: RunId| {
+        RequestBody::Observe(ObserveBody {
+            op: format!("runs:outcome:{id}:{run}"),
+            target: Some(Target::Host),
+            query: None,
+            run_id: None,
+        })
+    };
+    let mut attachment = None;
+    let mut streams = NoStreams;
+    let poll = |host: &mut Server<Admitter, Resolver, Observer, Ids>, body, session| {
+        host.answer(
+            &cx,
+            &observe_context(),
+            &root,
+            &grant,
+            &request(session, body, 99),
+            &mut attachment,
+            &mut streams,
+        )
+        .outcome
+    };
+    let mut poll = poll;
+    assert!(
+        matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["state"] == "pending")
+    );
+    assert!(matches!(
+        poll(
+            &mut host,
+            observe(RequestId::new([11; 16]), run_id),
+            session
+        ),
+        ResponseOutcome::Refused(_)
+    ));
+    let other = RunId::new(1, [77; 10]).unwrap();
+    assert!(matches!(
+        poll(&mut host, observe(id, other), session),
+        ResponseOutcome::Refused(_)
+    ));
+    let wrong_session = Session {
+        run: other,
+        generation: Generation::new(99),
+    };
+    assert!(matches!(
+        poll(&mut host, observe(id, run_id), wrong_session),
+        ResponseOutcome::Refused(_)
+    ));
+    run.finish(crate::outcome::WorkloadOutcome::Failed { code: 7 })
+        .unwrap();
+    run.settle(&cleanup(&cx), &mut NoEffects).unwrap();
+    assert!(
+        matches!(poll(&mut host, observe(id, run_id), session), ResponseOutcome::Observed(value) if value["outcome"]["workload"]["Failed"]["code"] == 7)
+    );
+    assert!(host.dispatcher.admission.tickets.is_empty());
+    assert_eq!(host.dispatcher.resolver.calls, 0);
 }

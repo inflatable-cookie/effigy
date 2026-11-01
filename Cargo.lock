@@ -1027,6 +1027,7 @@ dependencies = [
  "effigy-test-support",
  "effigy-ui",
  "nix 0.31.3",
+ "rusqlite",
  "serde",
  "serde_json",
  "siphasher",

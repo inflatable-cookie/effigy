@@ -7,6 +7,144 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 const PRIMARY: &str = "workspace";
+
+#[test]
+fn owned_apply_borrows_the_same_gated_run_and_original_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let expected_run = env_run.run.id();
+    let request = request(&render);
+    let deadline = request.deadline;
+    let mut called = false;
+    let outcome =
+        env_run.create_with_owned(&mut fake, &selection(), request, |run, effect, until| {
+            called = true;
+            assert_eq!(run.id(), expected_run);
+            assert_eq!(until, deadline);
+            assert!(effect.operation().check("owned apply").is_ok());
+            assert!(
+                !effigy_kernel::store::in_transaction(),
+                "backend I/O must not span a journal transaction"
+            );
+            assert!(
+                EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).is_err(),
+                "the same Env gate remains held"
+            );
+            Ok(())
+        });
+    assert!(outcome.is_ok(), "owned apply should complete: {outcome:?}");
+    assert!(called);
+    env_run.finish(true).unwrap();
+}
+
+#[test]
+fn owned_apply_never_runs_after_the_original_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut request = request(&render);
+    request.deadline = Instant::now();
+    let mut called = false;
+    let result = env_run.create_with_owned(&mut fake, &selection(), request, |_, _, _| {
+        called = true;
+        Ok(())
+    });
+    assert!(matches!(
+        result,
+        Err(EnvError::Backend(BackendError::NotStarted(_)))
+    ));
+    assert!(
+        !called,
+        "an expired creation deadline cannot start the callback"
+    );
+    env_run.finish(false).unwrap();
+}
+
+#[test]
+fn owned_apply_effect_context_expires_at_earlier_request_deadline() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut request = request(&render);
+    request.deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = request.deadline;
+    let mut entered = false;
+    let result = env_run.create_with_owned(&mut fake, &selection(), request, |_, effect, until| {
+        entered = true;
+        assert_eq!(until, deadline);
+        assert!(matches!(effect.operation().deadline(), effigy_kernel::ctx::Deadline::At(actual) if actual == deadline));
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(effect.operation().check("private apply").is_err());
+        assert!(ctx.cx.operation().check("parent still live").is_ok());
+        Err(BackendError::Uncertain("timed out while applying".into()))
+    });
+    assert!(
+        entered,
+        "the callback must enter before testing in-flight expiry"
+    );
+    assert!(matches!(
+        result,
+        Err(EnvError::Backend(BackendError::Uncertain(_)))
+    ));
+    env_run.finish(false).unwrap();
+}
+
+#[test]
+fn owned_apply_uncertainty_never_replays_the_callback() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    let mut env_run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let mut calls = 0;
+    let first = env_run.create_with_owned(&mut fake, &selection(), request(&render), |_, _, _| {
+        calls += 1;
+        Err(BackendError::Uncertain("private apply unsettled".into()))
+    });
+    assert!(matches!(
+        first,
+        Err(EnvError::Backend(BackendError::Uncertain(_)))
+    ));
+    assert!(env_run
+        .create_with_owned(&mut fake, &selection(), request(&render), |_, _, _| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err());
+    assert_eq!(calls, 1, "an uncertain apply cannot be repeated");
+    env_run.finish(false).unwrap();
+}
+
+#[test]
+fn owned_private_apply_does_not_report_not_started_or_leak_diagnostics() {
+    for error in [
+        BackendError::NotStarted("secret-bearing backend diagnostic".into()),
+        BackendError::Uncertain("secret-bearing backend diagnostic".into()),
+    ] {
+        let result = super::super::workspace_activation::private_apply_failure(error);
+        assert!(
+            matches!(&result, BackendError::Uncertain(message) if message == "workspace private apply outcome unsettled")
+        );
+        assert!(!format!("{result:?}").contains("secret-bearing"));
+    }
+}
 fn id(byte: char) -> String {
     byte.to_string().repeat(64)
 }
@@ -474,6 +612,125 @@ fn stale_preflight_images_refuse_under_the_gate() {
 }
 
 #[test]
+fn primary_reference_belongs_to_exact_frozen_preflight() {
+    let frozen = render(&[PRIMARY, "worker"]);
+    let mut fake = Fake::new(vec![], vec![]);
+    let preflight =
+        crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+    assert_eq!(
+        preflight
+            .primary_image_reference(request(&frozen), &mut fake)
+            .unwrap(),
+        "fixture:latest"
+    );
+    let mut wrong_service = request(&frozen);
+    wrong_service.primary_service = "worker";
+    assert!(preflight
+        .primary_image_reference(wrong_service, &mut fake)
+        .is_err());
+    let mut wrong_checkout = request(&frozen);
+    wrong_checkout.workdir = Path::new("other");
+    assert!(preflight
+        .primary_image_reference(wrong_checkout, &mut fake)
+        .is_err());
+    fake.selection.context = "another-context".into();
+    assert!(preflight
+        .primary_image_reference(request(&frozen), &mut fake)
+        .is_err());
+    fake.selection = selection();
+    fake.images
+        .push_back(verified(format!("sha256:{}", id('d'))));
+    assert!(
+        preflight
+            .primary_image_reference(request(&frozen), &mut fake)
+            .is_err(),
+        "retagged image refuses"
+    );
+    let mut expired = request(&frozen);
+    expired.deadline = Instant::now() - Duration::from_millis(1);
+    assert!(preflight
+        .primary_image_reference(expired, &mut fake)
+        .is_err());
+    let other = render(&[PRIMARY]);
+    assert!(preflight
+        .primary_image_reference(request(&other), &mut fake)
+        .is_err());
+}
+
+#[test]
+fn attached_primary_image_uses_frozen_backend_and_real_inventory() {
+    let frozen = render(&[PRIMARY]);
+    let primary = row(PRIMARY, 'a');
+    let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+    let preflight =
+        crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+    let identity = preflight
+        .reobserve_attached_primary(&mut fake, request(&frozen), &primary)
+        .expect("matching running image");
+    assert_eq!(identity.container_id(), primary.id);
+    assert_eq!(
+        identity.identity().capability(),
+        crate::environment::ImageCapability::ContainerImageId
+    );
+    assert_eq!(identity.identity().resolved_id(), Some(image().as_str()));
+}
+
+#[test]
+fn attached_primary_image_refuses_retag_wrong_image_context_and_ambiguity() {
+    let frozen = render(&[PRIMARY]);
+    let primary = row(PRIMARY, 'a');
+    for case in ["retag", "wrong-image", "context", "ambiguous", "expired"] {
+        let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+        let preflight =
+            crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+        let mut expected = primary.clone();
+        let mut req = request(&frozen);
+        match case {
+            "retag" => fake
+                .images
+                .push_back(verified(format!("sha256:{}", id('d')))),
+            "wrong-image" => {
+                expected.image = format!("sha256:{}", id('d'));
+                fake.inventories = [
+                    verified(vec![expected.clone()]),
+                    verified(vec![expected.clone()]),
+                ]
+                .into();
+            }
+            "context" => fake.selection.context = "another".into(),
+            "ambiguous" => {
+                fake.inventories = [verified(vec![primary.clone(), row(PRIMARY, 'b')])].into()
+            }
+            _ => req.deadline = Instant::now() - Duration::from_millis(1),
+        }
+        assert!(
+            preflight
+                .reobserve_attached_primary(&mut fake, req, &expected)
+                .is_err(),
+            "{case} must refuse"
+        );
+    }
+}
+
+#[test]
+fn attached_colima_reference_refuses_without_verified_sealed_paths() {
+    let frozen = render(&[PRIMARY]);
+    for matching in [true, false] {
+        let mut primary = row(PRIMARY, 'a');
+        primary.image = "fixture:latest".into();
+        primary.labels.insert(
+            "com.docker.compose.config-hash".into(),
+            id(if matching { 'd' } else { 'e' }),
+        );
+        let mut fake = Fake::new(vec![primary.clone()], vec![primary.clone()]);
+        let preflight =
+            crate::environment::CreationPreflight::observe(&mut fake, request(&frozen)).unwrap();
+        let result = preflight.reobserve_attached_primary(&mut fake, request(&frozen), &primary);
+        assert!(result.is_err(), "unverified Compose paths must refuse");
+    }
+}
+
+#[test]
 fn journalled_generation_and_recheck_refuse_replaced_or_retagged_rows() {
     let fixture = home();
     let state = root(fixture.path());
@@ -492,6 +749,14 @@ fn journalled_generation_and_recheck_refuse_replaced_or_retagged_rows() {
     assert!(receipt
         .reobserve(&mut fake, Instant::now() + Duration::from_secs(1))
         .is_ok());
+    let reads_before_expiry = fake.reads;
+    assert!(receipt
+        .reobserve(&mut fake, Instant::now() - Duration::from_millis(1))
+        .is_err());
+    assert_eq!(
+        fake.reads, reads_before_expiry,
+        "expired rechecks do no backend I/O"
+    );
     fake.inventories
         .push_back(verified(vec![row(PRIMARY, 'b')]));
     assert!(receipt
@@ -675,6 +940,744 @@ fn fresh_binding_accepts_only_the_created_workspace_id_never_attached_or_depende
         );
         let _ = run.finish(false);
     }
+}
+
+fn parked_activation_fixture<'a>(
+    ctx: &EnvContext<'a>,
+    stack: &EnvRef,
+) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
+    parked_activation_fixture_with_budget(ctx, stack, Duration::from_secs(60))
+}
+
+fn parked_activation_fixture_with_budget<'a>(
+    ctx: &EnvContext<'a>,
+    stack: &EnvRef,
+    budget: Duration,
+) -> (super::super::ParkedWorkspaceActivation<'a>, Fake) {
+    use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
+    use effigy_kernel::workspace_session::{
+        BoundPlatform, ContainerIdentity, GuestObject, ImagePlatform, LoaderFamily, TargetCandidate,
+    };
+    let reservation = fresh_reservation(ctx, stack);
+    let inputs = reservation.inputs().unwrap().clone();
+    let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
+    let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task,
+        route: Route::Task,
+        argv: vec![],
+        cwd: String::new(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        gates: vec![],
+        attachments: vec![],
+        class: effigy_kernel::ctx::EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .unwrap();
+    let options = effigy_kernel::run::BeginOpts {
+        id: effigy_kernel::id::RunId::new(1_760_000_000_000, [73; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        custody: None,
+        next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+            .unwrap(),
+    };
+    let super::super::WorkspaceBegin::Activate(mut activation) =
+        super::super::WorkspaceActivation::begin(
+            ctx,
+            stack,
+            &inputs,
+            &invocation,
+            options,
+            "fixture-supervisor",
+        )
+        .unwrap()
+    else {
+        panic!("fresh activation")
+    };
+    let render = render(&[PRIMARY]);
+    let mut fake = Fake::new(vec![], vec![row(PRIMARY, 'a')]);
+    activation
+        .environment_mut()
+        .create_with(&mut fake, &selection(), request(&render), || Ok(()))
+        .unwrap();
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    let candidate = verified(vec![TargetCandidate {
+        identity: ContainerIdentity {
+            container_id: id('a'),
+            vm_boot_id: "boot".into(),
+            backend: "fixture".into(),
+        },
+        project: PROJECT.into(),
+        created_by: None,
+    }]);
+    let reservation = activation.reservation().clone();
+    activation
+        .environment_mut()
+        .bind_target_observing(
+            &reservation,
+            candidate,
+            &mut fake,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+    let target = ContainerIdentity {
+        container_id: id('a'),
+        vm_boot_id: "boot".into(),
+        backend: "fixture".into(),
+    };
+    let platform = ImagePlatform {
+        os: "linux".into(),
+        architecture: "amd64".into(),
+        variant: String::new(),
+        loader: LoaderFamily::Gnu,
+    };
+    let digest = effigy_kernel::id::Digest::of(b"fixture artifact");
+    activation
+        .environment_mut()
+        .bind_platform(
+            &reservation,
+            verified(BoundPlatform {
+                target,
+                platform: platform.clone(),
+                artifact_platform: platform,
+                artifact: GuestObject {
+                    path: format!("/run/effigy/objects/bin/{digest}"),
+                    digest,
+                },
+                artifact_version: "0.15.0".into(),
+                execution_available: true,
+            }),
+        )
+        .unwrap();
+    let parked = activation
+        .park(Instant::now() + budget)
+        .expect("complete activation parks");
+    (parked, fake)
+}
+
+#[test]
+fn parked_abort_uses_fresh_cleanup_after_context_expiry_and_cancel() {
+    use effigy_kernel::ctx::StopCause;
+    use effigy_kernel::run::{
+        WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step,
+    };
+    for expired in [true, false] {
+        for attempted in [false, true] {
+            let fixture = home();
+            let state = root(fixture.path());
+            let base = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let ctx = base.bounded_until(deadline).unwrap();
+            let fresh_ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+            let stack = env("stack");
+            let (mut parked, _fake) = parked_activation_fixture(&ctx, &stack);
+            if attempted {
+                parked
+                    .record_integration_step(&ctx, Step::Routes, State::Attempted)
+                    .unwrap();
+            }
+            if expired {
+                while Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            } else {
+                ctx.cx
+                    .operation()
+                    .cancel_token()
+                    .cancel(StopCause::Requested);
+            }
+            let error = parked
+                .record_integration_step(&fresh_ctx, Step::Secrets, State::Attempted)
+                .unwrap_err();
+            assert!(error.to_string().contains(if expired {
+                "deadline expired"
+            } else {
+                "cancelled"
+            }));
+            if attempted {
+                let error = parked
+                    .record_integration_step(&fresh_ctx, Step::Routes, State::Completed)
+                    .unwrap_err();
+                assert!(error.to_string().contains(if expired {
+                    "deadline expired"
+                } else {
+                    "cancelled"
+                }));
+            }
+            let snapshot = parked
+                .integration_snapshot()
+                .expect("cleanup snapshot uses fresh authority");
+            assert_eq!(snapshot.contains_key(&Step::Routes), attempted);
+            if attempted {
+                let (error, custody) = parked
+                    .abort(&ctx, Wait::FailFast)
+                    .expect_err("attempted effect remains recoverable");
+                assert!(error
+                    .to_string()
+                    .contains("integration effects unsettled; re-run up"));
+                let super::super::ParkedAbortCustody::Activation(mut owner) = *custody else {
+                    panic!("retain both exact owners")
+                };
+                owner
+                    .record_integration_step(&ctx, Step::Routes, State::Cleared)
+                    .unwrap();
+                parked = *owner;
+            }
+            parked
+                .abort(&ctx, Wait::FailFast)
+                .expect("fresh cleanup settles and cancels exact reservation");
+        }
+    }
+}
+
+#[test]
+fn target_observer_facade_refuses_mismatches_and_retains_owner() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
+    for _ in 0..8 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            // Synthetic mismatch control; production must observe the target.
+            let mut target = view.facts().target.clone();
+            target.vm_boot_id = "replaced-boot".into();
+            verified((target, view.facts().platform.clone()))
+        })
+        .expect_err("changed boot refuses");
+    assert!(error
+        .to_string()
+        .contains("workspace resume observation changed"));
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            let mut platform = view.facts().platform.clone();
+            platform.platform.architecture = "different-architecture".into();
+            verified((view.facts().target.clone(), platform))
+        })
+        .expect_err("changed platform refuses");
+    assert!(error
+        .to_string()
+        .contains("workspace resume observation changed"));
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |_, _, _| {
+            Observed::Unknown(UnknownReason::Injected)
+        })
+        .expect_err("unknown target refuses");
+    assert!(error.to_string().contains("observation is unknown"));
+    let activation = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            // Fixture plumbing only, not a backend-observation proof.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect("matching structural fixture resumes");
+    assert_eq!(activation.session(), &session);
+    activation
+        .abort_guarded_recoverable(&ctx, Wait::FailFast)
+        .unwrap();
+}
+
+#[test]
+fn resumed_activation_can_repark_for_cleanup_after_expiry_or_cancellation() {
+    use effigy_kernel::run::{
+        WorkspaceIntegrationState as State, WorkspaceIntegrationStep as Step,
+    };
+    for expired in [false, true] {
+        let fixture = home();
+        let state = root(fixture.path());
+        let base = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let ctx = base.bounded_until(deadline).unwrap();
+        let stack = env("stack");
+        let (mut parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+        parked
+            .record_integration_step(&ctx, Step::Routes, State::Attempted)
+            .unwrap();
+        parked
+            .record_integration_step(&ctx, Step::Routes, State::Completed)
+            .unwrap();
+        for _ in 0..2 {
+            fake.inventories
+                .push_back(verified(vec![row(PRIMARY, 'a')]));
+        }
+        let activation = parked
+            .reacquire_target(&mut fake, |view, _, _| {
+                verified((view.facts().target.clone(), view.facts().platform.clone()))
+            })
+            .expect("fixture resumes");
+        let other_fixture = home();
+        let other_root = root(other_fixture.path());
+        let other_ctx = EnvContext::new(&other_root, CancelToken::default()).unwrap();
+        let (_, activation) = activation
+            .park_for_cleanup(&other_ctx)
+            .expect_err("another root cannot take custody");
+        let probe = EnvContext::new(&state, CancelToken::default()).unwrap();
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &probe.cx,
+            &state,
+            std::slice::from_ref(&stack.resource),
+            Wait::FailFast
+        )
+        .is_err());
+        if expired {
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        } else {
+            ctx.cx
+                .operation()
+                .cancel_token()
+                .cancel(effigy_kernel::ctx::StopCause::Requested);
+        }
+        let parked = (*activation)
+            .park_for_cleanup(&ctx)
+            .expect("cleanup must repark the exact owner despite workload cancellation");
+        assert!(parked
+            .integration_snapshot(&ctx)
+            .unwrap()
+            .contains_key(&Step::Routes));
+        assert!(effigy_kernel::gate::Gate::acquire(
+            &EnvContext::new(&state, CancelToken::default()).unwrap().cx,
+            &state,
+            std::slice::from_ref(&stack.resource),
+            Wait::FailFast
+        )
+        .is_ok());
+        let (error, custody) = parked
+            .abort(&ctx, Wait::FailFast)
+            .expect_err("unwound effects must be cleared before settlement");
+        assert!(error
+            .to_string()
+            .contains("integration effects unsettled; re-run up"));
+        let super::super::ParkedAbortCustody::CleanupActivation(mut parked) = *custody else {
+            panic!("cleanup must retain the same parked owner");
+        };
+        parked.clear_step(&ctx, Step::Routes).unwrap();
+        parked
+            .abort(&ctx, Wait::FailFast)
+            .expect("settle exact owners and cancel");
+    }
+}
+
+#[test]
+fn target_observation_cancel_refuses_resume_and_keeps_cleanup_custody() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
+    for _ in 0..2 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let cancel = ctx.cx.operation().cancel_token().clone();
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, _, _| {
+            cancel.cancel(effigy_kernel::ctx::StopCause::Requested);
+            // A structural fixture; production must supply an actual observation.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect_err("cancel during observation refuses resume");
+    assert!(error.to_string().contains("cancelled"));
+    assert_eq!(parked.session(), &session);
+    parked
+        .abort(&ctx, Wait::FailFast)
+        .expect("fresh cleanup settles exact owners");
+}
+
+#[test]
+fn target_observation_past_parked_deadline_refuses_resume_and_keeps_cleanup_custody() {
+    let fixture = home();
+    let state = root(fixture.path());
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) =
+        parked_activation_fixture_with_budget(&ctx, &stack, Duration::from_secs(2));
+    let session = parked.session().clone();
+    for _ in 0..2 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let mut observer_entered = false;
+    let (error, parked) = parked
+        .reacquire_target(&mut fake, |view, deadline, _| {
+            observer_entered = true;
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(50),
+            );
+            // A structural fixture; production must supply an actual observation.
+            verified((view.facts().target.clone(), view.facts().platform.clone()))
+        })
+        .expect_err("expired observation refuses resume");
+    let refused_for_deadline = error.to_string().contains("deadline");
+    let retained_session = parked.session() == &session;
+    let cleanup = parked
+        .abort(&ctx, Wait::FailFast)
+        .map_err(|(error, _)| error);
+    assert!(
+        observer_entered,
+        "the observer ran before the parked deadline"
+    );
+    assert!(refused_for_deadline && retained_session);
+    cleanup.expect("fresh cleanup settles exact owners");
+}
+
+#[test]
+fn activation_parks_the_real_claimed_run_after_target_binding() {
+    use effigy_kernel::id::{ExecutionTarget, InvocationSpec, Route, Surface, TaskId};
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::collections::BTreeMap;
+    use std::io::Write;
+
+    const CHILD_HOME: &str = "EFFIGY_PARKED_ACTIVATION_CHILD_HOME";
+    let Some(child_home) = std::env::var_os(CHILD_HOME) else {
+        let fixture = home();
+        let marker = fixture.path().join("parked-ready");
+        let output = std::fs::File::create(fixture.path().join("child.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "environment::tests::creation::activation_parks_the_real_claimed_run_after_target_binding", "--nocapture"])
+            .env(CHILD_HOME, fixture.path())
+            .stdin(std::process::Stdio::piped()).stdout(output)
+            .spawn_owned().unwrap();
+        let pid = child.id();
+        let until = Instant::now() + Duration::from_secs(30);
+        while !marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let ready = marker.exists();
+        let state = root(fixture.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+        let stack = env("stack");
+        let gate_free = ready
+            && effigy_kernel::gate::Gate::acquire(
+                &ctx.cx,
+                &state,
+                std::slice::from_ref(&stack.resource),
+                Wait::FailFast,
+            )
+            .is_ok();
+        let refused = ready
+            && EnvRun::begin(&ctx, &stack, Operation::Down, Wait::FailFast)
+                .err()
+                .is_some_and(|error| {
+                    error
+                        .to_string()
+                        .contains("reserved by a workspace activation")
+                });
+        let alias = effigy_kernel::id::ResourceId::environment(
+            effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [8; 16]),
+            "stack",
+        )
+        .unwrap();
+        let task = TaskId::new(
+            stack.checkout,
+            "",
+            Surface::Published,
+            "container-down",
+            None,
+        )
+        .unwrap();
+        let invocation = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+            owner: alias,
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![stack.resource.clone()],
+            attachments: vec![],
+            class: effigy_kernel::ctx::EffectClass::Mutate,
+            placement: effigy_kernel::ctx::Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let options = effigy_kernel::run::BeginOpts {
+            id: effigy_kernel::id::RunId::new(1_760_000_000_000, [74; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            custody: None,
+            next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+                .unwrap(),
+        };
+        let alias_refused = ready
+            && effigy_kernel::run::Run::begin(
+                &ctx.cx,
+                &state,
+                &invocation,
+                options,
+                &ctx.cleanup().unwrap(),
+                &mut EnvSettlement,
+            )
+            .err()
+            .is_some_and(|error| {
+                error
+                    .to_string()
+                    .contains("reserved by a workspace activation")
+            });
+        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("reservation reader unavailable: {other:?}"),
+        };
+        let original =
+            match effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(
+                &reader,
+                &stack.resource,
+            ) {
+                Observed::Verified(Some(reservation), _) => reservation,
+                other => panic!("reservation unavailable: {other:?}"),
+            };
+        let original_plan = original
+            .plan(&reader)
+            .verified()
+            .cloned()
+            .flatten()
+            .unwrap();
+        let inputs = original.inputs().unwrap().clone();
+        drop(reader);
+        let task = TaskId::new(stack.checkout, "", Surface::Published, "workspace", None).unwrap();
+        let contender = effigy_kernel::id::ResolvedInvocation::new(InvocationSpec {
+            owner: task.resource(),
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: String::new(),
+            target: ExecutionTarget::Host,
+            env: BTreeMap::new(),
+            gates: vec![],
+            attachments: vec![],
+            class: effigy_kernel::ctx::EffectClass::Mutate,
+            placement: effigy_kernel::ctx::Placement::Host,
+            provenance: BTreeMap::new(),
+        })
+        .unwrap();
+        let options = effigy_kernel::run::BeginOpts {
+            id: effigy_kernel::id::RunId::new(1_760_000_000_000, [75; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            custody: None,
+            next: effigy_kernel::outcome::Invocation::validated(vec!["recover".into()], |_| true)
+                .unwrap(),
+        };
+        let workspace_refused = super::super::WorkspaceActivation::begin(
+            &ctx,
+            &stack,
+            &inputs,
+            &contender,
+            options,
+            "competing-supervisor",
+        )
+        .err()
+        .is_some_and(|error| {
+            error
+                .to_string()
+                .contains("competing attempt or untagged reservation")
+        });
+        let reader = match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("reservation reader unavailable after competitor: {other:?}"),
+        };
+        let survivor =
+            match effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(
+                &reader,
+                &stack.resource,
+            ) {
+                Observed::Verified(Some(reservation), _) => reservation,
+                other => panic!("reservation missing after competitor: {other:?}"),
+            };
+        let preserved = survivor.id() == original.id()
+            && survivor.state()
+                == effigy_kernel::workspace_session::ActivationReservationState::Reserved
+            && survivor.plan(&reader).verified().cloned().flatten() == Some(original_plan);
+        drop(reader);
+        if ready {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"settle\n")
+                .unwrap();
+        }
+        let settled_marker = fixture.path().join("settled-ready");
+        let until = Instant::now() + Duration::from_secs(30);
+        while ready && !settled_marker.exists() && Instant::now() < until {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let settled_live = settled_marker.exists() && child.try_wait().unwrap().is_none();
+        let cancelled = if settled_live {
+            match effigy_kernel::store::Store::read(&ctx.observe(), &state) {
+                Observed::Verified(reader, _) => matches!(
+                    effigy_kernel::workspace_session::WorkspaceActivationReservation::recover(&reader, &stack.resource),
+                    Observed::Verified(Some(reservation), _) if reservation.state() == effigy_kernel::workspace_session::ActivationReservationState::Cancelled
+                ),
+                _ => false,
+            }
+        } else {
+            false
+        };
+        drop(child.stdin.take());
+        let exit = child.wait().expect("reap exact child");
+        assert!(ready, "child {pid} did not park");
+        assert!(gate_free, "parked activation released Env");
+        assert!(refused, "ordinary competing admission refuses");
+        assert!(alias_refused, "alias competing admission refuses");
+        assert!(
+            workspace_refused,
+            "competing workspace staging refuses by name"
+        );
+        assert!(
+            preserved,
+            "the competing attempt cannot cancel or replace the original session"
+        );
+        assert!(settled_live, "same child remains alive after settlement");
+        assert!(
+            cancelled,
+            "exact reservation was cancelled before child exit"
+        );
+        assert!(exit.success(), "child {pid} failed: {exit}");
+        return;
+    };
+    let state = root(std::path::Path::new(&child_home));
+    let ctx = EnvContext::new(&state, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let (parked, mut fake) = parked_activation_fixture(&ctx, &stack);
+    let session = parked.session().clone();
+    assert_eq!(parked.session(), &session);
+    let foreign_fixture = home();
+    let foreign_root = root(foreign_fixture.path());
+    let foreign_ctx = EnvContext::new(&foreign_root, CancelToken::default()).unwrap();
+    let (_, custody) = parked
+        .abort(&foreign_ctx, Wait::FailFast)
+        .expect_err("foreign root refuses");
+    let super::super::ParkedAbortCustody::Activation(parked) = *custody else {
+        panic!("foreign root must retain the parked activation")
+    };
+    let gate = effigy_kernel::gate::Gate::acquire(
+        &ctx.cx,
+        &state,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast,
+    )
+    .expect("Env is free");
+    drop(gate);
+    std::fs::write(
+        std::path::Path::new(&child_home).join("parked-ready"),
+        b"ready",
+    )
+    .unwrap();
+    let mut input = String::new();
+    let _ = std::io::stdin().read_line(&mut input);
+    let original_context = fake.selection.context.clone();
+    fake.selection.context = "foreign-context".into();
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("wrong backend must refuse before observation")
+        })
+        .expect_err("wrong backend retains custody");
+    assert!(error.to_string().contains("backend differs"));
+    fake.selection.context = original_context;
+    let mut parked = parked
+        .repark_for_cleanup()
+        .expect("release Env for integration cleanup");
+    let step = effigy_kernel::run::WorkspaceIntegrationStep::Routes;
+    parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Attempted,
+        )
+        .unwrap();
+    assert_eq!(
+        parked.integration_snapshot().unwrap().get(&step),
+        Some(&effigy_kernel::run::WorkspaceIntegrationState::Attempted)
+    );
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            panic!("unsettled step must refuse before observation")
+        })
+        .expect_err("attempted integration cannot resume activation");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let (error, custody) = parked
+        .abort(&ctx, Wait::FailFast)
+        .expect_err("unsettled integrations retain both owners");
+    assert!(error
+        .to_string()
+        .contains("integration effects unsettled; re-run up"));
+    let super::super::ParkedAbortCustody::Activation(mut parked) = *custody else {
+        panic!("integration cleanup retains activation custody")
+    };
+    parked
+        .record_integration_step(
+            &ctx,
+            step,
+            effigy_kernel::run::WorkspaceIntegrationState::Cleared,
+        )
+        .unwrap();
+    assert!(parked.integration_snapshot().unwrap().is_empty());
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'a')]));
+    fake.inventories
+        .push_back(verified(vec![row(PRIMARY, 'b')]));
+    let (error, parked) = parked
+        .reacquire(&mut fake, |view, _, _| {
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect_err("changed inventory after observation retains custody");
+    assert!(error
+        .to_string()
+        .contains("project inventory changed after apply"));
+    for _ in 0..4 {
+        fake.inventories
+            .push_back(verified(vec![row(PRIMARY, 'a')]));
+    }
+    let (error, parked) = parked
+        .reacquire(&mut fake, |_, _, _| {
+            Observed::Unknown(UnknownReason::Injected)
+        })
+        .expect_err("unknown reobservation retains custody");
+    assert!(error.to_string().contains("observation is unknown"));
+    assert!(effigy_kernel::gate::Gate::acquire(
+        &ctx.cx,
+        &state,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast
+    )
+    .is_err());
+    let activation = parked
+        .reacquire(&mut fake, |view, _, _| {
+            // Structural fixture only: production builds fresh target/platform
+            // observations rather than treating the expected view as evidence.
+            Observed::Verified(view.facts().clone(), evidence())
+        })
+        .expect("guarded owner resumes after fixture reobservation");
+    assert_eq!(activation.session(), &session);
+    activation
+        .abort(&ctx, Wait::FailFast)
+        .expect("resumed owners settle and cancel");
+    std::fs::write(
+        std::path::Path::new(&child_home).join("settled-ready"),
+        b"ready",
+    )
+    .unwrap();
+    input.clear();
+    let _ = std::io::stdin().read_line(&mut input);
 }
 
 #[test]

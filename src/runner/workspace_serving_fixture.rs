@@ -308,6 +308,7 @@ pub fn probe_authority(
     write_answer(
         &mut transport,
         &Frame::Hello(Hello {
+            capabilities: Vec::new(),
             schema: SCHEMA.to_owned(),
             protocol_versions: vec![PROTOCOL_V1],
             effigy_version: "fixture".to_owned(),
@@ -344,6 +345,8 @@ pub fn probe_authority(
             vm_boot_id: "fixture".to_owned(),
             body: effigy_kernel::workspace_channel::RequestBody::Observe(
                 effigy_kernel::workspace_channel::ObserveBody {
+                    query: None,
+                    run_id: None,
                     op: crate::runner::workspace_client::serving_fixture::PROBE_OPERATION
                         .to_owned(),
                     target: Some(effigy_kernel::workspace_channel::Target::Host),
@@ -398,6 +401,7 @@ fn unissued_is_refused(
     write_answer(
         &mut transport,
         &Frame::Hello(Hello {
+            capabilities: Vec::new(),
             schema: SCHEMA.to_owned(),
             protocol_versions: vec![PROTOCOL_V1],
             effigy_version: "fixture".to_owned(),
@@ -562,4 +566,232 @@ fn read_answer_within(
             Err(_) => return Ok(None),
         }
     }
+}
+
+/// A test front end that keeps its original owning pipe after a startup
+/// refusal. It lets the proof inspect retained cleanup custody and then send
+/// an explicit stop to that exact supervisor, without creating another owner.
+#[derive(Debug)]
+pub struct RefusedHostProbe {
+    host: super::workspace_client::serving_host::ServingHost,
+    effect: effigy_kernel::ctx::EffectContext,
+}
+
+impl RefusedHostProbe {
+    pub fn run(&self) -> effigy_kernel::id::RunId {
+        self.host.run()
+    }
+
+    pub fn await_refusal(&mut self) -> Result<String, String> {
+        match self
+            .host
+            .await_serving(&self.effect, Duration::from_secs(30))
+        {
+            Err(error) => Ok(error.to_string()),
+            Ok(_) => Err("the cleanup refusal unexpectedly announced Serving".into()),
+        }
+    }
+
+    pub fn stop(self) -> Result<(), String> {
+        self.host
+            .stop(&self.effect)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub fn start_refused_host_probe(
+    request_json: &str,
+    executable_path: &std::path::Path,
+) -> Result<RefusedHostProbe, String> {
+    let request: ServingHostRequest = serde_json::from_str(request_json)
+        .map_err(|_| "the cleanup probe request is unreadable".to_owned())?;
+    let effect = task_engine::effect_context(OpenReason::DevServer);
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&request.project_path),
+    };
+    let root = StateRoot::checkout_effects(&effect, &request.state_home, &location)
+        .map_err(|error| error.to_string())?;
+    let executable = effigy_kernel::supervise::Executable::capture(executable_path)
+        .map_err(|error| error.to_string())?;
+    let host = serving_host::start(&effect, &root, &request, &executable)
+        .map_err(|error| error.to_string())?;
+    Ok(RefusedHostProbe { host, effect })
+}
+
+/// A third process's answer from the actual production dispatcher. No
+/// credential or capability is returned, printed or placed in process argv.
+#[derive(Debug, serde::Serialize)]
+pub struct ProductionAuthorityProbe {
+    pub response: serde_json::Value,
+    pub refused_unissued: bool,
+    pub wrong_pin_refused: bool,
+    pub no_credential_echo: bool,
+}
+
+/// Read the fixture's private representation of guest files, enrol through the
+/// real grant book, reconnect with that issued capability, and Observe. This
+/// process owns no session/run/lease and cannot manufacture an authority fact.
+pub fn probe_production_guest(
+    guest_files: &std::path::Path,
+    public_output: &str,
+) -> Result<ProductionAuthorityProbe, String> {
+    use effigy_kernel::id::{Digest, Generation, RunId};
+    use effigy_kernel::workspace_channel::{self as wire, Frame, Hello, Secret};
+    use effigy_kernel::workspace_session::WorkspaceContextDocument;
+    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_json::from_slice(
+        &std::fs::read(guest_files).map_err(|_| "fixture guest files unavailable")?,
+    )
+    .map_err(|_| "fixture guest files invalid")?;
+    let document = files
+        .values()
+        .filter_map(|bytes| serde_json::from_slice::<WorkspaceContextDocument>(bytes).ok())
+        .find(|document| {
+            document.schema == effigy_kernel::workspace_session::WORKSPACE_CONTEXT_SCHEMA
+        })
+        .ok_or("published guest document absent")?;
+    let credential_file = files
+        .get(&document.credential.path)
+        .ok_or("guest credential absent")?;
+    if Digest::of(credential_file).hex() != document.credential.digest {
+        return Err("guest credential bytes differ from published digest".into());
+    }
+    let credential = std::str::from_utf8(credential_file)
+        .map_err(|_| "guest credential invalid")?
+        .lines()
+        .find_map(|line| line.strip_prefix("credential="))
+        .ok_or("guest credential value absent")?;
+    let secret = Secret::parse(credential).map_err(|_| "guest credential secret invalid")?;
+    let capability_bytes = [0x57u8; 32];
+    let capability = Secret::new(capability_bytes);
+    let session: RunId = document
+        .session
+        .run_id
+        .parse()
+        .map_err(|_| "session ID invalid")?;
+    let port: u16 = document
+        .locator
+        .endpoint
+        .strip_prefix("effigy-host:")
+        .ok_or("locator invalid")?
+        .parse()
+        .map_err(|_| "locator port invalid")?;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let pin = document
+        .locator
+        .pin
+        .strip_prefix("sha256:")
+        .and_then(Digest::parse_hex)
+        .ok_or("locator pin invalid")?;
+    let binary = document
+        .artifact_digest
+        .strip_prefix("sha256:")
+        .and_then(Digest::parse_hex)
+        .ok_or("binary digest invalid")?;
+    let hello = || {
+        Frame::Hello(Hello {
+            capabilities: Vec::new(),
+            schema: wire::SCHEMA.into(),
+            protocol_versions: vec![wire::PROTOCOL_V1],
+            effigy_version: document.version.clone(),
+            binary_digest: binary.clone(),
+            context_generation: Generation::new(document.context_generation),
+            session_run_id: session,
+        })
+    };
+    let connect = || -> Result<crate::runner::workspace_transport::TlsChannelTransport, String> {
+        let mut transport = crate::runner::workspace_transport::TlsChannelTransport::connect(
+            address,
+            pin.clone(),
+            Duration::from_secs(5),
+        )
+        .map_err(|_| "production listener pinned TLS connection refused")?;
+        write_answer(&mut transport, &hello())?;
+        if !matches!(
+            read_answer_within(&mut transport, Duration::from_secs(5))?,
+            Some(Frame::HelloOk(_))
+        ) {
+            return Err("production listener negotiation refused".into());
+        }
+        Ok(transport)
+    };
+    let request = |id| {
+        Frame::Request(wire::Request {
+            id,
+            context_generation: Generation::new(document.context_generation),
+            environment_generation: Generation::new(document.environment_generation),
+            session_run_id: session,
+            container_id: document.container_id.clone(),
+            vm_boot_id: document.vm_boot_id.clone(),
+            body: wire::RequestBody::Observe(wire::ObserveBody {
+                query: None,
+                run_id: None,
+                op: "runs:list".into(),
+                target: Some(wire::Target::Host),
+            }),
+        })
+    };
+    // Enrolment executes no operation. Its next request proves that the host
+    // really issued this client-chosen capability, with no secret echo.
+    let mut enrolled = connect()?;
+    write_answer(
+        &mut enrolled,
+        &Frame::Enrol(wire::EnrolRequest {
+            credential: secret,
+            capability: capability_bytes,
+            session_run_id: session,
+            session_generation: Generation::new(document.session.generation),
+            environment_generation: Generation::new(document.environment_generation),
+            container_id: document.container_id.clone(),
+            vm_boot_id: document.vm_boot_id.clone(),
+        }),
+    )?;
+    let enrol_request = effigy_kernel::run::RequestId::new([0x45; 16]);
+    write_answer(&mut enrolled, &request(enrol_request))?;
+    if !matches!(read_answer_within(&mut enrolled,Duration::from_secs(10))?, Some(Frame::Response(ref response))
+        if response.id == enrol_request && matches!(response.outcome, wire::ResponseOutcome::Observed(_)))
+    {
+        return Err("issued capability did not answer enrolment control request".into());
+    }
+    drop(enrolled);
+    // A new connection must authenticate against the retained grant book.
+    let mut issued = connect()?;
+    write_answer(&mut issued, &Frame::Authenticate(capability))?;
+    let id = effigy_kernel::run::RequestId::new([0x46; 16]);
+    write_answer(&mut issued, &request(id))?;
+    let response = match read_answer_within(&mut issued, Duration::from_secs(10))? {
+        Some(Frame::Response(response)) if response.id == id => match response.outcome {
+            wire::ResponseOutcome::Observed(value) => value,
+            _ => return Err("issued capability Observe returned another outcome".into()),
+        },
+        _ => return Err("issued capability Observe did not return this request's response".into()),
+    };
+    drop(issued);
+    let mut unissued = connect()?;
+    write_answer(&mut unissued, &Frame::Authenticate(Secret::new([0x00; 32])))?;
+    let refused_unissued = matches!(
+        read_answer_within(&mut unissued, Duration::from_secs(5))?,
+        Some(Frame::Refuse(_))
+    );
+    drop(unissued);
+    // The transport cannot be constructed until pin and TLS signature verify;
+    // no application frame or credential is handed to this failing connection.
+    let wrong_pin_refused = crate::runner::workspace_transport::TlsChannelTransport::connect(
+        address,
+        Digest([0; 32]),
+        Duration::from_secs(5),
+    )
+    .is_err();
+    let capability_text = "57".repeat(32);
+    let body = response.to_string();
+    let no_credential_echo = !public_output.contains(credential)
+        && !public_output.contains(&capability_text)
+        && !body.contains(credential)
+        && !body.contains(&capability_text);
+    Ok(ProductionAuthorityProbe {
+        response,
+        refused_unissued,
+        wrong_pin_refused,
+        no_credential_echo,
+    })
 }

@@ -29,6 +29,369 @@ fn cx() -> EffectContext {
 fn id() -> RunId {
     RunId::new(1, [3; 10]).unwrap()
 }
+
+#[test]
+fn unknown_process_without_receipt_is_not_settled_as_released() {
+    let effect = Effect {
+        sequence: 1,
+        spec: EffectSpec {
+            target: Fence {
+                resource: inv().spec().owner.clone(),
+                generation: Generation::new(1),
+            },
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: EffectState::Unknown,
+        receipt: None,
+        reason: Some("partial fork ownership unavailable".into()),
+    };
+    let cleanup = cx().operation().cleanup(Duration::from_secs(5)).unwrap();
+    let (state, reason) = settle_effect(&effect, None, &cleanup, || false);
+    assert!(!state.terminal(), "unknown custody must remain unresolved");
+    assert!(reason.is_some(), "unresolved custody needs a reason");
+}
+
+#[test]
+fn receiptless_process_residue_stays_unsettled_on_retry() {
+    let effect = Effect {
+        sequence: 1,
+        spec: EffectSpec {
+            target: Fence {
+                resource: inv().spec().owner.clone(),
+                generation: Generation::new(1),
+            },
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        },
+        state: EffectState::Residue,
+        receipt: None,
+        reason: Some("unknown process custody has no receipt".into()),
+    };
+    let cleanup = cx().operation().cleanup(Duration::from_secs(5)).unwrap();
+    let (state, reason) = settle_effect(&effect, None, &cleanup, || false);
+    assert!(!state.terminal(), "retry must preserve unresolved custody");
+    assert!(reason.is_some(), "unresolved custody needs a reason");
+}
+
+#[test]
+fn workspace_partial_fork_marker_is_durable_and_legacy_unreadable() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut invocation = inv().spec().clone();
+    invocation.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "partial-marker",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(invocation).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    let ticket = run
+        .intend_process(EffectSpec {
+            target: run.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    run.mark_workspace_partial_fork(&ticket).unwrap();
+    let effect = run.effects().unwrap().pop().unwrap();
+    drop(run);
+    assert_eq!(effect.state, EffectState::Unknown);
+    let marker = effect
+        .receipt
+        .expect("partial fork requires a durable marker");
+    assert!(serde_json::from_value::<ProcessRecord>(marker.clone()).is_err());
+    assert!(serde_json::from_value::<StoredProcessRecord>(marker).is_err());
+}
+
+#[test]
+fn workspace_partial_marker_can_be_replaced_by_a_callback() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut invocation = inv().spec().clone();
+    invocation.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "marker-callback",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(invocation).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    let ticket = run
+        .intend_process(EffectSpec {
+            target: run.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    run.mark_workspace_partial_fork(&ticket).unwrap();
+    // This opaque value exercises journal replacement only; it is not a
+    // process receipt and grants no process or signal capability.
+    let replacement = serde_json::json!({ "test_only": "replacement" });
+    run.applied(&ticket, replacement.clone()).unwrap();
+    let effect = run.effects().unwrap().pop().unwrap();
+    drop(run);
+    assert_eq!(effect.state, EffectState::Applied);
+    assert_eq!(effect.receipt, Some(replacement));
+}
+
+#[test]
+fn workspace_partial_marker_ambiguous_commit_keeps_owner_gate() {
+    struct ClearFault;
+    impl Drop for ClearFault {
+        fn drop(&mut self) {
+            crate::fault::arm(None);
+        }
+    }
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut invocation = inv().spec().clone();
+    invocation.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "marker-ambiguous",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(invocation).unwrap();
+    let options = |run_id| BeginOpts {
+        id: run_id,
+        wait: crate::gate::Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: None,
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(id()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    let ticket = run
+        .intend_process(EffectSpec {
+            target: run.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    let _clear = ClearFault;
+    crate::fault::arm_point(
+        crate::fault::Point::AppliedAfter,
+        crate::fault::Fault::Enospc,
+    );
+    let result = run.mark_workspace_partial_fork(&ticket);
+    crate::fault::arm(None);
+    let effect = run.effects().unwrap().pop().unwrap();
+    let other = RunId::new(1, [4; 10]).unwrap();
+    let competing = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        options(other),
+        &cleanup,
+        &mut Strict,
+    );
+    assert!(result.is_err());
+    assert_eq!(effect.state, EffectState::Unknown);
+    assert!(effect.receipt.is_some());
+    assert!(
+        competing.is_err(),
+        "the original owner must retain its gate"
+    );
+}
+
+#[test]
+fn workspace_partial_marker_refuses_another_live_target() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let invocation = |name| {
+        let mut spec = inv().spec().clone();
+        spec.owner =
+            ResourceId::environment(CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]), name)
+                .unwrap();
+        ResolvedInvocation::new(spec).unwrap()
+    };
+    let options = |run_id| BeginOpts {
+        id: run_id,
+        wait: crate::gate::Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: None,
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut owner = Run::begin(
+        &cx,
+        &root,
+        &invocation("marker-owner"),
+        options(id()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    let other = Run::begin(
+        &cx,
+        &root,
+        &invocation("marker-other"),
+        options(RunId::new(1, [4; 10]).unwrap()),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    let ticket = owner
+        .intend_process(EffectSpec {
+            target: other.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    let result = owner.mark_workspace_partial_fork(&ticket);
+    let effect = owner.effects().unwrap().pop().unwrap();
+    assert!(result.is_err(), "a different live target must be refused");
+    assert_eq!(effect.state, EffectState::Intended);
+    assert!(effect.receipt.is_none());
+}
+
+#[test]
+fn discard_receipt_is_not_accepted_by_the_legacy_reader() {
+    let record = ProcessRecord {
+        process: ProcessReceipt {
+            identity: fixture_identity(std::process::id()),
+            pgid: std::process::id(),
+            nonce: "test".into(),
+            grace_millis: 10,
+        },
+        anchor: None,
+    };
+    let encoded = serde_json::to_value(StoredProcessRecord::Discard { discard_v1: record })
+        .expect("encode discard receipt");
+    assert!(serde_json::from_value::<ProcessRecord>(encoded.clone()).is_err());
+    assert!(matches!(
+        serde_json::from_value::<StoredProcessRecord>(encoded),
+        Ok(StoredProcessRecord::Discard { .. })
+    ));
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied older Effigy executable"]
+fn discard_old_sentinel_refuses_before_child_exec() {
+    let old_binary =
+        std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY").expect("name the older Effigy executable");
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut spec = inv().spec().clone();
+    spec.owner = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "workspace-proof",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: crate::outcome::Invocation::validated(
+                vec!["effigy".into(), "container".into(), "down".into()],
+                |_| true,
+            )
+            .unwrap(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(Path::new(&old_binary)).unwrap(),
+                placement: crate::supervise::Placement::Inline,
+            }),
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .expect("old sentinel accepts the ordinary run");
+    let marker = home.path().join("discard-executed");
+    let result = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "touch \"$MARKER\"".into()],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "MARKER".into(),
+                EnvValue::Plain(marker.as_os_str().to_owned()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Discard,
+            label: "workspace apply".into(),
+        },
+        &cx,
+    );
+    let refused = result.is_err();
+    drop(result);
+    let process_effect_recorded = run
+        .effects()
+        .unwrap()
+        .iter()
+        .any(|effect| effect.spec.kind == KIND);
+    let cleanup = run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    );
+    assert!(refused, "an old sentinel accepted a discard receipt");
+    assert!(
+        !process_effect_recorded,
+        "capability refusal must precede process intent"
+    );
+    assert!(
+        !marker.exists(),
+        "the child ran without a compatible sentinel"
+    );
+    assert!(cleanup.is_ok(), "cleanup failed: {cleanup:?}");
+}
 fn next() -> crate::outcome::Invocation {
     crate::outcome::Invocation::validated(vec!["recover".into()], |a| a == ["recover"]).unwrap()
 }
@@ -116,6 +479,242 @@ fn wait(mut yes: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+#[test]
+fn membership_row_keeps_both_vanish_stages_unproven() {
+    use super::platform::{membership_row, MembershipRow};
+    let pid = 42;
+    let absent = || Observed::Absent(AbsenceProof::NoSuchProcess { pid });
+    assert_eq!(
+        membership_row(pid, absent(), || panic!("identity read after absence")).unwrap(),
+        MembershipRow::Unproven(pid)
+    );
+    assert_eq!(
+        membership_row(
+            pid,
+            Observed::Verified(crate::ident::ProcessState::Active, evidence()),
+            || Observed::Absent(AbsenceProof::NoSuchProcess { pid })
+        )
+        .unwrap(),
+        MembershipRow::Unproven(pid)
+    );
+    assert_eq!(
+        membership_row(
+            pid,
+            Observed::Verified(crate::ident::ProcessState::Zombie, evidence()),
+            || panic!("identity read after zombie")
+        )
+        .unwrap(),
+        MembershipRow::NotLive(pid)
+    );
+}
+/// Closure classification keeps an unresolved row out of closure, and exclusion is
+/// incarnation-exact: the accounted generation is skipped, a recycled pid is a
+/// member again, and a vanished row is never absence (effigy#520).
+#[test]
+fn group_closure_round_refuses_unresolved_rows() {
+    use super::platform::{classify_round, MembershipRow as Row, RoundVerdict};
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    let accounted: Vec<&crate::ident::ProcessIdentity> = vec![&identity];
+    let mut member = identity.clone();
+    member.pid += 1;
+    let member_pid = member.pid;
+
+    assert_eq!(
+        classify_round(&[Row::Live(member.clone())], &accounted),
+        RoundVerdict::Live,
+        "a live member is not closure"
+    );
+    assert_eq!(
+        classify_round(&[Row::Live(identity.clone())], &accounted),
+        RoundVerdict::Empty,
+        "the accounted incarnation is excluded by its generation"
+    );
+    assert_eq!(
+        classify_round(&[Row::NotLive(member_pid)], &accounted),
+        RoundVerdict::Empty,
+        "a zombie is positively not live"
+    );
+    // The fork race: live at the state read, unreadable afterwards.
+    assert_eq!(
+        classify_round(&[Row::Unproven(member_pid)], &accounted),
+        RoundVerdict::Unproven
+    );
+    assert_eq!(
+        classify_round(&[Row::Unproven(identity.pid)], &accounted),
+        RoundVerdict::Empty,
+        "the accounted incarnation covers its own unresolved row"
+    );
+    // A recycled pid carries a different generation, so exclusion by number alone
+    // would have hidden a member.
+    let mut recycled = identity.clone();
+    recycled.start = match identity.start {
+        crate::ident::ProcessStartIdentity::LinuxTicks(ticks) => {
+            crate::ident::ProcessStartIdentity::LinuxTicks(ticks + 1)
+        }
+        crate::ident::ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds,
+        } => crate::ident::ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds: microseconds + 1,
+        },
+    };
+    assert_eq!(
+        classify_round(&[Row::Live(recycled)], &accounted),
+        RoundVerdict::Live,
+        "an accounted pid reused by another incarnation is not excluded"
+    );
+    assert_eq!(
+        classify_round(
+            &[Row::Live(member), Row::Unproven(member_pid + 1)],
+            &accounted
+        ),
+        RoundVerdict::Live,
+        "a live member outranks an unresolved row"
+    );
+}
+
+/// Group authority comes only from a leader whose live generation matches the
+/// receipt: an absent, unreadable or mismatched leader never yields a group
+/// signal, and no signal reaches a process that is not in the recorded group
+/// (effigy#520). Deterministic: the process table is the injected fake.
+#[test]
+fn recovery_never_group_signals_without_a_verified_live_leader() {
+    #[derive(Debug)]
+    struct Table {
+        leader: Observed<ProcessIdentity>,
+        members: Vec<Member>,
+        signals: Vec<SignalDelivered>,
+    }
+    impl ProcessTable for Table {
+        fn leader(&mut self, _: &ProcessReceipt) -> Observed<ProcessIdentity> {
+            self.leader.clone()
+        }
+        fn members(&mut self, _: u32) -> Observed<Vec<Member>> {
+            Observed::Verified(self.members.clone(), evidence())
+        }
+        fn present(&mut self, _: &ProcessIdentity) -> Observed<bool> {
+            Observed::Verified(true, evidence())
+        }
+        fn signal_leader(&mut self, r: &ProcessReceipt, s: i32) -> Observed<SignalDelivered> {
+            let sent = SignalDelivered {
+                pid: r.pgid,
+                group: true,
+                signal: s,
+            };
+            self.signals.push(sent.clone());
+            self.members.clear();
+            // The signal retired the leader: the next observation sees it gone,
+            // so the loop reaches closure instead of signalling again.
+            self.leader = Observed::Absent(AbsenceProof::NoSuchProcess {
+                pid: r.identity.pid,
+            });
+            Observed::Verified(sent, evidence())
+        }
+        fn signal_member(
+            &mut self,
+            m: &Member,
+            _: &ProcessReceipt,
+            s: i32,
+        ) -> Observed<SignalDelivered> {
+            let sent = SignalDelivered {
+                pid: m.identity.pid,
+                group: false,
+                signal: s,
+            };
+            self.signals.push(sent.clone());
+            Observed::Verified(sent, evidence())
+        }
+    }
+    let identity = crate::ident::process_identity(std::process::id())
+        .verified()
+        .cloned()
+        .unwrap();
+    // A process outside the group whose pid sits where a recycled number would.
+    let unrelated = identity.pid + 1;
+    let receipt = ProcessReceipt {
+        pgid: identity.pid,
+        identity: identity.clone(),
+        nonce: "run:effect".into(),
+        grace_millis: 0,
+    };
+    let member = Member {
+        identity: {
+            let mut other = identity.clone();
+            other.pid += 2;
+            other
+        },
+        nonce: Observed::Verified("run:effect".into(), evidence()),
+    };
+    // Each case runs against the injected table; the table records every signal,
+    // so "no foreign signal" is an assertion about the record, not a hope.
+    let run = |label: &str, leader: Observed<ProcessIdentity>| {
+        // A fresh bounded cleanup per case: one spent budget must never stand in
+        // for an observation in the next case.
+        let cleanup = cx().operation().cleanup(Duration::from_millis(80)).unwrap();
+        let mut table = Table {
+            leader,
+            members: vec![member.clone()],
+            signals: Vec::new(),
+        };
+        let result = platform::recover_with(&mut table, &receipt, &cleanup, &mut || false);
+        let group_signals: Vec<_> = table.signals.iter().filter(|s| s.group).collect();
+        assert!(
+            table.signals.iter().all(|signal| signal.pid != unrelated),
+            "{label}: a process outside the group was signalled: {:?}",
+            table.signals
+        );
+        (result, group_signals.len())
+    };
+
+    // Leader absent, no anchor: no group signal, and closure is never claimed.
+    let (result, group_signals) = run(
+        "leader absent",
+        Observed::Absent(AbsenceProof::NoSuchProcess { pid: identity.pid }),
+    );
+    assert_eq!(group_signals, 0, "leader absent: {result:?}");
+    assert!(
+        !matches!(result, Observed::Verified(..)),
+        "leader absent: closure must not be claimed without leader evidence"
+    );
+
+    // Leader unreadable: no group signal, fail closed.
+    let (result, group_signals) = run(
+        "leader unreadable",
+        Observed::Unknown(unknown("process table unreadable")),
+    );
+    assert_eq!(group_signals, 0, "leader unreadable: {result:?}");
+    assert!(matches!(result, Observed::Unknown(_)), "{result:?}");
+
+    // Leader replaced by another generation: no group signal.
+    let replaced = {
+        let mut other = identity.clone();
+        other.pid += 3;
+        Observed::Verified(other, evidence())
+    };
+    let (result, group_signals) = run("leader replaced", replaced);
+    assert_eq!(group_signals, 0, "leader replaced: {result:?}");
+    assert!(
+        !matches!(result, Observed::Verified(..)),
+        "leader replaced: closure must not be claimed"
+    );
+
+    // Leader live with the recorded generation: group authority, one member
+    // inventory retires the group and closure is reported.
+    let (result, group_signals) = run(
+        "leader verified",
+        Observed::Verified(identity.clone(), evidence()),
+    );
+    assert!(group_signals >= 1, "leader verified: {result:?}");
+    assert!(
+        matches!(result, Observed::Verified(..) | Observed::Absent(_)),
+        "leader verified: {result:?}"
+    );
+}
+
 #[test]
 fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
     #[derive(Debug)]
@@ -487,6 +1086,61 @@ fn journal_writes_are_owned_by_run_not_supervision_or_custody() {
 }
 
 #[test]
+#[ignore = "requires verified discard helper capability"]
+fn discard_child_output_never_reaches_capture() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf '%s' \"$TOKEN\"; printf '%s' \"$TOKEN\" >&2".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Plain("private-discard-test".into()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Discard,
+            label: "workspace apply".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert!(report.group.verified().is_some(), "{report:?}");
+    assert!(child.tail().is_empty());
+    fn assert_absent(dir: &Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                assert_absent(&entry.path());
+            } else if kind.is_file() {
+                let bytes = std::fs::read(entry.path()).unwrap();
+                assert!(!bytes
+                    .windows(b"private-discard-test".len())
+                    .any(|part| { part == b"private-discard-test" }));
+            }
+        }
+    }
+    assert_absent(home.path());
+}
+
+#[test]
 fn kernel_nonce_is_observed_from_real_spawn_environment() {
     let home = home();
     let cx = cx();
@@ -645,7 +1299,7 @@ fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
         Run::begin(&cx, &root, &invocation, options(11), &cleanup, &mut Strict).unwrap();
     let path = home.path().join("app.log");
     let raw = b"\x1b[31mlegacy-owner-secret\n";
-    std::fs::write(&path, raw).unwrap();
+    effigy_test_support::write_private(&path, raw).unwrap();
     assert!(Run::begin(&cx, &root, &invocation, options(12), &cleanup, &mut Strict).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), raw);
     assert!(MergedLog::identity(&path).is_err());
@@ -907,7 +1561,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         }
         wait(|| {
             matches!(
-                platform::group_closed(r.pgid, None),
+                platform::group_closed(r.pgid, &[]),
                 Observed::Verified(..) | Observed::Absent(_)
             )
         });
@@ -1031,6 +1685,83 @@ fn anchor_verifier_cells_refuse_unproven_state_and_never_signal() {
     );
 }
 
+/// The fixture fix raises the fixture home's mode; it never relaxes the kernel's
+/// refusal. `Trust::Operator` still refuses a group- or other-writable directory
+/// (the r6 Linux failure) while accepting a group-readable, group-non-writable
+/// one, and `Trust::Private` stays stricter still (effigy#520).
+#[test]
+fn operator_trust_refuses_a_group_writable_directory_and_still_accepts_group_read() {
+    let home = home();
+    let directory = home.path().join("checked");
+    std::fs::create_dir(&directory).unwrap();
+    let set = |mode: u32| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    set(0o775);
+    let refused = crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).unwrap_err();
+    assert!(refused.is_open_mode(), "{refused:?}");
+    set(0o750);
+    assert!(
+        crate::fs::DirFd::walk(&directory, crate::fs::Trust::Operator).is_ok(),
+        "group read without group write stays acceptable to operator trust"
+    );
+    assert!(
+        crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_err(),
+        "private trust still refuses any group bit"
+    );
+    set(0o700);
+    assert!(crate::fs::DirFd::walk(&directory, crate::fs::Trust::Private).is_ok());
+}
+
+/// File trust rules are unchanged by the fixture fix: operator trust tolerates a
+/// group-readable legacy log but refuses a group-writable one, and private trust
+/// refuses any group or other bit. A fixture that stands in for kernel state is
+/// written 0600, which is why the Linux umask no longer decides these tests
+/// (effigy#520).
+#[test]
+fn fixture_fix_keeps_file_trust_rules_exact() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = home();
+    let path = home.path().join("legacy.log");
+    let set =
+        |mode: u32| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    effigy_test_support::write_private(&path, b"legacy\n").unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "a private fixture file is 0600 whatever the umask"
+    );
+    let name = crate::fs::FileName::new("legacy.log").unwrap();
+    let open = |trust: crate::fs::Trust| {
+        crate::fs::DirFd::open(home.path())
+            .unwrap()
+            .open_file(&name, libc::O_RDONLY, None, trust)
+    };
+    for (mode, operator_ok, private_ok) in [
+        (0o600, true, true),
+        (0o644, true, false),
+        (0o664, false, false),
+        (0o640, true, false),
+    ] {
+        set(mode);
+        assert_eq!(
+            open(crate::fs::Trust::Operator).is_ok(),
+            operator_ok,
+            "operator trust on mode {mode:o}"
+        );
+        assert_eq!(
+            open(crate::fs::Trust::Private).is_ok(),
+            private_ok,
+            "private trust on mode {mode:o}"
+        );
+    }
+    set(0o664);
+    let refused = open(crate::fs::Trust::Operator).unwrap_err();
+    assert!(refused.is_open_mode(), "{refused:?}");
+    set(0o600);
+}
+
 /// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite
 /// lease. SIGTERM retires an idle anchor within a bounded grace, so a harness
 /// that stops its own tree never needs SIGKILL for custody evidence.
@@ -1084,6 +1815,154 @@ fn idle_anchor_exits_on_term_within_a_bounded_grace() {
             Observed::Verified(crate::ident::ProcessState::Active, _)
         ),
         "TERM retires the evidence, never the still-live workload"
+    );
+}
+
+/// An anchor is group evidence and nothing else. While any workload member is
+/// live it stays, and once its group has no live member it retires itself within
+/// a bounded deadline instead of waiting for an owner that may be gone. The only
+/// processes this proof signals are its own recorded fixtures.
+#[test]
+fn idle_anchor_retires_itself_once_its_group_closes_within_a_bounded_deadline() {
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), "/bin/sleep 40 & wait".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "anchor idle proof".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "anchor-idle", cx.operation(), &image, None, None).unwrap();
+    let leader = fixture_identity(child.pid);
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let mut fixture = AnchorFixture(vec![leader.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    let live = |identity: &ProcessIdentity| {
+        matches!(
+            crate::ident::process_state(identity.pid),
+            Observed::Verified(
+                crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
+    // The group the anchor itself pins is the only inventory this proof reads.
+    // The workload forks its `sleep` and keeps the anchor; all three are members.
+    let members = || platform::live_pids(child.pid).unwrap_or_default();
+    wait(|| {
+        members()
+            .iter()
+            .any(|pid| *pid != leader.pid && *pid != anchor.pid)
+    });
+    // Kill only the recorded leader. Its `sleep` descendant stays in the group,
+    // so the anchor must stay too: a missing leader alone is never closure.
+    assert!(platform::generation(&leader).verified().is_some());
+    platform::numeric(leader.pid, false, libc::SIGKILL);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        live(&anchor),
+        "a live workload member keeps the group's evidence"
+    );
+    // Now the last member: the anchor retires itself, with no signal to it.
+    let remaining: Vec<u32> = members()
+        .into_iter()
+        .filter(|pid| *pid != anchor.pid)
+        .collect();
+    let mut descendants = Vec::new();
+    for pid in remaining {
+        let identity = fixture_identity(pid);
+        fixture.0.push(identity.clone());
+        descendants.push(identity);
+    }
+    assert!(
+        !descendants.is_empty(),
+        "the descendant is the group's remaining member"
+    );
+    for identity in &descendants {
+        if platform::generation(identity).verified().is_some() {
+            platform::numeric(identity.pid, false, libc::SIGKILL);
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while live(&anchor) {
+        assert!(
+            Instant::now() < deadline,
+            "an anchor whose group closed must retire itself within a bounded deadline"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The whole eligible workload group is one session, its anchor included, so a
+/// nested task session or a harness census of its own session never has to
+/// account for a custody helper of a run it did not start. The routes that owe
+/// the caller's terminal keep the caller's session, where a lease can name them.
+#[test]
+fn an_eligible_custody_group_owns_its_session_and_its_anchor_shares_it() {
+    for (terminal, stdin_is_terminal, isolated) in [
+        (Terminal::None, false, true),
+        (Terminal::None, true, true),
+        (Terminal::Pipe, true, true),
+        (Terminal::Styled { pty: false }, true, true),
+        (Terminal::Styled { pty: true }, true, true),
+        (Terminal::Pty, false, true),
+        (Terminal::Foreground, true, false),
+        (Terminal::Foreground, false, false),
+        (Terminal::Inherit { capture: true }, true, false),
+        (Terminal::Inherit { capture: true }, false, true),
+        (Terminal::Inherit { capture: false }, false, true),
+    ] {
+        assert_eq!(
+            spawn::isolates_session(&terminal, stdin_is_terminal),
+            isolated,
+            "{terminal:?} with stdin terminal {stdin_is_terminal}"
+        );
+    }
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sleep".into(), "5".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(30)),
+        terminal: Terminal::None,
+        label: "anchor session proof".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "anchor-session", cx.operation(), &image, None, None).unwrap();
+    let leader = fixture_identity(child.pid);
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let _fixture = AnchorFixture(vec![leader.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    // SAFETY: getsid and getpgid only observe this proof's own recorded
+    // children, whose generations are held live by the fixture guard.
+    let (leader_session, anchor_session, anchor_group) = unsafe {
+        (
+            libc::getsid(leader.pid as i32),
+            libc::getsid(anchor.pid as i32),
+            libc::getpgid(anchor.pid as i32),
+        )
+    };
+    assert_eq!(
+        leader_session, leader.pid as i32,
+        "an eligible workload leader is its own session leader"
+    );
+    assert_eq!(
+        anchor_session, leader.pid as i32,
+        "the anchor lives in the workload's session"
+    );
+    assert_eq!(
+        anchor_group, leader.pid as i32,
+        "the anchor still joins the recorded group"
     );
 }
 

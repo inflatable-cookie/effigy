@@ -57,6 +57,16 @@ pub(in crate::runner) struct Started {
     pub(in crate::runner) root: effigy_kernel::root::StateRoot,
 }
 
+#[cfg(all(test, feature = "workspace-serving-fixture"))]
+thread_local! {
+    static RESERVED_HANDOFF_PRESENT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(test, feature = "workspace-serving-fixture"))]
+pub(in crate::runner) fn take_reserved_handoff_observation() -> Option<bool> {
+    RESERVED_HANDOFF_PRESENT.with(|observed| observed.take())
+}
+
 /// Spawns the run's detached supervisor and waits for its admission. A
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
@@ -94,6 +104,26 @@ pub(in crate::runner) fn start_reserved(
     invocation: &effigy_cli::TaskInvocation,
     cwd: PathBuf,
     admission: effigy_kernel::run::AdmissionTicket,
+    resolution: wire::WorkspaceResolution,
+) -> Result<Started, RunnerError> {
+    let executable = task_engine::startup_executable()?;
+    start_reserved_with_executable(
+        host_checkout,
+        invocation,
+        cwd,
+        admission,
+        Some(resolution),
+        &executable,
+    )
+}
+
+pub(in crate::runner) fn start_reserved_with_executable(
+    host_checkout: &Path,
+    invocation: &effigy_cli::TaskInvocation,
+    cwd: PathBuf,
+    admission: effigy_kernel::run::AdmissionTicket,
+    resolution: Option<wire::WorkspaceResolution>,
+    executable: &effigy_kernel::supervise::Executable,
 ) -> Result<Started, RunnerError> {
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
@@ -106,16 +136,19 @@ pub(in crate::runner) fn start_reserved(
         front: Front::Detached,
         state_home: home,
         terminal: None,
+        workspace_resolution: resolution,
     };
     let mut env: Vec<(OsString, OsString)> =
         crate::runner::secret_session::workload_ambient_environment()
             .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
             .collect();
-    if let Some(grant) = crate::runner::secret_session::take_child_grant() {
+    let grant = crate::runner::secret_session::take_child_grant();
+    #[cfg(all(test, feature = "workspace-serving-fixture"))]
+    RESERVED_HANDOFF_PRESENT.with(|observed| observed.set(Some(grant.is_some())));
+    if let Some(grant) = &grant {
         let (key, value) = grant.env_entry();
         env.push((OsString::from(key), OsString::from(value)));
     }
-    let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let root = task_engine::checkout_effects_root(host_checkout)?;
     let run = admission.run();
@@ -126,10 +159,10 @@ pub(in crate::runner) fn start_reserved(
             payload: wire::encode(&payload),
             cwd,
             env,
-            handoff: None,
+            handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
             admission: Some(admission),
         },
-        &executable,
+        executable,
         ClientMode::Owning,
     )
     .map_err(|error| {
@@ -160,6 +193,7 @@ fn start_with(
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,
+        workspace_resolution: None,
     };
     // The supervisor is Effigy's own process, and it is never a workload's
     // environment: it starts without session access, then reads the one-shot

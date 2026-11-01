@@ -4,6 +4,13 @@
 //! string/default-locator or generic-publication fallback here.
 #![allow(dead_code)] // The workspace-client owner installs the serialized consuming caller.
 
+#[path = "environment_workspace/integrated.rs"]
+pub(in crate::runner) mod integrated;
+#[path = "environment_workspace/phase_a.rs"]
+pub(in crate::runner) mod phase_a;
+#[path = "environment_workspace/phase_b.rs"]
+pub(in crate::runner) mod phase_b;
+
 use effigy_containers::environment::{
     BackendError, CreationOutcome, EnvError, EnvRun, Retention, Up, WorkspaceActivation,
     WorkspaceBegin,
@@ -88,12 +95,62 @@ pub(in crate::runner) struct WorkspaceUpRequest<'a> {
     pub(in crate::runner) supervisor_id: &'a str,
 }
 
+/// Planned activation does not have decision inputs until its gated observation.
+#[derive(Debug)]
+pub(in crate::runner) struct PlannedWorkspaceUpRequest<'a> {
+    pub(in crate::runner) policy: &'a EffectiveContainerPolicy,
+    pub(in crate::runner) retention: Retention,
+    pub(in crate::runner) invocation: &'a ResolvedInvocation,
+    pub(in crate::runner) options: BeginOpts,
+    pub(in crate::runner) supervisor_id: &'a str,
+}
+
+struct ActivationRequest<'a> {
+    policy: &'a EffectiveContainerPolicy,
+    retention: Retention,
+    inputs: Option<&'a PublishInputs>,
+    invocation: &'a ResolvedInvocation,
+    options: BeginOpts,
+    supervisor_id: &'a str,
+}
+
+impl<'a> From<WorkspaceUpRequest<'a>> for ActivationRequest<'a> {
+    fn from(request: WorkspaceUpRequest<'a>) -> Self {
+        Self {
+            policy: request.policy,
+            retention: request.retention,
+            inputs: Some(request.inputs),
+            invocation: request.invocation,
+            options: request.options,
+            supervisor_id: request.supervisor_id,
+        }
+    }
+}
+impl<'a> From<PlannedWorkspaceUpRequest<'a>> for ActivationRequest<'a> {
+    fn from(request: PlannedWorkspaceUpRequest<'a>) -> Self {
+        Self {
+            policy: request.policy,
+            retention: request.retention,
+            inputs: None,
+            invocation: request.invocation,
+            options: request.options,
+            supervisor_id: request.supervisor_id,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::runner) enum WorkspaceUpError {
     Preparation(crate::runner::error::RunnerError),
     Owner {
         cause: Box<EnvError>,
         cleanup: Option<Box<EnvError>>,
+    },
+    Finish {
+        cause: Box<EnvError>,
+        custody: Box<effigy_containers::environment::WorkspaceFinishCustody<'static>>,
+        channel: Box<PreparedHostChannel>,
+        serving: Box<crate::runner::workspace_client::ServingFacts>,
     },
 }
 
@@ -107,7 +164,48 @@ pub(in crate::runner) fn up<'a>(
         &mut WorkspaceActivation<'static>,
     ) -> Result<WorkspacePublication<'a>, EnvError>,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
+    up_impl(request.into(), compose_env, None, publish)
+}
+
+/// The exact owner inputs used by the planned production path.
+pub(in crate::runner) struct PlannedWorkspaceUp<'a> {
+    pub(in crate::runner) plan:
+        &'a crate::runner::container_command::reserved_input::ReservedPublicationPlan,
+    pub(in crate::runner) decide: Box<
+        dyn FnOnce(
+                std::time::Instant,
+                Arc<effigy_containers::environment::CreationPreflight>,
+            ) -> Result<PublishInputs, effigy_kernel::run::RunError>
+            + Send,
+    >,
+    pub(in crate::runner) observation:
+        &'a mut dyn crate::runner::container_command::reserved_input::ReservedBackendObservation,
+}
+
+fn up_impl<'a>(
+    request: ActivationRequest<'_>,
+    compose_env: &[(String, std::ffi::OsString)],
+    planned: Option<PlannedWorkspaceUp<'_>>,
+    publish: impl FnOnce(
+        &mut WorkspaceActivation<'static>,
+    ) -> Result<WorkspacePublication<'a>, EnvError>,
+) -> Result<WorkspaceUp, WorkspaceUpError> {
     let policy = request.policy;
+    if let Some(planned) = &planned {
+        let frozen = planned.plan.policy();
+        if policy.repo_root != frozen.repo_root
+            || policy.project_name != frozen.project_name
+            || policy.primary_service != frozen.primary_service
+            || policy.compose_files != frozen.compose_files
+        {
+            return Err(WorkspaceUpError::Owner {
+                cause: Box::new(EnvError::Invalid(
+                    "planned workspace policy differs from its frozen plan".into(),
+                )),
+                cleanup: None,
+            });
+        }
+    }
     if crate::runner::workspace_command::operator_workspace_for_policy(&policy.repo_root, policy)
         .map_err(WorkspaceUpError::Preparation)?
         .is_none()
@@ -137,13 +235,19 @@ pub(in crate::runner) fn up<'a>(
             "workspace activation has no frozen render".into(),
         ))
     })?;
-    let backend = super::backend(&policy.repo_root, policy);
-    let until = match ctx.cx.operation().deadline() {
-        effigy_kernel::ctx::Deadline::At(until) => until,
-        effigy_kernel::ctx::Deadline::Open(_) => {
-            std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
-        }
-    };
+    let backend = planned.as_ref().map_or_else(
+        || super::backend(&policy.repo_root, policy),
+        |planned| planned.plan.backend().clone(),
+    );
+    let until = planned.as_ref().map_or_else(
+        || match ctx.cx.operation().deadline() {
+            effigy_kernel::ctx::Deadline::At(until) => until,
+            effigy_kernel::ctx::Deadline::Open(_) => {
+                std::time::Instant::now() + effigy_containers::environment::RUN_BUDGET
+            }
+        },
+        |planned| planned.plan.deadline().at(),
+    );
     let mut preflight_request = Up {
         render: Some(&closure.closure),
         project: &policy.project_name,
@@ -155,32 +259,95 @@ pub(in crate::runner) fn up<'a>(
     }
     .creation_request();
     preflight_request.deadline = until;
-    let preflight = effigy_containers::environment::CreationPreflight::observe(
-        backend.adapter().as_mut(),
-        preflight_request,
-    )
-    .map_err(|error| {
-        owner_error(EnvError::Backend(BackendError::NotStarted(
-            error.to_string(),
-        )))
-    })?;
-    let sealed = effigy_kernel::objects::Objects::seal_for_preflight(
-        &ctx.cx,
-        ctx.root,
-        &closure.closure,
-        until,
-    )
-    .map_err(|error| owner_error(EnvError::Kernel(error)))?;
-    let mut activation = match WorkspaceActivation::begin(
-        &ctx,
-        &env,
-        request.inputs,
-        request.invocation,
-        request.options,
-        request.supervisor_id,
-    )
-    .map_err(owner_error)?
-    {
+    let preflight = Arc::new(
+        effigy_containers::environment::CreationPreflight::observe(
+            backend.adapter().as_mut(),
+            preflight_request,
+        )
+        .map_err(|_| {
+            owner_error(EnvError::Backend(BackendError::NotStarted(
+                "workspace creation preflight unavailable".into(),
+            )))
+        })?,
+    );
+    let owned_seal = if planned.is_none() {
+        Some(
+            effigy_kernel::objects::Objects::seal_for_preflight(
+                &ctx.cx,
+                ctx.root,
+                &closure.closure,
+                until,
+            )
+            .map_err(|error| owner_error(EnvError::Kernel(error)))?,
+        )
+    } else {
+        None
+    };
+    let sealed = match &planned {
+        Some(planned) => planned
+            .plan
+            .predecessor_seal()
+            .ok_or_else(|| {
+                owner_error(EnvError::Kernel(effigy_kernel::run::RunError::unavailable(
+                    "planned workspace has no retained preflight seal",
+                )))
+            })?
+            .receipt(),
+        None => owned_seal
+            .as_ref()
+            .expect("ordinary activation made its seal"),
+    };
+    if !sealed.matches(&closure.closure) {
+        return Err(owner_error(EnvError::Kernel(
+            effigy_kernel::run::RunError::refused(
+                "planned workspace retained seal differs from its render",
+            ),
+        )));
+    }
+    let is_planned = planned.is_some();
+    let (begin, before_apply) = match planned {
+        Some(planned) => {
+            let decision_preflight = Arc::clone(&preflight);
+            let decide = planned.decide;
+            (
+                WorkspaceActivation::begin_observing(
+                    &ctx,
+                    &env,
+                    request.invocation,
+                    request.options,
+                    request.supervisor_id,
+                    until,
+                    move |deadline| decide(deadline, decision_preflight),
+                )
+                .map_err(owner_error)?,
+                Some((planned.plan, planned.observation)),
+            )
+        }
+        None => (
+            WorkspaceActivation::begin(
+                &ctx,
+                &env,
+                request.inputs.ok_or_else(|| {
+                    owner_error(EnvError::Invalid(
+                        "ordinary workspace has no decision inputs".into(),
+                    ))
+                })?,
+                request.invocation,
+                request.options,
+                request.supervisor_id,
+            )
+            .map_err(owner_error)?,
+            None,
+        ),
+    };
+    let mut activation = match begin {
+        WorkspaceBegin::Attach(_) if is_planned => {
+            return Err(owner_error(EnvError::Kernel(
+                effigy_kernel::run::RunError::unavailable(
+                    "planned workspace attach has no plan-matched custody proof",
+                ),
+            )));
+        }
         WorkspaceBegin::Attach(session) => return Ok(WorkspaceUp::Attached(session)),
         WorkspaceBegin::Activate(activation) => activation,
     };
@@ -189,7 +356,21 @@ pub(in crate::runner) fn up<'a>(
     );
     let mut creation = None;
     let result = (|| {
-        let backend = super::backend(&policy.repo_root, policy);
+        if let Some((plan, observation)) = before_apply {
+            let inputs = activation.reservation().inputs().ok_or_else(|| {
+                EnvError::Invalid("planned workspace decision has no frozen inputs".into())
+            })?;
+            if *inputs != plan.publish_inputs(inputs.artifact.clone(), inputs.target.clone())? {
+                return Err(EnvError::Invalid(
+                    "workspace decision differs from its frozen plan".into(),
+                ));
+            }
+            crate::runner::container_command::reserved_input::recheck_live_predecessor(
+                plan,
+                observation,
+            )?;
+            plan.deadline().remaining()?;
+        }
         let (program, args) = backend
             .compose_invocation(&effigy_containers::compose::compose_up_args(policy))
             .map_err(EnvError::Backend)?;
@@ -203,10 +384,10 @@ pub(in crate::runner) fn up<'a>(
                 primary_service: &policy.primary_service,
                 compose_files: &policy.compose_files,
             },
-            &sealed,
+            sealed,
             &preflight,
             || {
-                effigy_containers::exec::run_backend_invocation_until(
+                effigy_containers::exec::run_backend_invocation_private_until(
                     &policy.repo_root,
                     &program,
                     &args,
@@ -214,8 +395,9 @@ pub(in crate::runner) fn up<'a>(
                     compose_env,
                     until,
                 )
-                .map(|_| ())
-                .map_err(|error| BackendError::Uncertain(error.to_string()))
+                .map_err(|_| {
+                    BackendError::Uncertain("workspace frozen render apply unavailable".into())
+                })
             },
         )?;
         creation = bringing_up.creation;
@@ -269,7 +451,17 @@ pub(in crate::runner) fn up<'a>(
             });
         }
     };
-    let (supervisor, session) = activation.finish_selected().map_err(owner_error)?;
+    let (supervisor, session) = match activation.finish_selected() {
+        Ok(value) => value,
+        Err((cause, custody)) => {
+            return Err(WorkspaceUpError::Finish {
+                cause: Box::new(cause),
+                custody,
+                channel: Box::new(channel),
+                serving: Box::new(serving),
+            })
+        }
+    };
     Ok(WorkspaceUp::Selected(Box::new(WorkspaceOwner {
         supervisor,
         session,
@@ -296,6 +488,26 @@ pub(in crate::runner) fn up_prepared<'a>(
     >,
 ) -> Result<WorkspaceUp, WorkspaceUpError> {
     up(request, compose_env, |activation| {
+        let input = observe(activation)?;
+        crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
+            activation, input,
+        )
+    })
+}
+
+/// Run prepared publication with a retained plan and gated observations.
+pub(in crate::runner) fn up_prepared_planned<'a>(
+    request: PlannedWorkspaceUpRequest<'_>,
+    compose_env: &[(String, std::ffi::OsString)],
+    planned: PlannedWorkspaceUp<'_>,
+    observe: impl FnOnce(
+        &mut WorkspaceActivation<'static>,
+    ) -> Result<
+        crate::runner::workspace_command::provisioning::reserved_guest::ReservedGuestInput<'a>,
+        EnvError,
+    >,
+) -> Result<WorkspaceUp, WorkspaceUpError> {
+    up_impl(request.into(), compose_env, Some(planned), |activation| {
         let input = observe(activation)?;
         crate::runner::workspace_command::provisioning::reserved_guest::prepare_reserved_guest(
             activation, input,
@@ -338,14 +550,18 @@ pub(in crate::runner) fn recover_selection(
         Observed::Verified(journal, _) => {
             match unfinished_selection(&journal, obligation.environment()) {
                 Observed::Verified(Some(stored), _) => stored,
-                Observed::Unknown(reason) => {
-                    return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+                Observed::Unknown(_reason) => {
+                    return Err(EnvError::Kernel(RunError::unavailable(
+                        "workspace selection recovery observation unavailable",
+                    )))
                 }
                 _ => return Err(refuse()),
             }
         }
-        Observed::Unknown(reason) => {
-            return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+        Observed::Unknown(_reason) => {
+            return Err(EnvError::Kernel(RunError::unavailable(
+                "workspace selection recovery observation unavailable",
+            )))
         }
         _ => return Err(refuse()),
     };
@@ -366,8 +582,10 @@ pub(in crate::runner) fn recover_selection(
     for fact in [target_live, listener_live] {
         match fact {
             Observed::Verified((), _) => {}
-            Observed::Unknown(reason) => {
-                return Err(EnvError::Kernel(RunError::unavailable(reason.to_string())))
+            Observed::Unknown(_reason) => {
+                return Err(EnvError::Kernel(RunError::unavailable(
+                    "workspace selection recovery observation unavailable",
+                )))
             }
             Observed::Absent(_) => {
                 return Err(EnvError::Kernel(RunError::refused(

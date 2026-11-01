@@ -18,6 +18,22 @@ const MAX_FILES: usize = 4096;
 const MAX_DEPTH: usize = 16;
 const MAX_BYTES: usize = 64 << 20;
 
+/// The permission bits of a stat mode, as the inventory stores them.
+///
+/// `st_mode` is `u16` on macOS and `u32` on Linux, so a single `as u32` is
+/// necessary on one platform and unnecessary (and a lint error) on the other.
+/// Neither arm casts: the narrow platform widens with `u32::from` and the wide
+/// one needs nothing. The stored value is identical on both (effigy#520).
+#[cfg(target_os = "linux")]
+fn permission_bits(mode: libc::mode_t) -> u32 {
+    mode & 0o777
+}
+
+#[cfg(not(target_os = "linux"))]
+fn permission_bits(mode: libc::mode_t) -> u32 {
+    u32::from(mode & 0o777)
+}
+
 /// A pure, canonical closure. Names are relative UTF-8 paths; publication
 /// keeps the private modes (files 0600, directories 0700) and the digest alone
 /// proves integrity. No host path or registry enters the digest.
@@ -284,7 +300,7 @@ pub(crate) fn open(
     let mut inventory = vec![SealedEntry {
         path: String::new(),
         kind: SealedKind::Directory,
-        mode: dir.stat()?.st_mode as u32 & 0o777,
+        mode: permission_bits(dir.stat()?.st_mode),
         len: 0,
     }];
     let mut left = MAX_BYTES;
@@ -346,7 +362,7 @@ fn read_tree(
             inventory.push(SealedEntry {
                 path: path.clone(),
                 kind: SealedKind::Directory,
-                mode: stat.st_mode as u32 & 0o777,
+                mode: permission_bits(stat.st_mode),
                 len: 0,
             });
             let child = dir
@@ -378,7 +394,7 @@ fn read_tree(
             inventory.push(SealedEntry {
                 path: path.clone(),
                 kind: SealedKind::File,
-                mode: stat.st_mode as u32 & 0o777,
+                mode: permission_bits(stat.st_mode),
                 len: bytes.len() as u64,
             });
             files.insert(path, bytes);

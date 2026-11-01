@@ -465,9 +465,60 @@ impl SessionRef {
         reservation: &WorkspaceActivationReservation,
         placement: Placement,
     ) -> Result<(Run<'a>, SessionRef), RunError> {
+        Self::admit_reserved_inner(
+            cx,
+            root,
+            invocation,
+            opts,
+            cleanup,
+            adapter,
+            reservation,
+            placement,
+            None,
+        )
+    }
+
+    /// Admit only the session staged by this activation attempt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_reserved_for_attempt<'a>(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        invocation: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        reservation: &WorkspaceActivationReservation,
+        placement: Placement,
+        attempt: run::RequestId,
+    ) -> Result<(Run<'a>, SessionRef), RunError> {
+        Self::admit_reserved_inner(
+            cx,
+            root,
+            invocation,
+            opts,
+            cleanup,
+            adapter,
+            reservation,
+            placement,
+            Some(attempt),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_reserved_inner<'a>(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        invocation: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        reservation: &WorkspaceActivationReservation,
+        placement: Placement,
+        attempt: Option<run::RequestId>,
+    ) -> Result<(Run<'a>, SessionRef), RunError> {
         session_placement(&opts, placement)?;
         let id = opts.id;
-        let claim = reservation.claim_session(cx, root)?;
+        let claim = reservation.claim_session_with_attempt(cx, root, attempt)?;
         if claim.binding.owner != invocation.spec().owner {
             return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
         }
@@ -514,9 +565,25 @@ pub struct SessionSupervisor<'a> {
 }
 
 impl<'a> SessionSupervisor<'a> {
-    pub fn adopt(mut run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
-        run.register_session_custody(supervisor)?;
-        Ok(Self { run })
+    pub fn adopt(run: Run<'a>, supervisor: &str) -> Result<Self, RunError> {
+        Self::adopt_recoverable(run, supervisor).map_err(|(error, _)| error)
+    }
+
+    /// Retain custody on a registration failure so the caller can settle it.
+    pub fn adopt_recoverable(
+        mut run: Run<'a>,
+        supervisor: &str,
+    ) -> Result<Self, (RunError, Box<Run<'a>>)> {
+        let result = (|| {
+            crate::fault_point!(SessionSupervisorAdoptBefore)?;
+            run.register_session_custody(supervisor)?;
+            crate::fault_point!(SessionSupervisorAdoptAfter)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(Self { run }),
+            Err(error) => Err((error, Box::new(run))),
+        }
     }
 
     pub fn settle(
@@ -525,6 +592,18 @@ impl<'a> SessionSupervisor<'a> {
         adapter: &mut impl SettlementAdapter,
     ) -> Result<crate::outcome::Outcome<crate::run::Settled>, RunError> {
         self.run.settle(cleanup, adapter)
+    }
+
+    /// Keep the session's private slot when cleanup cannot finish.
+    pub fn settle_recoverable(
+        self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<crate::outcome::Outcome<crate::run::Settled>, (RunError, Box<Self>)> {
+        match self.run.settle_workspace_recoverable(cleanup, adapter) {
+            Ok(outcome) => Ok(outcome),
+            Err((error, run)) => Err((error, Box::new(Self { run: *run }))),
+        }
     }
 }
 
@@ -1778,6 +1857,157 @@ impl WorkspaceActivationReservation {
         }
         publishing.validate()?;
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
+        Self::decide_held(cx, root, environment, publishing)
+    }
+
+    /// Observe the publication inputs under the same environment gate that
+    /// protects the decision. The read-only observer owns its inputs and is
+    /// bounded by `deadline`; a late or failed result cannot be committed.
+    pub fn decide_observing(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        wait: Wait,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<PublishInputs, RunError> + Send + 'static,
+    ) -> Result<ActivationDecision, RunError> {
+        if environment.kind() != ResourceKind::Env {
+            return Err(ActivationRefusal::NotAnEnvironment.into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        let bounded = cx.child_until(deadline);
+        let _gate = Gate::acquire(&bounded, root, std::slice::from_ref(environment), wait)?;
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        let effective_deadline = match bounded.operation().deadline() {
+            crate::ctx::Deadline::At(until) => until.min(deadline),
+            crate::ctx::Deadline::Open(_) => deadline,
+        };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("workspace-decision-observation".into())
+            .spawn(move || {
+                let _ = sender.send(observe(effective_deadline));
+            })
+            .map_err(|error| {
+                RunError::unavailable(format!(
+                    "workspace decision observer could not start: {error}"
+                ))
+            })?;
+        let publishing = loop {
+            bounded
+                .operation()
+                .check("workspace decision observation")?;
+            let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(RunError::unavailable("workspace decision deadline expired"));
+            }
+            match receiver.recv_timeout(remaining.min(std::time::Duration::from_millis(25))) {
+                Ok(result) => break result?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RunError::unavailable(
+                        "workspace decision observer exited without a result",
+                    ));
+                }
+            }
+        };
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        publishing.validate()?;
+        Self::decide_held(&bounded, root, environment, &publishing)
+    }
+
+    /// Test-only candidate: neither callback is yet constrained to bounded,
+    /// read-only I/O, so this does not grant production observation authority.
+    #[cfg(test)]
+    fn decide_observing_split<T: Send + 'static>(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        wait: Wait,
+        deadline: std::time::Instant,
+        observe: impl FnOnce(std::time::Instant) -> Result<T, RunError> + Send + 'static,
+        finalize: impl FnOnce(T, std::time::Instant) -> Result<PublishInputs, RunError>,
+    ) -> Result<ActivationDecision, RunError> {
+        if environment.kind() != ResourceKind::Env {
+            return Err(ActivationRefusal::NotAnEnvironment.into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        let bounded = cx.child_until(deadline);
+        let _gate = Gate::acquire(&bounded, root, std::slice::from_ref(environment), wait)?;
+        bounded
+            .operation()
+            .check("workspace decision observation")?;
+        let effective_deadline = match bounded.operation().deadline() {
+            crate::ctx::Deadline::At(until) => until.min(deadline),
+            crate::ctx::Deadline::Open(_) => deadline,
+        };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("workspace-decision-observation".into())
+            .spawn(move || {
+                let _ = sender.send(observe(effective_deadline));
+            })
+            .map_err(|error| {
+                RunError::unavailable(format!(
+                    "workspace decision observer could not start: {error}"
+                ))
+            })?;
+        let external = loop {
+            bounded
+                .operation()
+                .check("workspace decision observation")?;
+            let remaining = effective_deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(RunError::unavailable("workspace decision deadline expired"));
+            }
+            match receiver.recv_timeout(remaining.min(std::time::Duration::from_millis(25))) {
+                Ok(result) => break result?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RunError::unavailable(
+                        "workspace decision observer exited without a result",
+                    ));
+                }
+            }
+        };
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision finalization")?;
+        let publishing = finalize(external, effective_deadline)?;
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded
+            .operation()
+            .check("workspace decision finalization")?;
+        publishing.validate()?;
+        if std::time::Instant::now() >= effective_deadline {
+            return Err(RunError::unavailable("workspace decision deadline expired"));
+        }
+        bounded.operation().check("workspace decision")?;
+        Self::decide_held(&bounded, root, environment, &publishing)
+    }
+
+    fn decide_held(
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment: &ResourceId,
+        publishing: &PublishInputs,
+    ) -> Result<ActivationDecision, RunError> {
         crate::fault_point!(ActivationDecisionBefore)?;
         // The live session's *owner* liveness is observed under the same gate,
         // before the deciding transaction: a mapped run whose owner gate is free
@@ -1940,6 +2170,10 @@ impl WorkspaceActivationReservation {
                 // revived: its id is derived from the same pair, and its inputs
                 // are the ones this decision froze.
                 txn.conn().execute(
+                    "DELETE FROM workspace_activation_attempts WHERE reservation_id=?1",
+                    [existing.id.to_string()],
+                )?;
+                txn.conn().execute(
                     "UPDATE workspace_activation_reservations SET state='reserved',session_owner=NULL,session_run=NULL,session_generation=NULL,inputs=?3,updated_at=?4 \
                      WHERE environment=?1 AND environment_generation=?2",
                     params![
@@ -2020,15 +2254,16 @@ impl WorkspaceActivationReservation {
         authority.bind_workspace_target(self, candidates)
     }
 
-    pub(crate) fn claimed_inputs(
+    pub(crate) fn verify_claimed_run(
         &self,
         conn: &rusqlite::Connection,
         run: RunId,
         fence: &Fence,
-    ) -> Result<PublishInputs, RunError> {
+    ) -> Result<ActivationReservationRecord, RunError> {
         if fence.resource != self.record.environment || fence.generation != self.record.generation {
             return Err(ActivationRefusal::WrongGeneration.into());
         }
+        crate::run::check_workspace_fence(conn, fence)?;
         let stored = read_reservation(conn, &self.record.environment, self.record.generation)?
             .ok_or(ActivationRefusal::WrongReservation)?;
         if stored.id != self.record.id {
@@ -2040,7 +2275,16 @@ impl WorkspaceActivationReservation {
         if stored.environment_run != Some(run) {
             return Err(ActivationRefusal::ClaimedByAnotherRun.into());
         }
-        stored
+        Ok(stored)
+    }
+
+    pub(crate) fn claimed_inputs(
+        &self,
+        conn: &rusqlite::Connection,
+        run: RunId,
+        fence: &Fence,
+    ) -> Result<PublishInputs, RunError> {
+        self.verify_claimed_run(conn, run, fence)?
             .inputs
             .ok_or_else(|| ActivationRefusal::Unfrozen.into())
     }
@@ -2099,6 +2343,15 @@ impl WorkspaceActivationReservation {
         cx: &EffectContext,
         root: &StateRoot,
     ) -> Result<SessionClaim, RunError> {
+        self.claim_session_with_attempt(cx, root, None)
+    }
+
+    fn claim_session_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        attempt: Option<run::RequestId>,
+    ) -> Result<SessionClaim, RunError> {
         let observe = activation_observe(cx)?;
         let reader = activation_reader(&observe, root)?;
         let stored = read_reservation(
@@ -2112,6 +2365,7 @@ impl WorkspaceActivationReservation {
         if stored.id != self.record.id {
             return Err(RunError::from(ActivationRefusal::WrongReservation));
         }
+        check_staging_attempt(reader.conn(), stored.id, attempt)?;
         match stored.state {
             ActivationReservationState::Reserved => {}
             ActivationReservationState::Committed => {
@@ -2129,6 +2383,7 @@ impl WorkspaceActivationReservation {
             environment: stored.environment,
             generation: stored.generation,
             binding,
+            attempt,
         })
     }
 
@@ -2153,6 +2408,29 @@ impl WorkspaceActivationReservation {
         owner: &ResourceId,
         run: RunId,
     ) -> Result<SessionBinding, RunError> {
+        self.stage_with_attempt(cx, root, owner, run, None)
+    }
+
+    /// Stage the exact session and its creating attempt in one transaction.
+    pub fn stage_for_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        owner: &ResourceId,
+        run: RunId,
+        attempt: run::RequestId,
+    ) -> Result<SessionBinding, RunError> {
+        self.stage_with_attempt(cx, root, owner, run, Some(attempt))
+    }
+
+    fn stage_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        owner: &ResourceId,
+        run: RunId,
+        attempt: Option<run::RequestId>,
+    ) -> Result<SessionBinding, RunError> {
         check_session_owner(&self.record, owner)?;
         crate::fault_point!(SessionStageBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
@@ -2166,12 +2444,29 @@ impl WorkspaceActivationReservation {
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
             }
+            let prior_attempt: Option<String> = txn.conn().query_row(
+                "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+                [stored.id.to_string()], |row| row.get(0),
+            ).optional()?;
+            match (stored.session.is_some(), prior_attempt.as_deref(), attempt) {
+                (true, Some(saved), Some(offered)) if saved == offered.to_string() => {},
+                (true, None, None) => {},
+                (false, None, _) => {},
+                _ => return Err(RunError::refused("competing attempt or untagged reservation; reservation remains recoverable")),
+            }
             if stored.state == ActivationReservationState::Reserved && stored.environment_run.is_none() {
                 if let Some(existing) = &stored.session {
                     if existing.owner == *owner && existing.run == run {
                         return Ok(existing.clone());
                     }
                 }
+            }
+            let run_exists: bool = txn.conn().query_row(
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
+                [run.to_string()], |row| row.get(0),
+            )?;
+            if run_exists {
+                return Err(RunError::refused("session run identity already exists; reservation remains recoverable"));
             }
             let base = next_generation(txn.conn(), owner)?.get() - 1;
             let highest: i64 = txn.conn().query_row(
@@ -2238,6 +2533,12 @@ impl WorkspaceActivationReservation {
                     ],
                 )?,
             };
+            if let Some(attempt) = attempt {
+                txn.conn().execute(
+                    "INSERT INTO workspace_activation_attempts(reservation_id,attempt_id) VALUES (?1,?2)",
+                    params![stored.id.to_string(), attempt.to_string()],
+                )?;
+            }
             // Exactly one writer stages this session: a competing Task run's
             // staging loses here rather than replacing the winner.
             if changed != 1 {
@@ -2320,6 +2621,11 @@ impl WorkspaceActivationReservation {
                 table: RESERVATIONS.into(),
             });
         };
+        if stored.id != self.record.id {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "workspace activation reservation identity changed".into(),
+            ));
+        }
         match activation_plan(reader.conn(), &stored) {
             Ok(Some(plan)) => Observed::Verified(Some(plan), activation_evidence()),
             Ok(None) => Observed::Absent(AbsenceProof::NoRow {
@@ -2602,6 +2908,27 @@ impl WorkspaceActivationReservation {
         root: &StateRoot,
         wait: Wait,
     ) -> Result<Self, RunError> {
+        self.cancel_with_attempt(cx, root, wait, None)
+    }
+
+    /// Only the attempt that staged this session may cancel its reservation.
+    pub fn cancel_for_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: Wait,
+        attempt: run::RequestId,
+    ) -> Result<Self, RunError> {
+        self.cancel_with_attempt(cx, root, wait, Some(attempt))
+    }
+
+    fn cancel_with_attempt(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: Wait,
+        attempt: Option<run::RequestId>,
+    ) -> Result<Self, RunError> {
         let _gate = Gate::acquire(
             cx,
             root,
@@ -2620,12 +2947,34 @@ impl WorkspaceActivationReservation {
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
             }
+            let saved: Option<String> = txn
+                .conn()
+                .query_row(
+                    "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+                    [stored.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match (saved.as_deref(), attempt) {
+                (Some(saved), Some(offered)) if saved == offered.to_string() => {}
+                (None, None) => {}
+                _ => return Err(RunError::refused(
+                    "competing attempt or untagged reservation; reservation remains recoverable",
+                )),
+            }
             match stored.state {
                 ActivationReservationState::Committed => {
                     return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
                 }
                 ActivationReservationState::Cancelled => return Ok(stored),
                 ActivationReservationState::Reserved => {}
+            }
+            if let Some(session) = stored.session.as_ref() {
+                if run::workspace_integrations_unsettled(txn.conn(), session, stored.id)? {
+                    return Err(RunError::refused(
+                        "integration effects unsettled; re-run up",
+                    ));
+                }
             }
             if let Some(run) = stored.environment_run {
                 if run_needs_settlement(txn.conn(), run, true)? {
@@ -2793,6 +3142,27 @@ pub struct SessionClaim {
     environment: ResourceId,
     generation: Generation,
     binding: SessionBinding,
+    attempt: Option<run::RequestId>,
+}
+
+fn check_staging_attempt(
+    conn: &rusqlite::Connection,
+    reservation: ActivationReservationId,
+    attempt: Option<run::RequestId>,
+) -> Result<(), RunError> {
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT attempt_id FROM workspace_activation_attempts WHERE reservation_id=?1",
+            params![reservation.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if stored != attempt.map(|id| id.to_string()) {
+        return Err(RunError::refused(
+            "competing attempt or untagged reservation; reservation remains recoverable",
+        ));
+    }
+    Ok(())
 }
 
 impl SessionClaim {
@@ -2835,6 +3205,7 @@ impl SessionClaim {
         if stored.id != self.reservation {
             return Err(RunError::from(ActivationRefusal::WrongReservation));
         }
+        check_staging_attempt(txn.conn(), self.reservation, self.attempt)?;
         match stored.state {
             ActivationReservationState::Reserved => {}
             ActivationReservationState::Committed => {
@@ -2883,6 +3254,74 @@ pub(crate) fn refuse_reserved_generation(
         ));
     }
     Ok(())
+}
+
+/// A bound reservation may still have its owning activation alive while its
+/// Env gate is temporarily released. Refuse before predecessor recovery, since
+/// recovering that run would otherwise settle another owner's activation.
+pub(crate) fn refuse_bound_reservation_recovery(
+    conn: &rusqlite::Connection,
+    owner: &ResourceId,
+) -> Result<(), RunError> {
+    if owner.kind() != ResourceKind::Env {
+        return Ok(());
+    }
+    if let Some(record) = recoverable_reservation(conn, owner)?.filter(|record| {
+        record.state == ActivationReservationState::Reserved && record.environment_run.is_some()
+    }) {
+        if let Some(session) = record.session.as_ref() {
+            if run::workspace_integrations_unsettled(conn, session, record.id)? {
+                return Err(RunError::refused(
+                    "integration effects unsettled; re-run up",
+                ));
+            }
+        }
+        return Err(RunError::refused(
+            "this environment is reserved by a workspace activation; reservation remains recoverable",
+        ));
+    }
+    Ok(())
+}
+
+/// Explicit settlement of a bound activation is allowed only with positive
+/// evidence that the exact process which admitted it is gone. A free Env gate
+/// alone is not liveness evidence during the integration interval.
+pub(crate) fn verify_reserved_owner_dead(
+    conn: &rusqlite::Connection,
+    owner: &ResourceId,
+    run: RunId,
+) -> Result<(), RunError> {
+    if owner.kind() != ResourceKind::Env {
+        return Ok(());
+    }
+    let Some(reservation) = recoverable_reservation(conn, owner)? else {
+        return Ok(());
+    };
+    if reservation.state != ActivationReservationState::Reserved
+        || reservation.environment_run != Some(run)
+    {
+        return Ok(());
+    }
+    let identity: Option<String> = conn.query_row(
+        "SELECT owner_identity FROM runs WHERE run_id=?1",
+        [run.to_string()],
+        |row| row.get(0),
+    )?;
+    let identity: crate::ident::ProcessIdentity = serde_json::from_str(
+        identity.as_deref().ok_or_else(|| {
+            RunError::unavailable("reserved activation owner identity is unavailable; reservation remains recoverable")
+        })?,
+    ).map_err(|_| RunError::unavailable("reserved activation owner identity is unreadable; reservation remains recoverable"))?;
+    match crate::ident::process_identity(identity.pid) {
+        Observed::Absent(_) => Ok(()),
+        Observed::Verified(current, _) if current != identity => Ok(()),
+        Observed::Verified(_, _) => Err(RunError::refused(
+            "reserved workspace activation owner is still alive; reservation remains recoverable",
+        )),
+        Observed::Unknown(_) => Err(RunError::unavailable(
+            "reserved workspace activation owner liveness is unknown; reservation remains recoverable",
+        )),
+    }
 }
 
 /// The guest publication an activation run recorded must be applied and carry

@@ -134,6 +134,31 @@ Host-dispatched tasks bound to that workspace run as its declared user and
 home. They do not run as root or leave root-owned files in bind-mounted
 workspace volumes for the later `dev` handoff to trip over.
 
+The v0.15 release requires workspace-client commands to follow the staged Level 1 surface in
+[contract 052 §8.6](../knowledge/contracts/052-runtime-kernel-contract.md#86-coverage).
+Unsupported guest commands must refuse by name with instructions to run a separate
+host CLI invocation; they must not fall back to a guest engine or resend an
+indeterminate request after `Unknown`. Implementation and enforcement remain in
+progress. The session production path and each
+native backend still require their qualification; a prepared guest artifact
+alone is not that proof.
+
+For the required Level 1 behavior, closing a foreground owner's connection
+cancels its run. A detached child keeps running after its owner leaves only when
+its detach was acknowledged. A later authenticated client may explicitly claim
+ownership of that detached run; it cannot take ownership from a live owner.
+Secondary terminals do not stop the owner when they leave. This reconnect path
+remains lifecycle work and is not yet a qualified capability.
+
+That future capability requires a journal upgrade. Older Effigy writers must
+refuse a v2 journal with upgrade, down or reset guidance. A newer version can
+read a v1 journal without changing it; its first effectful use will create a
+verified, transactionally consistent private adjacent backup, including committed
+WAL state, and migrate atomically. Supported rollback restores that backup with
+the previous binary only after quiescence and checks for later changes; it must
+refuse potential data loss or orphaned resources without an explicit recovery
+decision. This migration and rollback are not yet shipped or qualified.
+
 ### Catalog sources in the workspace
 
 Workspace preparation installs the Effigy binary only. It copies no catalog

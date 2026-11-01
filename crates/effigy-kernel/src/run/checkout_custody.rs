@@ -3,12 +3,13 @@
 use super::*;
 use crate::closure::ClosurePin;
 use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
-use crate::supervise::memory::{MemoryGuard, MemoryPurpose};
+use crate::supervise::memory::{MemoryGuard, MemoryPurpose, PartialMemoryGuard};
 
 #[derive(Debug)]
 pub(super) struct CheckoutCustody {
     lease: CheckoutFenceGuard,
     backup: Option<MemoryGuard>,
+    partial_backup: Option<Box<PartialMemoryGuard>>,
     token: String,
 }
 impl Run<'_> {
@@ -25,6 +26,7 @@ impl Run<'_> {
         self.checkout_custody = Some(CheckoutCustody {
             lease,
             backup: None,
+            partial_backup: None,
             token,
         });
         self.start_checkout_backup()
@@ -33,13 +35,18 @@ impl Run<'_> {
         let Some(custody) = &mut self.checkout_custody else {
             return Ok(());
         };
+        if custody.partial_backup.is_some() {
+            return Err(RunError::unavailable(
+                "checkout backup startup remains unsettled",
+            ));
+        }
         if custody.backup.is_some() {
             return Ok(());
         }
         let Some(sentinel) = &self.sentinel else {
             return Ok(());
         };
-        custody.backup = Some(MemoryGuard::start(
+        match MemoryGuard::start_recoverable(
             &sentinel.executable,
             &mut custody.lease.guard,
             &[],
@@ -47,13 +54,30 @@ impl Run<'_> {
             self.id,
             self.owner.clone(),
             MemoryPurpose::CheckoutLease,
-        )?);
-        Ok(())
+        ) {
+            Ok(backup) => {
+                custody.backup = Some(backup);
+                Ok(())
+            }
+            Err((error, partial)) => {
+                custody.partial_backup = partial;
+                Err(error)
+            }
+        }
     }
     pub(crate) fn acknowledge_checkout_process(
         &mut self,
         ticket: &EffectTicket,
     ) -> Result<(), RunError> {
+        if self
+            .checkout_custody
+            .as_ref()
+            .is_some_and(|custody| custody.partial_backup.is_some())
+        {
+            return Err(RunError::unavailable(
+                "checkout backup startup remains unsettled",
+            ));
+        }
         if let Some(backup) = self
             .checkout_custody
             .as_mut()
@@ -80,6 +104,11 @@ impl Run<'_> {
     }
     pub(super) fn verify_checkout_custody(&self) -> Result<(), RunError> {
         if let Some(custody) = &self.checkout_custody {
+            if custody.partial_backup.is_some() {
+                return Err(RunError::unavailable(
+                    "checkout backup startup remains unsettled",
+                ));
+            }
             let cx = self
                 .cx
                 .child(std::time::Duration::from_secs(3))
@@ -102,12 +131,43 @@ impl Run<'_> {
         &mut self,
         cleanup: &CleanupContext,
     ) -> Result<(), RunError> {
-        if let Some(mut custody) = self.checkout_custody.take() {
-            if let Some(mut backup) = custody.backup.take() {
+        self.close_checkout_custody_recoverable(cleanup)
+    }
+
+    /// Keep the same backup lease available if bounded cleanup fails.
+    pub(super) fn close_checkout_custody_recoverable(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
+        if let Some(custody) = self.checkout_custody.as_mut() {
+            if let Some(backup) = custody.partial_backup.as_mut() {
+                backup.close(cleanup).map_err(|_| {
+                    RunError::unavailable("checkout backup cleanup remains unsettled")
+                })?;
+            }
+            custody.partial_backup.take();
+            if let Some(backup) = custody.backup.as_mut() {
                 backup.close(cleanup)?;
             }
         }
+        self.checkout_custody.take();
         self.ancestor_closure.take();
         Ok(())
+    }
+
+    #[cfg(all(test, feature = "fault-injection"))]
+    pub(super) fn has_partial_checkout_backup(&self) -> bool {
+        self.checkout_custody
+            .as_ref()
+            .is_some_and(|custody| custody.partial_backup.is_some())
+    }
+
+    #[cfg(all(test, feature = "fault-injection"))]
+    pub(super) fn partial_checkout_backup_identity(&self) -> Option<crate::ident::ProcessIdentity> {
+        self.checkout_custody
+            .as_ref()?
+            .partial_backup
+            .as_ref()?
+            .identity()
     }
 }

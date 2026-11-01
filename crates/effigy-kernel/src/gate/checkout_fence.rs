@@ -43,6 +43,10 @@ fn name(token: &str) -> Result<String, GateError> {
     }
     Ok(format!("checkout-{token}.retirement"))
 }
+// libc device/inode widths differ across supported Unix targets, so `st_dev`'s
+// `as u64` is required on macOS and redundant on Linux (effigy#520 Linux
+// strict-Clippy window; same narrow allow as `custody::merged::atomic`).
+#[allow(clippy::unnecessary_cast)]
 fn identity(file: &File) -> Result<CheckoutFenceIdentity, GateError> {
     use std::os::fd::AsRawFd;
     let stat = fs::fstat(file.as_raw_fd()).map_err(|e| {

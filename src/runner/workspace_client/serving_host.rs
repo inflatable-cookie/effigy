@@ -92,11 +92,10 @@ pub(crate) struct ServingHostRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub(crate) enum Activation {
-    /// The container-up producer: the real `up_prepared` transaction, which #452
-    /// supplies once #506's planner lands.
+    /// Container-up intent; the supervisor constructs and retains its plan.
     ContainerUp {
-        /// The producer's own frozen input, opaque to this module.
-        request: Vec<u8>,
+        /// Command intent only. Live preparation never crosses this boundary.
+        request: super::container_up::ContainerUpRequest,
     },
     /// The disposable activation the process-lifetime proof runs: a real
     /// session run, listener, key, grant book and leased session with no
@@ -127,6 +126,14 @@ pub(crate) struct DisposableActivation {
     /// the host must refuse to serve it.
     #[serde(default)]
     pub(crate) omit_selection_record: bool,
+    /// Test-only expired first cleanup budget. The exact stopped owner must
+    /// survive until an explicit stop or owner-loss transition retries cleanup.
+    #[serde(default)]
+    pub(crate) fail_refusal_cleanup: bool,
+    /// Model a real journalled external file whose cleanup observation stays
+    /// Unknown until the fixture explicitly permits its removal.
+    #[serde(default)]
+    pub(crate) unknown_refusal_cleanup: bool,
     /// Attempt a competing second owner for this session inside the same
     /// process, so the kernel's one-serving-owner fence is exercised.
     #[serde(default)]
@@ -135,6 +142,15 @@ pub(crate) struct DisposableActivation {
     /// what bounds the wait.
     #[serde(default)]
     pub(crate) announce_delay_ms: u64,
+}
+
+/// The normal container report produced from completed integration results.
+/// It is descriptive output, never activation authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ContainerStartupReport {
+    pub(crate) json: serde_json::Value,
+    pub(crate) text: String,
 }
 
 /// What one serving host announced to its front end: the committed session it
@@ -154,6 +170,8 @@ pub(crate) struct ServingPublished {
     pub(crate) pin: String,
     /// The `supervisor_id` the lease recorded.
     pub(crate) supervisor_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) report: Option<ContainerStartupReport>,
 }
 
 impl ServingPublished {
@@ -168,6 +186,7 @@ impl ServingPublished {
             endpoint: lease.endpoint().to_owned(),
             pin: lease.pin().hex(),
             supervisor_id: lease.supervisor_id().to_owned(),
+            report: None,
         }
     }
 }
@@ -203,10 +222,26 @@ pub(crate) fn start(
     executable: &Executable,
 ) -> Result<ServingHost, RunError> {
     let payload = serde_json::to_vec(request)?;
+    // The kernel deliberately clears inherited environment. Pass only path
+    // routing and the declared credential-free backend identity. Secret values,
+    // policies and session credentials never use this lane.
+    let mut environment = vec![("HOME".into(), request.state_home.as_os_str().to_owned())];
+    if let Some(path) = std::env::var_os("PATH") {
+        environment.push(("PATH".into(), path));
+    }
+    if let Activation::ContainerUp { request: input } = &request.activation {
+        if let Some(declaration) = &input.post_prep {
+            environment.extend(declaration.backend_environment()?);
+        }
+    }
+    #[cfg(feature = "workspace-serving-fixture")]
+    if let Some(config) = std::env::var_os("EFFIGY_WORKSPACE_ACTIVATION_FAKE") {
+        environment.push(("EFFIGY_WORKSPACE_ACTIVATION_FAKE".into(), config));
+    }
     let launch = EngineLaunch {
         payload,
         cwd: request.project_path.clone(),
-        env: Vec::new(),
+        env: environment,
         handoff: None,
         admission: None,
     };
@@ -293,6 +328,11 @@ impl ServingHost {
     /// Acknowledge the kernel's durable detach: the supervisor keeps serving
     /// after this front end exits.
     pub(crate) fn detach(self, cx: &EffectContext) -> Result<RunId, RunError> {
+        if self.published.is_none() {
+            return Err(RunError::refused(
+                "the workspace serving host cannot detach before its committed acknowledgement",
+            ));
+        }
         let id = self.client.run;
         self.client.detach(cx, id)
     }
@@ -311,12 +351,26 @@ impl ServingHost {
 pub(crate) struct ServingSettlement;
 
 impl SettlementAdapter for ServingSettlement {
-    fn observe(&mut self, _: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<Fence> {
+    fn observe(
+        &mut self,
+        effect: &Effect,
+        _: &effigy_kernel::ctx::CleanupContext,
+    ) -> Observed<Fence> {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if let Some(observed) = super::serving_fixture::cleanup_probe_observe(effect) {
+            return observed;
+        }
+        let _ = effect;
         Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
             "a workspace serving host has no adapter effects".into(),
         ))
     }
-    fn release(&mut self, _: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<()> {
+    fn release(&mut self, effect: &Effect, _: &effigy_kernel::ctx::CleanupContext) -> Observed<()> {
+        #[cfg(feature = "workspace-serving-fixture")]
+        if let Some(observed) = super::serving_fixture::cleanup_probe_release(effect) {
+            return observed;
+        }
+        let _ = effect;
         Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
             "a workspace serving host has no adapter effects".into(),
         ))
@@ -341,7 +395,7 @@ pub(crate) fn observation() -> effigy_kernel::ctx::ObserveContext {
 }
 
 /// One fresh run identity for the host supervisor.
-fn fresh_run_id() -> Result<RunId, RunError> {
+pub(super) fn fresh_run_id() -> Result<RunId, RunError> {
     use std::io::Read;
     let mut bytes = [0u8; 10];
     let read = std::fs::File::open("/dev/urandom")
@@ -433,6 +487,21 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             "the workspace serving payload is unsupported",
         ));
     }
+    if matches!(&request.activation, Activation::ContainerUp { .. }) {
+        if let Err(error) = super::container_up::require_private_preparation_output() {
+            return Err(refuse(&session, error.category(), error.to_string()));
+        }
+    }
+    let prepared_container = match &request.activation {
+        Activation::ContainerUp { request: input } => {
+            match super::container_up::preflight(&request, input) {
+                Ok(prepared) => Some(prepared),
+                Err(error) => return Err(refuse(&session, error.category(), error.to_string())),
+            }
+        }
+        Activation::Disposable(_) => None,
+    };
+    crate::runner::task_engine::adopt_state_home(request.state_home.clone());
     let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
     #[cfg_attr(not(feature = "workspace-serving-fixture"), allow(unused_variables))]
     let observe = observation();
@@ -484,12 +553,12 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             return Err(error);
         }
     };
-    session.admitted(&mut run)?;
+    if let Err(error) = session.admitted(&mut run) {
+        return settle_refused_host(session, run, error);
+    }
     session.active();
-    let watch = session.owner_watch().ok();
-
     // The activation runs here, in the process that will keep it.
-    let mut service = match request.activation.clone() {
+    match request.activation.clone() {
         Activation::Disposable(disposable) => {
             #[cfg(not(feature = "workspace-serving-fixture"))]
             let activated: Result<ServiceOwner<'_>, RunError> = {
@@ -503,32 +572,73 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
             #[cfg(feature = "workspace-serving-fixture")]
             let activated =
                 super::serving_fixture::activate(&cx, &observe, &root, &request, &disposable);
-            match activated {
+            let service = match activated {
                 Ok(service) => service,
                 Err(error) => {
-                    let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
-                    let _ = run.settle(&cleanup_budget(), &mut adapter);
-                    session.refused_message(error.category(), error.to_string());
-                    return Err(error);
+                    return settle_refused_host(session, run, error);
                 }
-            }
+            };
+            serve_activated(
+                session,
+                run,
+                &root,
+                service,
+                disposable.fail_refusal_cleanup,
+                None,
+            )
         }
-        Activation::ContainerUp { .. } => {
-            let error = refuse(
-                &session,
-                Category::Refused,
-                "the container-up activation producer is not wired yet; #452 supplies it",
-            );
-            let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
-            let _ = run.settle(&cleanup_budget(), &mut adapter);
-            return Err(error);
+        Activation::ContainerUp { request: input } => {
+            let Some(prepared) = prepared_container else {
+                return settle_refused_host(
+                    session,
+                    run,
+                    RunError::broken("workspace activation lost its prevalidation"),
+                );
+            };
+            let activated = match super::container_up::activate(
+                &request,
+                input,
+                prepared,
+                &mut session,
+                &mut run,
+            ) {
+                Ok(activated) => activated,
+                Err(error) => return settle_refused_host(session, run, error),
+            };
+            let service = activated.service;
+            let effects = activated.effects;
+            let report = activated.report;
+            let result = serve_activated(session, run, &root, service, false, Some(report));
+            // Keep the exact integration handles beside the original serving
+            // owner until its control loop has ended.
+            drop(effects);
+            result
         }
-    };
+    }
+}
 
+/// Both production and disposable dispatchers retain the same custody loop.
+fn serve_activated<Ad, Rs, Ob, Id>(
+    mut session: EngineSession,
+    mut run: Run<'_>,
+    root: &StateRoot,
+    mut service: ServiceOwner<'_, Ad, Rs, Ob, Id>,
+    fail_refusal_cleanup: bool,
+    startup_report: Option<ContainerStartupReport>,
+) -> Result<(), RunError>
+where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
+    let observe = observation();
+    let watch = session.owner_watch().ok();
+    let mut adapter = ServingSettlement;
     // The switch must be a durable fact of the session's own run: the host reads
     // it back from the journal and refuses to serve anything else, so no
     // activation can announce a session it never switched.
-    match durable_selection(&observe, &root, service.session()) {
+    match durable_selection(&observe, root, service.session()) {
         Ok((state, committed)) => {
             let refusal = super::supervisor::committed_state(state)
                 .err()
@@ -541,24 +651,37 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
                     "the serving lease is not the lease the committed selection recorded".to_owned()
                 })
             }) {
-                let error = refuse(&session, Category::Refused, reason);
-                let _ = service.abandon();
-                let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
-                let _ = run.settle(&cleanup_budget(), &mut adapter);
-                return Err(error);
+                let error = RunError::refused(reason);
+                let error = retire_refused_service(
+                    &mut session,
+                    &mut run,
+                    service,
+                    error,
+                    fail_refusal_cleanup,
+                    RetirementCause::ListenerFailed,
+                    None,
+                );
+                return settle_refused_host(session, run, error);
             }
         }
         Err(error) => {
-            let reported = refuse(&session, error.category(), error.to_string());
-            let _ = service.abandon();
-            let _ = run.interrupt(&cleanup_budget(), WorkloadOutcome::Failed { code: 1 });
-            let _ = run.settle(&cleanup_budget(), &mut adapter);
-            return Err(reported);
+            let reported = RunError::reported(error.category(), error.to_string());
+            let error = retire_refused_service(
+                &mut session,
+                &mut run,
+                service,
+                reported,
+                fail_refusal_cleanup,
+                RetirementCause::ListenerFailed,
+                None,
+            );
+            return settle_refused_host(session, run, error);
         }
     }
 
     // Announce only the committed session, after the activation committed.
-    let published = ServingPublished::of(service.session(), service.lease());
+    let mut published = ServingPublished::of(service.session(), service.lease());
+    published.report = startup_report;
     let event = serde_json::to_vec(&HostEvent::Serving(published.clone()))
         .map_err(|error| RunError::broken(format!("the serving result: {error}")))?;
     session.event(event);
@@ -607,50 +730,229 @@ pub(crate) fn supervise(mut session: EngineSession) -> Result<(), RunError> {
     };
 
     let cleanup = cleanup_budget();
-    let retired: Retired = match service.retire_for(end, &cleanup, &mut adapter) {
+    let retired: Retired = match service.retire_for_recoverable(end, &cleanup, &mut adapter) {
         Ok(retired) => retired,
-        Err(error) => {
-            // The release is already made (the retire stops the listener and
-            // wipes the key first); report the kernel's settle failure instead
-            // of closing this run as if the session had settled.
-            let _ = run.interrupt(
-                &cleanup,
-                WorkloadOutcome::Cancelled {
-                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
-                    signal: None,
-                },
+        Err((error, retained)) => {
+            let primary = RunError::unavailable(format!(
+                "workspace service ended ({}); session cleanup failed: {error}",
+                end.as_str(),
+            ));
+            let error = retire_refused_service(
+                &mut session,
+                &mut run,
+                *retained,
+                primary,
+                false,
+                end,
+                Some(error),
             );
-            let _ = run.settle(&cleanup, &mut adapter);
-            session.refused_message(error.category(), error.to_string());
-            return Err(error);
-        }
-    };
-    match retired.cause {
-        RetirementCause::Stopped | RetirementCause::Down | RetirementCause::Settled => {
-            run.finish(WorkloadOutcome::Succeeded)?
-        }
-        RetirementCause::OwnerLost => {
-            run.interrupt(
-                &cleanup,
-                WorkloadOutcome::Cancelled {
-                    cause: effigy_kernel::ctx::StopCause::OwnerLost,
-                    signal: None,
-                },
-            )?;
-        }
-        RetirementCause::ListenerFailed => {
-            run.interrupt(
-                &cleanup,
+            return settle_failed_host(
+                session,
+                run,
+                error,
                 WorkloadOutcome::Cancelled {
                     cause: effigy_kernel::ctx::StopCause::ListenerFailed,
                     signal: None,
                 },
-            )?;
+                false,
+            );
+        }
+    };
+    if !retired.complete() {
+        return settle_failed_host(
+            session,
+            run,
+            RunError::unavailable(
+                "session cleanup incomplete; re-run down; no complete settlement was acknowledged",
+            ),
+            WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                signal: None,
+            },
+            false,
+        );
+    }
+    let terminal = match retired.cause {
+        RetirementCause::Stopped | RetirementCause::Down | RetirementCause::Settled => {
+            run.finish(WorkloadOutcome::Succeeded)
+        }
+        RetirementCause::OwnerLost => run.interrupt(
+            &cleanup,
+            WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::OwnerLost,
+                signal: None,
+            },
+        ),
+        RetirementCause::ListenerFailed => run.interrupt(
+            &cleanup,
+            WorkloadOutcome::Cancelled {
+                cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+                signal: None,
+            },
+        ),
+    };
+    let failed = || WorkloadOutcome::Cancelled {
+        cause: effigy_kernel::ctx::StopCause::ListenerFailed,
+        signal: None,
+    };
+    if let Err(error) = terminal {
+        return settle_failed_host(session, run, error, failed(), false);
+    }
+    match run.settle_workspace_recoverable(&cleanup, &mut adapter) {
+        Ok(settled) => {
+            session.closed(&settled);
+            Ok(())
+        }
+        Err((error, retained)) => settle_failed_host(session, *retained, error, failed(), true),
+    }
+}
+
+/// Wait while retaining the exact owners. A persistent lost pipe is one
+/// transition, not permission to retry cleanup indefinitely.
+pub(super) fn await_cleanup_recovery(
+    session: &mut EngineSession,
+    run: &mut Run<'_>,
+    owner_loss_handled: &mut bool,
+) {
+    loop {
+        // A broken control observation grants no cleanup authority. Keep
+        // both owners; a later exact request can still be observed.
+        if let Ok(control) = session.control(run, &[]) {
+            match control.stop {
+                Some(effigy_kernel::ctx::StopCause::OwnerLost) if !*owner_loss_handled => {
+                    *owner_loss_handled = true;
+                    return;
+                }
+                Some(effigy_kernel::ctx::StopCause::OwnerLost) | None => {}
+                Some(_) => return,
+            }
+        }
+        std::thread::sleep(TURN);
+    }
+}
+
+fn retire_refused_service<Ad, Rs, Ob, Id>(
+    session: &mut EngineSession,
+    run: &mut Run<'_>,
+    mut service: ServiceOwner<'_, Ad, Rs, Ob, Id>,
+    primary: RunError,
+    fail_first_cleanup: bool,
+    cause: RetirementCause,
+    initial_failure: Option<RunError>,
+) -> RunError
+where
+    Ad: effigy_kernel::workspace_channel::Admission,
+    Rs: effigy_kernel::workspace_channel::Resolver,
+    Ob: effigy_kernel::workspace_channel::Observer,
+    Id: effigy_kernel::workspace_channel::RunIds,
+{
+    let mut cleanup = if fail_first_cleanup {
+        crate::runner::task_engine::cleanup_context(Duration::ZERO)
+    } else {
+        cleanup_budget()
+    };
+    let mut owner_loss_handled = false;
+    let mut previous_failure = initial_failure.as_ref().map(ToString::to_string);
+    if let Some(error) = initial_failure {
+        session.refused_message(error.category(), format!(
+            "{primary}; cleanup failed: {error}; exact owner retained (supervisor_run={}, session_run={}); request stop for that supervisor run to retry cleanup",
+            run.id(), service.session().run(),
+        ));
+        await_cleanup_recovery(session, run, &mut owner_loss_handled);
+        cleanup = cleanup_budget();
+    }
+    loop {
+        let session_run = service.session().run();
+        match service.retire_for_recoverable(cause, &cleanup, &mut ServingSettlement) {
+            Ok(retired) => {
+                if !retired.complete() {
+                    return RunError::unavailable(format!(
+                        "{primary}; session cleanup incomplete (session_run={session_run}); re-run down",
+                    ));
+                }
+                return match previous_failure {
+                    Some(failure) => RunError::unavailable(format!(
+                        "{primary}; initial cleanup failed: {failure}; exact session cleanup recovered",
+                    )),
+                    None => primary,
+                };
+            }
+            Err((error, retained)) => {
+                previous_failure = Some(error.to_string());
+                service = *retained;
+                session.refused_message(error.category(), format!(
+                    "{primary}; cleanup failed: {error}; exact owner retained (supervisor_run={}, session_run={session_run}); listener={} key_held={} serving={}; request stop for that supervisor run to retry cleanup",
+                    run.id(), service.lease().endpoint(), service.key_held(), service.serving(),
+                ));
+                await_cleanup_recovery(session, run, &mut owner_loss_handled);
+                cleanup = cleanup_budget();
+            }
         }
     }
-    let settled = run.settle(&cleanup, &mut adapter)?;
-    session.closed(&settled);
-    Ok(())
+}
+
+/// Preserve host-run custody and both errors rather than dropping a failed
+/// settlement or reporting its primary refusal as successful cleanup.
+fn settle_refused_host(
+    session: EngineSession,
+    run: Run<'_>,
+    primary: RunError,
+) -> Result<(), RunError> {
+    settle_failed_host(session, run, primary, WorkloadOutcome::NotStarted, false)
+}
+
+fn settle_failed_host(
+    mut session: EngineSession,
+    mut run: Run<'_>,
+    primary: RunError,
+    workload: WorkloadOutcome,
+    defer_first_attempt: bool,
+) -> Result<(), RunError> {
+    let mut owner_loss_handled = false;
+    if defer_first_attempt {
+        session.refused_message(primary.category(), format!(
+            "cleanup failed: {primary}; exact supervisor owner retained (supervisor_run={}); request stop for that run to retry cleanup", run.id(),
+        ));
+        await_cleanup_recovery(&mut session, &mut run, &mut owner_loss_handled);
+    }
+    loop {
+        let cleanup = cleanup_budget();
+        let mark_error = match run.phase() {
+            Ok(effigy_kernel::run::Phase::Stopping) => None,
+            Ok(_) => run.interrupt(&cleanup, workload.clone()).err(),
+            Err(error) => Some(error),
+        };
+        let run_id = run.id();
+        match run.settle_workspace_recoverable(&cleanup, &mut ServingSettlement) {
+            Ok(outcome) => {
+                let error = if let Some(mark_error) = mark_error {
+                    RunError::unavailable(format!(
+                        "{primary}; recording refusal failed: {mark_error}"
+                    ))
+                } else if outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Incomplete {
+                    RunError::unavailable(format!(
+                        "{primary}; supervisor {run_id} cleanup incomplete; re-run down"
+                    ))
+                } else {
+                    primary
+                };
+                session.refused_message(error.category(), error.to_string());
+                session.closed(&outcome);
+                return Err(error);
+            }
+            Err((error, retained)) => {
+                run = *retained;
+                let mark_error = mark_error
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "none".into());
+                session.refused_message(error.category(), format!(
+                    "{primary}; recording refusal error: {mark_error}; cleanup failed: {error}; exact supervisor owner retained (supervisor_run={run_id}); request stop for that run to retry cleanup",
+                ));
+                await_cleanup_recovery(&mut session, &mut run, &mut owner_loss_handled);
+            }
+        }
+    }
 }
 
 /// The selection state a session's own run durably recorded, read back from the

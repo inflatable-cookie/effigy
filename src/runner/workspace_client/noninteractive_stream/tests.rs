@@ -179,7 +179,6 @@ impl ChannelRequest for FakeChannel {
             Auth::Accept => Ok(()),
             Auth::Unknown => Err(ChannelError::Unknown {
                 message: "the connection failed before the host answered authentication".to_owned(),
-                replayable: true,
             }),
         }
     }
@@ -217,7 +216,20 @@ impl ChannelRequest for FakeChannel {
                 }))
             }
             channel::RequestBody::Observe(body) => {
-                self.observe(&body.op).map(ChannelOutcome::Observed)
+                if let Some(rest) = body.op.strip_prefix("runs:outcome:") {
+                    let expected = format!("{}:{}", self.invoked[0], self.run);
+                    if rest != expected {
+                        return Err(ChannelError::Local("outcome identity mismatch".into()));
+                    }
+                    let value = if self.completed() {
+                        json!({"state": "completed", "outcome": self.outcome})
+                    } else {
+                        json!({"state": "pending"})
+                    };
+                    Ok(ChannelOutcome::Observed(value))
+                } else {
+                    self.observe(&body.op).map(ChannelOutcome::Observed)
+                }
             }
             other => Err(ChannelError::Local(format!(
                 "a Level 1 forwarder sent {other:?}"
@@ -316,13 +328,12 @@ impl ForwardChannel for SharedChannel {
         self
     }
 
-    fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+    fn send_initial(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
         self.send(intent)
     }
 }
 
-/// Drive the forwarding protocol over one fake connection, with the same replay
-/// path the real forwarder uses.
+/// Drive the forwarding protocol over one fake connection.
 fn drive(
     fake: &FakeChannel,
     sinks: &mut dyn CommandSinks,
@@ -361,11 +372,7 @@ fn forward_streams_distinct_streams_incrementally_and_reports_the_status() {
     assert_eq!(sinks.stderr, b"warning: still here\n");
     let seen = seen.inspect();
     assert_eq!(seen.attaches, 1, "one owning attachment, never a second");
-    assert!(!seen.invoked.is_empty(), "the outcome was checked");
-    assert!(
-        seen.invoked.windows(2).all(|pair| pair[0] == pair[1]),
-        "every replay is the same request id, so the host can never admit twice"
-    );
+    assert_eq!(seen.invoked.len(), 1, "polls never invoke or admit");
     assert!(
         seen.reads >= 3,
         "output was read before the outcome and drained after it"
@@ -868,76 +875,6 @@ fn a_forwarded_command_shape_has_no_pty_eof_stdin_and_a_real_status() {
     assert_eq!(status.signal(), Some(15));
 }
 
-/// A forwarder whose replay adopts a fresh connection, as
-/// `AuthenticatedClient::send_replaying` does.
-struct SwitchingForward {
-    first: SharedChannel,
-    second: SharedChannel,
-    replays: usize,
-    switched: bool,
-}
-
-impl ForwardChannel for SwitchingForward {
-    fn client(&mut self) -> &mut dyn ChannelRequest {
-        if self.switched {
-            &mut self.second
-        } else {
-            &mut self.first
-        }
-    }
-
-    fn replay(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
-        self.replays += 1;
-        if self.replays < 2 {
-            return self.first.replay(intent);
-        }
-        // The replay the connection died under is answered on a fresh one, and
-        // every later request must use that one.
-        self.switched = true;
-        self.second.replay(intent)
-    }
-}
-
-#[test]
-fn a_replayed_connection_is_the_one_later_reads_use() {
-    let first = FakeChannel::new()
-        .stdout_chunk(b"before\n")
-        .closed_after(usize::MAX);
-    // The fresh connection already saw the admission, so its first replay is
-    // the closed run's outcome.
-    // A fresh connection resumes at the guest's consumed position.
-    let mut second = FakeChannel::new().stdout_chunk(b"after\n");
-    second.consumed = Some([7, 0]);
-    second.closed_after = 0;
-    second.outcome = json!({"workload": {"Failed": {"code": 4}}, "cleanup_complete": true});
-    let shared_first = SharedChannel::new(first);
-    let shared_second = SharedChannel::new(second);
-    let mut forwarder = SwitchingForward {
-        first: shared_first.clone(),
-        second: shared_second.clone(),
-        replays: 0,
-        switched: false,
-    };
-    let mut sinks = RecordingSinks::default();
-    let result = super::drive(&mut forwarder, &task_intent(), &mut sinks, false);
-    assert!(
-        matches!(result, Err(RunnerError::RunSettled { code: 4 })),
-        "{result:?}"
-    );
-    assert_eq!(sinks.stdout, b"before\nafter\n");
-    let first_reads = shared_first.inspect().observed.len();
-    let second_reads = shared_second.inspect().observed.len();
-    assert!(
-        second_reads > 0,
-        "the fresh connection served the later reads"
-    );
-    assert!(
-        first_reads <= 5,
-        "the dead connection was not read past its last turn: {first_reads}"
-    );
-    assert!(shared_second.inspect().attaches == 0, "one owning attach");
-}
-
 #[test]
 fn the_host_dispatcher_serves_the_captured_output_read_and_nothing_new_else() {
     let fixture = Fixture::new();
@@ -949,6 +886,8 @@ fn the_host_dispatcher_serves_the_captured_output_read_and_nothing_new_else() {
     let body = channel::ObserveBody {
         op: output_operation(run, [0, 0]),
         target: Some(channel::Target::Host),
+        query: None,
+        run_id: None,
     };
     let value = channel::Observer::observe(&mut dispatch, &host.observe, &body)
         .expect("the captured-output read");
@@ -960,10 +899,12 @@ fn the_host_dispatcher_serves_the_captured_output_read_and_nothing_new_else() {
     let body = channel::ObserveBody {
         op: "runs:output-is-not-the-read".to_owned(),
         target: Some(channel::Target::Host),
+        query: None,
+        run_id: None,
     };
     let refusal = channel::Observer::observe(&mut dispatch, &host.observe, &body)
         .expect_err("an unserved observe still refuses");
-    assert!(refusal.diagnostic.contains("does not serve"), "{refusal:?}");
+    assert_eq!(refusal.code, channel::RefusalCode::Forbidden);
 }
 
 /// Scripted connections for the production replay state machine.
@@ -988,49 +929,25 @@ fn level_one_auth() -> super::super::GuestAuth {
 }
 
 #[test]
-fn a_replay_authenticates_the_replacement_once() {
-    // The first connection's authentication delivery is indeterminate, so the
-    // forwarder must open a replacement, present the credential there, and
-    // adopt it. Presenting it twice on the replacement would be refused by the
-    // host, and the debug assert on `client()` would fire if the session forgot
-    // the replacement had presented it.
+fn indeterminate_authentication_does_not_reconnect_or_invoke() {
     let first = SharedChannel::new(FakeChannel::new().lost_authentication());
-    let second = SharedChannel::new(
-        FakeChannel::new()
-            .stdout_chunk(b"replayed\n")
-            // Two outcome checks: a double presentation would happen on the
-            // second one.
-            .closed_after(10),
-    );
+    let second = SharedChannel::new(FakeChannel::new());
     let memory = MemoryConnections {
         channels: vec![first.clone(), second.clone()],
         next: 0,
     };
-    let mut session =
-        super::Session::connect(Box::new(memory)).expect("the first connection opened");
+    let mut session = super::Session::connect(Box::new(memory)).unwrap();
     session.authenticate_with(level_one_auth());
-    let mut sinks = RecordingSinks::default();
-    let result = super::drive(&mut session, &task_intent(), &mut sinks, false);
-    assert_eq!(result.expect("a replayed success"), "");
-    assert_eq!(sinks.stdout, b"replayed\n");
-    assert_eq!(
-        first.inspect().authentications,
-        1,
-        "the indeterminate connection presented the credential once"
+    let result = super::drive(
+        &mut session,
+        &task_intent(),
+        &mut RecordingSinks::default(),
+        false,
     );
-    assert_eq!(
-        second.inspect().authentications,
-        1,
-        "the replacement presented the credential exactly once"
-    );
-    assert!(
-        second
-            .inspect()
-            .invoked
-            .windows(2)
-            .all(|pair| pair[0] == pair[1]),
-        "every replay keeps the one request id across the replacement"
-    );
+    assert!(result.is_err());
+    assert_eq!(first.inspect().authentications, 1);
+    assert_eq!(second.inspect().authentications, 0);
+    assert!(first.inspect().invoked.is_empty());
 }
 
 #[test]
@@ -1042,7 +959,7 @@ fn a_level_one_connection_refuses_an_acknowledged_detach_by_name() {
     };
     let mut session = super::Session::connect(Box::new(memory)).expect("the connection opened");
     session.authenticate_with(level_one_auth());
-    let admitted = session.replay(&task_intent()).expect("the admission");
+    let admitted = session.send_initial(&task_intent()).expect("the admission");
     assert!(matches!(admitted, ChannelOutcome::Accepted { .. }));
     // The Level 1 client refuses the named Level 2 request before any frame, so
     // the fake's detach (which panics) is never reached.
@@ -1083,7 +1000,7 @@ fn the_credential_is_presented_only_by_the_first_request() {
         0,
         "holding the credential presents nothing"
     );
-    let admitted = session.replay(&task_intent()).expect("the admission");
+    let admitted = session.send_initial(&task_intent()).expect("the admission");
     assert!(matches!(admitted, ChannelOutcome::Accepted { .. }));
     assert_eq!(
         fake.inspect().authentications,
