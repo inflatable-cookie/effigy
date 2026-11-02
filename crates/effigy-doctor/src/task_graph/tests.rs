@@ -28,13 +28,15 @@ fn fixture_manifest() -> TaskManifest {
     .expect("task graph fixture should parse")
 }
 
+/// Both manifest walkers traverse the same run-sequence/concurrent/profile
+/// shape: commands come back in execution order and task references name the
+/// owning task.
 #[test]
-fn manifest_command_walker_includes_run_sequence_and_concurrent_commands() {
+fn manifest_walkers_include_run_sequence_and_concurrent_commands_and_references() {
     let manifest = fixture_manifest();
+
     let mut commands = Vec::<String>::new();
-
     for_each_manifest_command(&manifest, |command| commands.push(command.to_owned()));
-
     assert_eq!(
         commands,
         vec![
@@ -46,17 +48,11 @@ fn manifest_command_walker_includes_run_sequence_and_concurrent_commands() {
             "node scripts/health.js",
         ]
     );
-}
 
-#[test]
-fn manifest_reference_walker_includes_sequence_and_concurrent_task_references() {
-    let manifest = fixture_manifest();
     let mut references = Vec::<(String, String)>::new();
-
     for_each_manifest_task_reference(&manifest, |task_name, reference| {
         references.push((task_name.to_owned(), reference.to_owned()));
     });
-
     assert_eq!(
         references,
         vec![

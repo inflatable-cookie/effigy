@@ -1468,6 +1468,15 @@ During v0.x, MINOR bumps may include breaking changes.
   never started. The replace now waits for the gate itself within the stop's
   own pickup budget before its successor's admission reads it (effigy#567).
 
+- Restore the `COMPOSER_HOME/vendor/bin` PATH preference for `composer global
+  exec …` deferrals on the handoff-local container branch. Dispatching the
+  rendered runtime command there (color wrapper, runtime env) meant the raw
+  `composer global exec` prefix never matched, so the child could not resolve
+  `composer` from the global vendor bin and exited 127. The preference again
+  keys on the semantic command while the rendered command remains the
+  execution text; host routing, the wrapper, secret delivery, depth and loop
+  protection are unchanged (effigy#568).
+
 - A capture pump drain commits at most one bounded 64 KiB window per stream
   instead of one durable append per pipe read. A chatty producer's full pipe
   paid the append-and-provenance dance (and the styled-tap window rewrite) up

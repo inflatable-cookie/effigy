@@ -113,6 +113,23 @@ fn callbacks() -> HostCallbacks {
     }
 }
 
+/// Staged `.effigy-publish-` payloads the atomic publish/copy helpers must
+/// always retire; shared by the write_file_if_absent and copy_if_missing proofs.
+fn staged_payload_leftovers(root: &Path) -> Vec<PathBuf> {
+    let mut leftovers = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.expect("walk staged payloads");
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .contains(".effigy-publish-")
+        {
+            leftovers.push(entry.path().to_path_buf());
+        }
+    }
+    leftovers
+}
+
 fn script_context(root: &Path) -> ScriptContext {
     ScriptContext {
         cwd: root.to_path_buf(),
@@ -417,6 +434,46 @@ fn rhai_surface_feature_descriptors_cover_feature_names() {
             RhaiFeatureDispatch::Runner | RhaiFeatureDispatch::HostHandled
         ));
     }
+}
+
+/// The published Rhai catalog must keep listing the helper modules (with a
+/// representative function each) and must still describe copy_if_missing's
+/// atomic create-if-absent publication; docs are generated from this JSON.
+#[test]
+fn rhai_surface_registry_lists_helper_modules() {
+    let surface = crate::surface::rhai_surface_json();
+    let modules = surface["modules"].as_array().expect("modules array");
+    let functions = surface["functions"].as_array().expect("functions array");
+
+    for (module, function) in [
+        ("git", "commit"),
+        ("forge", "pr_create"),
+        ("prompt", "confirm"),
+        ("semver", "satisfies"),
+    ] {
+        assert!(
+            modules.iter().any(|entry| entry.as_str() == Some(module)),
+            "surface JSON must list the `{module}` module"
+        );
+        assert!(
+            functions
+                .iter()
+                .any(|entry| entry["module"] == module && entry["name"] == function),
+            "surface JSON must list `{module}::{function}`"
+        );
+    }
+
+    let copy_if_missing = functions
+        .iter()
+        .find(|entry| entry["module"] == "fs" && entry["name"] == "copy_if_missing")
+        .expect("copy_if_missing surface entry");
+    let description = copy_if_missing["description"]
+        .as_str()
+        .expect("description");
+    assert!(
+        description.contains("Atomically") && description.contains("absent"),
+        "surface catalog must describe create-if-absent publication: {description}"
+    );
 }
 
 #[test]

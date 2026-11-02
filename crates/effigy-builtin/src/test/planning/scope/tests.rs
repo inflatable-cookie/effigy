@@ -10,48 +10,36 @@ fn args(values: &[&str]) -> Vec<String> {
 const NEXTEST_WORKSPACE: &str = "cargo nextest run --workspace";
 const CARGO_TEST_WORKSPACE: &str = "cargo test --workspace";
 
+/// The auto `--workspace` flag yields to every explicit package-selection
+/// spelling in the passthrough, and the rendered command quotes each form
+/// with the auto flag dropped and the scope narrowed.
 #[test]
-fn package_scope_compose_drops_auto_workspace_flag_for_short_package_flag() {
-    let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["-p", "scope-good"]));
-    assert_eq!(scoped.command, "cargo nextest run '-p' 'scope-good'");
-    assert!(scoped.workspace_flag_dropped);
-    assert!(scoped.package_scope_narrowed);
-}
-
-#[test]
-fn package_scope_compose_drops_auto_workspace_flag_for_long_package_flag() {
-    let scoped =
-        compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["--package", "scope-good"]));
-    assert_eq!(scoped.command, "cargo nextest run '--package' 'scope-good'");
-    assert!(scoped.workspace_flag_dropped);
-}
-
-#[test]
-fn package_scope_compose_drops_auto_workspace_flag_for_equals_package_form() {
-    let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["--package=scope-good"]));
-    assert_eq!(scoped.command, "cargo nextest run '--package=scope-good'");
-    assert!(scoped.workspace_flag_dropped);
-}
-
-#[test]
-fn package_scope_compose_drops_auto_workspace_flag_for_attached_short_form() {
-    let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["-pscope-good"]));
-    assert_eq!(scoped.command, "cargo nextest run '-pscope-good'");
-    assert!(scoped.workspace_flag_dropped);
-}
-
-#[test]
-fn package_scope_compose_drops_auto_workspace_flag_for_repeated_selections() {
-    let scoped = compose_scoped_command(
-        NEXTEST_WORKSPACE,
-        true,
-        &args(&["-p", "scope-good", "--package", "scope-bad"]),
-    );
-    assert_eq!(
-        scoped.command,
-        "cargo nextest run '-p' 'scope-good' '--package' 'scope-bad'"
-    );
-    assert!(scoped.workspace_flag_dropped);
+fn package_scope_compose_drops_the_auto_workspace_flag_for_every_package_form() {
+    let cases = [
+        (
+            vec!["-p", "scope-good"],
+            "cargo nextest run '-p' 'scope-good'",
+        ),
+        (
+            vec!["--package", "scope-good"],
+            "cargo nextest run '--package' 'scope-good'",
+        ),
+        (
+            vec!["--package=scope-good"],
+            "cargo nextest run '--package=scope-good'",
+        ),
+        (vec!["-pscope-good"], "cargo nextest run '-pscope-good'"),
+        (
+            vec!["-p", "scope-good", "--package", "scope-bad"],
+            "cargo nextest run '-p' 'scope-good' '--package' 'scope-bad'",
+        ),
+    ];
+    for (passthrough, expected) in cases {
+        let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&passthrough));
+        assert_eq!(scoped.command, expected, "form {passthrough:?}");
+        assert!(scoped.workspace_flag_dropped, "{passthrough:?}");
+        assert!(scoped.package_scope_narrowed, "{passthrough:?}");
+    }
 }
 
 #[test]
@@ -62,20 +50,20 @@ fn package_scope_compose_preserves_cargo_test_fallback_base() {
     assert!(scoped.package_scope_narrowed);
 }
 
+/// An explicit workspace selection (`--workspace`, or its `--all` alias)
+/// also drops the auto flag, but it is not a package narrowing.
 #[test]
-fn package_scope_compose_yields_auto_flag_to_explicit_workspace_selection() {
-    let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["--workspace"]));
-    assert_eq!(scoped.command, "cargo nextest run '--workspace'");
-    assert!(scoped.workspace_flag_dropped);
-    assert!(!scoped.package_scope_narrowed);
-}
-
-#[test]
-fn package_scope_compose_yields_auto_flag_to_explicit_all_alias() {
-    let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&["--all"]));
-    assert_eq!(scoped.command, "cargo nextest run '--all'");
-    assert!(scoped.workspace_flag_dropped);
-    assert!(!scoped.package_scope_narrowed);
+fn package_scope_compose_yields_the_auto_flag_to_explicit_workspace_selections() {
+    for form in [["--workspace"], ["--all"]] {
+        let scoped = compose_scoped_command(NEXTEST_WORKSPACE, true, &args(&form));
+        assert_eq!(
+            scoped.command,
+            format!("cargo nextest run '{}'", form[0]),
+            "form {form:?}"
+        );
+        assert!(scoped.workspace_flag_dropped, "{form:?}");
+        assert!(!scoped.package_scope_narrowed, "{form:?}");
+    }
 }
 
 #[test]

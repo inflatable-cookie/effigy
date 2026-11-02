@@ -29,15 +29,43 @@ fn exit_event_ignores_every_exit_while_restart_pending() {
     assert!(state.logs_for("api").expect("api logs").is_empty());
 }
 
+/// The payload a worker reported decides the recorded state: zero passes, a
+/// signal the stop sends is a stop, and any nonzero exit is the suite's own
+/// failure — never a cancellation (the run's own stop record decides that).
 #[test]
-fn exit_event_marks_failure_and_sanitizes_rendered_log_line() {
+fn exit_event_maps_the_reported_payload_to_the_recorded_state() {
+    let cases = [
+        ("exit=0", ProcessExitState::Success),
+        ("exit=1", ProcessExitState::Failure),
+        ("signal=9", ProcessExitState::Stopped),
+        ("signal=15", ProcessExitState::Stopped),
+    ];
+    for (payload, expected) in cases {
+        let mut state = state_with_process("api");
+        let mut diagnostics = diagnostics();
+        let event = process_event("api", ProcessEventKind::Exit, payload, None);
+
+        handle_exit_event(&event, &mut state, &mut diagnostics);
+
+        assert_eq!(
+            state.exit_states.get("api"),
+            Some(&expected),
+            "payload {payload}"
+        );
+        assert!(!state.restart_pending_for("api"), "{payload}");
+    }
+}
+
+/// The rendered exit line keeps the report's printable text: control bytes
+/// (here a NUL) are stripped before the line reaches the pane.
+#[test]
+fn exit_event_sanitizes_the_rendered_failure_log_line() {
     let mut state = state_with_process("api");
     let mut diagnostics = diagnostics();
     let event = process_event("api", ProcessEventKind::Exit, "exit=1\u{0000}", None);
 
     handle_exit_event(&event, &mut state, &mut diagnostics);
 
-    assert!(!state.restart_pending_for("api"));
     assert_eq!(
         state.exit_states.get("api"),
         Some(&ProcessExitState::Failure)
@@ -48,37 +76,6 @@ fn exit_event_marks_failure_and_sanitizes_rendered_log_line() {
         .expect("exit log entry");
     assert!(matches!(entry.kind, LogEntryKind::Exit));
     assert_eq!(entry.line, "exit=1");
-}
-
-#[test]
-fn exit_event_marks_signal_as_stopped_never_as_success() {
-    for signal in ["signal=9", "signal=15"] {
-        let mut state = state_with_process("api");
-        let mut diagnostics = diagnostics();
-        let event = process_event("api", ProcessEventKind::Exit, signal, None);
-
-        handle_exit_event(&event, &mut state, &mut diagnostics);
-
-        assert_eq!(
-            state.exit_states.get("api"),
-            Some(&ProcessExitState::Stopped),
-            "a terminated entry is a stop, not a pass: {signal}"
-        );
-    }
-}
-
-#[test]
-fn exit_event_marks_zero_as_success() {
-    let mut state = state_with_process("api");
-    let mut diagnostics = diagnostics();
-    let event = process_event("api", ProcessEventKind::Exit, "exit=0", None);
-
-    handle_exit_event(&event, &mut state, &mut diagnostics);
-
-    assert_eq!(
-        state.exit_states.get("api"),
-        Some(&ProcessExitState::Success)
-    );
 }
 
 #[test]

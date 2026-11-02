@@ -10,29 +10,41 @@ use super::{
     ansi_line, format_elapsed, ingest_log_payload, runtime_meta_line, sanitize_log_text, vt_logs,
 };
 
+/// Every SGR colour class the panes render keeps its own parsed form: basic
+/// foreground colours, 256-indexed colours and truecolor RGB each produce
+/// their spans, and the extended classes carry the parsed colour.
 #[test]
-fn ansi_line_parses_basic_colour_sequence() {
-    let line = ansi_line("\u{1b}[31merror\u{1b}[0m ok", Style::default());
-    assert_eq!(line.spans.len(), 2);
-    assert_eq!(line.spans[0].content.as_ref(), "error");
-    assert_eq!(line.spans[1].content.as_ref(), " ok");
-}
-
-#[test]
-fn ansi_line_parses_ansi256_colour_sequence() {
-    let line = ansi_line("\u{1b}[38;5;212mEFFIGY\u{1b}[0m path", Style::default());
-    assert_eq!(line.spans.len(), 2);
-    assert_eq!(line.spans[0].content.as_ref(), "EFFIGY");
-    assert_eq!(line.spans[0].style.fg, Some(Color::Indexed(212)));
-    assert_eq!(line.spans[1].content.as_ref(), " path");
-}
-
-#[test]
-fn ansi_line_parses_truecolor_sequence() {
-    let line = ansi_line("\u{1b}[38;2;12;34;56mshade\u{1b}[0m", Style::default());
-    assert_eq!(line.spans.len(), 1);
-    assert_eq!(line.spans[0].content.as_ref(), "shade");
-    assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(12, 34, 56)));
+fn ansi_line_parses_the_sgr_colour_classes() {
+    let classes = [
+        (
+            "basic",
+            "\u{1b}[31merror\u{1b}[0m ok",
+            &["error", " ok"][..],
+            Some(Color::Red),
+        ),
+        (
+            "ansi256",
+            "\u{1b}[38;5;212mEFFIGY\u{1b}[0m path",
+            &["EFFIGY", " path"][..],
+            Some(Color::Indexed(212)),
+        ),
+        (
+            "truecolor",
+            "\u{1b}[38;2;12;34;56mshade\u{1b}[0m",
+            &["shade"][..],
+            Some(Color::Rgb(12, 34, 56)),
+        ),
+    ];
+    for (class, raw, spans, fg) in classes {
+        let line = ansi_line(raw, Style::default());
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(rendered, spans, "{class}");
+        assert_eq!(line.spans[0].style.fg, fg, "{class}");
+    }
 }
 
 #[test]

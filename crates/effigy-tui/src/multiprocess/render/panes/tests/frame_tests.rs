@@ -47,7 +47,19 @@ fn render_frame(
     startup_states: &HashMap<String, ProcessStartupState>,
     now: Instant,
 ) -> String {
-    let names = TABS
+    render_frame_with_names(waits, &TABS, active, startup_states, now)
+}
+
+/// The same render over a caller-supplied tab list, so a single-entry order
+/// reuses the machinery instead of re-inlining it.
+fn render_frame_with_names(
+    waits: &EntryWaits,
+    names: &[&str],
+    active: &str,
+    startup_states: &HashMap<String, ProcessStartupState>,
+    now: Instant,
+) -> String {
+    let names = names
         .iter()
         .map(|name| (*name).to_owned())
         .collect::<Vec<_>>();
@@ -161,16 +173,15 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     assert_no_spinner_or_generic_wait(&frame);
 
     // The environment is ready and `api` starts against its own request: the
-    // dependents now name `api` starting, and `api`'s own pane names the
-    // request.
+    // dependents now name `api` starting, and none names the environment any
+    // more (the probe and readiness frames are the merged transition test's
+    // subject).
     waits.environment_ready(now);
     waits.started("api", now);
-    waits.probing("api", "GET / -> 200", now);
     let frame = render_frame(&waits, "front", &startup, now + Duration::from_secs(2));
     assert_tab_labels(
         &frame,
         &[
-            "api [starting: GET / -> 200 (2s)]",
             "front [waiting: api starting]",
             "admin [waiting: api starting]",
         ],
@@ -178,32 +189,32 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     assert!(frame.contains("waiting for api (starting)"), "{frame}");
     assert!(!frame.contains("waiting for environment"), "{frame}");
     assert_no_spinner_or_generic_wait(&frame);
-
-    let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(2));
-    assert!(frame.contains("waiting for GET / -> 200 (2s)"), "{frame}");
-    assert_no_spinner_or_generic_wait(&frame);
-
-    // api is ready; both dependents may start.
-    waits.ready("api", now);
-    waits.started("front", now);
-    waits.started("admin", now);
-    let running = HashMap::from([
-        ("api".to_owned(), ProcessStartupState::Running),
-        ("front".to_owned(), ProcessStartupState::Starting),
-        ("admin".to_owned(), ProcessStartupState::Starting),
-    ]);
-    let frame = render_frame(&waits, "front", &running, now + Duration::from_secs(3));
-    assert_tab_labels(&frame, &["api [ready]", "front [starting]"]);
 }
 
-/// `api` starts, then waits on its readiness probe with elapsed seconds; the
-/// dependents still name `api` starting. Then `api` is ready, and both
-/// dependents start.
+/// A probe and readiness transition renders on one tab only: `api`'s pane
+/// names its own probe with the elapsed wait, the dependents keep naming `api`
+/// (and never borrow `api`'s probe), and readiness releases them. The probe
+/// label is the production listener label (effigy#458).
 #[test]
-fn each_transition_updates_only_its_own_tab() {
+fn probe_and_readiness_frames_name_the_reader_its_own_probe_and_release_the_dependents() {
+    use crate::waits::{listener_probe_label, HostOrder};
+
     let now = Instant::now();
-    let mut waits = EntryWaits::new(four_entry_order(), Some("app"), now);
-    waits.environment_ready(now);
+    let order = SessionOrder::hosts(&[
+        HostOrder {
+            name: "api",
+            depends_on: &[],
+        },
+        HostOrder {
+            name: "front",
+            depends_on: &["api".to_owned()],
+        },
+        HostOrder {
+            name: "admin",
+            depends_on: &["api".to_owned()],
+        },
+    ]);
+    let mut waits = EntryWaits::new(order, None, now);
     waits.started("api", now);
     let startup = HashMap::from([
         ("api".to_owned(), ProcessStartupState::Starting),
@@ -216,8 +227,9 @@ fn each_transition_updates_only_its_own_tab() {
     assert!(frame.contains("waiting for api (starting)"), "{frame}");
     assert_no_spinner_or_generic_wait(&frame);
 
-    // api's own readiness probe, with the elapsed wait.
-    waits.probing("api", "GET / -> 200", now);
+    // api's own readiness probe, with the elapsed wait; the label is what a
+    // listener probe renders in production.
+    waits.probing("api", listener_probe_label("/", 200), now);
     let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(12));
     assert!(
         frame.contains("api [starting: GET / -> 200 (12s)]"),
@@ -234,8 +246,13 @@ fn each_transition_updates_only_its_own_tab() {
     );
     assert!(!frame.contains("waiting for GET / -> 200"), "{frame}");
 
-    // api is ready: both dependents start.
+    // api is ready: both dependents may start and their frames say so.
     waits.ready("api", now + Duration::from_secs(20));
+    assert!(waits.may_start("front"), "front starts once api is ready");
+    assert!(
+        waits.may_start("admin"),
+        "admin's own prerequisites are satisfied; the plan orders its launch"
+    );
     waits.started("front", now + Duration::from_secs(20));
     waits.started("admin", now + Duration::from_secs(20));
     let running = HashMap::from([
@@ -304,116 +321,15 @@ fn a_legacy_delay_tab_names_the_delay() {
     }]);
     let mut waits = EntryWaits::new(order, None, now);
     waits.delaying("jobs", Duration::from_millis(1_200), now);
-    let names = ["lifecycle".to_owned(), "jobs".to_owned()];
-    let entry_waits = waits
-        .states(now)
-        .into_iter()
-        .map(|state| (state.entry.clone(), state))
-        .collect::<HashMap<String, EntryState>>();
     let startup = HashMap::from([("jobs".to_owned(), ProcessStartupState::Waiting)]);
-    let state = SessionState::new(PathBuf::from("/fixture"), names.to_vec(), 40, 120, 500);
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("test terminal");
-    terminal
-        .draw(|frame| {
-            render_ui(
-                frame,
-                RenderUiState {
-                    process_names: &names,
-                    active_index: 1,
-                    active_logs: &[],
-                    scroll_offset: 0,
-                    max_offset: 0,
-                    render_scroll_offset: 0,
-                    scrollbar_total: 0,
-                    follow: true,
-                    active_process: "jobs",
-                    active_startup_state: ProcessStartupState::Waiting,
-                    active_vt: false,
-                    input_line: "",
-                    input_mode: InputMode::Command,
-                    shell_capture_mode: false,
-                    exit_states: &state.exit_states,
-                    startup_states: &startup,
-                    entry_waits: &entry_waits,
-                    active_entry_wait: entry_waits.get("jobs"),
-                    show_help: false,
-                    show_options: false,
-                    options_index: 0,
-                    footer_message: None,
-                    active_output_seen: false,
-                    spinner_tick: 0,
-                    active_elapsed: Duration::from_secs(1),
-                    active_restart_count: 0,
-                    shell_cursor: None,
-                },
-            )
-        })
-        .expect("the frame renders");
-    let buffer = terminal.backend().buffer();
-    let mut text = String::new();
-    for y in 0..buffer.area.height {
-        for x in 0..buffer.area.width {
-            text.push_str(buffer[(x, y)].symbol());
-        }
-        text.push('\n');
-    }
+    let text = render_frame_with_names(
+        &waits,
+        &["lifecycle", "jobs"],
+        "jobs",
+        &startup,
+        now + Duration::from_secs(1),
+    );
     assert!(text.contains("jobs [waiting: 2s delay]"), "{text}");
     assert!(text.contains("scheduled delay: 2s remaining"), "{text}");
     assert_no_spinner_or_generic_wait(&text);
-}
-
-/// The production host mapping: `SessionOrder::hosts` over the declared
-/// `depends_on`, and the declared readiness request as the probe label. The
-/// frames name `api`'s phase to each dependent and `api`'s own request to its
-/// tab (effigy#458).
-#[test]
-fn host_depends_on_frames_name_the_reader_and_its_own_probe() {
-    use crate::waits::{listener_probe_label, HostOrder, SessionOrder};
-
-    let now = Instant::now();
-    let order = SessionOrder::hosts(&[
-        HostOrder {
-            name: "api",
-            depends_on: &[],
-        },
-        HostOrder {
-            name: "front",
-            depends_on: &["api".to_owned()],
-        },
-        HostOrder {
-            name: "admin",
-            depends_on: &["api".to_owned()],
-        },
-    ]);
-    let mut waits = EntryWaits::new(order, None, now);
-    waits.started("api", now);
-    waits.probing("api", listener_probe_label("/", 200), now);
-    let startup = HashMap::from([
-        ("api".to_owned(), ProcessStartupState::Starting),
-        ("front".to_owned(), ProcessStartupState::Waiting),
-        ("admin".to_owned(), ProcessStartupState::Waiting),
-    ]);
-
-    let frame = render_frame(&waits, "front", &startup, now + Duration::from_secs(12));
-    assert_tab_labels(
-        &frame,
-        &[
-            "api [starting: GET / -> 200 (12s)]",
-            "front [waiting: api starting]",
-            "admin [waiting: api starting]",
-        ],
-    );
-    assert!(frame.contains("waiting for api (starting)"), "{frame}");
-    assert_no_spinner_or_generic_wait(&frame);
-
-    let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(12));
-    assert!(frame.contains("waiting for GET / -> 200 (12s)"), "{frame}");
-
-    // api reached readiness: the dependents no longer wait on it.
-    waits.ready("api", now + Duration::from_secs(20));
-    assert!(waits.may_start("front"), "front starts once api is ready");
-    assert!(
-        waits.may_start("admin"),
-        "admin's own prerequisites are satisfied; the plan orders its launch"
-    );
 }

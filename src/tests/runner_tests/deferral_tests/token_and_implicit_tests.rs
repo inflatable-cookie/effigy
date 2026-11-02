@@ -1,3 +1,4 @@
+use crate::runner::error::RunnerError;
 use crate::runner::tests::prelude::{
     assert_deferred_task_case_table, assert_deferred_task_failure_case_table, fs, lock_test,
     run_task_expect_empty_output, temp_workspace, workspace_with_optional_defer_manifest,
@@ -86,10 +87,7 @@ fn seed_guest_effigy_artifact(home: &std::path::Path) {
     .expect("write fake guest artifact identity");
 }
 
-fn setup_fake_docker_deferral_runtime(
-    root: &std::path::Path,
-    service_running: bool,
-) -> (std::path::PathBuf, EnvGuard) {
+fn setup_fake_docker_deferral_runtime(root: &std::path::Path) -> (std::path::PathBuf, EnvGuard) {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
     let docker_log = root.join("fake-docker.log");
@@ -104,9 +102,8 @@ fn setup_fake_docker_deferral_runtime(
     fs::create_dir_all(&mkcert_caroot).expect("mkdir fake mkcert caroot");
     fs::write(mkcert_caroot.join("rootCA.pem"), "fake-root-ca\n").expect("write fake root ca");
     let runtime_state = root.join("fake-docker-running");
-    if service_running {
-        fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
-    }
+    // Every deferral fixture starts from a stopped runtime so the run exercises
+    // the cold activation path; `compose up` and `down` maintain the state file.
     let inspect = bin_dir.join("inspect-proof.py");
     fs::write(&inspect, r#"import sys,os,json,hashlib
 name=sys.argv[1];project=name.removesuffix('-app-1')
@@ -340,10 +337,11 @@ fn setup_php_library_path_bundle(root: &std::path::Path) {
     copy_dir_all(&php_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
 }
 
-fn write_container_handoff_external_mount_defer_manifest(root: &std::path::Path) {
+fn write_container_handoff_external_mount_defer_manifest(root: &std::path::Path, defer_run: &str) {
     write_root_manifest(
         root,
-        r#"[containers]
+        &format!(
+            r#"[containers]
 default = "web"
 
 [containers.web]
@@ -368,9 +366,10 @@ default_workspace = "app"
 container = "web"
 
 [defer]
-run = "printf deferred > handoff-marker.txt"
+run = "{defer_run}"
 run_in = "container"
-"#,
+"#
+        ),
     );
 }
 
@@ -474,7 +473,7 @@ fn run_manifest_task_php_app_bundle_defers_inside_container() {
 base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
 
     run_task_expect_empty_output(
         &root,
@@ -498,16 +497,8 @@ base = { type = "path", dir = "bundles/php-library" }
         "expected workspace service exec, got {log}"
     );
     assert!(
-        log.contains("EFFIGY_COLOR=always"),
-        "expected forced color env, got {log}"
-    );
-    assert!(
-        log.contains("FORCE_COLOR=3"),
-        "expected force-color env, got {log}"
-    );
-    assert!(
         log.contains("unset NO_COLOR; export EFFIGY_COLOR=always CLICOLOR_FORCE=1 FORCE_COLOR=3"),
-        "expected deferred shell command to clear NO_COLOR and force color, got {log}"
+        "expected deferred shell command to clear NO_COLOR and force the color env, got {log}"
     );
     assert!(
         log.contains(
@@ -529,46 +520,191 @@ base = { type = "path", dir = "bundles/php-library" }
     );
 }
 
+/// A host deferral whose command is a `composer global exec …` invocation must
+/// resolve `composer` through the composer global vendor bin, which the local
+/// deferral path prepends to the child PATH ahead of the inherited value. The
+/// fixture composer records its lookup path, the effective PATH, the deferred
+/// depth and its arguments, so the whole dispatch is observed from the child
+/// that ran.
 #[test]
-fn run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container() {
+fn run_manifest_task_composer_global_exec_deferral_resolves_the_global_vendor_bin() {
     let _guard = lock_test();
-    let root = temp_workspace("php_app-container-deferral-handoff");
-    std::fs::create_dir(root.join(".git")).expect("git dir");
-    std::fs::create_dir_all(root.join("app")).expect("app dir");
-    setup_php_library_path_bundle(&root);
-    write_root_manifest(
-        &root,
-        r#"[bundle]
-base = { type = "path", dir = "bundles/php-library" }
-"#,
+    let root = workspace_with_optional_defer_manifest(
+        "composer-global-vendor-bin",
+        Some("composer global exec effigy {request} {args}"),
+        None,
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
     let composer_home = root.join("composer-home");
     let composer_bin = composer_home.join("vendor/bin");
     fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let composer_log = root.join("fake-composer-global-bin.log");
     write_executable(
-        &composer_bin.join("effigy"),
+        &composer_bin.join("composer"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-            root.join("fake-legacy-effigy.log").display(),
+            "#!/bin/sh\nprintf 'argv0=%s\\n' \"$0\" >> '{log}'\nprintf 'path=%s\\n' \"$PATH\" >> '{log}'\nprintf 'depth=%s\\n' \"${{EFFIGY_DEFER_DEPTH:-unset}}\" >> '{log}'\nprintf 'args=%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+            log = composer_log.display(),
         ),
     );
-    let _handoff = EnvGuard::set_many(&[
-        ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
+    let _composer_home = EnvGuard::set_many(&[
         ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+        // Pin a non-interactive shell so the recorded child PATH is exactly the
+        // one the local deferral path constructed, not a login rc's rebuild.
+        ("SHELL", Some("/bin/sh".to_owned())),
     ]);
 
     run_task_expect_empty_output(
         &root,
         "missing-task",
         &["--watch"],
-        "php_app bundle handoff-local deferral should succeed",
+        "composer global exec deferral should run through the global vendor bin",
     );
 
-    let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
+    let log = fs::read_to_string(&composer_log).expect("read fake composer log");
     assert!(
-        docker.contains("\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" 'missing-task' '--watch'"),
-        "expected handoff-local deferral to invoke composer-home effigy inside container, got {docker}"
+        log.contains(&format!("path={}:", composer_bin.display())),
+        "expected the composer global vendor bin prepended to the child PATH, got {log}"
+    );
+    assert!(
+        log.contains(&format!("argv0={}/composer", composer_bin.display())),
+        "expected composer to resolve from the composer global vendor bin, got {log}"
+    );
+    assert!(
+        log.contains("args=global exec effigy missing-task --watch"),
+        "expected the deferred command rendered as literal words, got {log}"
+    );
+    assert!(
+        log.contains("depth=1"),
+        "expected the local deferral to start at depth 1, got {log}"
+    );
+}
+
+/// A `composer global exec …` deferral that takes the real handoff-local
+/// container branch must still resolve `composer` through the composer global
+/// vendor bin: the rendered color/runtime wrapper must not hide the raw
+/// semantic command from the local PATH preference. The fixture composer is
+/// discoverable only from the synthetic `COMPOSER_HOME/vendor/bin` — the child
+/// PATH excludes every other lookup directory and no fake container runtime is
+/// installed, so a container fallback cannot satisfy the scenario — and it
+/// records its lookup path, the effective PATH order, the working directory,
+/// the literal arguments and the deferred depth.
+#[test]
+fn run_manifest_task_composer_global_exec_handoff_local_deferral_resolves_the_global_vendor_bin() {
+    let _guard = lock_test();
+    let root = temp_workspace("composer-global-vendor-bin-handoff");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "composer global exec effigy {request} {args}",
+    );
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let composer_log = root.join("fake-composer-global-bin-handoff.log");
+    write_executable(
+        &composer_bin.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf 'argv0=%s\\n' \"$0\" >> '{log}'\nprintf 'path=%s\\n' \"$PATH\" >> '{log}'\nprintf 'cwd=%s\\n' \"$PWD\" >> '{log}'\nprintf 'depth=%s\\n' \"${{EFFIGY_DEFER_DEPTH:-unset}}\" >> '{log}'\nprintf 'args=%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+            log = composer_log.display(),
+        ),
+    );
+    let context = container_handoff_context(&root);
+    let _env = EnvGuard::set_many(&[
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+        // Pin a non-interactive shell so the recorded child PATH is exactly the
+        // one the local deferral path constructed, not a login rc's rebuild.
+        ("SHELL", Some("/bin/sh".to_owned())),
+        // Composer must be discoverable only from the synthetic vendor/bin.
+        ("PATH", Some("/usr/bin:/bin".to_owned())),
+    ]);
+
+    let output = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::run_defer(DeferArgs {
+            task: TaskInvocation {
+                name: "missing-task".to_owned(),
+                args: vec!["--watch".to_owned()],
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    })
+    .expect("composer global exec handoff-local deferral should resolve the global vendor bin");
+    assert_eq!(output, "");
+
+    let log = fs::read_to_string(&composer_log).expect("read fake composer log");
+    assert!(
+        log.contains(&format!("path=/usr/local/bin:{}:", composer_bin.display())),
+        "expected the color wrapper's /usr/local/bin ahead of the composer global vendor bin, ahead of the inherited PATH, got {log}"
+    );
+    assert!(
+        log.contains(&format!("argv0={}/composer", composer_bin.display())),
+        "expected composer to resolve from the composer global vendor bin, got {log}"
+    );
+    let physical_root = root.canonicalize().expect("canonical fixture root");
+    assert!(
+        log.contains(&format!("cwd={}", physical_root.display())),
+        "expected the handoff-local child to run in the handoff working directory, got {log}"
+    );
+    assert!(
+        log.contains("args=global exec effigy missing-task --watch"),
+        "expected the deferred command rendered as literal words, got {log}"
+    );
+    assert!(
+        log.contains("depth=1"),
+        "expected the handoff-local deferral to start at depth 1, got {log}"
+    );
+}
+
+/// The composer global vendor bin preference keys on the raw semantic command
+/// prefix only. A handoff-local deferral that merely wraps `composer global
+/// exec` inside a larger command must not gain the synthetic vendor/bin PATH,
+/// so the wrapped composer stays unresolvable and the fixture composer never
+/// runs.
+#[test]
+fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path() {
+    let _guard = lock_test();
+    let root = temp_workspace("composer-global-vendor-bin-handoff-wrapped");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf wrapped; composer global exec effigy {request} {args}",
+    );
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let composer_log = root.join("fake-composer-global-bin-wrapped.log");
+    write_executable(
+        &composer_bin.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+            log = composer_log.display(),
+        ),
+    );
+    let context = container_handoff_context(&root);
+    let _env = EnvGuard::set_many(&[
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        // Composer must be discoverable only from the synthetic vendor/bin.
+        ("PATH", Some("/usr/bin:/bin".to_owned())),
+    ]);
+
+    let err = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::run_defer(DeferArgs {
+            task: TaskInvocation {
+                name: "missing-task".to_owned(),
+                args: vec!["--watch".to_owned()],
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    })
+    .expect_err("a wrapped composer command must not gain the vendor bin PATH preference");
+    match err {
+        RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(127)),
+        other => panic!("unexpected error: {other}"),
+    }
+    assert!(
+        !composer_log.exists(),
+        "the wrapped composer must stay unresolvable, so the fixture composer must not run"
     );
 }
 
@@ -577,7 +713,10 @@ fn run_manifest_task_container_handoff_deferral_skips_host_mount_validation() {
     let _guard = lock_test();
     let root = temp_workspace("container-deferral-handoff-external-mount");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    write_container_handoff_external_mount_defer_manifest(&root);
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf deferred > handoff-marker.txt",
+    );
     let context = container_handoff_context(&root);
     let output = crate::runner::command_context::with_runtime_context(&context, || {
         crate::runner::run_defer(DeferArgs {
@@ -601,7 +740,10 @@ fn run_manifest_task_container_handoff_implicit_deferral_skips_host_mount_valida
     let _guard = lock_test();
     let root = temp_workspace("container-implicit-deferral-handoff-external-mount");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    write_container_handoff_external_mount_defer_manifest(&root);
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf deferred > handoff-marker.txt",
+    );
     let context = container_handoff_context(&root);
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(context.clone())
@@ -622,51 +764,6 @@ fn run_manifest_task_container_handoff_implicit_deferral_skips_host_mount_valida
 }
 
 #[test]
-fn run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin() {
-    let _guard = lock_test();
-    let root = temp_workspace("php_app-container-deferral-handoff-composer-bin");
-    std::fs::create_dir(root.join(".git")).expect("git dir");
-    std::fs::create_dir_all(root.join("app")).expect("app dir");
-    setup_php_library_path_bundle(&root);
-    write_root_manifest(
-        &root,
-        r#"[bundle]
-base = { type = "path", dir = "bundles/php-library" }
-"#,
-    );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
-    let composer_home = root.join("composer-home");
-    let composer_bin = composer_home.join("vendor/bin");
-    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
-    write_executable(
-        &composer_bin.join("effigy"),
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-            root.join("fake-legacy-effigy.log").display(),
-        ),
-    );
-    let _handoff = EnvGuard::set_many(&[
-        ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
-        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
-    ]);
-
-    run_task_expect_empty_output(
-        &root,
-        "missing-task",
-        &["--watch"],
-        "php_app bundle handoff-local deferral should prefer composer global bin",
-    );
-
-    let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
-    assert!(
-        docker.contains(
-            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" 'missing-task' '--watch'"
-        ),
-        "expected composer-home effigy path in handoff-local deferral command, got {docker}"
-    );
-}
-
-#[test]
 fn run_manifest_task_php_app_held_environment_stops_when_its_last_run_ends() {
     let _guard = lock_test();
     let root = temp_workspace("php_app-container-deferral-idle-stop");
@@ -679,7 +776,7 @@ base = { type = "path", dir = "bundles/php-library" }
 project_name = "legacy-dev"
 "#,
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
 
     run_task_expect_empty_output(
         &root,
@@ -738,7 +835,7 @@ shared_root = "{}"
             shared_root.display()
         ),
     );
-    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
 
     run_task_expect_empty_output(
         &repo_a,
@@ -791,7 +888,7 @@ shared_root = "{}"
             shared_root.display()
         ),
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
     // This test exercises repair, so its inspect must positively prove the
     // rendered volume mounts rather than leave their inventory unavailable.
     let manifest = effigy_manifest::load_task_manifest(&repo.join("effigy.toml"))
@@ -911,7 +1008,7 @@ fn run_manifest_task_php_app_bundle_refuses_container_that_reports_no_identity()
 base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
-    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
     // The guest reports no boot, platform or libc, so no identity is verified
     // and the deferral must refuse before any guest state is written.
     fs::write(root.join("fake-home/fake-guest-identity-absent"), "")
@@ -941,7 +1038,7 @@ fn php_bundle_refusal_with_guest_copy_fault(label: &str, marker: &str) -> String
 base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
-    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
     fs::write(root.join("fake-home").join(marker), "").expect("arm guest copy fault");
     let err =
         crate::runner::tests::prelude::run_task_in_workspace(&root, "missing-task", &["--watch"])
