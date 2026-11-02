@@ -2,11 +2,11 @@ use crate::runner::tests::prelude::{
     assert_file_text_equals, assert_run_array_builtin_test_task_ref_case_table,
     assert_run_array_task_output_case_table, assert_run_array_task_output_derived_case_table,
     assert_run_array_validate_marker_case_table,
-    assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_ok, temp_workspace,
-    write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
-    write_manifest, write_validate_manifest, write_validate_manifest_template,
-    BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase, RunArrayTaskOutputDerivedCase,
-    RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
+    assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_err,
+    run_validate_ok, temp_workspace, write_capture_task_ref_validate_manifest,
+    write_catalog_builtin_test_suite_manifest, write_manifest, write_validate_manifest,
+    write_validate_manifest_template, BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase,
+    RunArrayTaskOutputDerivedCase, RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
 };
 
 fn setup_task_ref_inline_args(root: &Path, marker: &Path) {
@@ -267,34 +267,57 @@ fn run_manifest_task_run_array_task_reference_env_contract_table() {
     assert_run_array_task_output_derived_case_table(&cases);
 }
 
+/// One resolution contract for every task-reference shape: a single task
+/// object without an array wrapper in both task-table spellings, and a
+/// mid-array reference whose successor step still runs. The missing-heading
+/// workspace proves the referenced docs check really executes — a skipped or
+/// parser-only step would leave that run green.
 #[test]
-fn run_manifest_task_accepts_single_task_object_without_array_wrapper() {
-    let root = temp_workspace("single-task-object-builtin-task-ref");
-    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
+fn run_manifest_task_run_array_task_reference_resolution_contract_table() {
+    let long_form = temp_workspace("single-task-object-builtin-task-ref");
+    write_manifest(&long_form.join("README.md"), "# Hello\n\n## World\n");
     write_validate_manifest(
-        &root,
+        &long_form,
         r#"[tasks.validate]
 run = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
 "#,
     );
 
-    let out = run_validate_ok(&root, &[]);
-    assert_eq!(out, "");
-}
+    assert_eq!(run_validate_ok(&long_form, &[]), "");
 
-#[test]
-fn run_manifest_task_shorthand_accepts_single_task_object_without_array_wrapper() {
-    let root = temp_workspace("single-task-object-shorthand-builtin-task-ref");
-    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
+    let shorthand = temp_workspace("single-task-object-shorthand-builtin-task-ref");
+    write_manifest(&shorthand.join("README.md"), "# Hello\n\n## World\n");
     write_manifest(
-        &root.join("effigy.toml"),
+        &shorthand.join("effigy.toml"),
         r#"[tasks]
 validate = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
 "#,
     );
 
-    let out = run_validate_ok(&root, &[]);
+    assert_eq!(run_validate_ok(&shorthand, &[]), "");
+
+    let must_execute = temp_workspace("single-task-object-docs-ref-must-execute");
+    write_manifest(&must_execute.join("README.md"), "# Hello\n");
+    write_validate_manifest(
+        &must_execute,
+        r#"[tasks.validate]
+run = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
+"#,
+    );
+
+    let error = run_validate_err(&must_execute, &[]);
+    assert!(error.to_string().contains("## World"), "{error}");
+
+    let dag = temp_workspace("run-array-task-ref-dag-in-process");
+    let marker = dag.join("task-ref-dag.log");
+    setup_dag_task_ref_in_process(&dag, &marker);
+
+    let out = run_validate_ok(&dag, &[]);
     assert_eq!(out, "");
+    assert_eq!(
+        fs::read_to_string(marker).expect("read marker"),
+        "validate-ok"
+    );
 }
 
 #[test]
@@ -319,19 +342,5 @@ run = [{{ task = "defer release -- --dry-run" }}, "printf validate-ok"]
     assert_eq!(
         fs::read_to_string(marker).expect("read defer marker"),
         "deferred"
-    );
-}
-
-#[test]
-fn run_manifest_task_run_array_dag_task_reference_uses_custody() {
-    let root = temp_workspace("run-array-task-ref-dag-in-process");
-    let marker = root.join("task-ref-dag.log");
-    setup_dag_task_ref_in_process(&root, &marker);
-
-    let out = run_validate_ok(&root, &[]);
-    assert_eq!(out, "");
-    assert_eq!(
-        fs::read_to_string(marker).expect("read marker"),
-        "validate-ok"
     );
 }
