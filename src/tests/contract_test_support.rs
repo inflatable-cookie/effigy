@@ -193,8 +193,7 @@ pub(super) fn strip_ambient_agent_environment() -> EnvGuard {
     let mut entries: Vec<(String, Option<String>)> = Vec::new();
     for (key, _) in std::env::vars_os() {
         let Some(name) = key.to_str() else { continue };
-        let hits = FAMILIES.iter().any(|family| name.starts_with(family))
-            || EXACT.iter().any(|exact| name == *exact);
+        let hits = FAMILIES.iter().any(|family| name.starts_with(family)) || EXACT.contains(&name);
         if hits {
             entries.push((name.to_owned(), None));
         }

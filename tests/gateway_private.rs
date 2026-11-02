@@ -4229,7 +4229,7 @@ fn bounded_tail(path: &Path, max: usize) -> String {
             }
             let mut tail = text[start..].to_owned();
             if start > 0 {
-                tail.insert_str(0, "…");
+                tail.insert(0, '…');
             }
             tail
         }
@@ -7363,7 +7363,11 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     let log = fixture.path().join("api.log");
     let suffix = "[effigy host-process] started `api` (pid 50645)\n\
          [effigy host-process] `api` exited (code 1)\n";
-    let padding = if suffix.len() % 2 == 0 { "x" } else { "" };
+    let padding = if suffix.len().is_multiple_of(2) {
+        "x"
+    } else {
+        ""
+    };
     let long_log = format!("{}{padding}{suffix}", "é".repeat(4_001));
     assert!(!long_log.is_char_boundary(long_log.len() - 8_000));
     fs::write(&log, long_log).expect("fixture host-process log");
