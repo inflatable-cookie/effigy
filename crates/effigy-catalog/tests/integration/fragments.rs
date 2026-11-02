@@ -654,108 +654,14 @@ fn php_fpm_publishes_host_ports_when_requested() {
     );
 }
 
-#[test]
-fn assemble_full_lemp_stack() {
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-
-    let services = vec![
-        ServiceDeclaration {
-            name: "app".to_string(),
-            catalog: "php-fpm".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "web".to_string(),
-            catalog: "nginx".to_string(),
-            params: HashMap::new(),
-            variant: Some("default".to_string()),
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "db".to_string(),
-            catalog: "mariadb".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "cache".to_string(),
-            catalog: "redis".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "sessions".to_string(),
-            catalog: "memcached".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-    ];
-
-    let result = assembler
-        .assemble(&services, "client-x", ".", ".effigy-catalog", 1000, 1000)
-        .unwrap();
-
-    // All five services present.
-    for name in &["app", "web", "db", "cache", "sessions"] {
-        assert!(
-            result.compose_yaml.contains(&format!("{name}:")),
-            "missing {name} service:\n{}",
-            result.compose_yaml
-        );
-    }
-
-    // Nginx config file should be generated.
-    assert!(
-        result.config_files.contains_key("web.conf"),
-        "missing nginx config: {:?}",
-        result.config_files.keys().collect::<Vec<_>>()
-    );
-    assert!(result.config_files["web.conf"].contains("fastcgi_pass"));
-}
-
-#[test]
-fn generated_compose_pins_runtime_volume_names() {
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-
-    let services = vec![ServiceDeclaration {
-        name: "db".to_string(),
-        catalog: "postgres".to_string(),
-        params: HashMap::new(),
-        variant: None,
-        config: None,
-    }];
-
-    let result = assembler
-        .assemble(
-            &services,
-            "farmyard-dev",
-            ".",
-            ".effigy-catalog",
-            1000,
-            1000,
-        )
-        .unwrap();
-
-    assert!(
-        result
-            .compose_yaml
-            .contains("farmyard-dev-db-data:/var/lib/postgresql/data"),
-        "missing named Postgres data volume:\n{}",
-        result.compose_yaml
-    );
-    assert!(
-        result.compose_yaml.contains("farmyard-dev-db-data"),
-        "expected Postgres named volume output:\n{}",
-        result.compose_yaml
-    );
-}
+// The five-service LEMP composition is subsumed by
+// `full_stack_with_all_services` (services.rs), which carries the same services
+// plus mailpit/silo/elasticsearch and absorbs this stack's one distinct claim:
+// a default-variant nginx emits web.conf with fastcgi_pass inside a
+// multi-service stack. Volume naming (<project>-<service>-data, persist flags)
+// is pinned with more context by `rust_postgres_stack_assembles_correctly` and
+// `single_redis_service_assembles_with_persistent_data_volume` (structure.rs)
+// through the same assemble -> build_compose_document path.
 
 #[test]
 fn fragment_not_found_error() {

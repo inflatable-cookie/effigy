@@ -104,46 +104,45 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
-    let services = vec![
-        ServiceDeclaration {
-            name: "app".to_string(),
-            catalog: "php-fpm".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
+    // The genesis params are nginx-side, so the config renders without a
+    // variant and without a php-fpm service (default.conf falls back to
+    // `app` for the fastcgi upstream when none exists).
+    let services = vec![ServiceDeclaration {
+        name: "web".to_string(),
+        catalog: "nginx".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "document_root".to_string(),
+                toml::Value::String(".".to_string()),
+            );
+            p.insert(
+                "rewrite_all_to".to_string(),
+                toml::Value::String("/vendor/genesis.php".to_string()),
+            );
+            p.insert(
+                "asset_fallback".to_string(),
+                toml::Value::String("/vendor/genesis.php".to_string()),
+            );
+            p.insert(
+                "error_page_404".to_string(),
+                toml::Value::String("/vendor/genesis.php".to_string()),
+            );
+            p
         },
-        ServiceDeclaration {
-            name: "web".to_string(),
-            catalog: "nginx".to_string(),
-            params: {
-                let mut p = HashMap::new();
-                p.insert(
-                    "document_root".to_string(),
-                    toml::Value::String(".".to_string()),
-                );
-                p.insert(
-                    "rewrite_all_to".to_string(),
-                    toml::Value::String("/vendor/genesis.php".to_string()),
-                );
-                p.insert(
-                    "asset_fallback".to_string(),
-                    toml::Value::String("/vendor/genesis.php".to_string()),
-                );
-                p.insert(
-                    "error_page_404".to_string(),
-                    toml::Value::String("/vendor/genesis.php".to_string()),
-                );
-                p
-            },
-            variant: None,
-            config: None,
-        },
-    ];
+        variant: None,
+        config: None,
+    }];
 
     let result = assembler
         .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
         .unwrap();
 
+    assert!(
+        result.compose_yaml.contains("- .:/var/www/html:ro"),
+        "nginx params should apply the repo-root working dir preset:\n{}",
+        result.compose_yaml
+    );
     let config = &result.config_files["web.conf"];
     assert!(
         config.contains("root /var/www/html;"),
@@ -327,55 +326,10 @@ fn nginx_health_status_for_wget(command: &str, stderr_line: &str, wget_exit: i32
         .unwrap_or(255)
 }
 
-#[test]
-fn nginx_genesis_rewrite_params_apply_without_variant() {
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-
-    let services = vec![ServiceDeclaration {
-        name: "web".to_string(),
-        catalog: "nginx".to_string(),
-        params: {
-            let mut p = HashMap::new();
-            p.insert(
-                "document_root".to_string(),
-                toml::Value::String(".".to_string()),
-            );
-            p.insert(
-                "rewrite_all_to".to_string(),
-                toml::Value::String("/vendor/genesis.php".to_string()),
-            );
-            p.insert(
-                "asset_fallback".to_string(),
-                toml::Value::String("/vendor/genesis.php".to_string()),
-            );
-            p.insert(
-                "error_page_404".to_string(),
-                toml::Value::String("/vendor/genesis.php".to_string()),
-            );
-            p
-        },
-        variant: None,
-        config: None,
-    }];
-
-    let result = assembler
-        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
-        .unwrap();
-
-    assert!(
-        result.compose_yaml.contains("- .:/var/www/html:ro"),
-        "nginx params should apply the repo-root working dir preset:\n{}",
-        result.compose_yaml
-    );
-    assert!(
-        result.config_files["web.conf"].contains("root /var/www/html;"),
-        "nginx params should apply the repo-root document root preset:\n{}",
-        result.config_files["web.conf"]
-    );
-}
-
-// --- Additional service fragments ─────────────────────────────────────
+// The nginx-only compose preset and the four config assertions of the old
+// `nginx_genesis_rewrite_params_apply_without_variant` now live in
+// `nginx_supports_genesis_rewrite_params_without_variant` (same genesis params,
+// one assembly).
 
 #[test]
 fn node_fragment_assembles_with_modules_volume() {
@@ -559,79 +513,58 @@ fn phpmyadmin_fragment_assembles() {
 }
 
 #[test]
-fn phpmyadmin_uses_empty_password_when_db_explicitly_sets_empty_password() {
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
+fn phpmyadmin_propagates_the_mariadb_root_password_both_ways() {
+    let assembler = ComposeAssembler::new(bundled_resolver());
 
-    let services = vec![
-        ServiceDeclaration {
-            name: "db".to_string(),
-            catalog: "mariadb".to_string(),
-            params: {
-                let mut p = HashMap::new();
-                p.insert("password".to_string(), toml::Value::String("".to_string()));
-                p
+    let services = |password: &str| {
+        vec![
+            ServiceDeclaration {
+                name: "db".to_string(),
+                catalog: "mariadb".to_string(),
+                params: {
+                    let mut p = HashMap::new();
+                    p.insert(
+                        "password".to_string(),
+                        toml::Value::String(password.to_string()),
+                    );
+                    p
+                },
+                variant: None,
+                config: None,
             },
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "dbadmin".to_string(),
-            catalog: "phpmyadmin".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-    ];
-
-    let result = assembler
-        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
-        .unwrap();
-
-    assert!(
-        result.compose_yaml.contains("PMA_PASSWORD: ''"),
-        "phpmyadmin should keep an explicitly empty mariadb password empty:\n{}",
-        result.compose_yaml
-    );
-}
-
-#[test]
-fn phpmyadmin_inherits_mariadb_password() {
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-
-    let services = vec![
-        ServiceDeclaration {
-            name: "db".to_string(),
-            catalog: "mariadb".to_string(),
-            params: {
-                let mut p = HashMap::new();
-                p.insert(
-                    "password".to_string(),
-                    toml::Value::String("localdev".to_string()),
-                );
-                p
+            ServiceDeclaration {
+                name: "dbadmin".to_string(),
+                catalog: "phpmyadmin".to_string(),
+                params: HashMap::new(),
+                variant: None,
+                config: None,
             },
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "dbadmin".to_string(),
-            catalog: "phpmyadmin".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-    ];
+        ]
+    };
 
-    let result = assembler
-        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+    let inherited = assembler
+        .assemble(
+            &services("localdev"),
+            "test",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
         .unwrap();
-
     assert!(
-        result.compose_yaml.contains("PMA_PASSWORD: localdev"),
+        inherited.compose_yaml.contains("PMA_PASSWORD: localdev"),
         "phpmyadmin should inherit the mariadb root password:\n{}",
-        result.compose_yaml
+        inherited.compose_yaml
+    );
+
+    let emptied = assembler
+        .assemble(&services(""), "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    assert!(
+        emptied.compose_yaml.contains("PMA_PASSWORD: ''"),
+        "phpmyadmin should keep an explicitly empty mariadb password empty:\n{}",
+        emptied.compose_yaml
     );
 }
 
@@ -1428,5 +1361,19 @@ fn full_stack_with_all_services() {
             .contains("full-stack-db-data:/var/lib/mysql"),
         "should have a named mariadb data volume:\n{}",
         result.compose_yaml
+    );
+
+    // A default-variant nginx in a multi-service stack still emits its config
+    // file with the PHP upstream resolved (absorbed from the dominated
+    // five-service LEMP composition).
+    assert!(
+        result.config_files.contains_key("web.conf"),
+        "missing nginx config: {:?}",
+        result.config_files.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        result.config_files["web.conf"].contains("fastcgi_pass"),
+        "nginx config should have fastcgi_pass:\n{}",
+        result.config_files["web.conf"]
     );
 }
