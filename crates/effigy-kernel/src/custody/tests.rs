@@ -54,6 +54,103 @@ fn unknown_process_without_receipt_is_not_settled_as_released() {
     assert!(reason.is_some(), "unresolved custody needs a reason");
 }
 
+fn assert_recoverable_settlement_retains_core(lost_response: bool) {
+    let home = tempfile::tempdir().expect("fixture");
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let cleanup = cx
+        .operation()
+        .cleanup(Duration::from_secs(5))
+        .expect("cleanup");
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &inv(),
+        BeginOpts {
+            id: id(),
+            wait: crate::gate::Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cleanup,
+        &mut Strict,
+    )
+    .expect("run");
+    let ticket = run
+        .intend_process(EffectSpec {
+            target: run.fence().clone(),
+            kind: KIND.into(),
+            payload: serde_json::Value::Null,
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .expect("intent");
+    run.applied(&ticket, serde_json::json!({"invalid": true}))
+        .expect("receipt");
+    let core = Arc::new(Mutex::new(ProcessCore {
+        receipt: ProcessReceipt {
+            identity: fixture_identity(std::process::id()),
+            pgid: 0,
+            nonce: "test".into(),
+            grace_millis: 0,
+        },
+        interpolation: None,
+        anchor: None,
+        logs: [None, None],
+        canonical_output: None,
+        output: VecDeque::new(),
+        streams: [VecDeque::new(), VecDeque::new()],
+        queue_max: 0,
+        stdout: None,
+        stderr: None,
+        stdin: None,
+        pipeline: OutputPipeline::new(Vec::new()),
+        tail: VecDeque::new(),
+        tail_max: 0,
+        capture: CaptureState::Complete,
+        exit: None,
+        reaped: true,
+        deadline: None,
+        terminal: None,
+        pty: false,
+        registration: None,
+        capture_eof_sent: true,
+    }));
+    let weak = Arc::downgrade(&core);
+    run.retain_process(ticket.sequence(), core);
+    if lost_response {
+        crate::fault::arm_point(
+            crate::fault::Point::SettleEffectAfter,
+            crate::fault::Fault::Enospc,
+        );
+    }
+    let result = run.settle_workspace_recoverable(&cleanup, &mut Strict);
+    let fired = crate::fault::fired();
+    crate::fault::arm(None);
+    assert_eq!(
+        fired, lost_response,
+        "the selected response fault must fire"
+    );
+    let (_, owner) = result.expect_err("unknown receipt must retain the owner");
+    assert!(
+        weak.upgrade().is_some(),
+        "the same process core stays with the returned Run"
+    );
+    drop(owner);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn recoverable_settlement_retains_the_exact_core_on_unknown_receipt() {
+    assert_recoverable_settlement_retains_core(false);
+}
+
+#[test]
+fn recoverable_settlement_retains_the_exact_core_on_lost_response() {
+    assert_recoverable_settlement_retains_core(true);
+}
+
 #[test]
 fn receiptless_process_residue_stays_unsettled_on_retry() {
     let effect = Effect {
@@ -2542,6 +2639,7 @@ impl FakeCapture {
         };
         let core = ProcessCore {
             receipt,
+            interpolation: None,
             anchor: None,
             logs,
             canonical_output: None,

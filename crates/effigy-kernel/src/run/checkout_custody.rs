@@ -46,10 +46,14 @@ impl Run<'_> {
         let Some(sentinel) = &self.sentinel else {
             return Ok(());
         };
+        // Share the Run's actual exclusion descriptions as well as the
+        // checkout lease. A pathname reopened by the helper would be a different
+        // flock owner; explicit unlock on caller drop would release both copies.
+        let owner_gates = self.guard.share_custody()?;
         match MemoryGuard::start_recoverable(
             &sentinel.executable,
             &mut custody.lease.guard,
-            &[],
+            &owner_gates,
             &self.cx,
             self.id,
             self.owner.clone(),
@@ -87,6 +91,124 @@ impl Run<'_> {
             backup.register(&effect)?;
         }
         Ok(())
+    }
+    pub(crate) fn retain_checkout_interpolation(
+        &mut self,
+        ticket: &EffectTicket,
+        file: &mut crate::interpolation::RetainedInterpolation,
+    ) -> Result<(), RunError> {
+        let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|c| c.backup.as_mut())
+            .ok_or_else(|| RunError::refused("interpolation requires retained checkout backup"))?;
+        backup.verify_retained()?;
+        let process_receipt = effect
+            .receipt
+            .clone()
+            .ok_or_else(|| RunError::broken("missing interpolation process receipt"))?;
+        if process_receipt.get("interpolation_v1").is_none() {
+            let pending = serde_json::json!({"interpolation_v1": process_receipt, "binding": {"pending": true}});
+            let publication = self.store.transaction(&self.cx, |txn| {
+                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                journal::write_effect(
+                    txn,
+                    self.id,
+                    ticket.sequence,
+                    EffectState::Applied,
+                    Some(&pending),
+                    None,
+                )
+            });
+            if publication.is_err() {
+                self.poisoned = true;
+            }
+            publication?;
+        }
+        if file.binding().is_ok() {
+            if !file.matches_effect(&effect, self.id, &self.owner) {
+                return Err(RunError::refused(
+                    "retained interpolation retry binding differs",
+                ));
+            }
+        } else {
+            file.bind(self.id, self.owner.clone(), effect.clone())?;
+        }
+        // The Run journal records the obligation before the helper handoff or
+        // go. The distinct envelope is unreadable to old process-receipt
+        // readers: owner loss cannot silently turn a bound file into a plain
+        // process effect whose release would claim complete cleanup.
+        let mut receipt = effect
+            .receipt
+            .clone()
+            .ok_or_else(|| RunError::broken("missing interpolation process receipt"))?;
+        if receipt.get("interpolation_v1").is_none() {
+            receipt = serde_json::json!({"interpolation_v1": receipt, "binding": file.binding()?});
+            let publication = self.store.transaction(&self.cx, |txn| {
+                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+                journal::write_effect(
+                    txn,
+                    self.id,
+                    ticket.sequence,
+                    EffectState::Applied,
+                    Some(&receipt),
+                    None,
+                )
+            });
+            if publication.is_err() {
+                self.poisoned = true;
+            }
+            publication?;
+        }
+        backup.retain_interpolation(file)
+    }
+    pub(super) fn finish_interpolation_custody(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
+        let pending = self.processes.values().any(|core| {
+            core.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .interpolation
+                .as_ref()
+                .is_some_and(|file| !file.helper_completed())
+        });
+        if !pending {
+            return Ok(());
+        }
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| {
+                RunError::unavailable("interpolation has no verified completion custodian")
+            })?;
+        if backup.has_unconfirmed_files() {
+            for core in self.processes.values() {
+                let core = core
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(file) = core.interpolation.as_ref() {
+                    backup.retain_interpolation(file)?;
+                }
+            }
+        }
+        for core in self.processes.values() {
+            let core = core
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if core
+                .interpolation
+                .as_ref()
+                .is_some_and(|file| !file.helper_completed() && !backup.owns_interpolation(file))
+            {
+                return Err(RunError::unavailable(
+                    "interpolation descriptor handoff did not complete",
+                ));
+            }
+        }
+        self.close_checkout_custody_recoverable(cleanup)
     }
     pub(crate) fn checkout_closure_pin(&self) -> Result<Option<ClosurePin>, RunError> {
         match self
@@ -148,6 +270,30 @@ impl Run<'_> {
             custody.partial_backup.take();
             if let Some(backup) = custody.backup.as_mut() {
                 backup.close(cleanup)?;
+            }
+        }
+        if self
+            .checkout_custody
+            .as_ref()
+            .and_then(|custody| custody.backup.as_ref())
+            .is_some_and(|backup| backup.has_interpolation())
+        {
+            for core in self.processes.values() {
+                if let Some(file) = core
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .interpolation
+                    .as_mut()
+                {
+                    if self
+                        .checkout_custody
+                        .as_ref()
+                        .and_then(|custody| custody.backup.as_ref())
+                        .is_some_and(|backup| backup.owns_interpolation(file))
+                    {
+                        file.confirm_helper_completion();
+                    }
+                }
             }
         }
         self.checkout_custody.take();

@@ -22,5 +22,6 @@ Current technical authority for Effigy.
 | Gateway legacy upgrade and recovery | [034-gateway-legacy-upgrade-recovery.md](034-gateway-legacy-upgrade-recovery.md) |
 | Gateway endpoint storage API | [035-gateway-endpoint-store.md](035-gateway-endpoint-store.md) |
 | Live progress sites (Q-017) | [036-live-progress-sites.md](036-live-progress-sites.md) |
+| Interpolation custody and recovery (proposed) | [037-interpolation-custody-proposal.md](037-interpolation-custody-proposal.md) |
 | Effigy Product Guardrails | [product-guardrails.md](product-guardrails.md) |
 | Codebase sweep procedure | [codebase-sweep.md](codebase-sweep.md) |

@@ -63,6 +63,8 @@ thread_local! {
     static FAIL_NEXT_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal fails before it touches the directory.
     static FAIL_NEXT_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_CUSTODY_FILE_DUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal's quarantine entry vanishes after the move.
     static VANISH_NEXT_QUARANTINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test seam: the next removal's quarantine name is this one, so a test can
@@ -83,6 +85,42 @@ const RANDOM_BYTES: usize = 16;
 pub struct ComposeInvocation {
     pub args: Vec<OsString>,
     pub interpolation: Option<InterpolationFile>,
+}
+
+impl ComposeInvocation {
+    /// The retained path is separate from direct-child execution. A secret VM
+    /// invocation must use the exact Env Run already owning its process group.
+    pub fn spawn_retained(
+        mut self,
+        run: &mut effigy_kernel::run::Run<'_>,
+        mut spec: effigy_kernel::custody::ProcessSpec,
+        cx: &effigy_kernel::ctx::EffectContext,
+    ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
+        let program = spec.argv.first().cloned().ok_or_else(|| {
+            effigy_kernel::custody::SpawnError::Refused("missing Compose program".into())
+        })?;
+        spec.argv = std::iter::once(program).chain(self.args).collect();
+        match self.interpolation.take() {
+            Some(file) => {
+                let file = file.into_retained().map_err(|error| {
+                    effigy_kernel::custody::SpawnError::Refused(error.to_string())
+                })?;
+                effigy_kernel::custody::Custody::spawn_interpolated(run, spec, cx, file)
+            }
+            None => effigy_kernel::custody::Custody::spawn(run, spec, cx),
+        }
+    }
+
+    /// Direct-child callers cannot safely transfer this owner into group custody.
+    /// Refuse before spawn until they can admit a retained kernel Run.
+    pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {
+        if self.interpolation.is_some() {
+            return Err(io::Error::other(
+                "VM Compose interpolation requires retained kernel custody",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One Compose invocation's arguments, with the interpolation values a
@@ -207,8 +245,36 @@ pub struct InterpolationFile {
     stat: FileStat,
     /// Holds the shared lock for the file's lifetime, so another cooperating
     /// writer sees the name as taken. No sweep removes a file on the lock alone.
-    _lock: Flock<File>,
+    _lock: File,
     removed: bool,
+    attempted: bool,
+    custody_prepared: bool,
+    phase: RemovalPhase,
+}
+
+/// Duplicates of the exact file and directory descriptions, for a custody
+/// channel. They grant no authority to remove the entry or prove closure.
+#[derive(Debug)]
+pub struct InterpolationDescriptors {
+    pub file: OwnedFd,
+    pub directory: OwnedFd,
+    /// The original single-component name; the receiver must verify it.
+    pub original: String,
+    /// The current name and phase; this is a claim, not cleanup authority.
+    pub location: InterpolationLocation,
+}
+
+/// The name that a live owner currently associates with the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterpolationLocation {
+    Original,
+    Quarantine(String),
+}
+
+enum RemovalPhase {
+    Original,
+    Quarantine(String),
+    Unknown,
 }
 
 impl InterpolationFile {
@@ -217,11 +283,117 @@ impl InterpolationFile {
         &self.path
     }
 
-    /// Remove the file now. `Ok` means the entry this invocation created is gone
-    /// or was already removed; `Err` means its state is unknown.
-    pub fn remove(mut self) -> io::Result<()> {
+    /// Prepare the exact open descriptions for a custody handoff. Once attempted,
+    /// dropping this owner never unlinks the file, even if duplication fails or
+    /// the recipient's acknowledgement is lost. The caller retains this owner.
+    pub fn prepare_custody(&mut self) -> io::Result<InterpolationDescriptors> {
+        self.attempted = true;
+        self.custody_prepared = true;
+        if self.removed {
+            return Err(invalid("interpolation file was already removed".into()));
+        }
+        let location = match &self.phase {
+            RemovalPhase::Original => InterpolationLocation::Original,
+            RemovalPhase::Quarantine(name) => InterpolationLocation::Quarantine(name.clone()),
+            RemovalPhase::Unknown => {
+                return Err(invalid("interpolation cleanup state is unknown".into()))
+            }
+        };
+        let current_name = match &location {
+            InterpolationLocation::Original => self.name.as_str(),
+            InterpolationLocation::Quarantine(name) => name.as_str(),
+        };
+        let _directory_lock = lock_directory(&self.directory)?;
+        let directory = fstat(&self.directory).map_err(io::Error::from)?;
+        if !owned_directory_for(&directory, geteuid().as_raw())
+            || directory.st_nlink == 0
+            || u32::from(directory.st_mode) & 0o777 != 0o700
+        {
+            self.phase = RemovalPhase::Unknown;
+            return Err(invalid(
+                "the interpolation directory is no longer trusted".into(),
+            ));
+        }
+        let held = fstat(&self._lock).map_err(io::Error::from)?;
+        if !same_object(&held, &self.stat) || !private_file(&held) {
+            self.phase = RemovalPhase::Unknown;
+            return Err(invalid(
+                "the held interpolation file is no longer trusted".into(),
+            ));
+        }
+        match fstatat(&self.directory, current_name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(named) if same_object(&named, &held) && private_file(&named) => {}
+            Ok(_) | Err(Errno::ENOENT) => {
+                self.phase = RemovalPhase::Unknown;
+                return Err(invalid(
+                    "the interpolation name no longer identifies the held file".into(),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+        try_shared_lock(&self._lock)?;
+        let file = self._lock.try_clone()?;
+        #[cfg(test)]
+        if FAIL_AFTER_CUSTODY_FILE_DUP.with(|armed| armed.replace(false)) {
+            return Err(io::Error::other("injected custody duplication failure"));
+        }
+        Ok(InterpolationDescriptors {
+            file: file.into(),
+            directory: self.directory.try_clone()?,
+            original: self.name.clone(),
+            location,
+        })
+    }
+
+    /// Move this prepared file into the kernel's retained spawn path. The
+    /// original owner disables Drop cleanup before any fallible duplication.
+    pub fn into_retained(
+        mut self,
+    ) -> io::Result<effigy_kernel::interpolation::RetainedInterpolation> {
+        let descriptors = self.prepare_custody()?;
+        let location = match descriptors.location {
+            InterpolationLocation::Original => effigy_kernel::interpolation::Location::Original,
+            InterpolationLocation::Quarantine(name) => {
+                effigy_kernel::interpolation::Location::Quarantine(name)
+            }
+        };
+        effigy_kernel::interpolation::RetainedInterpolation::new(
+            descriptors.file,
+            descriptors.directory,
+            descriptors.original,
+            location,
+        )
+    }
+
+    /// Attempt removal without consuming this owner. `Err` leaves the file and
+    /// lock with the caller; dropping after an error never retries implicitly.
+    /// A partially moved entry may remain in quarantine and still needs recovery.
+    pub fn remove(&mut self) -> io::Result<()> {
+        self.attempted = true;
+        if self.custody_prepared {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "interpolation custody requires verified kernel group closure",
+            ));
+        }
+        let _directory_lock = lock_directory(&self.directory)?;
+        let held = fstat(&self._lock).map_err(io::Error::from)?;
+        if held.st_nlink == 0 {
+            self.phase = RemovalPhase::Unknown;
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the held interpolation file has no name; its removal is not confirmed",
+            ));
+        }
+        if !same_object(&held, &self.stat) || !private_file(&held) {
+            self.phase = RemovalPhase::Unknown;
+            return Err(invalid(
+                "the held interpolation file is no longer trusted".into(),
+            ));
+        }
+        remove_owned_tracked(&self.directory, &self.name, &self.stat, &mut self.phase)?;
         self.removed = true;
-        remove_owned(&self.directory, &self.name, &self.stat)
+        Ok(())
     }
 
     /// Sweep stale files, then write one fresh file for `body`.
@@ -231,6 +403,7 @@ impl InterpolationFile {
         })?;
         let directory = open_private_directory(&home)?;
         let directory_path = home.join(DIRECTORY);
+        let _directory_lock = lock_directory(&directory)?;
         sweep(&directory_path);
         for _ in 0..CREATE_ATTEMPTS {
             let name = format!("{FILE_PREFIX}{}{FILE_SUFFIX}", random_hex(RANDOM_BYTES)?);
@@ -286,12 +459,14 @@ impl InterpolationFile {
             discard(directory, name, &stat)?;
             return Err(error.into());
         }
-        let Ok(mut locked) = Flock::lock(file, FlockArg::LockSharedNonblock) else {
-            // Another party holds this name's exclusive lock, so the name is
-            // taken: discard our own unfilled file and let the caller retry.
+        if let Err(error) = try_shared_lock(&file) {
             discard(directory, name, &stat)?;
-            return Ok(None);
-        };
+            if error.kind() == io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        let mut locked = file;
         if !is_entry(directory, name, &stat) {
             discard(directory, name, &stat)?;
             return Ok(None);
@@ -311,6 +486,9 @@ impl InterpolationFile {
             stat,
             _lock: locked,
             removed: false,
+            attempted: false,
+            custody_prepared: false,
+            phase: RemovalPhase::Original,
         }))
     }
 }
@@ -329,8 +507,21 @@ fn unknown_after_write(write_error: io::Error, cleanup: io::Result<()>) -> io::E
     }
 }
 
+/// The lock belongs to the open file description and survives duplicate
+/// descriptor closes. Reacquiring it is safe on that same description.
+fn try_shared_lock(file: &File) -> io::Result<()> {
+    // SAFETY: `file` owns a live descriptor for the duration of this call.
+    let result =
+        unsafe { nix::libc::flock(file.as_raw_fd(), nix::libc::LOCK_SH | nix::libc::LOCK_NB) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// The one write of a value into a locked interpolation file.
-fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
+fn write_body(file: &mut File, body: &str) -> io::Result<()> {
     #[cfg(test)]
     if FAIL_NEXT_WRITE.with(|armed| armed.replace(false)) {
         return Err(io::Error::other("injected write failure"));
@@ -340,7 +531,12 @@ fn write_body(file: &mut Flock<File>, body: &str) -> io::Result<()> {
 
 impl Drop for InterpolationFile {
     fn drop(&mut self) {
-        if !self.removed && remove_owned(&self.directory, &self.name, &self.stat).is_err() {
+        if !self.removed
+            && !self.attempted
+            && lock_directory(&self.directory)
+                .and_then(|_guard| remove_owned(&self.directory, &self.name, &self.stat))
+                .is_err()
+        {
             eprintln!(
                 "effigy: could not confirm removal of a Compose interpolation file at {}; its cleanup state is unknown",
                 self.path.display()
@@ -416,6 +612,20 @@ fn open_private_directory(home: &Path) -> io::Result<OwnedFd> {
         }
     }
     Ok(directory)
+}
+
+/// Lock the verified directory itself. Reopen `.` to obtain an independent
+/// open-file description: dup would share the existing flock across threads.
+fn lock_directory(directory: &OwnedFd) -> io::Result<Flock<File>> {
+    let fd = openat(
+        directory,
+        ".",
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    Flock::lock(File::from(fd), FlockArg::LockExclusive)
+        .map_err(|(_, error)| io::Error::from(error))
 }
 
 /// Count the residue this layout can name and leave it in place. A free file
@@ -550,59 +760,100 @@ fn quarantine_name() -> io::Result<String> {
 /// moves. The unlink never follows a check: if the moved inode is not
 /// `expected`, it is put back with a no-overwrite link and never unlinked.
 fn remove_owned(directory: &OwnedFd, name: &str, expected: &FileStat) -> io::Result<()> {
+    remove_owned_tracked(directory, name, expected, &mut RemovalPhase::Original)
+}
+
+/// Retain the quarantine name across failures so a live owner retries the same
+/// inode rather than inventing a new destination. Unknown is never retried.
+fn remove_owned_tracked(
+    directory: &OwnedFd,
+    name: &str,
+    expected: &FileStat,
+    phase: &mut RemovalPhase,
+) -> io::Result<()> {
     #[cfg(test)]
     if FAIL_NEXT_REMOVE.with(|armed| armed.replace(false)) {
         return Err(io::Error::other("injected removal failure"));
     }
-    let quarantine = quarantine_name()?;
-    match move_without_replace(directory, name, &quarantine) {
-        Ok(()) => {}
-        // The name is already gone. Nothing confirms that this invocation's
-        // inode was the one removed, so the caller decides whether that matters.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "a Compose interpolation file was already gone; its removal is not confirmed",
-            ))
+    if matches!(phase, RemovalPhase::Original) {
+        match fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(found) if same_object(&found, expected) && private_file(&found) => {}
+            Ok(_) => {
+                *phase = RemovalPhase::Unknown;
+                return Err(invalid(
+                    "a Compose interpolation name no longer names its owner; the entry is left in place".into(),
+                ));
+            }
+            Err(Errno::ENOENT) => {
+                *phase = RemovalPhase::Unknown;
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "a Compose interpolation file was already gone; its removal is not confirmed",
+                ));
+            }
+            Err(error) => return Err(error.into()),
         }
-        // An occupied quarantine name is refused with nothing moved.
-        Err(error) => return Err(error),
+        let quarantine = quarantine_name()?;
+        match move_without_replace(directory, name, &quarantine) {
+            Ok(()) => *phase = RemovalPhase::Quarantine(quarantine),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                *phase = RemovalPhase::Unknown;
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "a Compose interpolation file was already gone; its removal is not confirmed",
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+        #[cfg(test)]
+        if FAIL_AFTER_RENAME.with(|armed| armed.replace(false)) {
+            return Err(io::Error::other("injected post-rename failure"));
+        }
     }
+    let RemovalPhase::Quarantine(quarantine) = phase else {
+        return Err(invalid("interpolation cleanup state is unknown".into()));
+    };
     #[cfg(test)]
     if VANISH_NEXT_QUARANTINE.with(|armed| armed.replace(false)) {
         let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
     }
     match fstatat(directory, quarantine.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
-        Ok(moved) if same_object(&moved, expected) => {
+        Ok(moved) if same_object(&moved, expected) && private_file(&moved) => {
             unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir)
                 .map_err(io::Error::from)
         }
+        Ok(moved) if same_object(&moved, expected) => {
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(
+                "the quarantined interpolation file is no longer trusted".into(),
+            ))
+        }
         Ok(_) => {
-            // Something replaced the name between the check and the move. Put
-            // it back without overwriting whatever holds the name now.
-            match linkat(
+            // Never overwrite an occupied original name while restoring a
+            // replacement; its state remains unknown even after restoration.
+            let restored = linkat(
                 directory,
                 quarantine.as_str(),
                 directory,
                 name,
                 AtFlags::empty(),
-            ) {
-                Ok(()) => {
-                    let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
-                    Err(invalid(
-                        "a Compose interpolation name was replaced before removal; the replacement was restored".into(),
-                    ))
-                }
-                Err(_) => Err(invalid(
-                    "a Compose interpolation name was replaced before removal; the replacement is left in quarantine".into(),
-                )),
+            );
+            if restored.is_ok() {
+                let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
             }
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(if restored.is_ok() {
+                "a Compose interpolation name was replaced before removal; the replacement was restored".into()
+            } else {
+                "a Compose interpolation name was replaced before removal; the replacement is left in quarantine".into()
+            }))
         }
-        // The moved entry vanished before it could be checked or unlinked, so
-        // whatever it was, its removal is not confirmed.
-        Err(Errno::ENOENT) => Err(invalid(
-            "a Compose interpolation file vanished during removal; its state is unknown".into(),
-        )),
+        Err(Errno::ENOENT) => {
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(
+                "a Compose interpolation file vanished during removal; its state is unknown".into(),
+            ))
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -638,6 +889,11 @@ fn owned_file_for(stat: &FileStat, uid: u32) -> bool {
     SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
         && stat.st_uid == uid
         && stat.st_nlink == 1
+}
+
+/// A private regular single-link file owned by this user.
+fn private_file(stat: &FileStat) -> bool {
+    owned_file(stat) && u32::from(stat.st_mode) & 0o777 == 0o600
 }
 
 /// A directory owned by the given user.
@@ -772,12 +1028,377 @@ mod tests {
     }
 
     #[test]
+    fn retained_owner_drop_and_later_writer_preserve_crash_residue() {
+        let home = tempfile::tempdir().expect("home");
+        let first = invoke(home.path(), &args(&["up"]), &secret("crash fixture")).unwrap();
+        let original = env_path(&first);
+        let retained = first.interpolation.unwrap().into_retained().unwrap();
+        drop(retained);
+        assert!(original.exists());
+        let next = invoke(home.path(), &args(&["up"]), &secret("next fixture")).unwrap();
+        assert!(
+            original.exists(),
+            "an idle lock and a later sweep confer no closure authority"
+        );
+        drop(next);
+        assert!(
+            original.exists(),
+            "only the later writer's own file is removed"
+        );
+    }
+
+    #[test]
+    fn a_transferred_descriptor_keeps_the_lock_after_the_owner_drops() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let received = file._lock.try_clone().expect("duplicate description");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err(), "preserve the entry after failure");
+        drop(file);
+        let candidate = File::open(&path).expect("independent description");
+        let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
+            Err((candidate, _)) => candidate,
+            Ok(_) => panic!("transferred descriptor lost its lock"),
+        };
+        drop(received);
+        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_ok());
+    }
+
+    #[test]
+    fn scm_rights_handoff_keeps_the_locked_inode_after_owner_drop() {
+        use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags};
+        use std::io::{IoSlice, IoSliceMut};
+        use std::os::fd::FromRawFd;
+        use std::os::unix::net::UnixStream;
+
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let original = fstat(&file._lock).expect("identity");
+        let original_directory = fstat(&file.directory).expect("directory identity");
+        let transfer = file.prepare_custody().expect("prepare custody");
+        let (sender, receiver) = UnixStream::pair().expect("socket pair");
+        let descriptors = [transfer.file.as_raw_fd(), transfer.directory.as_raw_fd()];
+        assert_eq!(
+            sendmsg::<()>(
+                sender.as_raw_fd(),
+                &[IoSlice::new(b"x")],
+                &[ControlMessage::ScmRights(&descriptors)],
+                MsgFlags::empty(),
+                None
+            )
+            .expect("send"),
+            1
+        );
+        let mut data = [0];
+        let mut ancillary = nix::cmsg_space!([i32; 3]);
+        let mut slices = [IoSliceMut::new(&mut data)];
+        let message = recvmsg::<()>(
+            receiver.as_raw_fd(),
+            &mut slices,
+            Some(&mut ancillary),
+            MsgFlags::empty(),
+        )
+        .expect("receive");
+        assert_eq!(message.bytes, 1);
+        assert!(!message
+            .flags
+            .intersects(MsgFlags::MSG_CTRUNC | MsgFlags::MSG_TRUNC));
+        let mut received = Vec::new();
+        for control in message.cmsgs().expect("ancillary") {
+            if let ControlMessageOwned::ScmRights(fds) = control {
+                for fd in fds {
+                    // SAFETY: recvmsg created each descriptor and this takes its sole ownership.
+                    received.push(unsafe { OwnedFd::from_raw_fd(fd) });
+                }
+            }
+        }
+        assert_eq!(received.len(), 2);
+        assert_eq!(
+            fstat(&received[0]).expect("received identity").st_ino,
+            original.st_ino
+        );
+        assert_eq!(
+            fstat(&received[1]).expect("directory identity").st_ino,
+            original_directory.st_ino
+        );
+        drop(transfer);
+        drop(file);
+        let candidate = File::open(&path).expect("independent description");
+        let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
+            Err((candidate, _)) => candidate,
+            Ok(_) => panic!("transferred descriptor lost its lock"),
+        };
+        drop(received);
+        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_ok());
+    }
+
+    #[test]
+    fn child_receives_both_descriptors_and_keeps_the_same_file_lock() {
+        use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
+        use std::io::{IoSlice, Read, Write};
+        use std::os::unix::net::UnixStream;
+        use std::process::{Child, Command, Stdio};
+
+        struct FixtureChild(Option<Child>);
+        impl Drop for FixtureChild {
+            fn drop(&mut self) {
+                if let Some(child) = &mut self.0 {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let transfer = file.prepare_custody().expect("prepare custody");
+        let (mut parent, child_socket) = UnixStream::pair().expect("socket pair");
+        parent
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        parent
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("write timeout");
+        let child_fd: OwnedFd = child_socket.into();
+        let script = r#"import array, socket, os
+s = socket.socket(fileno=0)
+fds = array.array('i')
+data, anc, flags, _ = s.recvmsg(1, socket.CMSG_SPACE(2 * fds.itemsize))
+for level, kind, value in anc:
+    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+        fds.frombytes(value[:len(value) - len(value) % fds.itemsize])
+if data != b'x' or len(fds) != 2 or flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC):
+    raise SystemExit(2)
+os.fstat(fds[0]); os.fstat(fds[1])
+s.sendall(b'a')
+if s.recv(1) != b'q':
+    raise SystemExit(3)
+"#;
+        let child = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::from(child_fd))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("fixture child");
+        let mut child = FixtureChild(Some(child));
+        let fds = [transfer.file.as_raw_fd(), transfer.directory.as_raw_fd()];
+        assert_eq!(
+            sendmsg::<()>(
+                parent.as_raw_fd(),
+                &[IoSlice::new(b"x")],
+                &[ControlMessage::ScmRights(&fds)],
+                MsgFlags::empty(),
+                None
+            )
+            .expect("send"),
+            1
+        );
+        let mut ack = [0];
+        parent.read_exact(&mut ack).expect("child acknowledgement");
+        assert_eq!(ack, *b"a");
+        drop(transfer);
+        drop(file);
+        assert!(path.exists(), "owner drop preserves the file");
+        let candidate = File::open(&path).expect("independent description");
+        let candidate = match Flock::lock(candidate, FlockArg::LockExclusiveNonblock) {
+            Err((candidate, _)) => candidate,
+            Ok(_) => panic!("the child did not retain the lock"),
+        };
+        parent.write_all(b"q").expect("release child");
+        let status = child
+            .0
+            .as_mut()
+            .expect("child owner")
+            .wait()
+            .expect("child exit");
+        child.0.take();
+        assert!(status.success());
+        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_ok());
+    }
+
+    #[test]
+    fn custody_transfer_keeps_the_original_and_quarantine_phase() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let original = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        let transfer = file.prepare_custody().expect("prepare quarantine");
+        assert_eq!(
+            transfer.original,
+            original.file_name().unwrap().to_str().unwrap()
+        );
+        let InterpolationLocation::Quarantine(name) = &transfer.location else {
+            panic!("quarantine phase must be retained");
+        };
+        let quarantine = compose_dir(home.path()).join(name);
+        assert!(quarantine.exists());
+        let received = fstat(&transfer.file).expect("transferred identity");
+        assert_eq!(received.st_ino, file.stat.st_ino);
+        drop(file);
+        assert!(quarantine.exists());
+        let candidate = File::open(&quarantine).expect("independent description");
+        assert!(Flock::lock(candidate, FlockArg::LockExclusiveNonblock).is_err());
+    }
+
+    #[test]
+    fn failed_partial_handoff_retries_the_same_file_and_directory() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let original_file = fstat(&file._lock).expect("file identity");
+        let original_dir = fstat(&file.directory).expect("directory identity");
+        FAIL_AFTER_CUSTODY_FILE_DUP.with(|armed| armed.set(true));
+        assert!(file.prepare_custody().is_err());
+        let retry = file.prepare_custody().expect("same owner retry");
+        assert!(same_object(
+            &fstat(&retry.file).expect("file"),
+            &original_file
+        ));
+        assert!(same_object(
+            &fstat(&retry.directory).expect("directory"),
+            &original_dir
+        ));
+        assert_eq!(retry.location, InterpolationLocation::Original);
+        drop(retry);
+        drop(file);
+        assert!(
+            path.exists(),
+            "failed or unacknowledged handoff is retained"
+        );
+    }
+
+    #[test]
+    fn custody_preparation_rechecks_directory_permissions() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        fs::set_permissions(compose_dir(home.path()), fs::Permissions::from_mode(0o755))
+            .expect("mode");
+        assert!(file.prepare_custody().is_err());
+        drop(file);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn custody_retry_refuses_an_exclusive_competing_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let transfer = file.prepare_custody().expect("first preparation");
+        // SAFETY: this test owns the live duplicate and deliberately simulates
+        // an explicit unlock by a recipient of the same open description.
+        assert_eq!(
+            unsafe { nix::libc::flock(transfer.file.as_raw_fd(), nix::libc::LOCK_UN) },
+            0
+        );
+        let competitor = Flock::lock(
+            File::open(&path).expect("file"),
+            FlockArg::LockExclusiveNonblock,
+        )
+        .expect("competing lock");
+        assert!(file.prepare_custody().is_err());
+        drop(competitor);
+        let retry = file
+            .prepare_custody()
+            .expect("same owner reacquires shared lock");
+        assert!(same_object(&fstat(&retry.file).expect("file"), &file.stat));
+        drop(retry);
+        drop(transfer);
+        drop(file);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn prepared_custody_cannot_be_cleaned_from_an_idle_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let transfer = file.prepare_custody().expect("prepare custody");
+        drop(transfer);
+        let error = file.remove().expect_err("no group closure evidence");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        drop(file);
+        assert!(path.exists(), "idle lock grants no cleanup authority");
+    }
+
+    #[test]
+    fn failed_custody_preparation_keeps_the_original_owner_and_name() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("mode");
+        assert!(file.prepare_custody().is_err());
+        let identity = fstat(&file._lock).expect("original owner");
+        assert_eq!(identity.st_ino, file.stat.st_ino);
+        drop(file);
+        assert!(path.exists(), "failed transfer never unlinks");
+    }
+
+    #[test]
+    fn failed_removal_keeps_the_exact_owner_for_retry() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        let identity = fstat(&file._lock).expect("file identity");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        assert_eq!(
+            fstat(&file._lock).expect("same owner").st_ino,
+            identity.st_ino
+        );
+        assert!(path.exists());
+        file.remove().expect("retry same owner");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn retry_resumes_the_same_quarantine_after_rename() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        assert!(!path.exists());
+        assert_eq!(entries(home.path()).len(), 1);
+        file.remove().expect("retry the moved inode");
+        assert!(entries(home.path()).is_empty());
+    }
+
+    #[test]
+    fn dropping_an_owner_after_failed_removal_does_not_retry() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_NEXT_REMOVE.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        drop(file);
+        assert!(path.exists(), "failed cleanup remains visible");
+    }
+
+    #[test]
     fn remove_confirms_the_file_is_gone() {
         let home = tempfile::tempdir().expect("home");
         let resolved =
             invoke(home.path(), &args(&["ps"]), &secret("sentinel-value")).expect("file");
         let path = env_path(&resolved);
-        let file = resolved.interpolation.expect("held file");
+        let mut file = resolved.interpolation.expect("held file");
         assert!(path.is_file());
         file.remove().expect("confirmed removal");
         assert!(!path.exists(), "the secret-bearing file is gone");
@@ -953,6 +1574,75 @@ mod tests {
     }
 
     #[test]
+    fn a_live_owner_with_an_extra_link_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let alias = compose_dir(home.path()).join("extra-link");
+        fs::hard_link(&path, &alias).expect("extra link");
+        let mut file = invocation.interpolation.expect("owner");
+        assert!(file.remove().is_err(), "multiple links are untrusted");
+        assert_eq!(
+            fs::read(&path).expect("original"),
+            fs::read(&alias).expect("alias")
+        );
+    }
+
+    #[test]
+    fn a_quarantined_owner_with_an_extra_link_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        let RemovalPhase::Quarantine(name) = &file.phase else {
+            panic!("rename retained the quarantine phase");
+        };
+        let quarantine = compose_dir(home.path()).join(name);
+        let alias = compose_dir(home.path()).join("extra-link");
+        fs::hard_link(&quarantine, &alias).expect("extra link");
+        assert!(file.remove().is_err());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read(&quarantine).expect("quarantine"),
+            fs::read(&alias).expect("alias")
+        );
+    }
+
+    #[test]
+    fn a_live_owner_with_changed_mode_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("mode");
+        let mut file = invocation.interpolation.expect("owner");
+        assert!(file.remove().is_err());
+        assert!(path.exists(), "untrusted file remains");
+    }
+
+    #[test]
+    fn a_foreign_original_is_refused_before_any_rename() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let replacement = compose_dir(home.path()).join("replacement");
+        fs::write(&replacement, "FOREIGN=kept\n").expect("replacement");
+        fs::rename(&replacement, &path).expect("replace original");
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        let result = file.remove();
+        let rename_was_reached = FAIL_AFTER_RENAME.with(|armed| !armed.replace(false));
+        assert!(result.is_err());
+        assert!(!rename_was_reached, "foreign entry must not be moved");
+        assert_eq!(
+            fs::read_to_string(&path).expect("foreign file"),
+            "FOREIGN=kept\n"
+        );
+        assert_eq!(entries(home.path()).len(), 1);
+    }
+
+    #[test]
     fn a_replaced_name_is_restored_and_never_unlinked() {
         let home = tempfile::tempdir().expect("home");
         let held = invoke(home.path(), &args(&["up"]), &secret("held")).expect("held");
@@ -960,7 +1650,7 @@ mod tests {
         let other = compose_dir(home.path()).join("stand-in.env");
         fs::write(&other, "REPLACEMENT=kept\n").expect("replacement");
         fs::rename(&other, &path).expect("replace the name");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         assert!(
             file.remove().is_err(),
             "a replaced name is reported, not confirmed"
@@ -996,6 +1686,53 @@ mod tests {
             .expect("mode");
         let _held = invoke(home.path(), &args(&["up"]), &secret("secret")).expect("repaired");
         assert_eq!(mode(&compose_dir(home.path())), 0o700);
+    }
+
+    #[test]
+    fn creation_waits_for_the_cooperative_directory_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let directory = open_private_directory(home.path()).expect("directory");
+        let held = lock_directory(&directory).expect("directory lock");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let root = home.path().to_path_buf();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("started");
+            let invocation = invoke(&root, &args(&["up"]), &secret("value"));
+            done_tx.send(invocation.is_ok()).expect("done");
+        });
+        started_rx.recv().expect("worker started");
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(held);
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("creation finished"));
+        worker.join().expect("worker");
+    }
+
+    #[test]
+    fn removal_waits_for_the_cooperative_directory_lock() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("value")).expect("invocation");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("file");
+        let directory = open_private_directory(home.path()).expect("directory");
+        let held = lock_directory(&directory).expect("directory lock");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("started");
+            done_tx.send(file.remove().is_ok()).expect("done");
+        });
+        started_rx.recv().expect("worker started");
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(path.exists(), "the held lock prevents removal");
+        drop(held);
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("removal finished"));
+        worker.join().expect("worker");
+        assert!(!path.exists());
     }
 
     #[test]
@@ -1066,7 +1803,7 @@ mod tests {
         let home = tempfile::tempdir().expect("home");
         let held = invoke(home.path(), &args(&["up"]), &secret("gone")).expect("held");
         fs::remove_file(env_path(&held)).expect("the name is removed out from under the holder");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         let error = file
             .remove()
             .expect_err("a missing name is not a confirmed removal");
@@ -1077,7 +1814,7 @@ mod tests {
     fn a_quarantine_that_vanishes_after_the_move_is_reported_unknown() {
         let home = tempfile::tempdir().expect("home");
         let held = invoke(home.path(), &args(&["up"]), &secret("vanish")).expect("held");
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         VANISH_NEXT_QUARANTINE.with(|armed| armed.set(true));
         let error = file
             .remove()
@@ -1095,7 +1832,7 @@ mod tests {
         fs::write(&occupant, "FOREIGN=kept\n").expect("occupant");
         fs::set_permissions(&occupant, fs::Permissions::from_mode(0o600)).expect("mode");
         FORCE_NEXT_QUARANTINE.with(|forced| *forced.borrow_mut() = Some(quarantine));
-        let file = held.interpolation.expect("held file");
+        let mut file = held.interpolation.expect("held file");
         assert!(
             file.remove().is_err(),
             "an occupied quarantine name is refused, not confirmed"

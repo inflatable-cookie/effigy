@@ -1,7 +1,4 @@
-//! Workspace-route proof for the VM-hosted Compose interpolation file: the
-//! inherited Compose spawn names a per-invocation file, the child sees 0700/0600
-//! while it runs, and nothing with the fixture sentinel persists after the child
-//! is reaped and the held file dropped. Fixture secrets only.
+//! Direct-child VM Compose paths refuse secret delivery without retained custody.
 #![cfg(unix)]
 
 use std::ffi::OsString;
@@ -38,22 +35,6 @@ fn fake_colima(root: &Path, name: &str, tail: &str) -> PathBuf {
     path
 }
 
-fn files_under(root: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                found.push(path);
-            }
-        }
-    }
-    found
-}
-
 fn plan(root: &Path, program: &Path) -> ContainerComposeInvocationPlan {
     ContainerComposeInvocationPlan {
         backend_id: BackendId::colima_nerdctl(),
@@ -66,66 +47,6 @@ fn plan(root: &Path, program: &Path) -> ContainerComposeInvocationPlan {
             .map(OsString::from)
             .collect(),
         label: "workspace route".to_owned(),
-    }
-}
-
-fn run_once(root: &Path, home: &Path, program: &Path) -> bool {
-    let env = vec![(
-        "DATABASE_URL".to_owned(),
-        OsString::from(format!("postgres://fixture/{SENTINEL}")),
-    )];
-    effigy_containers::with_test_effigy_home(home, || {
-        let (mut child, interpolation) =
-            spawn_compose_plan_inherit_with_env(&plan(root, program), &env)
-                .expect("the workspace route spawns");
-        let status = child.wait().expect("the child is reaped");
-        drop(interpolation);
-        status.success()
-    })
-}
-
-#[test]
-fn workspace_route_removes_its_file_on_success_and_on_failure() {
-    for (name, tail, expect_success) in [("ws-ok", "exit 0", true), ("ws-fail", "exit 3", false)] {
-        let root = tempfile::tempdir().expect("fixture root");
-        let home = root.path().join("home");
-        fs::create_dir_all(&home).expect("home");
-        let program = fake_colima(root.path(), name, tail);
-
-        let success = run_once(root.path(), &home, &program);
-        assert_eq!(
-            success, expect_success,
-            "{name}: the child exit is preserved"
-        );
-
-        let observed = fs::read_to_string(root.path().join(format!("{name}.observed")))
-            .expect("the child observed its file");
-        assert!(
-            observed.contains("drwx------"),
-            "{name}: directory 0700:\n{observed}"
-        );
-        assert!(
-            observed.contains("-rw-------"),
-            "{name}: file 0600:\n{observed}"
-        );
-
-        let remaining = fs::read_dir(home.join("compose-env"))
-            .map(|entries| entries.flatten().count())
-            .unwrap_or(0);
-        assert_eq!(
-            remaining, 0,
-            "{name}: no interpolation file survives its child"
-        );
-        for file in files_under(&home) {
-            let bytes = fs::read(&file).unwrap_or_default();
-            assert!(
-                !bytes
-                    .windows(SENTINEL.len())
-                    .any(|window| window == SENTINEL.as_bytes()),
-                "{name}: sentinel bytes persist in {}",
-                file.display()
-            );
-        }
     }
 }
 
@@ -149,5 +70,26 @@ fn workspace_route_spawn_failure_removes_its_file() {
     assert_eq!(
         remaining, 0,
         "the file is removed before the spawn error returns"
+    );
+}
+
+#[test]
+fn secret_bearing_vm_spawn_requires_retained_kernel_custody() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).expect("home");
+    let program = fake_colima(root.path(), "unretained", "exit 0");
+    let env = vec![("DATABASE_URL".to_owned(), OsString::from(SENTINEL))];
+    let result = effigy_containers::with_test_effigy_home(&home, || {
+        spawn_compose_plan_inherit_with_env(&plan(root.path(), &program), &env)
+    });
+    if let Ok((mut child, owner)) = result {
+        let _ = child.wait();
+        drop(owner);
+        panic!("direct child ran without retained kernel custody");
+    }
+    assert!(
+        !root.path().join("unretained.observed").exists(),
+        "no child starts"
     );
 }

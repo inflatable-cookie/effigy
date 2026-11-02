@@ -115,7 +115,10 @@ fn spawn_command_inherit_os(
     // process environment unchanged.
     let invocation =
         effigy_containers::policy::render::compose_invocation_args(program.as_ref(), args, env)
-            .map_err(launch)?;
+            .map_err(&launch)?;
+    invocation
+        .require_retained_custody_for_interpolation()
+        .map_err(launch)?;
     let args = invocation.args;
     let mut command = Command::new(program);
     command

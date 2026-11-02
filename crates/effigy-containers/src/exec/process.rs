@@ -668,12 +668,15 @@ fn compose_invocation_args(
         .iter()
         .map(|argument| argument.as_ref().to_os_string())
         .collect::<Vec<_>>();
-    crate::policy::render::compose_invocation_args(program, &owned, env).map_err(|error| {
-        ContainerExecError::Launch {
+    crate::policy::render::compose_invocation_args(program, &owned, env)
+        .and_then(|invocation| {
+            invocation.require_retained_custody_for_interpolation()?;
+            Ok(invocation)
+        })
+        .map_err(|error| ContainerExecError::Launch {
             command: format!("{} {}", program.to_string_lossy(), format_args(&owned)),
             error,
-        }
-    })
+        })
 }
 
 fn capture_output_after_exit(mut command: Command, eof_grace: Duration) -> std::io::Result<Output> {

@@ -210,9 +210,9 @@ impl Drop for GateFile {
         }
     }
 }
-/// Keep inherited gate sources above the helper's 20..84 target range.
-/// Ordinary `try_clone` may allocate inside that range and clobber a later
-/// source during pre-exec dup2. These copies remain CLOEXEC in the owner.
+/// Keep inherited custody sources above stdio and workload-reserved slots.
+/// Helpers inherit these already-allocated numbers, so later spawn/error pipes
+/// cannot collide with a gate target. Copies remain CLOEXEC in the owner.
 pub(crate) fn duplicate_custody(
     file: &impl std::os::fd::AsRawFd,
 ) -> std::io::Result<std::os::fd::OwnedFd> {

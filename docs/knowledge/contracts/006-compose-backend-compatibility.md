@@ -305,14 +305,18 @@ Effigy ownership:
   repaired to 0700; a foreign or symlinked one is refused). The value is written
   only after the invocation holds the file's shared lock and the name still
   names that inode
-- the invocation keeps the file until the Compose child that reads it has been
-  reaped, on success, failure, timeout, kill and spawn failure; removal first
+- direct-child launchers refuse secret-bearing VM Compose before spawn pending
+  retained kernel custody. The file owner still cleans up an invocation that
+  never started; removal first
   moves the name to a quarantine name by a no-replace rename (`renameatx_np`
   with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux) and
-  unlinks only the inode it created. An occupied quarantine name is refused with
-  nothing moved. A platform without a no-replace rename refuses removal before
-  anything moves, with no replacing fallback. A name that another inode took is
-  restored without overwrite and reported as unknown; a name already gone, or a
+  unlinks only the inode it created. Before rename, it checks the original
+  name under the directory lock and leaves a mismatched entry in place. It
+  rechecks the held and named file's identity, owner, regular-file type,
+  single-link count and private mode; a drifted file is retained as Unknown.
+  An occupied quarantine name is refused with nothing moved. A platform without a no-replace rename refuses removal before
+  anything moves, with no replacing fallback. A foreign entry moved after the
+  initial check is restored without overwrite and reported as unknown; a name already gone, or a
   quarantine that vanishes after the move, is never reported as confirmed
   removal. A failed write whose removal also fails returns the write error with
   the cleanup state named as unknown
@@ -330,12 +334,25 @@ Effigy ownership:
   every Effigy writer and sweep. A non-cooperating same-user process that swaps
   an entry after its stat can cause deletion of a foreign entry before any check
   runs, and that deletion is not guaranteed to be detected. A no-replace rename
-  does not close that stat-to-unlink window. The per-file lock is the only
-  cooperative protocol the code implements today; the directory lock is not yet
-  implemented
-- limits of this slice: a removal that fails still consumes its owner, so
-  `remove(self)` and `Drop` do not retain the file for retry; there is no
-  durable attempt or group binding and no caller-drop Unknown lifecycle.
+  does not close that stat-to-unlink window. Effigy locks the verified directory
+  across creation, sweep and removal; the per-file lock remains held throughout
+  the file owner’s lifetime. The directory lock does not prove group closure
+- Tom’s ruling for #534: every secret-bearing VM Compose invocation moves to a
+  retained kernel Run; if it cannot be admitted, refuse before spawn. Resident
+  Env custody and production Discard remain refused until separately qualified.
+- the live owner can prepare duplicates of its exact locked file and directory
+  descriptions, original name and current original/quarantine phase for a
+  custody handoff. Preparation disables drop cleanup and refuses ordinary
+  removal; a free lock does not authorize removal. The file lock follows the
+  open file description until its last duplicate closes, rather than being
+  explicitly unlocked when the original owner drops. A failed preparation
+  retains the original owner and leaves its entry for review
+- limits of this slice: explicit removal borrows the file owner, retaining its
+  descriptor and lock after failure, and drop does not retry a failed removal.
+  The live owner retains its quarantine name across a failed cleanup and can
+  retry that exact phase. The phase is not durable: there is no durable attempt
+  or group binding, no production helper handoff, and no caller-drop Unknown
+  lifecycle under a Run.
   Discard stays refused. These belong to the retained-lifecycle follow-up, #534,
   which depends on #532 and #533
 - a value both readers can take literally stays unquoted, and anything

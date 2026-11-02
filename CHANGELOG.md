@@ -8,6 +8,26 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Add retained interpolation handoff to the existing kernel backup, binding the
+  exact file descriptions to the Run and process before execution. Caller drop
+  and Unknown preserve custody; helper loss preserves crash residue. Direct
+  VM Compose and production Discard remain refused.
+
+- Keep the Env Run's exact exclusion gates in checkout backup custody before
+  acknowledging process registration; install live process custody before a
+  caller's final spawn handoff.
+
+- Preserve the interpolation file lock while a transferred file description is
+  still held; preparing custody leaves cleanup refused without group closure.
+
+- Preserve interpolation cleanup candidates when their ownership, mode, type or link count no longer matches the private-file policy.
+
+- Check interpolation file identity before moving a cleanup candidate; leave a mismatched entry in place.
+
+- Refuse secret-bearing VM Compose direct-child launches until retained kernel custody is available.
+
+- Serialize Compose interpolation file creation, sweep and removal with a cooperative directory lock.
+
 - Process custody proves the recorded group anchor before it records a receipt
   and again immediately before the workload `go` byte: the anchor's generation,
   readable custody nonce, group membership and start order must all verify.
