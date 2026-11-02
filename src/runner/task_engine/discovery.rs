@@ -263,4 +263,48 @@ mod tests {
             .any(|row| row.path.ends_with("missing")));
         assert_eq!(std::fs::read_dir(search.join("a")).unwrap().count(), before);
     }
+
+    /// A registered Git worktree whose directory is gone — or present but not
+    /// openable — is an omission carrying its reason, never a checkout and
+    /// never a silent gap (papercut 727a4d82, effigy#536). A readable sibling
+    /// is still discovered.
+    #[test]
+    fn registered_worktree_candidates_that_cannot_be_opened_are_omitted_not_silent() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = effigy_test_support::Fixture::new("727a4d82-discovery-").unwrap();
+        let primary = root.path().join("primary");
+        let gone = root.path().join("gone");
+        let locked = root.path().join("locked");
+        let healthy = root.path().join("healthy");
+        for dir in [&gone, &locked, &healthy] {
+            std::fs::create_dir_all(dir.join(".git")).unwrap();
+        }
+        std::fs::create_dir_all(primary.join(".git/worktrees")).unwrap();
+        for (name, target) in [
+            ("gone", gone.join(".git")),
+            ("locked", locked.join(".git")),
+            ("healthy", healthy.join(".git")),
+        ] {
+            let entry = primary.join(".git/worktrees").join(name);
+            std::fs::create_dir_all(&entry).unwrap();
+            std::fs::write(entry.join("gitdir"), format!("{}\n", target.display())).unwrap();
+        }
+        // One sibling is positively gone; one exists but cannot be opened.
+        std::fs::remove_dir_all(&gone).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = collect(&kernel::observe(), &primary, &[]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            result.checkouts.contains(&primary) && result.checkouts.contains(&healthy),
+            "the readable checkouts are discovered: {result:?}"
+        );
+        assert!(!result.checkouts.contains(&gone));
+        assert!(!result.checkouts.contains(&locked));
+        for path in [&gone, &locked] {
+            assert!(
+                result.omitted.iter().any(|row| &row.path == path),
+                "{path:?} is missing from the omissions: {result:?}"
+            );
+        }
+    }
 }
