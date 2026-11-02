@@ -210,7 +210,7 @@ impl MemoryGuard {
     /// A guard around a helper this test spawned itself, for driving the
     /// owner-side frame and acknowledgement path without a real custodian. It
     /// grants no custody: the recorded identity is only that process's own.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "fault-injection"))]
     pub(super) fn testing(mut child: Child, cx: EffectContext, ack_budget: Duration) -> Self {
         let input = child.stdin.take().expect("piped guard stdin");
         let output = child.stdout.take().expect("piped guard stdout");
@@ -232,7 +232,7 @@ impl MemoryGuard {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "fault-injection"))]
     pub(super) fn testing_child(&mut self) -> &mut Child {
         &mut self.child
     }

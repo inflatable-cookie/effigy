@@ -299,7 +299,10 @@ impl Run<'_> {
                     self.settle_socket(effect, &cx)?;
                 }
             } else if effect.spec.kind == crate::custody::KIND {
-                let live = self.processes.remove(&effect.sequence);
+                // The same core must survive an Unknown or a lost settlement
+                // response while a recoverable Run is returned to its caller.
+                // The Run owns it until the Run itself is released.
+                let live = self.processes.get(&effect.sequence).cloned();
                 let diagnostic = live.clone();
                 // Stop can be inside its grace wait when a front end sends its
                 // second interrupt. Read the fenced durable mailbox here too;

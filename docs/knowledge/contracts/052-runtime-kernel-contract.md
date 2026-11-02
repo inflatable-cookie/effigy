@@ -1178,6 +1178,11 @@ it started, and a run that completes retires its anchor during settlement; no
 anchor outlives a settled run.
 SIGINT and SIGHUP stay ignored, because a terminal delivers them to the whole
 foreground group where the anchor is only the group's evidence.
+A recoverable checkout settlement keeps the live process core in its Run
+through an unresolved disposition or lost settlement response, so the returned
+owner can retry with the same in-process custody. This does not itself bind an
+interpolation file or prove group closure after owner loss.
+
 Settlement stops the workload and verifies group closure before retiring the
 anchor. If SIGTERM removes the anchor while workload members remain, its
 positive group-identity evidence is gone and the existing `Unknown` rule below
