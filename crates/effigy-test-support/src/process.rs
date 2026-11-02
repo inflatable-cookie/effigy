@@ -3,7 +3,7 @@
 //! Ownership stays local to the test. A suite-wide sweep in
 //! `tests/scripts/suite_guard.py` covers what `Drop` cannot: a killed runner,
 //! or a fixture that deliberately leaves its group.
-pub use crate::kernel_helpers::wait_kernel_helpers;
+pub use crate::kernel_helpers::{wait_kernel_helpers, wait_kernel_helpers_within};
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::path::Path;

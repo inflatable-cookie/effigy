@@ -8,8 +8,8 @@ use std::process::Output;
 
 use effigy_containers::{
     exec::{runtime_backend_is_running, selected_backend_label},
-    load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
-    validate_container_policy, EffectiveContainerPolicy,
+    load_container_exec_working_dir, load_container_policy, validate_container_policy,
+    EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_core::shell::shell_quote;
@@ -181,8 +181,9 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // A shell session attaches to an already-running stack whose mounts were
+    // admitted when it was created; the session applies nothing, so the
+    // apply-time backend preflight has no effect to admit here.
     if !runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
     {

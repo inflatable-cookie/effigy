@@ -14,7 +14,7 @@ use effigy_containers::{
     health::probe_health_status,
     health::readiness::{inspect_project_health, ServiceHealth},
     load_container_exec_working_dir, load_container_policy, logs_report, status_report,
-    validate_compose_backend_runtime, validate_container_policy,
+    validate_container_policy,
 };
 use effigy_containers::{
     stats_global_report, status_global_report, ContainerServiceHealth, ContainerStatsAllEntry,
@@ -51,8 +51,10 @@ pub fn run_container_status(
         read_operation_plan(repo_root, &policy, ContainerReadOperation::status(false));
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Status is a read surface: it reports state and, when the renderer never
+    // ran, `compose ps`. It never applies Compose, so the apply-time backend
+    // preflight (temp-root sharing, nerdctl mounts budget) has no effect to
+    // admit here and would refuse reports before their read-only operation.
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _manager_report = lifecycle_operation_report(
@@ -176,8 +178,8 @@ pub fn run_container_logs(
     );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // Logs attach to an already-running stack; the apply-time backend
+    // preflight has no effect to admit here.
     if !runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
     {

@@ -152,6 +152,17 @@ fn an_unreadable_backend_record_refuses_in_words() {
         "no `Debug` structure reaches a person: {error}"
     );
     assert!(error.contains("EFFIGY_COMPOSE_BACKEND"), "{error}");
+
+    // The corrupted journal is this test's own fixture data: `prepare` wrote
+    // the store in this process and no kernel helper was ever launched under
+    // it. Remove what the test made unreadable, so fixture cleanup settles on
+    // the journal's absence instead of waiting out a store it is never
+    // allowed to read as proof that no helper exists (effigy#550).
+    let state = fixture.checkout.join(".effigy/state");
+    std::fs::remove_file(state.join("kernel.db")).unwrap();
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(state.join(format!("kernel.db{suffix}")));
+    }
 }
 
 #[test]

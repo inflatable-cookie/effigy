@@ -1278,8 +1278,8 @@ impl Custody {
             // carry that closure: without it the settle asks live-custody
             // questions about a group that no longer exists and settles the
             // recorded receipt as residue instead of release (effigy#549).
-            // Past `go` the workload may be running; ordinary live custody
-            // applies there.
+            // After transfer, Blocked no longer reaps; ordinary live custody
+            // applies even if `go` has not yet succeeded.
             let admitted = (|| {
                 {
                     let mut retained = lock(&core);
@@ -1318,8 +1318,8 @@ impl Custody {
             pending.executed(cx.operation())?;
             Ok(OwnedProcess { core, ticket })
         })();
-        // Blocked owns the pre-exec child until go. Its drop closes the barrier
-        // and reaps it on every refusal. After go the Run owns the live core.
+        // Before transfer, Blocked closes the barrier and reaps on refusal.
+        // After transfer the Run owns the live core.
         result
     }
     pub fn spawn_all(

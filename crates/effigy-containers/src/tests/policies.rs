@@ -1299,11 +1299,47 @@ primary_service = "app"
         .to_string()
         .contains("/private/mount/DO_NOT_PRINT"));
 
-    let tmpfs_contribution = refuse("services:\n  app:\n    tmpfs:\n      - /workspace/cache\n");
-
-    assert!(tmpfs_contribution
+    // An option-carrying tmpfs entry changes nerdctl's serialization and
+    // stays refused; its path is omitted from the diagnostic.
+    let tmpfs_options =
+        refuse("services:\n  app:\n    tmpfs:\n      - /workspace/cache:size=1073741824\n");
+    assert!(tmpfs_options
         .to_string()
-        .contains("unmodelled mount input `tmpfs`"));
+        .contains("`tmpfs` entry has unmodelled options"));
+    assert!(!tmpfs_options.to_string().contains("/workspace/cache"));
+
+    // A tmpfs mapping form carries per-mount options and stays refused.
+    let tmpfs_mapping =
+        refuse("services:\n  app:\n    tmpfs:\n      /workspace/cache: \"size=1g\"\n");
+    assert!(tmpfs_mapping
+        .to_string()
+        .contains("`tmpfs` is neither empty nor a list of option-less paths"));
+    assert!(!tmpfs_mapping.to_string().contains("/workspace/cache"));
+
+    // An option-less tmpfs list is a modelled mount input (the php-fpm
+    // catalog renders exactly this shape on the primary service), so it no
+    // longer refuses as an unmodelled field.
+    fs::write(
+        &overlay,
+        "services:\n  app:\n    tmpfs:\n      - /run/effigy/secrets\n",
+    )
+    .expect("write synthetic Compose overlay");
+    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+    unsafe {
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+    }
+    with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        crate::validate_compose_backend_runtime(&root, &policy)
+            .expect("option-less primary-service tmpfs is a modelled mount input")
+    });
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+        },
+        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+    }
+
+    assert!(malformed_entry.to_string().contains("volumes[1]"));
     assert!(inherited_mounts
         .to_string()
         .contains("unmodelled mount input `extends`"));
@@ -1312,6 +1348,76 @@ primary_service = "app"
         .contains("primary service mounts a named volume with unmodelled top-level options"));
 
     with_test_compose_backend(ComposeBackend::Docker, || {
+        crate::validate_compose_backend_runtime(&root, &policy)
+            .expect("Docker must not inherit Colima mount-budget refusals");
+    });
+}
+
+/// The budget counts modelled primary-service tmpfs rows like any other
+/// mount: a small generated secret runtime stays admissible, while enough
+/// option-less tmpfs entries exceed the preflight budget and refuse with
+/// paths omitted.
+#[test]
+fn validate_compose_backend_runtime_counts_primary_service_tmpfs_in_the_budget() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("colima-tmpfs-budget");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+
+    let validate_colima = |content: &str| {
+        fs::write(root.join("infra/dev/docker-compose.yml"), content).expect("write compose");
+        let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+        unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+        }
+        let result = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+            let policy = load_container_policy(&root, None).expect("policy");
+            crate::validate_compose_backend_runtime(&root, &policy)
+        });
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+            },
+            None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+        }
+        result
+    };
+
+    let generated_secret_runtime = "services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n      - /run/effigy/secrets\n";
+    validate_colima(generated_secret_runtime)
+        .expect("a small generated tmpfs runtime stays inside the budget");
+
+    let oversized = (0..40)
+        .map(|index| {
+            format!("      - /run/effigy/secrets/runtime/cache/segment/{index:02}/node-modules\n")
+        })
+        .collect::<String>();
+    let oversized_compose =
+        format!("services:\n  app:\n    image: example.invalid/synthetic\n    tmpfs:\n{oversized}");
+    let error = validate_colima(&oversized_compose)
+        .expect_err("enough tmpfs entries must exceed the nerdctl label budget");
+    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
+    assert!(
+        error
+            .to_string()
+            .contains("estimated nerdctl/mounts label size"),
+        "unexpected refusal: {error}"
+    );
+    assert!(!error.to_string().contains("/run/effigy/secrets"));
+
+    with_test_compose_backend(ComposeBackend::Docker, || {
+        let policy = load_container_policy(&root, None).expect("policy");
         crate::validate_compose_backend_runtime(&root, &policy)
             .expect("Docker must not inherit Colima mount-budget refusals");
     });

@@ -2154,7 +2154,7 @@ pub(crate) fn guest_passthrough_refusal() -> Result<(), RunnerError> {
     match detect(&mut guest)? {
         GuestPlacement::Host => Ok(()),
         GuestPlacement::Guest(_) => Err(RunnerError::task_invocation(format!(
-            "`effigy skill run --stdio passthrough` runs a task, and a container-mode guest has no \
+            "`effigy skill run <skill>/<task> --stdio passthrough` runs a task, and a container-mode guest has no \
              host authority to admit or run one. Run it on the host, or open the terminal with \
              `effigy workspace`; `{HOST_REPREPARE_COMMAND}` on the host re-prepares the workspace"
         ))),

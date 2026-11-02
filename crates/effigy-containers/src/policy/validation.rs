@@ -143,6 +143,12 @@ fn estimate_primary_service_mount_label_size(
     // is not counted as if nerdctl received both entries. Every explicit
     // mount input must be modelled; silently skipping one could undercount.
     let mut effective = std::collections::BTreeMap::<String, EffectiveMount>::new();
+    // A `tmpfs` service field is a separate mount list, not part of the
+    // `volumes` overlay merge, so its entries are counted beside the merged
+    // volume mounts instead of collapsing into the same target key. When a
+    // tmpfs target collides with a volume target the estimate counts both:
+    // the budget is an over-count-safe preflight, not a runtime oracle.
+    let mut tmpfs_mounts = Vec::new();
     let mut unmodelled_named_volumes = std::collections::BTreeMap::<String, usize>::new();
     for (file_index, compose_file) in policy.compose_files.iter().enumerate() {
         let content = policy.read_compose(compose_file)?;
@@ -217,10 +223,23 @@ fn estimate_primary_service_mount_label_size(
             ));
         };
 
-        // These Compose fields can add mounts outside service.volumes. Their
-        // nerdctl serialization is not modelled here, so refuse the Colima
-        // fallback rather than counting only the explicit volume list.
-        for field in ["extends", "tmpfs", "configs", "secrets", "volumes_from"] {
+        // An option-less `tmpfs` list is a recognized mount input: the
+        // nerdctl mounts metadata records tmpfs rows, so the estimate counts
+        // them instead of refusing the environment. This is Effigy's own
+        // generated shape too — the php-fpm catalog renders a primary-service
+        // `/run/effigy/secrets` tmpfs — so refusing the field made every such
+        // stack inadmissible before any command could run.
+        if let Some(tmpfs_value) = service.get(serde_yaml::Value::String("tmpfs".to_owned())) {
+            let parsed = parse_tmpfs_mounts(tmpfs_value).map_err(|reason| {
+                mount_budget_refusal(policy, file_index, &format!("primary service {reason}"))
+            })?;
+            tmpfs_mounts.extend(parsed);
+        }
+        // These remaining Compose fields can add mounts outside
+        // service.volumes. Their nerdctl serialization is not modelled here,
+        // so refuse the Colima fallback rather than counting only the
+        // explicit volume list.
+        for field in ["extends", "configs", "secrets", "volumes_from"] {
             if service.contains_key(serde_yaml::Value::String(field.to_owned())) {
                 return Err(mount_budget_refusal(
                     policy,
@@ -271,11 +290,13 @@ fn estimate_primary_service_mount_label_size(
             }
         }
     }
-    if effective.is_empty() {
+    if effective.is_empty() && tmpfs_mounts.is_empty() {
         return Ok(None);
     }
-    let mut entries = effective
-        .into_values()
+    let mut modelled = effective.into_values().collect::<Vec<_>>();
+    modelled.extend(tmpfs_mounts);
+    let mut entries = modelled
+        .into_iter()
         .enumerate()
         .map(|(index, mount)| MountBudgetEntry {
             ordinal: index + 1,
@@ -330,6 +351,50 @@ struct EffectiveMount {
     kind: String,
     read_only: bool,
     named_volume_source: Option<String>,
+}
+
+/// Model one service-level `tmpfs` field into estimated mount rows, or name
+/// the reason it cannot be modelled. The modelled form is a list of
+/// option-less absolute guest paths: nerdctl records a tmpfs mount with no
+/// host source, so the estimate carries an empty source and a writable row.
+/// A mapping (`/path: options`) or an option-carrying entry (`/path:size=…`)
+/// changes nerdctl's serialization and is refused, as are relative paths and
+/// unresolved Compose interpolation.
+fn parse_tmpfs_mounts(value: &serde_yaml::Value) -> Result<Vec<EffectiveMount>, &'static str> {
+    let mut mounts = Vec::new();
+    if value.is_null() {
+        // `tmpfs:` with no value renders no mounts, matching Compose.
+        return Ok(mounts);
+    }
+    let serde_yaml::Value::Sequence(entries) = value else {
+        return Err("`tmpfs` is neither empty nor a list of option-less paths");
+    };
+    for entry in entries {
+        let Some(raw) = entry.as_str() else {
+            return Err("`tmpfs` has a non-string entry");
+        };
+        let path = raw.trim();
+        if path.is_empty() {
+            return Err("`tmpfs` entry is empty");
+        }
+        if path.contains(':') {
+            return Err("`tmpfs` entry has unmodelled options");
+        }
+        if !path.starts_with('/') {
+            return Err("`tmpfs` entry is not an absolute guest path");
+        }
+        if path.contains('$') {
+            return Err("`tmpfs` entry contains unresolved Compose interpolation");
+        }
+        mounts.push(EffectiveMount {
+            source: String::new(),
+            target: path.to_owned(),
+            kind: "tmpfs".to_owned(),
+            read_only: false,
+            named_volume_source: None,
+        });
+    }
+    Ok(mounts)
 }
 
 fn parse_effective_mount(
