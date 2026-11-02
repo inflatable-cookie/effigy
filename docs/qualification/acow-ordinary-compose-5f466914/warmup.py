@@ -12,7 +12,7 @@ packet-r1.md:
 
 Every precondition is machine-checked and refuses closed BEFORE the worktree
 is created or any native effect happens: missing GO, wrong packet SHA, missing
-token, absent or non-green #539 receipt, installed-identity drift, moved
+token, absent or non-accepted #544 r18 proof receipt, installed-identity drift, moved
 consumer pin or bundle lock, dirty primary checkout, an existing fixture path,
 ambiguous engine inventory or an already-active warm-up scope. The one
 authorized sequence is exactly the owner-approved order:
@@ -46,7 +46,7 @@ from common import (  # noqa: E402
     git_args, judge_teardown_inventory, label_length_only,
     queue_shape_components, read_owner_marker, require_mariadb_unchanged,
     run_quiet, scoped_container_map, session_identity, validate_attach_record,
-    verify_539_receipt, verify_bundle_transition_after,
+    verify_544_proof_receipt, verify_bundle_transition_after,
     verify_bundle_transition_before, verify_consumer_pins,
     verify_go_receipt, verify_installed_identity, verify_packet_bundle,
     volume_mount_identity, write_owner_marker, write_receipt,
@@ -153,8 +153,8 @@ def preconditions(console):
     packet_sha = bundle['packet_sha256']
     go = verify_go_receipt(SCRATCH / 'acow-warmup-go.txt', packet_sha,
                            GO_WARMUP_TOKENS, 'warmup')
-    receipt539 = verify_539_receipt(SCRATCH / '539-green-receipt.json',
-                                    go['receipt539_sha256'])
+    receipt544 = verify_544_proof_receipt(SCRATCH / '544-proof-receipt.json',
+                                          go['receipt544_sha256'])
 
     def version_fn(path):
         r = run_quiet([str(path), '--version'], timeout=30)
@@ -204,7 +204,7 @@ def preconditions(console):
         'packet_sha256': packet_sha,
         'manifest_sha256': bundle['manifest_sha256'],
         'go': go,
-        'receipt539': receipt539,
+        'receipt544': receipt544,
         'installed_identity': identity,
         'consumer_pins': pins,
         'bundle_lock': lock,

@@ -2,10 +2,40 @@
   "schema": "effigy.qualification.acow-ordinary-compose.r1",
   "task": "effigy#540",
   "status": "prepared-not-executed",
-  "amended_by": {
-    "task": "effigy#543",
-    "date": "2026-11-02",
-    "summary": "qualifies the selected current clean head with the twelve-blob relevant-input closure and models bundle sync as the approved 61dc5aa8 -> 808adad\u2026/28c92040 transition; Acow owner cb0e6df4 message0fcb8b20"
+  "amendments": [
+    {
+      "task": "effigy#543",
+      "date": "2026-11-02",
+      "summary": "qualifies the selected current clean head with the twelve-blob relevant-input closure and models bundle sync as the approved 61dc5aa8 -> 808adad\u2026/28c92040 transition; Acow owner cb0e6df4 message0fcb8b20"
+    },
+    {
+      "task": "effigy#545",
+      "date": "2026-11-02",
+      "summary": "binds the warm-up prerequisite to the actual r18 ordinary-Compose proof receipt (Queue task effigy#544): the exact commit/selector/input-hash pinning, a settled passed exit-0 execution, and the retained reviewer's acceptance of that same execution; the superseded effigy#539 green-receipt prerequisite (zero execution, three authenticated refusedBeforeSelector receipts preserved) is retained as history only"
+    },
+    {
+      "task": "effigy#553",
+      "date": "2026-11-02",
+      "summary": "binds the accepted prerequisite review surface to what Queue actually exposes for the #544 proof-only completion: the accepted retained-reviewer callback (task.resolution.review, equal to the reviewer run's own completion) with the released finished reviewer run and resolution.reviewerAgentId binding; a proof-only completion has no per-subject verdict records (resolution.reviews empty), so the reviews-entry shape demanded before never existed for it"
+    }
+  ],
+  "prerequisite": {
+    "receipt": "544-proof-receipt.json",
+    "task": {"reference": "effigy#544", "id": "a648d634-82cf-4b3c-8903-a009eb427c12"},
+    "proof_only": {"commit": "0ed7e8394866187f24490e2ca0a473882f1b75d4"},
+    "proof_execution": {
+      "selector": "python3 -I -B docs/qualification/ordinary-compose-colima-5f466914/launch.py",
+      "inputs": [
+        "sha256:545566ddd6f48bc14f2f16f1df0db68a4c16476293b0c54cbe58e46331d8e286",
+        "sha256:944419d4517f2b1935e6870989408990cf84412264e999a9771644627f2c1291",
+        "sha256:cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1"
+      ],
+      "input_notes": "r18 packet; r18 artifacts manifest; the frozen candidate binary itself"
+    },
+    "required_records": "queue.detail(taskId) -> task.proofOnly, task.proofExecution, the task.proofExecutions entry named by task.proofOnlyResult.executionRunId, task.proofOnlyResult, task.resolution.review (the accepted callback), task.resolution.reviews (empty - no per-subject verdict records), task.resolution.reviewerAgentId, and the queue.detail.runs reviewer run named by task.proofOnlyResult.reviewerRunId; queue.outcome(taskId) -> {taskId, reference, outcome, reason, pr, review}",
+    "acceptance": "settled passed execution with exit 0 that is neither historical nor refused-before-selector; proofOnlyResult binds that execution run and a distinct retained reviewer run; the accepted retained-reviewer callback (resolution.review, a faithful Queue completion record) ready_to_merge at the same commit and equal to the reviewer run's own completion; the matching released finished reviewer run (role reviewer, status finished, released, not active) whose agent is resolution.reviewerAgentId; resolution.reviews empty (a proof-only completion has no per-subject verdict records); durable outcome done with review ready_to_merge and pr null; proof-only never publishes so the callback record carries no publication fields at all and the durable publication ids are null, and the linkage is the retained run-id pair plus the agent binding and the completion equality, never a publication id",
+    "binding": "the receipt file's SHA-256 is quoted by the exact warm-up GO receipt on its `544 receipt <sha256>` line; the extraction is transport only - a file alone grants no authority, and the operator GO, Acow reservation and consumer GO stay separate evidence",
+    "superseded": "effigy#539 (all three authenticated refusedBeforeSelector receipts preserved, zero execution) is historical and can never supply qualification; a fresh GO carrying a `539 receipt` line refuses"
   },
   "routes": {
     "warmup": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py",
@@ -22,7 +52,7 @@
   "receipts": {
     "warmup_go": "acow-warmup-go.txt",
     "primary_go": "acow-primary-go.txt",
-    "prerequisite_539": "539-green-receipt.json",
+    "prerequisite_544": "544-proof-receipt.json",
     "warmup_invocation": "acow-warmup-invocation-receipt.json",
     "warmup_activation": "acow-warmup-activation-receipt.json",
     "warmup_teardown": "acow-warmup-teardown-receipt.json",
@@ -131,9 +161,9 @@
     "learning.outcome": "state/schema/202608221003__baseline_learning.sql:150"
   },
   "helpers": {
-    "common.py": "8335692286c9c60c3248d0af3b5678fd4acb6ded9dbfbd07e601cd54e6dd0bce",
-    "warmup.py": "6a10cab14d8d246030ed69c807deed1ed062517378f46a5aef4f72da25e0c6d4",
+    "common.py": "127b7a6060eb37acb6a446716f32e47c4e554bccd762ebba9505ad9b922b28b3",
+    "warmup.py": "5bb7486a70ff538bee2da533261366ab30b4a69c056051165f5f14fe437b163b",
     "primary.py": "c4758de476109b25edfd02b387ea31003605499e54d3327751b7a1eae92f6325",
-    "boundaries.py": "eadf3c248bbed6c25898d9d35ab0fdc689f4761df1a8dd6cee6c08b3010538c1"
+    "boundaries.py": "f738ee6eaf8bf0407cd542473f4d71c0ee8c211413c6280600d4bffa3ecdb205"
   }
 }

@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-29
+Last Updated: 2026-11-02
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -43,17 +43,29 @@ array delimiter bytes and the 14-byte key, the modeled key-plus-value size is
 up, then refuses when the guarded estimate reaches the 3900-byte budget below
 the 4096-byte containerd label value limit. nerdctl owns the label format and
 runtime serialization; this estimate is not a runtime oracle or a universal
-guarantee. Unsupported volume syntax, known unmodelled service mount
-contributors (`extends`, `tmpfs`, `configs`, `secrets`, and `volumes_from`), and
-referenced top-level named-volume options that are not modelled refuse before
-apply with path-free diagnostics. Docker backends do not use this guard. The
+guarantee. An option-less primary-service `tmpfs` list is a modelled mount
+input: each absolute path counts as a writable tmpfs row with an empty source
+beside the merged volume mounts, so Effigy's own generated php-fpm secret
+runtime (`/run/effigy/secrets`) is admissible and its bytes are budgeted. A
+`tmpfs` mapping form or an option-carrying entry (`/path:size=…`), unsupported
+volume syntax, and the known unmodelled service mount contributors (`extends`,
+`configs`, `secrets`, and `volumes_from`), and referenced top-level
+named-volume options that are not modelled refuse before apply with path-free
+diagnostics. Docker backends do not use this guard. The
 estimate does not inspect image metadata for implicit
 `VOLUME` entries or account for other runtime-created mounts. Variable modes,
 propagation, escaping, paths and nerdctl versions still need qualification, so
 the measured reserve does not establish a universal bound. The guard does not
 consolidate mounts, relax workspace isolation or make a consumer whose declared
 mounts exceed the budget runnable. Real Colima and consumer qualification
-remain required.
+remain required. The preflight is apply-time admission: surfaces that may cause
+Compose to create or replace containers (activation and `up`, pull-production,
+workspace artifact builds, runtime activation prep and workspace sessions) run
+it before the apply; read-only surfaces (`container status`, `container logs`,
+data list, cache list, cache prune, data export and import) and attach-only
+exec and shell sessions target an already-running stack whose mounts were
+admitted when it was created, so they do not run the preflight and a report or
+session cannot refuse on a budget the operation would never consume.
 
 The runtime DNS renderer can emit a null primary-service value when a
 `network_mode` service has no DNS or route additions. Preflight treats that

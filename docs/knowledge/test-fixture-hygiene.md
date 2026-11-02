@@ -82,7 +82,16 @@ in-test mechanism: a ledger, a receipt, a nonce and a pre-exec socket barrier
 recorded state the suite now reads from the kernel directly.
 
 `Fixture` removes its tree on drop, waiting for kernel sentinels first
-(`wait_kernel_helpers`), and never follows a symlink inside it.
+(`wait_kernel_helpers`), and never follows a symlink inside it. An unreadable
+journal is never read as proof that no helper exists: the wait keeps retrying
+until its bounded budget and then fails the removal naming the last
+observation. A fixture that deliberately makes a store unreadable — a corrupt
+`kernel.db`, a schema-less one or a symlink standing in for it — is holding
+its own test data, not a HOME that launched kernel helpers, so the test
+removes that data before its `Fixture` drops and cleanup settles on the
+journal's absence (effigy#550). The observation's own controls pin both
+halves: unreadable and untrusted journals are never accepted as settled, and
+a readable journal with no recorded helper settles without waiting.
 
 An adapterless listener proof starts plain servers through Effigy, so the
 child is a generation Effigy supervises, not the fixture's own. Its state file
