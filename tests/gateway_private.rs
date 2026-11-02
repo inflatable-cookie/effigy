@@ -4217,6 +4217,70 @@ fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     }
 }
 
+/// The last `max` characters of a fixture log. Evidence stays bounded so a
+/// failed proof names what happened without flooding the runner's capture.
+fn bounded_tail(path: &Path, max: usize) -> String {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            let start = text.len().saturating_sub(max);
+            let mut tail = text[start..].to_owned();
+            if start > 0 {
+                tail.insert_str(0, "…");
+            }
+            tail
+        }
+        Err(error) => format!("<unreadable: {error}>"),
+    }
+}
+
+/// The nested-effigy proof's pid wait. A timeout must carry the evidence the
+/// main milestone run lacked (f099a12f, effigy#554): the host-process
+/// supervisor's own log, the fixture sweep ledger's recorded generations, the
+/// control directory's state and the bring-up adapter log. All of it is
+/// fixture-owned and bounded, so the failure names what the nested run
+/// actually did instead of reporting an assumed cause from the timeout.
+fn wait_for_nested_app_pid(
+    pid_file: &Path,
+    fixture_root: &Path,
+    control: &Path,
+    host_process_log: &Path,
+    docker_log: &Path,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    while !pid_file.exists() {
+        if Instant::now() >= deadline {
+            let control_inventory = if control.is_dir() {
+                let mut names: Vec<String> = fs::read_dir(control)
+                    .expect("control directory")
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| {
+                        let path = entry.path();
+                        format!(
+                            "{} ({} bytes)",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            entry.metadata().map(|meta| meta.len()).unwrap_or(0)
+                        )
+                    })
+                    .collect();
+                names.sort();
+                names.join(", ")
+            } else {
+                "<absent>".to_owned()
+            };
+            panic!(
+                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}",
+                pid_file.display(),
+                bounded_tail(host_process_log, 8_000),
+                bounded_tail(&fixture_root.join("sweep-ledger.json"), 4_000),
+                bounded_tail(docker_log, 2_000),
+            );
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 struct ForeignListener {
     address: SocketAddr,
     received: Arc<AtomicBool>,
@@ -7233,7 +7297,14 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         "`container web up --detach` failed: {up_text}\nlog={}",
         fs::read_to_string(&log_path).unwrap_or_default()
     );
-    wait_for_path_exists(&pid_file, Duration::from_secs(60), "the nested task's app");
+    wait_for_nested_app_pid(
+        &pid_file,
+        fixture.path(),
+        &control,
+        &log_path,
+        &docker_log,
+        Duration::from_secs(60),
+    );
     let app_pid: i32 = fs::read_to_string(&pid_file)
         .expect("the app records its pid")
         .trim()
@@ -7270,6 +7341,75 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     assert!(
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
         "the nested task's app is gone after the stop"
+    );
+}
+
+/// The nested proof's pid wait is its own negative control: when the nested
+/// task's app never appears, the timeout must name the child and owner
+/// evidence the milestone run lacked (effigy#554) — the host-process
+/// supervisor's log, the sweep ledger's recorded generations, the control
+/// directory and the bring-up adapter log — never a bare assumed cause.
+#[test]
+fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
+    let fixture = effigy_test_support::Fixture::new("g554-").expect("fixture root");
+    let control = fixture.path().join("control");
+    fs::create_dir(&control).expect("control directory");
+    let app = control.join("app.py");
+    fs::write(&app, "import os, signal\n").expect("fixture app");
+    let pid_file = control.join("app-pid");
+    let log = fixture.path().join("api.log");
+    fs::write(
+        &log,
+        "[effigy host-process] started `api` (pid 50645)\n\
+         [effigy host-process] `api` exited (code 1)\n",
+    )
+    .expect("fixture host-process log");
+    let ledger = fixture.path().join("sweep-ledger.json");
+    fs::write(
+        &ledger,
+        r#"{"generations":[{"pid":50645,"boot":"fixture-boot"}]}"#,
+    )
+    .expect("fixture sweep ledger");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    fs::write(&docker_log, "ps\ncompose up -d\n").expect("fixture adapter log");
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for_nested_app_pid(
+            &pid_file,
+            fixture.path(),
+            &control,
+            &log,
+            &docker_log,
+            Duration::from_secs(1),
+        );
+    }));
+    let Err(payload) = outcome else {
+        panic!("a missing nested app must fail its pid wait");
+    };
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+        .unwrap_or_default();
+    assert!(
+        message.contains("timed out waiting for the nested task's app"),
+        "the timeout names its wait: {message}"
+    );
+    assert!(
+        message.contains("`api` exited (code 1)"),
+        "the timeout carries the host-process supervisor's own record: {message}"
+    );
+    assert!(
+        message.contains("50645"),
+        "the timeout carries the recorded child identity: {message}"
+    );
+    assert!(
+        message.contains("app-pid") && message.contains("app.py"),
+        "the timeout carries the control directory's state: {message}"
+    );
+    assert!(
+        message.contains("compose up -d"),
+        "the timeout carries the bring-up adapter log: {message}"
     );
 }
 

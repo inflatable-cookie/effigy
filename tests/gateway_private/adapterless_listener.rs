@@ -30,6 +30,109 @@ fn listener_log_path(checkout: &Path, profile: &str, process: &str) -> PathBuf {
     listener_state_path(checkout, profile, process).with_file_name(format!("{process}.log"))
 }
 
+/// One route observation a proof may act on: the endpoint store answered and
+/// the domain is published, the store answered and the domain has no route, or
+/// the store could not answer at all.
+#[derive(Debug)]
+enum RouteObservation {
+    Present(Route),
+    Absent,
+    Unreadable(String),
+}
+
+impl RouteObservation {
+    /// The one-line note a timeout names. An unreadable store names its
+    /// refusal, so the reader can tell a refused read from a missing route.
+    fn note(&self) -> String {
+        match self {
+            Self::Present(route) => format!("published target {:?}", route.target),
+            Self::Absent => "no route".to_owned(),
+            Self::Unreadable(reason) => format!("unreadable: {reason}"),
+        }
+    }
+}
+
+fn observe_published_route(routes_path: &Path, domain: &str) -> RouteObservation {
+    match RouteTable::load(routes_path) {
+        Ok(table) => match table.lookup(domain) {
+            Some(route) => RouteObservation::Present(route.clone()),
+            None => RouteObservation::Absent,
+        },
+        Err(error) => RouteObservation::Unreadable(error.to_string()),
+    }
+}
+
+/// Poll the published route until a readable observation names one that
+/// satisfies `wanted`. An unreadable store keeps the wait polling: the main
+/// milestone run (f099a12f, effigy#554) showed one refused read settle a
+/// republication proof that the store itself describes as retryable, and an
+/// unknown never proves presence (effigy#554).
+fn wait_for_published_route(
+    routes_path: &Path,
+    domain: &str,
+    deadline: Instant,
+    state_path: &Path,
+    timeout_message: &str,
+    wanted: impl Fn(&Route) -> bool,
+) -> Route {
+    loop {
+        match observe_published_route(routes_path, domain) {
+            RouteObservation::Present(route) if wanted(&route) => return route,
+            observation => assert!(
+                Instant::now() < deadline,
+                "{timeout_message}: last {} and state={:?}",
+                observation.note(),
+                read_json_file(state_path)
+            ),
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Poll until a readable observation shows the route withdrawn. An unreadable
+/// store never proves absence, so the wait keeps polling within its deadline
+/// and names its last observation when it runs out (effigy#554).
+fn wait_for_withdrawn_route(
+    routes_path: &Path,
+    domain: &str,
+    deadline: Instant,
+    state_path: &Path,
+    timeout_message: &str,
+) {
+    loop {
+        match observe_published_route(routes_path, domain) {
+            RouteObservation::Absent => return,
+            observation => assert!(
+                Instant::now() < deadline,
+                "{timeout_message}: last {} and state={:?}",
+                observation.note(),
+                read_json_file(state_path)
+            ),
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Poll a listener state file until it records what `wanted` names. The
+/// supervisor publishes a route to the store before it rewrites its state
+/// file, so a proof that observed the store must also wait out this
+/// write-ordering gap instead of reading the stale record once (effigy#554).
+fn wait_for_listener_state(
+    state_path: &Path,
+    deadline: Instant,
+    timeout_message: &str,
+    wanted: impl Fn(&Value) -> bool,
+) -> Value {
+    loop {
+        let state = read_json_file(state_path);
+        if wanted(&state) {
+            return state;
+        }
+        assert!(Instant::now() < deadline, "{timeout_message}: {state}");
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// One private hybrid environment (one container service plus host processes)
 /// whose host-process and listener declarations are `manifest_tail`.
 fn adapterless_environment(root: &Path, profile: &str, manifest_tail: &str) -> PathBuf {
@@ -706,12 +809,13 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
         assert_eq!(observed["child_pid"], child_pid, "{observed}");
         thread::sleep(Duration::from_millis(200));
     }
-    assert!(
-        RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .is_some_and(|route| route.managed_listener.is_some()),
-        "a momentary probe miss keeps the route published"
+    wait_for_published_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(10),
+        &state_path,
+        "a momentary probe miss keeps the route published",
+        |route| route.managed_listener.is_some(),
     );
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -781,51 +885,56 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     );
 
     // The port is silent for 25 seconds: at least three consecutive five-second
-    // probes miss, so the route is withdrawn.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let published = RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .is_some();
-        if !published {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "three consecutive probe misses never withdrew the route: state={:?}",
-            read_json_file(&state_path)
-        );
-        thread::sleep(Duration::from_millis(100));
-    }
-    let withdrawn = read_json_file(&state_path);
+    // probes miss, so the route is withdrawn. A refused store read is neither
+    // withdrawal nor publication evidence: the wait polls until the store
+    // answers (effigy#554).
+    wait_for_withdrawn_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(90),
+        &state_path,
+        "three consecutive probe misses never withdrew the route",
+    );
+    let withdrawn = wait_for_listener_state(
+        &state_path,
+        Instant::now() + Duration::from_secs(30),
+        "the withdrawn listener never recorded its unavailable generation",
+        |state| {
+            state["status"] == "unavailable"
+                && state["route_owner"].is_null()
+                && state["generation"] == generation
+                && state["child_pid"] == child_pid
+        },
+    );
     assert_eq!(withdrawn["status"], "unavailable", "{withdrawn}");
     assert!(withdrawn["route_owner"].is_null(), "{withdrawn}");
     assert_eq!(withdrawn["generation"], generation, "{withdrawn}");
     assert_eq!(withdrawn["child_pid"], child_pid, "{withdrawn}");
     wait_for_file_contains(&log_path, "route withdrawn", Duration::from_secs(10));
 
-    // The port answers again: the same generation republishes the route.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let republished = RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .cloned();
-        if republished
-            .as_ref()
-            .is_some_and(|route| route.target.as_deref() == Some(address.as_str()))
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "an answering listener never republished its route: state={:?}",
-            read_json_file(&state_path)
-        );
-        thread::sleep(Duration::from_millis(100));
-    }
-    let republished = read_json_file(&state_path);
+    // The port answers again: the same generation republishes the route. An
+    // unreadable store is not readiness either: the wait polls until the store
+    // names the reserved address again (effigy#554).
+    let republished_target = address.clone();
+    wait_for_published_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(90),
+        &state_path,
+        "an answering listener never republished its route",
+        move |route| route.target.as_deref() == Some(republished_target.as_str()),
+    );
+    let republished = wait_for_listener_state(
+        &state_path,
+        Instant::now() + Duration::from_secs(30),
+        "the republished listener never recorded its ready generation",
+        |state| {
+            state["status"] == "ready"
+                && state["generation"] == generation
+                && state["child_pid"] == child_pid
+                && state["route_owner"]["generation"] == generation
+        },
+    );
     assert_eq!(republished["status"], "ready", "{republished}");
     assert_eq!(republished["generation"], generation, "{republished}");
     assert_eq!(republished["child_pid"], child_pid, "{republished}");
@@ -870,7 +979,11 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
     let routes_path = root.path().join("routes.json");
     save_private_routes(
         root.path(),
-        &[(domain, "127.0.0.1:65530".parse().expect("route target"), true)],
+        &[(
+            domain,
+            "127.0.0.1:65530".parse().expect("route target"),
+            true,
+        )],
     );
     let state_directory = root.path().join(".effigy/state");
     let trusted = fs::metadata(&state_directory)
@@ -891,9 +1004,9 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
         "the refused read is unknown, never absence: {refused}"
     );
 
-    // The withdrawal wait drawn from the republication proof polls through the
-    // refused window. Halfway through, the store becomes readable with the
-    // route removed, so a surviving wait ends by observing the real absence.
+    // The withdrawal wait polls through the refused window. Halfway through,
+    // the store becomes readable with the route removed, so a surviving wait
+    // ends by observing the real absence from a readable read.
     let remover = {
         let routes_path = routes_path.clone();
         let state_directory = state_directory.clone();
@@ -907,22 +1020,13 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
         })
     };
     let withdrawal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let published = RouteTable::load(&routes_path)
-                .expect("published routes")
-                .lookup(domain)
-                .is_some();
-            if !published {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the route never withdrew: state={:?}",
-                routes_path
-            );
-            thread::sleep(Duration::from_millis(25));
-        }
+        wait_for_withdrawn_route(
+            &routes_path,
+            domain,
+            Instant::now() + Duration::from_secs(10),
+            &routes_path,
+            "the route never withdrew",
+        );
     }));
     remover.join().expect("route remover");
     if let Err(payload) = withdrawal {
@@ -931,9 +1035,7 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
             .cloned()
             .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
             .unwrap_or_else(|| "<unlisted panic>".to_owned());
-        panic!(
-            "a route wait must survive a store unknown and keep polling: {message}"
-        );
+        panic!("a route wait must survive a store unknown and keep polling: {message}");
     }
 
     // The republication twin: readiness is also only ever a readable
@@ -945,6 +1047,7 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
         let routes_path = routes_path.clone();
         let state_directory = state_directory.clone();
         let trusted = trusted.clone();
+        let project_root = root.path().to_path_buf();
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(300));
             fs::set_permissions(&state_directory, trusted).expect("restore the trusted mode");
@@ -956,7 +1059,7 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
                 tcp_port: None,
                 tcp_target: None,
                 source: RouteSource::Manual,
-                project: routes_path.display().to_string(),
+                project: project_root.display().to_string(),
                 managed_listener: None,
                 tls: true,
                 registered: Utc::now(),
@@ -965,25 +1068,14 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
         })
     };
     let republication = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let republished = RouteTable::load(&routes_path)
-                .expect("published routes")
-                .lookup(domain)
-                .cloned();
-            if republished
-                .as_ref()
-                .is_some_and(|route| route.target.as_deref() == Some("127.0.0.1:65531"))
-            {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the route never republished: state={:?}",
-                routes_path
-            );
-            thread::sleep(Duration::from_millis(25));
-        }
+        wait_for_published_route(
+            &routes_path,
+            domain,
+            Instant::now() + Duration::from_secs(10),
+            &routes_path,
+            "the route never republished",
+            |route| route.target.as_deref() == Some("127.0.0.1:65531"),
+        );
     }));
     republisher.join().expect("route republisher");
     if let Err(payload) = republication {
@@ -992,9 +1084,7 @@ fn an_endpoint_store_unknown_never_settles_a_route_wait() {
             .cloned()
             .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
             .unwrap_or_else(|| "<unlisted panic>".to_owned());
-        panic!(
-            "a republication wait must survive a store unknown and keep polling: {message}"
-        );
+        panic!("a republication wait must survive a store unknown and keep polling: {message}");
     }
 }
 
@@ -1050,23 +1140,16 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
         .to_owned();
 
     // The port goes silent long enough for three consecutive probe misses to
-    // withdraw the route, while the root still validates.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let published = RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .is_some();
-        if !published {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "three consecutive probe misses never withdrew the route: state={:?}",
-            read_json_file(&state_path)
-        );
-        thread::sleep(Duration::from_millis(100));
-    }
+    // withdraw the route, while the root still validates. A refused store read
+    // is neither withdrawal nor publication evidence: the wait polls until the
+    // store answers (effigy#554).
+    wait_for_withdrawn_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(90),
+        &state_path,
+        "three consecutive probe misses never withdrew the route",
+    );
 
     // A private root this user still owns but no longer keeps at mode 0700 is
     // the brief store failure: the answer's publication cannot validate it.
@@ -1082,41 +1165,45 @@ fn managed_host_listener_retries_a_failed_republication_while_the_port_answers()
         "but its route could not be republished",
         Duration::from_secs(120),
     );
-    let failed = read_json_file(&state_path);
+    let failed = wait_for_listener_state(
+        &state_path,
+        Instant::now() + Duration::from_secs(30),
+        "the failed republication never recorded its unavailable generation",
+        |state| state["status"] == "unavailable" && state["route_owner"].is_null(),
+    );
     assert_eq!(failed["status"], "unavailable", "{failed}");
     assert!(failed["route_owner"].is_null(), "{failed}");
-    assert!(
-        RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .is_none(),
-        "a failed republication leaves the route withdrawn"
+    wait_for_withdrawn_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(10),
+        &state_path,
+        "a failed republication leaves the route withdrawn",
     );
 
     // Restoring the root is the only change: the still-answering port is the
     // retry, so the same generation republishes with no further outage.
     fs::set_permissions(&setup.private_gateway, original).expect("restore the private root");
     wait_for_file_contains(&log_path, "route republished", Duration::from_secs(60));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let republished = RouteTable::load(&routes_path)
-            .expect("published routes")
-            .lookup(domain)
-            .cloned();
-        if republished
-            .as_ref()
-            .is_some_and(|route| route.target.as_deref() == Some(address.as_str()))
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "an answering listener never retried its failed publication: state={:?}",
-            read_json_file(&state_path)
-        );
-        thread::sleep(Duration::from_millis(100));
-    }
-    let republished = read_json_file(&state_path);
+    let republished_target = address.clone();
+    wait_for_published_route(
+        &routes_path,
+        domain,
+        Instant::now() + Duration::from_secs(30),
+        &state_path,
+        "an answering listener never retried its failed publication",
+        move |route| route.target.as_deref() == Some(republished_target.as_str()),
+    );
+    let republished = wait_for_listener_state(
+        &state_path,
+        Instant::now() + Duration::from_secs(30),
+        "the republished listener never recorded its ready generation",
+        |state| {
+            state["status"] == "ready"
+                && state["generation"] == generation
+                && state["child_pid"] == child_pid
+        },
+    );
     assert_eq!(republished["status"], "ready", "{republished}");
     assert_eq!(republished["generation"], generation, "{republished}");
     assert_eq!(republished["child_pid"], child_pid, "{republished}");
