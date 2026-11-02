@@ -1,3 +1,4 @@
+use crate::runner::error::RunnerError;
 use crate::runner::tests::prelude::{
     assert_deferred_task_case_table, assert_deferred_task_failure_case_table, fs, lock_test,
     run_task_expect_empty_output, temp_workspace, workspace_with_optional_defer_manifest,
@@ -336,10 +337,11 @@ fn setup_php_library_path_bundle(root: &std::path::Path) {
     copy_dir_all(&php_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
 }
 
-fn write_container_handoff_external_mount_defer_manifest(root: &std::path::Path) {
+fn write_container_handoff_external_mount_defer_manifest(root: &std::path::Path, defer_run: &str) {
     write_root_manifest(
         root,
-        r#"[containers]
+        &format!(
+            r#"[containers]
 default = "web"
 
 [containers.web]
@@ -364,9 +366,10 @@ default_workspace = "app"
 container = "web"
 
 [defer]
-run = "printf deferred > handoff-marker.txt"
+run = "{defer_run}"
 run_in = "container"
-"#,
+"#
+        ),
     );
 }
 
@@ -575,12 +578,145 @@ fn run_manifest_task_composer_global_exec_deferral_resolves_the_global_vendor_bi
     );
 }
 
+/// A `composer global exec …` deferral that takes the real handoff-local
+/// container branch must still resolve `composer` through the composer global
+/// vendor bin: the rendered color/runtime wrapper must not hide the raw
+/// semantic command from the local PATH preference. The fixture composer is
+/// discoverable only from the synthetic `COMPOSER_HOME/vendor/bin` — the child
+/// PATH excludes every other lookup directory and no fake container runtime is
+/// installed, so a container fallback cannot satisfy the scenario — and it
+/// records its lookup path, the effective PATH order, the working directory,
+/// the literal arguments and the deferred depth.
+#[test]
+fn run_manifest_task_composer_global_exec_handoff_local_deferral_resolves_the_global_vendor_bin() {
+    let _guard = lock_test();
+    let root = temp_workspace("composer-global-vendor-bin-handoff");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "composer global exec effigy {request} {args}",
+    );
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let composer_log = root.join("fake-composer-global-bin-handoff.log");
+    write_executable(
+        &composer_bin.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf 'argv0=%s\\n' \"$0\" >> '{log}'\nprintf 'path=%s\\n' \"$PATH\" >> '{log}'\nprintf 'cwd=%s\\n' \"$PWD\" >> '{log}'\nprintf 'depth=%s\\n' \"${{EFFIGY_DEFER_DEPTH:-unset}}\" >> '{log}'\nprintf 'args=%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+            log = composer_log.display(),
+        ),
+    );
+    let context = container_handoff_context(&root);
+    let _env = EnvGuard::set_many(&[
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+        // Pin a non-interactive shell so the recorded child PATH is exactly the
+        // one the local deferral path constructed, not a login rc's rebuild.
+        ("SHELL", Some("/bin/sh".to_owned())),
+        // Composer must be discoverable only from the synthetic vendor/bin.
+        ("PATH", Some("/usr/bin:/bin".to_owned())),
+    ]);
+
+    let output = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::run_defer(DeferArgs {
+            task: TaskInvocation {
+                name: "missing-task".to_owned(),
+                args: vec!["--watch".to_owned()],
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    })
+    .expect("composer global exec handoff-local deferral should resolve the global vendor bin");
+    assert_eq!(output, "");
+
+    let log = fs::read_to_string(&composer_log).expect("read fake composer log");
+    assert!(
+        log.contains(&format!("path=/usr/local/bin:{}:", composer_bin.display())),
+        "expected the color wrapper's /usr/local/bin ahead of the composer global vendor bin, ahead of the inherited PATH, got {log}"
+    );
+    assert!(
+        log.contains(&format!("argv0={}/composer", composer_bin.display())),
+        "expected composer to resolve from the composer global vendor bin, got {log}"
+    );
+    let physical_root = root.canonicalize().expect("canonical fixture root");
+    assert!(
+        log.contains(&format!("cwd={}", physical_root.display())),
+        "expected the handoff-local child to run in the handoff working directory, got {log}"
+    );
+    assert!(
+        log.contains("args=global exec effigy missing-task --watch"),
+        "expected the deferred command rendered as literal words, got {log}"
+    );
+    assert!(
+        log.contains("depth=1"),
+        "expected the handoff-local deferral to start at depth 1, got {log}"
+    );
+}
+
+/// The composer global vendor bin preference keys on the raw semantic command
+/// prefix only. A handoff-local deferral that merely wraps `composer global
+/// exec` inside a larger command must not gain the synthetic vendor/bin PATH,
+/// so the wrapped composer stays unresolvable and the fixture composer never
+/// runs.
+#[test]
+fn run_manifest_task_container_handoff_wrapped_composer_gets_no_vendor_bin_path() {
+    let _guard = lock_test();
+    let root = temp_workspace("composer-global-vendor-bin-handoff-wrapped");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf wrapped; composer global exec effigy {request} {args}",
+    );
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let composer_log = root.join("fake-composer-global-bin-wrapped.log");
+    write_executable(
+        &composer_bin.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+            log = composer_log.display(),
+        ),
+    );
+    let context = container_handoff_context(&root);
+    let _env = EnvGuard::set_many(&[
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+        ("SHELL", Some("/bin/sh".to_owned())),
+        // Composer must be discoverable only from the synthetic vendor/bin.
+        ("PATH", Some("/usr/bin:/bin".to_owned())),
+    ]);
+
+    let err = crate::runner::command_context::with_runtime_context(&context, || {
+        crate::runner::run_defer(DeferArgs {
+            task: TaskInvocation {
+                name: "missing-task".to_owned(),
+                args: vec!["--watch".to_owned()],
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    })
+    .expect_err("a wrapped composer command must not gain the vendor bin PATH preference");
+    match err {
+        RunnerError::TaskCommandFailure { code, .. } => assert_eq!(code, Some(127)),
+        other => panic!("unexpected error: {other}"),
+    }
+    assert!(
+        !composer_log.exists(),
+        "the wrapped composer must stay unresolvable, so the fixture composer must not run"
+    );
+}
+
 #[test]
 fn run_manifest_task_container_handoff_deferral_skips_host_mount_validation() {
     let _guard = lock_test();
     let root = temp_workspace("container-deferral-handoff-external-mount");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    write_container_handoff_external_mount_defer_manifest(&root);
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf deferred > handoff-marker.txt",
+    );
     let context = container_handoff_context(&root);
     let output = crate::runner::command_context::with_runtime_context(&context, || {
         crate::runner::run_defer(DeferArgs {
@@ -604,7 +740,10 @@ fn run_manifest_task_container_handoff_implicit_deferral_skips_host_mount_valida
     let _guard = lock_test();
     let root = temp_workspace("container-implicit-deferral-handoff-external-mount");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    write_container_handoff_external_mount_defer_manifest(&root);
+    write_container_handoff_external_mount_defer_manifest(
+        &root,
+        "printf deferred > handoff-marker.txt",
+    );
     let context = container_handoff_context(&root);
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(context.clone())
