@@ -120,6 +120,18 @@ retains the same pending owner and descriptors; a retry reconciles the request
 number and actual helper state, never sends a new file as a replacement. A
 helper incapable of this protocol refuses before the child can execute.
 
+Tom's 2026-11-02 ruling selects an extension of the existing checkout backup
+for retry: it must retain the exact descriptors and gate across Unknown and
+provide an authenticated retry channel. The current pipe-only backup cannot
+do this: after its owner pipe closes it runs one settlement pass, then drops
+its gates and exits even when that pass left residue. It currently receives
+the checkout lease, not the Env Run's own gate. The implementation must
+retain both relevant gate custody and the exact file and directory descriptions
+before acknowledging the handoff, and retain that same custody if the reply
+is lost. An ordinary Env `finish` also discards the recoverable Run on error;
+the retained path must keep or transfer that owner instead. This ruling does
+not establish an authenticated retry protocol or enable cleanup.
+
 The proposed versioned binding is a kernel-owned effect record, not a generic
 adapter receipt: it associates one invocation ID and attempt ID with the Run
 ID/fence and the exact process effect sequence, recorded group receipt and
