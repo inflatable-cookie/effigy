@@ -245,6 +245,20 @@ impl InterpolationFile {
     pub fn remove(&mut self) -> io::Result<()> {
         self.attempted = true;
         let _directory_lock = lock_directory(&self.directory)?;
+        let held = fstat(&*self._lock).map_err(io::Error::from)?;
+        if held.st_nlink == 0 {
+            self.phase = RemovalPhase::Unknown;
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the held interpolation file has no name; its removal is not confirmed",
+            ));
+        }
+        if !same_object(&held, &self.stat) || !private_file(&held) {
+            self.phase = RemovalPhase::Unknown;
+            return Err(invalid(
+                "the held interpolation file is no longer trusted".into(),
+            ));
+        }
         remove_owned_tracked(&self.directory, &self.name, &self.stat, &mut self.phase)?;
         self.removed = true;
         Ok(())
@@ -615,7 +629,7 @@ fn remove_owned_tracked(
     }
     if matches!(phase, RemovalPhase::Original) {
         match fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
-            Ok(found) if same_object(&found, expected) => {}
+            Ok(found) if same_object(&found, expected) && private_file(&found) => {}
             Ok(_) => {
                 *phase = RemovalPhase::Unknown;
                 return Err(invalid(
@@ -656,9 +670,15 @@ fn remove_owned_tracked(
         let _ = unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir);
     }
     match fstatat(directory, quarantine.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
-        Ok(moved) if same_object(&moved, expected) => {
+        Ok(moved) if same_object(&moved, expected) && private_file(&moved) => {
             unlinkat(directory, quarantine.as_str(), UnlinkatFlags::NoRemoveDir)
                 .map_err(io::Error::from)
+        }
+        Ok(moved) if same_object(&moved, expected) => {
+            *phase = RemovalPhase::Unknown;
+            Err(invalid(
+                "the quarantined interpolation file is no longer trusted".into(),
+            ))
         }
         Ok(_) => {
             // Never overwrite an occupied original name while restoring a
@@ -721,6 +741,11 @@ fn owned_file_for(stat: &FileStat, uid: u32) -> bool {
     SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
         && stat.st_uid == uid
         && stat.st_nlink == 1
+}
+
+/// A private regular single-link file owned by this user.
+fn private_file(stat: &FileStat) -> bool {
+    owned_file(stat) && u32::from(stat.st_mode) & 0o777 == 0o600
 }
 
 /// A directory owned by the given user.
@@ -1077,6 +1102,54 @@ mod tests {
             "CRASH=quarantine\n",
             "an interrupted removal's quarantine name is preserved too"
         );
+    }
+
+    #[test]
+    fn a_live_owner_with_an_extra_link_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let alias = compose_dir(home.path()).join("extra-link");
+        fs::hard_link(&path, &alias).expect("extra link");
+        let mut file = invocation.interpolation.expect("owner");
+        assert!(file.remove().is_err(), "multiple links are untrusted");
+        assert_eq!(
+            fs::read(&path).expect("original"),
+            fs::read(&alias).expect("alias")
+        );
+    }
+
+    #[test]
+    fn a_quarantined_owner_with_an_extra_link_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        let mut file = invocation.interpolation.expect("owner");
+        FAIL_AFTER_RENAME.with(|armed| armed.set(true));
+        assert!(file.remove().is_err());
+        let RemovalPhase::Quarantine(name) = &file.phase else {
+            panic!("rename retained the quarantine phase");
+        };
+        let quarantine = compose_dir(home.path()).join(name);
+        let alias = compose_dir(home.path()).join("extra-link");
+        fs::hard_link(&quarantine, &alias).expect("extra link");
+        assert!(file.remove().is_err());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read(&quarantine).expect("quarantine"),
+            fs::read(&alias).expect("alias")
+        );
+    }
+
+    #[test]
+    fn a_live_owner_with_changed_mode_is_never_removed() {
+        let home = tempfile::tempdir().expect("home");
+        let invocation = invoke(home.path(), &args(&["up"]), &secret("held")).expect("file");
+        let path = env_path(&invocation);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("mode");
+        let mut file = invocation.interpolation.expect("owner");
+        assert!(file.remove().is_err());
+        assert!(path.exists(), "untrusted file remains");
     }
 
     #[test]
