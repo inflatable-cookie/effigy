@@ -110,7 +110,7 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
         }
     }
 
-    // Neither passphrase environment is set and stdin is not a terminal, so
+    // All passphrase environment sources are cleared and stdin is not a terminal, so
     // the sealed credential is the only passphrase source the doctor holds.
     let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "doctor", "--json"])
@@ -118,6 +118,7 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
         .stdin(Stdio::null())
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
         .output()
         .expect("run doctor");
     assert!(
@@ -155,6 +156,7 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
         .stdin(Stdio::null())
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
         .output()
         .expect("run text doctor");
     assert!(
