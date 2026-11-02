@@ -8,6 +8,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Add retained interpolation handoff to the existing kernel backup, binding the
+  exact file descriptions to the Run and process before execution. Caller drop
+  and Unknown preserve custody; helper loss preserves crash residue. Direct
+  VM Compose and production Discard remain refused.
+
 - Keep the Env Run's exact exclusion gates in checkout backup custody before
   acknowledging process registration; install live process custody before a
   caller's final spawn handoff.

@@ -8,12 +8,17 @@ use std::os::fd::{FromRawFd, OwnedFd};
 
 use std::process::ChildStdout;
 
-const GATE_FD: RawFd = 20;
 const GATE_MAX: usize = 64;
 
 #[derive(Debug)]
 pub(crate) struct MemoryGuard {
     child: Child,
+    descriptors: Option<std::os::unix::net::UnixDatagram>,
+    has_interpolation: bool,
+    unconfirmed_files: std::collections::BTreeSet<String>,
+    confirmed_files: std::collections::BTreeSet<String>,
+    pending_files: std::collections::BTreeMap<String, u64>,
+    pending_finish: Option<u64>,
     input: Option<ChildStdin>,
     output: Option<ChildStdout>,
     pub(crate) identity: Option<ProcessIdentity>,
@@ -52,15 +57,28 @@ pub(super) struct Config {
     pub(super) memory: bool,
     pub(super) owner: ProcessIdentity,
     pub(super) gates: usize,
+    pub(super) gate_fds: Vec<RawFd>,
     pub(super) run: RunId,
     pub(super) fence: Fence,
     pub(super) watch: RawFd,
+    #[serde(default)]
+    pub(super) descriptors: Option<RawFd>,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
     /// A receipt frame names the request it answers, so its acknowledgement
     /// cannot be confused with a late acknowledgement of an earlier frame.
-    Register { effect: Effect, request: u64 },
+    Register {
+        effect: Effect,
+        request: u64,
+    },
+    Interpolation {
+        binding: crate::interpolation::Binding,
+        request: u64,
+    },
+    Finish {
+        request: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +111,7 @@ impl MemoryGuard {
         fence: Fence,
         purpose: MemoryPurpose,
     ) -> Result<Self, (RunError, Option<Box<PartialMemoryGuard>>)> {
-        let (mut child, closure, config) = (|| -> Result<_, RunError> {
+        let (mut child, closure, config, descriptors) = (|| -> Result<_, RunError> {
             // Memory custody never pins or copies an image into runtime state, and
             // never refuses over one: a rebuilt or missing binary beside a
             // foreground run is not a reason to stop it (K1).
@@ -115,26 +133,31 @@ impl MemoryGuard {
                 return Err(RunError::broken("too many foreground gates"));
             }
             let (watch, closure) = ClosurePin::new()?;
+            let (descriptors, receiver) = std::os::unix::net::UnixDatagram::pair()?;
+            let receiver = crate::gate::duplicate_custody(&receiver)?;
+            descriptors.set_write_timeout(Some(ACK_BUDGET))?;
             let config = Config {
                 protocol: HELPER_PROTOCOL,
                 memory: true,
                 owner,
                 gates: copies.len(),
+                gate_fds: copies.iter().map(AsRawFd::as_raw_fd).collect(),
                 run,
                 fence,
                 watch: watch.as_raw_fd(),
+                descriptors: Some(receiver.as_raw_fd()),
             };
             let mut command = helper(executable, SENTINEL)?;
             command.stdout(Stdio::piped());
             let raw: Vec<_> = copies.iter().map(AsRawFd::as_raw_fd).collect();
-            // SAFETY: only async-signal-safe dup2 runs after fork. Sources are live
-            // CLOEXEC duplicates >=128 owned by `copies` through spawn. Targets
-            // 20..84 are distinct, never overlap sources or stdio. dup2 creates
-            // the only inheritable gate fds, in this helper child only.
+            // SAFETY: only async-signal-safe fcntl runs after fork. Each fd is
+            // already allocated and held by `copies` through spawn, so it cannot
+            // collide with a later stdio/error pipe. Only this helper child
+            // clears CLOEXEC; the owner's copies stay private to the owner.
             unsafe {
                 command.pre_exec(move || {
-                    for (index, source) in raw.iter().enumerate() {
-                        if libc::dup2(*source, GATE_FD + index as RawFd) < 0 {
+                    for source in &raw {
+                        if libc::fcntl(*source, libc::F_SETFD, 0) < 0 {
                             return Err(io::Error::last_os_error());
                         }
                     }
@@ -143,11 +166,14 @@ impl MemoryGuard {
                     if libc::fcntl(watch.as_raw_fd(), libc::F_SETFD, 0) < 0 {
                         return Err(io::Error::last_os_error());
                     }
+                    if libc::fcntl(receiver.as_raw_fd(), libc::F_SETFD, 0) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
                     Ok(())
                 });
             }
             let child = command.spawn()?;
-            Ok((child, closure, config))
+            Ok((child, closure, config, descriptors))
         })()
         .map_err(|error| (error, None))?;
         #[cfg(all(test, feature = "fault-injection"))]
@@ -159,6 +185,12 @@ impl MemoryGuard {
         // exact child and its pipes on any subsequent error.
         let mut guard = Self {
             child,
+            descriptors: Some(descriptors),
+            has_interpolation: false,
+            unconfirmed_files: Default::default(),
+            confirmed_files: Default::default(),
+            pending_files: Default::default(),
+            pending_finish: None,
             input,
             output,
             identity: identity.clone(),
@@ -221,6 +253,12 @@ impl MemoryGuard {
         let identity = ident::process_identity(child.id()).verified().cloned();
         Self {
             child,
+            descriptors: None,
+            has_interpolation: false,
+            unconfirmed_files: Default::default(),
+            confirmed_files: Default::default(),
+            pending_files: Default::default(),
+            pending_finish: None,
             input: Some(input),
             output: Some(output),
             identity,
@@ -265,6 +303,59 @@ impl MemoryGuard {
             self.cx.child(Duration::from_secs(30)).operation(),
         )?;
         self.ack(request)
+    }
+    pub(crate) fn owns_interpolation(
+        &self,
+        file: &crate::interpolation::RetainedInterpolation,
+    ) -> bool {
+        file.binding().is_ok_and(|binding| {
+            self.confirmed_files.contains(binding.invocation())
+                && !self.unconfirmed_files.contains(binding.invocation())
+        })
+    }
+    pub(crate) fn has_unconfirmed_files(&self) -> bool {
+        !self.unconfirmed_files.is_empty()
+    }
+    pub(crate) fn has_interpolation(&self) -> bool {
+        self.has_interpolation
+    }
+    pub(crate) fn retain_interpolation(
+        &mut self,
+        file: &crate::interpolation::RetainedInterpolation,
+    ) -> Result<(), RunError> {
+        self.verify_retained()?;
+        let invocation = file.binding()?.invocation().to_owned();
+        self.unconfirmed_files.insert(invocation.clone());
+        let request = match self.pending_files.get(&invocation) {
+            Some(request) => *request,
+            None => {
+                let request = self.requests.reserve()?;
+                self.pending_files.insert(invocation.clone(), request);
+                request
+            }
+        };
+        let socket = self
+            .descriptors
+            .as_ref()
+            .ok_or_else(|| RunError::refused("helper has no descriptor custody channel"))?;
+        self.has_interpolation = true;
+        crate::interpolation::channel::send(socket, request, &file.descriptors()?)?;
+        memory_frame(
+            self.input
+                .as_mut()
+                .ok_or_else(|| RunError::unavailable("custody input closed"))?,
+            &Message::Interpolation {
+                binding: file.binding()?.clone(),
+                request,
+            },
+            self.cx.child(ACK_BUDGET).operation(),
+        )?;
+        self.ack(request)?;
+        self.pending_files.remove(&invocation);
+        self.unconfirmed_files.remove(&invocation);
+        self.confirmed_files.insert(invocation);
+        crate::fault_point!(InterpolationRegistered)?;
+        Ok(())
     }
     /// Read-only proof that the retained guard is still the exact process this
     /// owner started and that its pipe is still ours.
@@ -340,6 +431,59 @@ impl MemoryGuard {
         read_acknowledgement(output, request, cx.operation())
     }
     pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
+        if self.has_unconfirmed_files() {
+            return Err(RunError::unavailable(
+                "interpolation handoff remains unconfirmed",
+            ));
+        }
+        if self.has_interpolation && self.input.is_some() {
+            self.verify_retained()?;
+            let request = match self.pending_finish {
+                Some(request) => request,
+                None => {
+                    let request = self.requests.reserve()?;
+                    self.pending_finish = Some(request);
+                    request
+                }
+            };
+            memory_frame(
+                self.input.as_mut().expect("input checked"),
+                &Message::Finish { request },
+                cx.operation(),
+            )?;
+            let output = self
+                .output
+                .as_mut()
+                .ok_or_else(|| RunError::unavailable("custody output closed"))?;
+            read_acknowledgement(output, request, cx.operation())?;
+            let mut answer = [0];
+            loop {
+                cx.operation().check("interpolation cleanup answer")?;
+                match output.read(&mut answer) {
+                    Ok(1) => break,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(2))
+                    }
+                    _ => {
+                        return Err(RunError::unavailable(
+                            "interpolation cleanup answer unavailable",
+                        ))
+                    }
+                }
+            }
+            crate::fault_point!(InterpolationFinishReply)?;
+            self.pending_finish = None;
+            if answer != [1] {
+                return Err(RunError::unavailable(
+                    "retained interpolation cleanup remains Unknown",
+                ));
+            }
+        }
         self.closure.take();
         self.input.take();
         self.close_deadline = Some(Instant::now() + cx.operation().remaining().unwrap_or_default());
@@ -477,13 +621,45 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     {
         return Err(RunError::broken("invalid foreground guard owner or gates"));
     }
-    if config.watch < 128 {
-        return Err(RunError::broken("invalid foreground closure descriptors"));
+    let mut inherited = config.gate_fds.clone();
+    inherited.push(config.watch);
+    if let Some(descriptors) = config.descriptors {
+        inherited.push(descriptors);
     }
+    inherited.sort_unstable();
+    if config.gate_fds.len() != config.gates
+        || inherited.iter().any(|fd| *fd < 128)
+        || inherited.windows(2).any(|pair| pair[0] == pair[1])
+    {
+        return Err(RunError::broken(
+            "invalid or aliased foreground custody descriptors",
+        ));
+    }
+    let descriptors = match config.descriptors {
+        Some(fd) if fd >= 128 && fd != config.watch => {
+            let stat = crate::fs::fstat(fd)?;
+            if stat.st_mode & libc::S_IFMT != libc::S_IFSOCK
+                || stat.st_uid != crate::fs::operator_uid()
+            {
+                return Err(RunError::refused("untrusted descriptor custody socket"));
+            }
+            // SAFETY: startup created this distinct inherited socket descriptor;
+            // it is outside stdio/gate slots and has no other Rust owner here.
+            let socket = unsafe { std::os::unix::net::UnixDatagram::from_raw_fd(fd) };
+            nix::fcntl::fcntl(
+                &socket,
+                nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
+            )
+            .map_err(io::Error::from)?;
+            socket.set_read_timeout(Some(ACK_BUDGET))?;
+            Some(socket)
+        }
+        None => None,
+        _ => return Err(RunError::refused("invalid descriptor custody socket")),
+    };
     let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
     let mut gates: Vec<OwnedFd> = Vec::new();
-    for index in 0..config.gates {
-        let raw = GATE_FD + index as RawFd;
+    for &raw in &config.gate_fds {
         // fstat validates each inherited fd before it is adopted. These fds
         // are private regular gate files, never sockets or workload pipes.
         let stat = crate::fs::fstat(raw)?;
@@ -493,8 +669,9 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         {
             return Err(RunError::broken("untrusted inherited foreground gate"));
         }
-        // SAFETY: the parent pre-exec created these distinct inherited fds.
-        // fstat verified each exists; no other owner is constructed for them.
+        // SAFETY: startup lists distinct preallocated inherited fds. Their
+        // ranges/aliases and fstat were checked before adoption; no other
+        // Rust owner exists for them in this helper.
         gates.push(unsafe { OwnedFd::from_raw_fd(raw) });
         // SAFETY: this helper owns raw; ensure its future forks cannot leak it.
         if unsafe { libc::fcntl(raw, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
@@ -505,7 +682,11 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     output.write_all(&[1])?;
     output.flush()?;
     let mut effects: Vec<Effect> = Vec::new();
+    let mut files: Vec<crate::interpolation::RetainedInterpolation> = Vec::new();
     let mut last_request = 0u64;
+    let mut finishing = false;
+    let mut retained_completed = false;
+    let mut last_file: Option<(u64, String)> = None;
     // Registration frames are length-prefixed. Reading the first byte is the
     // only intentionally open wait: owner EOF triggers cleanup, never unlock.
     let mut protocol_error = None;
@@ -524,17 +705,80 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                     }
                     let mut bytes = vec![0; size];
                     read_exact(input, &mut bytes)?;
-                    let Message::Register { effect, request } = serde_json::from_slice(&bytes)?;
-                    validate_register(
-                        &effect,
-                        request,
-                        last_request,
-                        effects.last().map_or(0, |last| last.sequence),
-                        &config,
-                    )?;
-                    // Acknowledge only after a complete receipt is retained,
-                    // and name the exact request this answer belongs to.
-                    effects.push(effect);
+                    let request = match serde_json::from_slice(&bytes)? {
+                        Message::Finish { request } => {
+                            if request < last_request || request == 0 {
+                                return Err(RunError::refused("stale retained cleanup request"));
+                            }
+                            finishing = true;
+                            let complete = retained_completed
+                                || finish_interpolations(&effects, &mut files, &config)?;
+                            retained_completed |= complete;
+                            last_request = request;
+                            output.write_all(&request.to_be_bytes())?;
+                            output.write_all(&[u8::from(complete)])?;
+                            output.flush()?;
+                            return Ok(());
+                        }
+                        Message::Register { effect, request } => {
+                            if finishing {
+                                return Err(RunError::refused("custody is already closing"));
+                            }
+                            validate_register(
+                                &effect,
+                                request,
+                                last_request,
+                                effects.last().map_or(0, |last| last.sequence),
+                                &config,
+                            )?;
+                            effects.push(effect);
+                            request
+                        }
+                        Message::Interpolation { binding, request } => {
+                            if finishing {
+                                return Err(RunError::refused("custody is already closing"));
+                            }
+                            if request < last_request
+                                || (request == last_request
+                                    && last_file.as_ref()
+                                        != Some(&(request, binding.invocation().to_owned())))
+                            {
+                                return Err(RunError::refused("stale interpolation request"));
+                            }
+                            let invocation = binding.invocation().to_owned();
+                            let socket = descriptors
+                                .as_ref()
+                                .ok_or_else(|| RunError::refused("no descriptor custody socket"))?;
+                            let received = crate::interpolation::channel::receive(socket, request)?;
+                            let file = crate::interpolation::RetainedInterpolation::receive(
+                                binding, received,
+                            )?;
+                            if !effects.iter().any(|effect| {
+                                file.matches_effect(effect, config.run, &config.fence)
+                            }) {
+                                return Err(RunError::refused(
+                                    "interpolation binding names no retained process effect",
+                                ));
+                            }
+                            if request == last_request
+                                && !files.iter().any(|retained| retained.same_binding(&file))
+                            {
+                                return Err(RunError::refused(
+                                    "interpolation retry changed its owner",
+                                ));
+                            }
+                            if !files.iter().any(|retained| retained.same_binding(&file)) {
+                                if files.len() >= 64 {
+                                    return Err(RunError::refused(
+                                        "too many retained interpolation owners",
+                                    ));
+                                }
+                                files.push(file);
+                            }
+                            last_file = Some((request, invocation));
+                            request
+                        }
+                    };
                     last_request = request;
                     output.write_all(&request.to_be_bytes())?;
                     output.flush()?;
@@ -560,11 +804,20 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         }
     }
     drop(output);
+    if !files.is_empty() {
+        // Retain exact descriptions across caller loss and every Unknown. Each
+        // retry re-enters identity-qualified kernel settlement; no idle lock,
+        // EOF or remembered PGID grants closure or signal authority.
+        while !finish_interpolations(&effects, &mut files, &config)? {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        retained_completed = true;
+    }
     let cleanup = context(CancelToken::default(), Duration::from_secs(60))
         .cleanup(Duration::from_secs(60))
         .map_err(|_| RunError::broken("foreground cleanup overflow"))?;
     let mut residue = false;
-    for effect in effects.iter().rev() {
+    for effect in effects.iter().rev().filter(|_| !retained_completed) {
         // Exact identity and ready-anchor evidence only. Existing custody
         // settlement never treats a remembered PGID as signalling authority.
         let (state, _) = crate::custody::settle_effect(effect, None, &cleanup, || false);
@@ -598,6 +851,34 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         return Err(error);
     }
     Ok(())
+}
+
+fn finish_interpolations(
+    effects: &[Effect],
+    files: &mut Vec<crate::interpolation::RetainedInterpolation>,
+    config: &Config,
+) -> Result<bool, RunError> {
+    let cleanup = context(CancelToken::default(), Duration::from_secs(5))
+        .cleanup(Duration::from_secs(5))
+        .map_err(|_| RunError::broken("retained cleanup overflow"))?;
+    let mut closed = Vec::new();
+    for effect in effects {
+        closed.push(
+            crate::custody::settle_effect(effect, None, &cleanup, || false).0
+                == EffectState::Released,
+        );
+    }
+    let mut pending = Vec::new();
+    for mut file in files.drain(..) {
+        let authorized = effects.iter().zip(&closed).any(|(effect, closed)| {
+            *closed && file.matches_effect(effect, config.run, &config.fence)
+        });
+        if !authorized || file.cleanup_after_verified_closure().is_err() {
+            pending.push(file);
+        }
+    }
+    *files = pending;
+    Ok(files.is_empty() && closed.iter().all(|closed| *closed))
 }
 
 /// One registration frame's whole validation. Pure, so the request binding and

@@ -88,6 +88,29 @@ pub struct ComposeInvocation {
 }
 
 impl ComposeInvocation {
+    /// The retained path is separate from direct-child execution. A secret VM
+    /// invocation must use the exact Env Run already owning its process group.
+    pub fn spawn_retained(
+        mut self,
+        run: &mut effigy_kernel::run::Run<'_>,
+        mut spec: effigy_kernel::custody::ProcessSpec,
+        cx: &effigy_kernel::ctx::EffectContext,
+    ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
+        let program = spec.argv.first().cloned().ok_or_else(|| {
+            effigy_kernel::custody::SpawnError::Refused("missing Compose program".into())
+        })?;
+        spec.argv = std::iter::once(program).chain(self.args).collect();
+        match self.interpolation.take() {
+            Some(file) => {
+                let file = file.into_retained().map_err(|error| {
+                    effigy_kernel::custody::SpawnError::Refused(error.to_string())
+                })?;
+                effigy_kernel::custody::Custody::spawn_interpolated(run, spec, cx, file)
+            }
+            None => effigy_kernel::custody::Custody::spawn(run, spec, cx),
+        }
+    }
+
     /// Direct-child callers cannot safely transfer this owner into group custody.
     /// Refuse before spawn until they can admit a retained kernel Run.
     pub fn require_retained_custody_for_interpolation(&self) -> io::Result<()> {
@@ -320,6 +343,26 @@ impl InterpolationFile {
             original: self.name.clone(),
             location,
         })
+    }
+
+    /// Move this prepared file into the kernel's retained spawn path. The
+    /// original owner disables Drop cleanup before any fallible duplication.
+    pub fn into_retained(
+        mut self,
+    ) -> io::Result<effigy_kernel::interpolation::RetainedInterpolation> {
+        let descriptors = self.prepare_custody()?;
+        let location = match descriptors.location {
+            InterpolationLocation::Original => effigy_kernel::interpolation::Location::Original,
+            InterpolationLocation::Quarantine(name) => {
+                effigy_kernel::interpolation::Location::Quarantine(name)
+            }
+        };
+        effigy_kernel::interpolation::RetainedInterpolation::new(
+            descriptors.file,
+            descriptors.directory,
+            descriptors.original,
+            location,
+        )
     }
 
     /// Attempt removal without consuming this owner. `Err` leaves the file and
@@ -981,6 +1024,26 @@ mod tests {
         assert!(
             entries(home.path()).is_empty(),
             "no file survives its invocation"
+        );
+    }
+
+    #[test]
+    fn retained_owner_drop_and_later_writer_preserve_crash_residue() {
+        let home = tempfile::tempdir().expect("home");
+        let first = invoke(home.path(), &args(&["up"]), &secret("crash fixture")).unwrap();
+        let original = env_path(&first);
+        let retained = first.interpolation.unwrap().into_retained().unwrap();
+        drop(retained);
+        assert!(original.exists());
+        let next = invoke(home.path(), &args(&["up"]), &secret("next fixture")).unwrap();
+        assert!(
+            original.exists(),
+            "an idle lock and a later sweep confer no closure authority"
+        );
+        drop(next);
+        assert!(
+            original.exists(),
+            "only the later writer's own file is removed"
         );
     }
 

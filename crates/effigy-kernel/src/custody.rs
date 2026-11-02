@@ -192,13 +192,22 @@ struct ProcessRecord {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 enum StoredProcessRecord {
-    Discard { discard_v1: ProcessRecord },
+    Discard {
+        discard_v1: ProcessRecord,
+    },
+    Interpolated {
+        interpolation_v1: ProcessRecord,
+        binding: Value,
+    },
     Legacy(ProcessRecord),
 }
 impl StoredProcessRecord {
     fn into_record(self) -> ProcessRecord {
         match self {
             Self::Discard { discard_v1 } => discard_v1,
+            Self::Interpolated {
+                interpolation_v1, ..
+            } => interpolation_v1,
             Self::Legacy(record) => record,
         }
     }
@@ -282,6 +291,7 @@ pub struct OwnedProcess {
 #[derive(Debug)]
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
+    pub(crate) interpolation: Option<crate::interpolation::RetainedInterpolation>,
     anchor: Option<ProcessIdentity>,
     /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
@@ -649,6 +659,15 @@ trait ProcessOwner {
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError>;
+    fn retain_interpolation(
+        &mut self,
+        _ticket: &EffectTicket,
+        _file: &mut crate::interpolation::RetainedInterpolation,
+    ) -> Result<(), RunError> {
+        Err(RunError::refused(
+            "interpolation requires a durable checkout Run",
+        ))
+    }
     fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError>;
     fn capture_log(
         &self,
@@ -680,6 +699,13 @@ impl ProcessOwner for Run<'_> {
     }
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
         self.acknowledge_checkout_process(ticket)
+    }
+    fn retain_interpolation(
+        &mut self,
+        ticket: &EffectTicket,
+        file: &mut crate::interpolation::RetainedInterpolation,
+    ) -> Result<(), RunError> {
+        self.retain_checkout_interpolation(ticket, file)
     }
     fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         self.anchor_image()
@@ -1018,6 +1044,27 @@ impl Custody {
             Some(output),
         )
     }
+    /// Spawn only after the same checkout backup holds the exact prepared file
+    /// descriptions and their synced process binding. Drop never unlinks it.
+    pub fn spawn_interpolated(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        file: crate::interpolation::RetainedInterpolation,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner_retained(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            true,
+            None,
+            None,
+            None,
+            Some(file),
+        )
+    }
     // Every parameter is a distinct spawn knob the public entry points set;
     // the gate is the one an engine adds between receipt and `go`.
     #[allow(clippy::too_many_arguments)]
@@ -1031,6 +1078,34 @@ impl Custody {
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner_retained(
+            run,
+            spec,
+            cx,
+            registration,
+            capability,
+            required,
+            gate,
+            handoff,
+            canonical_output,
+            None,
+        )
+    }
+    // Every parameter is a distinct spawn knob the public entry points set;
+    // the gate is the one an engine adds between receipt and `go`.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_inner_retained(
+        run: &mut impl ProcessOwner,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
+        capability: crate::ctx::Capability,
+        required: bool,
+        gate: Option<&mut dyn SpawnGate>,
+        handoff: Option<OwnedFd>,
+        canonical_output: Option<CanonicalOutput>,
+        interpolation: Option<crate::interpolation::RetainedInterpolation>,
     ) -> Result<OwnedProcess, SpawnError> {
         // A discard receipt needs every recovery helper to understand the
         // disposition before this owner records an intent or forks. Existing
@@ -1168,6 +1243,7 @@ impl Custody {
             };
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
+                interpolation,
                 anchor,
                 logs,
                 canonical_output,
@@ -1196,6 +1272,12 @@ impl Custody {
                 capture_eof_sent: false,
             }));
             run.retain_process(ticket.sequence(), core.clone());
+            {
+                let mut retained = lock(&core);
+                if let Some(file) = retained.interpolation.as_mut() {
+                    run.retain_interpolation(&ticket, file)?;
+                }
+            }
             // Install live custody before the caller's handoff. A refusal leaves
             // this exact core in the Run; Blocked still owns the closed barrier
             // and reaps the pre-exec group. Neither receipt publication nor a
@@ -1802,6 +1884,9 @@ pub(crate) fn settle_effect(
         .as_ref()
         .map(|v| serde_json::from_value::<StoredProcessRecord>(v.clone()))
     {
+        Some(Ok(StoredProcessRecord::Interpolated { .. })) if live.is_none() => {
+            return (EffectState::Residue, Some("retained interpolation requires its live descriptor owner; crash residue is Unknown".into()));
+        }
         Some(Ok(r)) => r.into_record(),
         None if matches!(effect.state, EffectState::Unknown | EffectState::Residue) => {
             return (

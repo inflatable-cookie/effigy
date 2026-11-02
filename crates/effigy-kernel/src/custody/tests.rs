@@ -95,6 +95,7 @@ fn assert_recoverable_settlement_retains_core(lost_response: bool) {
             nonce: "test".into(),
             grace_millis: 0,
         },
+        interpolation: None,
         anchor: None,
         logs: [None, None],
         canonical_output: None,
@@ -2638,6 +2639,7 @@ impl FakeCapture {
         };
         let core = ProcessCore {
             receipt,
+            interpolation: None,
             anchor: None,
             logs,
             canonical_output: None,

@@ -304,19 +304,38 @@ impl Run<'_> {
                 // The Run owns it until the Run itself is released.
                 let live = self.processes.get(&effect.sequence).cloned();
                 let diagnostic = live.clone();
+                let has_interpolation = live.as_ref().is_some_and(|core| {
+                    core.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .interpolation
+                        .is_some()
+                });
                 // Stop can be inside its grace wait when a front end sends its
                 // second interrupt. Read the fenced durable mailbox here too;
                 // no transaction or new writer spans process I/O (K4/K14).
-                let (state, reason) = crate::custody::settle_effect(effect, live, cleanup, || {
-                    if let Some((run, generation)) = successor {
-                        return self.recovery_escalated(run, generation).unwrap_or(false);
+                let (mut state, mut reason) =
+                    crate::custody::settle_effect(effect, live, cleanup, || {
+                        if let Some((run, generation)) = successor {
+                            return self.recovery_escalated(run, generation).unwrap_or(false);
+                        }
+                        self.requests().is_ok_and(|requests| {
+                            requests
+                                .iter()
+                                .any(|r| matches!(r.action, RequestAction::Escalate))
+                        })
+                    });
+                if state == EffectState::Released
+                    && (has_interpolation
+                        || effect
+                            .receipt
+                            .as_ref()
+                            .is_some_and(|receipt| receipt.get("interpolation_v1").is_some()))
+                {
+                    if let Err(error) = self.finish_interpolation_custody(cleanup) {
+                        state = EffectState::Residue;
+                        reason = Some(error.to_string());
                     }
-                    self.requests().is_ok_and(|requests| {
-                        requests
-                            .iter()
-                            .any(|r| matches!(r.action, RequestAction::Escalate))
-                    })
-                });
+                }
                 if let Some(core) = diagnostic {
                     stderr_tail = crate::custody::diagnostic_tail(&core);
                 }

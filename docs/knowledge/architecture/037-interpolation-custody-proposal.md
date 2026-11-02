@@ -1,7 +1,7 @@
 # Proposed interpolation custody and recovery design
 
-This is a design for independent security review, not a description of shipped
-behavior or authority to enable production Discard. It extends the current
+This describes the guarded retained path and its recovery limits for independent
+security review. It grants no authority to enable production Discard. It extends the current
 no-clobber removal in [contract 006](../contracts/006-compose-backend-compatibility.md)
 and must fit the kernel's custody and recovery rules in
 [contract 052](../contracts/052-runtime-kernel-contract.md). The qualified
@@ -93,78 +93,88 @@ distinguish success from foreign removal or substitution, it remains Unknown.
 The protocol must specify directory and journal sync semantics on each
 supported platform before enabling cleanup there.
 
-## Proposed kernel handoff and binding for review
+## Live retained handoff and recovery boundary
 
-The current checkout backup uses a pipe-only `MemoryGuard`; its Register frame
-carries an effect receipt but cannot transfer an open file description. The
-current `SpawnGate` sees a process receipt before `go`, and the process core is
-installed before that callback. This live core installation is necessary for
-retained ownership but does not transfer interpolation descriptors. Neither
-interface by itself transfers the interpolation file descriptor, lock, parent
-descriptor and cleanup phase into
-custody. A new implementation must not interpret either acknowledgement as
-proof of that handoff.
+`ComposeInvocation::spawn_retained` moves its prepared interpolation owner into
+`Custody::spawn_interpolated` on the supplied checkout Env Run. Direct-child
+routes still refuse secret-bearing VM Compose. This API does not enable the
+qualified workspace apply or production Discard.
 
-One candidate is a versioned Unix-domain control channel for the checkout
-backup, established during verified helper startup, with `SCM_RIGHTS` transfer
-of the exact locked file and verified directory descriptors. A registration
-frame names the run ID, owner fence, process effect sequence, process receipt
-(including nonce and generation-qualified leader and anchor), invocation ID,
-file and directory identities, original name, and a unique request number.
-The helper checks both descriptors, access modes, file type and ownership,
-lock assumptions, identities, allowed single-component names and its existing
-run/fence identity before acknowledging that exact request. Descriptor count,
-truncation, extra ancillary messages, peer identity, malformed frames and old
-helper versions all fail closed. No `go` may be sent unless the durable binding
-and the exact helper's receipt are both verified, and the actual live owner has
-moved into the corresponding process core. A failed or response-lost transfer
-retains the same pending owner and descriptors; a retry reconciles the request
-number and actual helper state, never sends a new file as a replacement. A
-helper incapable of this protocol refuses before the child can execute.
+The process core holds the prepared file before the handoff. The Run journal
+first records a distinct pending file obligation, so a failed file binding
+cannot recover as a plain process. Its exact process receipt first reaches the existing checkout backup; the file is then synced and
+bound under the cooperative directory lock to an unpredictable invocation ID,
+Run ID and fence, process effect sequence, generation-qualified leader and
+anchor receipt, parent/file device and inode, original name and current phase.
+The private `.custody-<invocation>` journal contains metadata, never file bytes.
+Its write and file sync precede directory sync. A distinct `interpolation_v1`
+process receipt records this binding in the Run journal before descriptor
+handoff and `go`; old process-receipt readers cannot treat it as a plain process.
 
-The Queue planner's 2026-11-02 answer on Tom's behalf selects an extension of
-the existing checkout backup for retry: it must retain the exact descriptors and gate across Unknown and
-provide an authenticated retry channel. The current pipe-only backup cannot
-do this: after its owner pipe closes it runs one settlement pass, then drops
-its gates and exits even when that pass left residue. It now receives
-the checkout lease and duplicates of the Env Run's own gate descriptions.
-The descriptor handoff must retain both relevant gate custody and the exact file and directory descriptions
-before acknowledging the handoff, and retain that same custody if the reply
-is lost. An ordinary Env `finish` also discards the recoverable Run on error;
-the retained path must keep or transfer that owner instead. This ruling does
-not establish an authenticated retry protocol or enable cleanup.
+Helper protocol 4 extends the existing backup with an inherited private Unix
+datagram socketpair beside its pipe control channel. Workloads inherit neither
+endpoint. Startup names already-allocated gate descriptor numbers, avoiding
+fixed targets that could collide with spawn/error pipes, and rejects aliases
+between gates, watch and descriptor channel. The same verified helper
+incarnation receives the locked file,
+pinned directory and binding journal through `SCM_RIGHTS`. The datagram request
+number must match its control frame. The receiver checks descriptor count,
+access modes, ownership, types, private modes, single links, named identities,
+journal identity/content and the exact process receipt already retained for
+this Run/fence. It syncs the received binding before acknowledgement. No child
+`go` follows a failed or uncertain handoff.
 
-The proposed versioned binding is a kernel-owned effect record, not a generic
-adapter receipt: it associates one invocation ID and attempt ID with the Run
-ID/fence and the exact process effect sequence, recorded group receipt and
-anchor, the verified parent and file stat identities, original name, optional
-quarantine name, and cleanup phase. File and directory stat matches are
-necessary checks, not closure authority. The schema must reject unknown
-versions, duplicate or conflicting bindings, missing identity fields, unsafe
-components and any binding that does not refer to its own process effect. An
-older helper must refuse the versioned record rather than ignore its binding.
-No secret values, file bytes or file descriptors are serialized.
+Retries authenticate by possession of the original inherited control endpoints
+and fresh verification of the helper's full process identity; there is no
+ambient reconnect endpoint or PID-only retry. A pending descriptor request
+keeps its number across response loss. Repeating it must name the same binding
+and cannot replace the helper's retained owner. An unconfirmed handoff cannot
+be finished as though no file were owed. Cleanup retries similarly retain a
+pending request number and the helper caches positive completion of that same
+closing operation. Closing refuses new process/file registrations.
 
-Persist and sync the binding and file before registering custody and opening
-the spawn barrier. Cleanup starts only from the kernel's verified closure for
-that exact process effect: acquire the directory lock, persist and sync intent
-including the chosen quarantine name, and finish that transaction before
-filesystem operations. Still holding the directory lock, perform no-replace
-rename, check the moved inode and unlink only a match; sync the directory
-before recording and syncing completion in a separate transaction. The Run and helper retain the exact live owner across an
-Unknown or lost reply. After owner death the helper reconciles the durable
-binding and actual entries under the same lock. If it cannot establish both
-identity and closure, or if an unlink succeeded but its completion cannot be
-proven, the result is Unknown and the evidence remains for later review. No
-missing name, free file lock, absent process or reused PID is a completion
-receipt. Unbound and legacy files remain notice-only.
+A retained cleanup request re-enters the kernel's exact process settlement.
+Unknown returns to the same owner with its gate and descriptors intact. Only
+verified closure of the bound effect permits cleanup. Cleanup syncs a fixed
+quarantine intent before no-replace rename, checks the moved entry, unlinks a
+matched file, syncs the directory, then separately writes and syncs completion.
+Occupied destinations preserve both entries. A moved foreign entry is restored
+only by no-replace rename and uncertainty is retained. Missing entries and lost
+unlink/completion receipts remain Unknown. The Run cannot record this process
+effect Released until its helper confirms the file obligation is complete.
 
-This candidate requires independent review of descriptor-channel authentication,
-helper-version compatibility, journal schema, sync ordering, owner-death and
-lost-response transitions, and resource ownership before any production use.
-It does not yet identify a macOS directory-entry durability guarantee or grant
-permission to enable recovery there. The implementation must prove each state
-transition and refuse any route where the exact owner cannot be transferred.
+Caller drop closes its private channel and hands cleanup to that same backup.
+The helper retains the exact live descriptions and gates across Unknown and
+retries identity-qualified settlement; EOF and idle locks confer no authority.
+The Queue planner's 2026-11-02 answer on Tom's behalf selected this extension of
+the existing backup. It did not authorize a replacement resident-owner service.
+
+After loss of the helper itself, the process receipt preserves a required file
+obligation. Recovery without its live descriptors reports residue, even if the
+group is now empty. Neither a journal stat match nor a free file lock reacquires
+durable object identity. Existing sweeps remain notice-only and do not remove
+original, quarantine or legacy crash residue. Even a helper that completed file
+cleanup before owner loss may therefore leave conservative Run-journal residue;
+no completion is manufactured from a missing file. Automatic recovery after
+helper death is not enabled on either platform.
+
+The fixture controls in `run/lifecycle/tests.rs` exercise caller drop through
+Unknown, exact inode and gate retention, verified closure, occupied quarantine,
+lost registration and cleanup replies, unsynced binding, helper death and an
+actual SIGKILL of the owner process without Rust destructors. The phase controls
+in `interpolation.rs` inject failures around journal write/sync, directory sync,
+rename, stat, unlink and restore. These are isolated Rust fixtures, not a native
+qualification packet or evidence of macOS power-loss durability.
+
+Descriptor reception reserves room for the platform's maximum rights message
+(XNU's `UIPC_MAX_CMSG_FD` is 512; Linux's `SCM_MAX_FD` is 253), although the private
+producer sends exactly three. A macOS failing control demonstrated that an
+undersized ancillary buffer can install descriptors omitted from a truncated
+reply. The receiver adopts all reported rights before refusing an invalid
+frame; controls cover wrong request/count, excess rights, payload truncation
+and close-on-exec. The kernel limits are documented in the
+[Apple socket implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/uipc_usrreq.c)
+and [Linux socket implementation](https://github.com/torvalds/linux/blob/master/include/net/scm.h).
 
 ## Platform durability evidence still needed
 

@@ -16,6 +16,7 @@ pub mod gate;
 pub mod human;
 pub mod id;
 pub mod ident;
+pub mod interpolation;
 pub mod location;
 pub mod objects;
 pub mod observe;

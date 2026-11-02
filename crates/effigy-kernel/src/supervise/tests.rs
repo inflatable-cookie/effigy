@@ -897,12 +897,14 @@ fn a_stale_memory_acknowledgement_never_answers_a_later_frame() {
         memory: true,
         owner,
         gates: 1,
+        gate_fds: vec![],
         run: RunId::new(1, [8; 10]).unwrap(),
         fence: Fence {
             resource,
             generation: crate::id::Generation::new(1),
         },
         watch: 3,
+        descriptors: None,
     };
     let frame = |sequence| Effect {
         sequence,
