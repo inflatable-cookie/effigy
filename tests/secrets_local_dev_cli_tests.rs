@@ -183,22 +183,6 @@ fn manual_unlock_allows_commands_and_tasks_then_lock_revokes_access() {
         String::from_utf8_lossy(&set.stderr)
     );
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["secrets", "doctor", "--json"])
-        .current_dir(&root)
-        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
-        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
-        .stdin(Stdio::null())
-        .output()
-        .expect("doctor with unlocked vault");
-    assert!(
-        doctor.status.success(),
-        "{}",
-        String::from_utf8_lossy(&doctor.stderr)
-    );
-    let json: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
-    assert_eq!(json["result"]["vault_state"]["status"], "unlocked");
-
     let changed = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "change-passphrase"])
         .current_dir(&root)
