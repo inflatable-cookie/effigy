@@ -1,0 +1,61 @@
+{
+  "backend": "colima",
+  "baseline": {
+    "containers": "rehearsal/colima-sweep/containers-before.sorted",
+    "counts": {
+      "containers": 15,
+      "networks": 36,
+      "volumes": 255
+    },
+    "networks": "rehearsal/colima-sweep/network-names-before.txt",
+    "pinned": true,
+    "sha256": {
+      "containers": "d89c846cdb44c0d9669f4db50eb57347d2b322aee26b4b03c7fbd2e000663f10",
+      "networks": "3f5c98bb52e73db7c6db8b5f84d732f95186e7c5847207e4427a0827a2900039",
+      "volumes": "b5a3e431ad628c622eef00158a9bc781599e2dc9a6b2de015cc4e3d573ac6d50"
+    },
+    "volumes": "rehearsal/colima-sweep/volumes-before.txt"
+  },
+  "candidate": {
+    "checkout": "candidate-src-a00394012",
+    "commit": "a00394012ae8dafe52981c36d459ec0491ec0552",
+    "host_binary": "candidate-src-a00394012/target/debug/effigy",
+    "host_binary_sha256": "58092a16bdab2aa15371ab352c0ab6f60f1baccbda9cd7b9b5e16f021054efb1"
+  },
+  "engine": {
+    "binary": "/opt/homebrew/bin/colima",
+    "colima_version": "0.10.3",
+    "kind": "colima-nerdctl",
+    "nerdctl_version": "v2.3.1",
+    "profile": "effigy",
+    "runtime": "containerd"
+  },
+  "fixtures": {
+    "compose_project": "effigy530-synthetic-c01ima",
+    "parent": "/Users/tom/.effigy-scratch",
+    "root": "/Users/tom/.effigy-scratch/530-qual-20261102-colima"
+  },
+  "helpers": {
+    "common.py": "96bcf21abc9fc848afe88ae14c534fe0c9c3467a554b8c2c80533c791b7a1553",
+    "launch.py": "37cd9227359914d8fa664bf400e9d6fdcf84f704f961a13cf89c3206f4cb70ad",
+    "preflight.py": "6a838a25121a53e7897cf8f79a7565bc0ad64375f569cd75f75a03d91ec072e0",
+    "prepare.py": "f077d01ba291c202e498123fac1ea2a23cfe661b42d40a46aa168a0cf647d4fb",
+    "runtime.py": "5cd92a52e859ad86b615a38d2f5e7ca292668f99343d15016c7b2a9e0b57616a"
+  },
+  "images": {
+    "runtime": {
+      "id": "sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+      "reference": "alpine:3.19"
+    },
+    "toolchain": {
+      "id": "sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3",
+      "reference": "rust:1.97.1-slim-bookworm"
+    }
+  },
+  "scratch_root": "/Volumes/Builds/scratch/effigy/530",
+  "synthetic": {
+    "build_container": "effigy530-build-5jwq2c",
+    "ident_a": "effigy530-ident-5jwq2ca",
+    "ident_b": "effigy530-ident-5jwq2cb"
+  }
+}

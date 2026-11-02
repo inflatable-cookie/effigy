@@ -1,0 +1,48 @@
+{
+  "backend": "desktop",
+  "baseline": {
+    "note": "no baseline exists before the first window; prepare captures the within-window baseline and runtime compares against it",
+    "pinned": false
+  },
+  "candidate": {
+    "checkout": "candidate-src-a00394012",
+    "commit": "a00394012ae8dafe52981c36d459ec0491ec0552",
+    "host_binary": "candidate-src-a00394012/target/debug/effigy",
+    "host_binary_sha256": "58092a16bdab2aa15371ab352c0ab6f60f1baccbda9cd7b9b5e16f021054efb1"
+  },
+  "engine": {
+    "binary": "/usr/local/bin/docker",
+    "context": "desktop-linux",
+    "kind": "docker-context",
+    "runtime": "Docker Desktop VM"
+  },
+  "fixtures": {
+    "compose_project": "effigy530-synthetic-d3skt0p",
+    "parent": "/Users/tom/.effigy-scratch",
+    "root": "/Users/tom/.effigy-scratch/530-qual-20261102-desktop"
+  },
+  "helpers": {
+    "common.py": "96bcf21abc9fc848afe88ae14c534fe0c9c3467a554b8c2c80533c791b7a1553",
+    "launch.py": "37cd9227359914d8fa664bf400e9d6fdcf84f704f961a13cf89c3206f4cb70ad",
+    "preflight.py": "6a838a25121a53e7897cf8f79a7565bc0ad64375f569cd75f75a03d91ec072e0",
+    "prepare.py": "f077d01ba291c202e498123fac1ea2a23cfe661b42d40a46aa168a0cf647d4fb",
+    "runtime.py": "5cd92a52e859ad86b615a38d2f5e7ca292668f99343d15016c7b2a9e0b57616a"
+  },
+  "images": {
+    "note": "resident-image IDs are resolved and pinned by prepare; an absent image stops the packet and its pull is named in the GO request, never performed unasked",
+    "runtime": {
+      "id": null,
+      "reference": "alpine:3.19"
+    },
+    "toolchain": {
+      "id": null,
+      "reference": "rust:1.97.1-slim-bookworm"
+    }
+  },
+  "scratch_root": "/Volumes/Builds/scratch/effigy/530",
+  "synthetic": {
+    "build_container": "effigy530-build-5jwq2d",
+    "ident_a": "effigy530-ident-5jwq2da",
+    "ident_b": "effigy530-ident-5jwq2db"
+  }
+}
