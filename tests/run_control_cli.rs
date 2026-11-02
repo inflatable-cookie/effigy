@@ -1177,7 +1177,7 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
         }
     }
     assert!(
-        started.elapsed() < Duration::from_secs(10),
+        started.elapsed() < Duration::from_secs(4),
         "the polls took {:?}; the lookup is scanning peers",
         started.elapsed()
     );
