@@ -479,13 +479,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn default_alias_uses_workspace_directory_name_for_root_catalog() {
+    fn default_alias_uses_the_catalog_directory_name() {
         let root = Path::new("/tmp/dev/cbs");
         assert_eq!(default_alias(root, root), "cbs");
-    }
-
-    #[test]
-    fn default_alias_uses_catalog_directory_name_for_child_catalog() {
         assert_eq!(
             default_alias(
                 Path::new("/tmp/dev/cbs/apps/api"),

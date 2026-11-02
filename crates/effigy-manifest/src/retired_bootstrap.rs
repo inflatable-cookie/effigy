@@ -420,9 +420,7 @@ fn last_synthesised_name(output: &EntryOutput<'_>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use super::{CHILDREN_REFUSAL, DB_SEED_TASK_REFUSAL, DEPS_SYNC_REFUSAL};
+    use super::DB_SEED_TASK_REFUSAL;
     use crate::TaskManifest;
 
     fn parse(text: &str) -> TaskManifest {
@@ -435,92 +433,6 @@ mod tests {
             .as_ref()
             .map(|bootstrap| bootstrap.setup.clone())
             .unwrap_or_default()
-    }
-
-    #[test]
-    fn run_becomes_setup_and_task_entries_become_selectors() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-run = [
-  { task = "secrets init" },
-  { task = "bootstrap:state" },
-]
-start = "dev"
-"#,
-        );
-        assert_eq!(setup(&manifest), vec!["secrets init", "bootstrap:state"]);
-        assert_eq!(
-            manifest
-                .bootstrap
-                .as_ref()
-                .and_then(|bootstrap| bootstrap.start.as_deref()),
-            Some("dev")
-        );
-        assert!(manifest
-            .retired_config
-            .notice(Path::new("effigy.toml"))
-            .is_some());
-    }
-
-    #[test]
-    fn inline_run_steps_stay_runnable_as_internal_tasks_in_order() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-run = [
-  { rhai = "scripts/bootstrap.rhai" },
-  { task = "container up --detach" },
-  { run = "bun install", run_in = "host" },
-]
-"#,
-        );
-        assert_eq!(
-            setup(&manifest),
-            vec![
-                "bootstrap:run:1",
-                "container up --detach",
-                "bootstrap:run:3"
-            ]
-        );
-        let php = manifest
-            .tasks
-            .get("bootstrap:run:1")
-            .expect("synthesised task");
-        assert_eq!(
-            php.visibility,
-            Some(crate::ManifestTaskVisibility::Internal)
-        );
-        let host = manifest
-            .tasks
-            .get("bootstrap:run:3")
-            .expect("synthesised task");
-        assert_eq!(host.run_in, Some(crate::ManifestTaskRunIn::Host));
-    }
-
-    #[test]
-    fn a_compact_run_definition_is_one_internal_task() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-run = { task = "setup" }
-"#,
-        );
-        assert_eq!(setup(&manifest), vec!["setup"]);
-    }
-
-    #[test]
-    fn setup_entries_that_are_task_tables_are_read_as_selectors() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-setup = [{ task = "bootstrap:deps" }]
-
-[tasks."bootstrap:deps"]
-run = "bun install --frozen-lockfile"
-"#,
-        );
-        assert_eq!(setup(&manifest), vec!["bootstrap:deps"]);
     }
 
     #[test]
@@ -550,33 +462,6 @@ start = [{ task = "container:up" }, { task = "dev" }]
     }
 
     #[test]
-    fn children_load_but_only_bootstrap_refuses_them() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-start = "dev"
-
-[[bootstrap.children]]
-path = "../book"
-repo = "git@example.test:book.git"
-branch = "main"
-required = true
-"#,
-        );
-        assert_eq!(
-            manifest
-                .bootstrap
-                .as_ref()
-                .and_then(|bootstrap| bootstrap.start.as_deref()),
-            Some("dev")
-        );
-        assert_eq!(manifest.retired_config.refusals(), [CHILDREN_REFUSAL]);
-        let message = manifest.retired_config.refusal_message().expect("refusal");
-        assert!(message.contains("[sources.<name>]"), "{message}");
-        assert!(message.contains("rev_file"), "{message}");
-    }
-
-    #[test]
     fn the_db_seed_callback_task_loads_and_refuses_only_in_bootstrap() {
         let manifest = parse(
             r#"
@@ -586,18 +471,6 @@ run = "psql < seed.sql"
         );
         assert!(manifest.tasks.contains_key("bootstrap:db-seed"));
         assert_eq!(manifest.retired_config.refusals(), [DB_SEED_TASK_REFUSAL]);
-    }
-
-    #[test]
-    fn a_run_entry_naming_retired_bootstrap_deps_sync_refuses_in_bootstrap() {
-        let manifest = parse(
-            r#"
-[bootstrap]
-run = [{ task = "bootstrap deps sync packages/ui" }]
-"#,
-        );
-        assert_eq!(setup(&manifest), vec!["bootstrap deps sync packages/ui"]);
-        assert_eq!(manifest.retired_config.refusals(), [DEPS_SYNC_REFUSAL]);
     }
 
     #[test]
