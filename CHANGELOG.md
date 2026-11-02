@@ -305,6 +305,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- The Acow ordinary-Compose consumer qualification packet
+  (`docs/qualification/acow-ordinary-compose-5f466914/`, task effigy#540):
+  two separately GO-armed proof routes for the frozen ordinary candidate
+  5f466914 — a fail-closed worktree warm-up at the exact Queue-QA path length
+  (bundle sync, the task-795 `worktree:container:attach`, plain
+  `container up --detach`, mounts-label length recorded, exact teardown that
+  preserves ALL volumes) and a primary-data counts-only observation of eight
+  owner-baselined tables through the existing postgres container — plus a
+  committed fake-backend refusal battery runnable as
+  `effigy test:qualification:acow`. Prepared, not executed: every missing GO,
+  receipt, pin or identity refuses before any effect.
+
 - **A forwarded workspace command streams to its terminal outcome.** A task a
   container-mode guest asks the host to run is now a Level 1 foreground command
   (contract 052 §8.11, Tom's 2026-11-01 ruling): the host run carries no PTY and

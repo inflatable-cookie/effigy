@@ -1,0 +1,101 @@
+{
+  "schema": "effigy.qualification.acow-ordinary-compose.r1",
+  "task": "effigy#540",
+  "status": "prepared-not-executed",
+  "routes": {
+    "warmup": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py",
+    "primary_data": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/primary.py",
+    "boundaries": "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py (installed-Effigy selector test:qualification:acow; fake backends only)"
+  },
+  "candidate": {
+    "source_commit": "5f4669141d8dabd91b7fbfef28d2bce21bc42ba2",
+    "binary_sha256": "cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1",
+    "version_marker": "5f46691",
+    "note": "the binary is not committed and must not be installed by this task; activation requires the exact installed version and binary SHA"
+  },
+  "scratch_root": "/Volumes/Builds/scratch/effigy/540",
+  "receipts": {
+    "warmup_go": "acow-warmup-go.txt",
+    "primary_go": "acow-primary-go.txt",
+    "prerequisite_539": "539-green-receipt.json",
+    "warmup_invocation": "acow-warmup-invocation-receipt.json",
+    "warmup_activation": "acow-warmup-activation-receipt.json",
+    "warmup_teardown": "acow-warmup-teardown-receipt.json",
+    "warmup_console": "acow-warmup-console.log",
+    "primary_observation": "acow-primary-observation-receipt.json",
+    "primary_console": "acow-primary-console.log"
+  },
+  "consumer_inputs": {
+    "primary_checkout": "/Users/tom/Dev/projects/acowtancy",
+    "pin_commit": "b7f004d74a47f702f4dc3ef5c96390f0bdbf3c0b",
+    "pin_tree": "88df708155e60deb8c8179cffd3c307a3baf5e01",
+    "attach_task": "infra/tasks.toml:16",
+    "attach_session_derivation": "wt-<sanitized-basename>-<sha256(canonical worktree path)[:8]>; compose project acowtancy-dev-<session>",
+    "bundle_source": "git@github.com:inflatable-cookie/underlay-effigy-bundle.git",
+    "bundle_lock_commit": "61dc5aa8405698ea757f0ff5c481cb6d7cb92314",
+    "pinned_input_blobs": {
+      "infra/tasks.toml": "ee9c7f26b516db2fbe03baabb01a5b24944bd42b",
+      "infra/workspace.toml": "df59e9722612053be479bdf77e62cee1ac82a5ab",
+      "effigy.toml": "80ccc592c5a3794b9e0038657120f4ad8a5bdb0d",
+      "scripts/tasks/worktree-container-attach.ts": "b9ed0416a26064edc22efd5433e2d7dba8884259",
+      "state/schema/202608221002__baseline_auth.sql": "65ab9b783d31eaf438be2577be201929a669aa68",
+      "state/schema/202608221003__baseline_learning.sql": "1f41b794afe1543a5064d4c7e85d3dcdbf9d9249",
+      "state/schema/202608221010__baseline_engagement.sql": "ed887393a015b8b1fd8f93a8393a9031742d0afb",
+      "state/schema/202608221011__baseline_billing.sql": "f0eae506b32555d71289807be6f9bf845c48c8b0"
+    }
+  },
+  "protected_state": {
+    "shared_mariadb_container": "c47a64b6fc1fe688e3ce503a27704fb978580c22bd4d8c2f7083e509ceb0e6d9",
+    "shared_mariadb_volume": "effigy-shared-mariadb-0721de3e-mysql-data",
+    "never_touch_volumes": [
+      "acowtancy-dev-postgres-data",
+      "acowtancy-dev-silo-data",
+      "acowtancy-dev-dbgate-data",
+      "effigy-shared-mariadb-0721de3e-mysql-data",
+      "effigy-shared-mariadb-0721de3e-legacy_mysql-data"
+    ],
+    "rule": "never pruned, recreated, repaired, imported, reset, inspected for secret values, or re-mounted; teardown preserves ALL volumes including older scoped volumes; no volume deletion and no global cleanup"
+  },
+  "engine": {
+    "kind": "colima-nerdctl",
+    "colima_binary": "/opt/homebrew/bin/colima",
+    "profile": "effigy",
+    "colima_version": "0.10.3",
+    "nerdctl_version": "2.3.1",
+    "mounts_label_budget_bytes": 4096,
+    "note": "the fresh protected baseline is captured at activation under GO; the packet pins identities, not a point-in-time baseline"
+  },
+  "fixture": {
+    "queue_shape_prefix": "/Volumes/Builds/queue/workspaces/",
+    "queue_shape_total_length": 137,
+    "parent": "/Volumes/Builds/scratch/effigy/w",
+    "task_uuid": "13f69c1b-9a5e-455e-8004-af30ece9685f",
+    "rule": "the disposable linked worktree path must match the Queue QA shape and its exact 137-character length; a short path does not qualify the nerdctl mounts-label size"
+  },
+  "expected_primary_counts": {
+    "auth.users": 57280,
+    "auth.legacy_user_link": 57279,
+    "billing.orders": 45540,
+    "engagement.feedback": 2372,
+    "engagement.complaint": 62,
+    "learning.pathway": 5,
+    "learning.module": 65,
+    "learning.outcome": 6689
+  },
+  "count_citations": {
+    "auth.users": "state/schema/202608221002__baseline_auth.sql:5",
+    "auth.legacy_user_link": "state/schema/202608221002__baseline_auth.sql:33",
+    "billing.orders": "state/schema/202608221011__baseline_billing.sql:357",
+    "engagement.feedback": "state/schema/202608221010__baseline_engagement.sql:5",
+    "engagement.complaint": "state/schema/202608221010__baseline_engagement.sql:26",
+    "learning.pathway": "state/schema/202608221003__baseline_learning.sql:5",
+    "learning.module": "state/schema/202608221003__baseline_learning.sql:40",
+    "learning.outcome": "state/schema/202608221003__baseline_learning.sql:150"
+  },
+  "helpers": {
+    "common.py": "01b7bb71f0e25a93996c553b3e5992006b2e072d1ab50ad5b542db64f374492d",
+    "warmup.py": "31e4893cc71f41fec94f8fa4e94a26a9bdaf54fc077f9f7556e662be4ed25ddc",
+    "primary.py": "c4758de476109b25edfd02b387ea31003605499e54d3327751b7a1eae92f6325",
+    "boundaries.py": "7a07541eed6c2da75f906f7b567ae8235d212b89618f0490a201bf3f88b66a7d"
+  }
+}
