@@ -1437,6 +1437,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Record pre-exec closure on a retained process core when a spawn is refused
+  after retaining its core and before custody transfer (a refusing workload gate, a lost
+  interpolation registration or a lost identity re-proof). The refused child
+  never execs and its pre-exec group is killed and reaped at the refusal, so
+  the settle reads release instead of contradicting live-custody evidence that
+  reported cleanup residue for work that never ran: a v2 admission refusal
+  settled its durable record with cleanup `incomplete`.
+
 - The Colima nerdctl mounts-budget preflight no longer refuses before commands
   that never apply Compose. The admission guard is apply-time: activation and
   `up`, pull-production, workspace artifact builds, runtime activation prep and
