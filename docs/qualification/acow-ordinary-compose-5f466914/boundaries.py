@@ -750,6 +750,34 @@ def t_544_outcome_review_not_accepted(tmp):
                    'durable outcome review')
 
 
+def t_544_outcome_review_ids_linked(tmp):
+    fixture = r544_fixture()
+    fixture['review'].update(reviewId=123, reviewCommentId=456)
+    fixture['outcome']['review'].update(reviewId=123, commentId=456)
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, '544-proof-receipt.json', text)
+    verify_544_proof_receipt(p, sha(text))
+
+
+def t_544_outcome_review_ids_mismatch(tmp):
+    for key, retained_key in (('reviewId', 'reviewId'),
+                              ('commentId', 'reviewCommentId')):
+        fixture = r544_fixture()
+        fixture['review'].update(reviewId=123, reviewCommentId=456)
+        fixture['outcome']['review'].update(reviewId=123, commentId=456)
+        fixture['outcome']['review'][key] = 999
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, key + '-mismatch.json', text)
+        expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                       'differs from retained review')
+        del fixture['review'][retained_key]
+        fixture['outcome']['review'][key] = None
+        text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+        p = tmpfile(tmp, key + '-missing.json', text)
+        expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                       'differs from retained review')
+
+
 def t_544_outcome_wrong_shape(tmp):
     fixture = r544_fixture()
     fixture['outcome'] = {'taskId': PROOF_TASK_ID, 'outcome': 'done'}

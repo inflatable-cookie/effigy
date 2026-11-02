@@ -28,7 +28,7 @@ candidate identity, and separate operator/consumer GOs.
 
 The primary lock is a preflight authority check. The disposable worktree must have no lock before sync; its receipt records that absence, and the exact approved target is required after sync before attach.
 
-## Artifacts manifest SHA-256: `c114d683fe69dc83b666c2059ad520d8d96746043dce78da5773d33eca7cc4b1`
+## Artifacts manifest SHA-256: `ab18c67f21c94e50e31429070e531786f1cb6322de0cd0b3f85b5eb507072be8`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
 the relevant-input closure with its selection policy, the reviewed anchor
