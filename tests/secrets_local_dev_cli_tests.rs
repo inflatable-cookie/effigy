@@ -172,6 +172,53 @@ fn doctor_reports_a_passphrase_unlock_through_the_sealed_credential() {
 }
 
 #[test]
+fn doctor_fails_closed_when_the_sealed_credential_cannot_be_opened() {
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    let vault_path = write_fixture(&root, false);
+
+    // Keep the credential structurally valid and private, but seal it with a
+    // different synthetic key than the key stored beside the vault.
+    let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+    let unrelated_key = LocalDevUnlockKey::generate().expect("generate unrelated key");
+    let key_path = local_dev_unlock_key_path(&vault_path);
+    fs::write(&key_path, local_dev_key.expose()).expect("write local-dev key");
+    let credential =
+        seal_local_unlock_passphrase(&unrelated_key, "credential-canary").expect("seal credential");
+    let credential_path = local_unlock_credential_path(&vault_path);
+    fs::write(&credential_path, credential).expect("write sealed credential");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&key_path, &credential_path] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("secure local unlock file");
+        }
+    }
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor", "--json"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .env_remove("EFFIGY_SECRET_PASSPHRASE")
+        .output()
+        .expect("run doctor");
+
+    assert!(!doctor.status.success(), "doctor unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&doctor.stderr);
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    let diagnostic = format!("{stdout}{stderr}");
+    assert!(
+        diagnostic.contains("failed to decrypt vault payload"),
+        "diagnostic: {diagnostic}"
+    );
+    assert!(!diagnostic.contains("credential-canary"));
+    assert!(!diagnostic.contains("vault-passphrase"));
+    assert!(!diagnostic.contains("tok_local_dev"));
+}
+
+#[test]
 fn first_dev_unlock_upgrades_a_legacy_vault() {
     let root = support::temp_workspace("effigy-secrets-cli", "execution");
     let vault_path = write_fixture(&root, false);
