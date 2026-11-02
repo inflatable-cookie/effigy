@@ -106,6 +106,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         super::lifecycle::run_container_up(
             repo_root,
             Some("linux-release"),
+            super::UpSelection::Direct,
             false,
             true,
             false,

@@ -111,6 +111,16 @@ and then the `[systems].default` workspace container, so a repo that declares
 only `[systems]` still targets the environment its tasks use.
 `--system <NAME>` selects one declared system explicitly.
 
+Both spellings take the same ordinary Compose path. Naming a container or
+accepting the default container is the ordinary invocation even when a bundle
+declares that container as its default system/workspace: the mount rewrite,
+apply, readiness and handoff are the ones this command has always run.
+`--system <NAME>` selects the environment through that system's default
+workspace, so it is the explicit workspace activation request; while the
+workspace production cut is in force that request refuses by name before
+workspace preparation or apply, and the ordinary invocation keeps working
+(contract 052 §8.11).
+
 ### `effigy workspace`
 
 This is the Linux-native maintenance entrypoint.

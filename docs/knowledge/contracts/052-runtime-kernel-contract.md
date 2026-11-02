@@ -3316,6 +3316,22 @@ reader does not infer an absent gate from silence:
 | S4 backup identity/reuse before Register, actual ACK, anchor verification before GO | landed | `MemoryGuard::register` re-proves the retained backup's exact incarnation before any frame; its acknowledgement names the frame's reserved request number; and process custody qualifies the recorded anchor and leader before the receipt and again before the `go` byte. |
 | S5 real mixed-binary and process-death controls | partial | A helper frame from another protocol version refuses by name, and real-process controls stop the recorded anchor and backup to prove the refusals. A genuine old-binary pair, Linux and native packets, and owner-death recovery for the resident owner are still outstanding. |
 
+**Workspace activation intent (effigy#535).** That refusal is asked for by the
+invocation, not inferred from the declaration. Naming a container or accepting
+`[containers].default` is the ordinary Compose invocation this command has
+always performed, including for a container a legacy bundle declares as its
+default system/workspace (the bundle export writes `[systems.<s>] container`,
+`default_workspace`, `working_dir`/`user`/`home` and an empty
+`[systems.<s>.workspaces.<w>]`, while `[containers].default` names the same
+container). `effigy container up --system <NAME>` selects the environment
+through that system's default workspace, and only that selection is the guarded
+workspace activation that refuses above. A task's own ensure and
+the workspace handoff keep the ordinary path. The selection is the invocation's,
+never the declaration's: a source refresh may add or remove a workspace
+declaration, and that can neither promote an ordinary invocation into a private
+apply nor bypass the explicit selection's recheck after the refresh. Private
+preparation, private Compose and Discard stay refused where requested.
+
 The guest locator lease retains two addresses: the numeric host bind socket for
 host recovery and the exact `effigy-host:<assigned-port>` proved by the staged
 guest for selection. `SessionLaunch::qualify_guest` issues a launch-local

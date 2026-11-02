@@ -144,9 +144,11 @@ mounts = ["prepared:/workspace/prepared:ro"]
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
+    // Phase-0 identity prevalidation belongs to the explicit workspace
+    // activation request; the ordinary invocation never reaches it.
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .current_dir(&project)
-        .args(["container", "up", "--detach", "--json"])
+        .args(["container", "up", "--system", "dev", "--detach", "--json"])
         .env("HOME", &home)
         .env("PATH", std::env::join_paths(paths).expect("fixture path"))
         .env("EFFIGY_TEST_RUNTIME_MARKER", &marker)
