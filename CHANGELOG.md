@@ -1473,8 +1473,8 @@ During v0.x, MINOR bumps may include breaking changes.
   activation's own diagnostics did not read it (QA 434a16f6, QA05c6ed7f;
   effigy#567). Classification now names its consumer: the canonical output's
   redaction set keeps every unproven value classified, while the spawn
-  specification delivers unproven values to the child and never refuses the
-  author's own argv. Schema-proven secrets stay classified for both and keep
+  specification permits unproven values without secret-bearing names.
+  Secret-bearing names and schema-proven secrets stay classified for both and keep
   the kernel's argv refusal, and no redaction rule changed. The nested-effigy
   proof's timeout evidence now reads the plain log shape the supervisor
   writes for a listener-less environment, plus every host-process log the

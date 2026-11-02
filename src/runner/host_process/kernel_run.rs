@@ -1753,7 +1753,11 @@ fn stop_resource_run(
     // Before reading it, wait for its gate flock to drain: the journal's
     // closure precedes the supervisor's own guard drop, and the caller's
     // successor admission reads this gate next (effigy#567).
-    wait_for_predecessor_gate(state_root, resource, deadline);
+    wait_for_predecessor_gate(
+        state_root,
+        resource,
+        Instant::now() + stop_pickup(shutdown_grace(policy, name)),
+    );
     if let Some(report) = read_stop_report(repo_root, policy, name, run_id) {
         return Ok(Some(HostProcessStop {
             name: name.to_owned(),

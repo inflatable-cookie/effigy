@@ -4273,6 +4273,7 @@ fn nested_host_process_log_evidence(fixture_root: &Path) -> String {
                     || name == ".effigy"
                     || name == "runtime"
                     || name == "home"
+                    || name == "checkout"
                 {
                     stack.push(path);
                 }
@@ -7446,6 +7447,12 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     let app = control.join("app.py");
     fs::write(&app, "import os, signal\n").expect("fixture app");
     let pid_file = control.join("app-pid");
+    let nested_log = fixture
+        .path()
+        .join("checkout/.effigy/runtime/host-processes/web/api.log");
+    fs::create_dir_all(nested_log.parent().unwrap()).expect("nested log directory");
+    fs::write(&nested_log, "nested supervisor evidence").expect("nested log");
+    assert!(nested_host_process_log_evidence(fixture.path()).contains("nested supervisor evidence"));
     let log = fixture.path().join("api.log");
     let suffix = "[effigy host-process] started `api` (pid 50645)\n\
          [effigy host-process] `api` exited (code 1)\n";

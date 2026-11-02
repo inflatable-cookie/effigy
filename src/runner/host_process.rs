@@ -1742,31 +1742,21 @@ fn spawn_generation(
     Custody::spawn_logged_auxiliary(run, process, cx, output)
 }
 
-/// Preserve schema provenance across the detached boundary by loading the
-/// producer's schema before spawn. A malformed schema refuses the producer.
-/// Ambient values without provenance are conservatively secret: a name that
-/// merely looks harmless cannot declassify a credential.
-/// Which consumer a classification serves.
-///
-/// The canonical output's redaction set and the spawn specification need the
-/// same provenance inputs but opposite refusal behavior for a value Effigy
-/// cannot prove: an unproven ambient value stays classified for capture, so a
-/// workload echoing it is redacted from the durable log, while the spawn keeps
-/// delivering it to the child exactly as the pre-provenance spawn did. The
-/// kernel's argv guard then refuses only proven secrets, so a queue identity
-/// that legitimately sits in both the checkout path (the workload's argv) and
-/// the runner environment never stops a declared workload from starting
-/// again (effigy#567).
+/// Capture retains unproven ambient values for redaction. Spawn permits
+/// unproven values without secret-bearing names to avoid incidental argv
+/// collisions; known secrets and secret-bearing names remain guarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runner) enum ClassifyPurpose {
     /// The canonical output's redaction set: every unproven value stays
     /// classified and redacted.
     Capture,
-    /// The spawn specification: unproven values reach the child and never
-    /// refuse the author's own argv; proven secrets keep the refusal.
+    /// Spawn keeps secret-bearing names and proven secrets classified.
     Spawn,
 }
 
+/// Preserve schema provenance across the detached boundary by loading the
+/// producer's schema before spawn. A malformed schema refuses the producer.
+/// Capture conservatively classifies ambient values without provenance.
 fn classify_child_environment(
     spec: &HostProcessRuntimeSpec,
     environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
@@ -1842,11 +1832,14 @@ fn classify_environment(
             });
             // A value that carries a declared secret's bytes stays classified
             // for both consumers, whatever its own name resolves to. Only a
-            // value Effigy cannot prove and that carries nothing proven is
+            // value with no secret-bearing name that carries nothing proven is
             // spawn-plain: capture keeps it classified for redaction.
             let value = if value.is_empty()
                 || (plain && !contains_secret)
-                || (purpose == ClassifyPurpose::Spawn && !plain && !contains_secret)
+                || (purpose == ClassifyPurpose::Spawn
+                    && !plain
+                    && !contains_secret
+                    && !secret_bearing_name(name))
             {
                 EnvValue::Plain(value)
             } else {
@@ -1875,12 +1868,15 @@ fn nonsecret_launcher_flag(name: &str, value: &std::ffi::OsStr) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     });
-    (known || switch)
-        && !name.split('_').any(|segment| {
-            ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
-                .iter()
-                .any(|secret| segment.eq_ignore_ascii_case(secret))
-        })
+    (known || switch) && !secret_bearing_name(name)
+}
+
+fn secret_bearing_name(name: &str) -> bool {
+    name.split('_').any(|segment| {
+        ["TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"]
+            .iter()
+            .any(|secret| segment.eq_ignore_ascii_case(secret))
+    })
 }
 
 /// Only transport/session facts with established non-secret meaning. All
@@ -3077,7 +3073,11 @@ mod tests {
             ClassifyPurpose::Spawn,
         )
         .unwrap();
-        for key in ["NORTHSTAR_TASK_ID", "NORTHSTAR_RUN_TOKEN", "UNKNOWN"] {
+        assert!(matches!(
+            spawn.get(std::ffi::OsStr::new("NORTHSTAR_RUN_TOKEN")),
+            Some(EnvValue::Secret(_))
+        ));
+        for key in ["NORTHSTAR_TASK_ID", "UNKNOWN"] {
             assert!(
                 matches!(
                     spawn.get(std::ffi::OsStr::new(key)),

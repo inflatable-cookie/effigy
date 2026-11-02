@@ -239,17 +239,6 @@ Injection rules:
   process environment, outside the rendered shell command and argv; captured
   headless log output drops terminal controls and then redacts the resolved
   values in merged arrival order (052 K12, 052 §5.7 output capture)
-- the host-process spawn specification separates a proven value from an
-  unproven one. A schema-proven secret stays classified in the spawn
-  specification, so the kernel's preflight still refuses a run string that
-  embeds its bytes. An unproven ambient value - a name no schema marks and no
-  allowlist clears - still reaches the workload and never refuses the
-  workload's own argv: a runner identity legitimately sits in both the
-  checkout path the run names and the environment, so treating the value as a
-  refusal trigger stopped every declared workload a queue-owned runner
-  started (effigy#567). The canonical output's redaction set keeps unproven
-  values classified on both routes, so nothing a workload echoes back loses
-  its redaction
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting
