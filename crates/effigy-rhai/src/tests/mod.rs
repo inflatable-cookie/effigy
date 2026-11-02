@@ -442,12 +442,8 @@ fn rhai_surface_feature_descriptors_cover_feature_names() {
 #[test]
 fn rhai_surface_registry_lists_helper_modules() {
     let surface = crate::surface::rhai_surface_json();
-    let modules = surface["modules"]
-        .as_array()
-        .expect("modules array");
-    let functions = surface["functions"]
-        .as_array()
-        .expect("functions array");
+    let modules = surface["modules"].as_array().expect("modules array");
+    let functions = surface["functions"].as_array().expect("functions array");
 
     for (module, function) in [
         ("git", "commit"),
@@ -471,7 +467,9 @@ fn rhai_surface_registry_lists_helper_modules() {
         .iter()
         .find(|entry| entry["module"] == "fs" && entry["name"] == "copy_if_missing")
         .expect("copy_if_missing surface entry");
-    let description = copy_if_missing["description"].as_str().expect("description");
+    let description = copy_if_missing["description"]
+        .as_str()
+        .expect("description");
     assert!(
         description.contains("Atomically") && description.contains("absent"),
         "surface catalog must describe create-if-absent publication: {description}"

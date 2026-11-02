@@ -35,7 +35,7 @@ fn removed_storage_calls_fail_without_network_or_external_effects() {
         "storage::delete(#{ bucket: \"assets\", key: \"a.txt\" })",
     ]
     .into_iter()
-        .map(|call| call.to_owned());
+    .map(|call| call.to_owned());
     let endpoint_calls = [
         format!(
             "storage::status(#{{ bucket: \"assets\", endpoint: \"http://{address}\", path_style: true }});"

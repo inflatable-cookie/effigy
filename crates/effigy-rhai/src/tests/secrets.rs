@@ -342,11 +342,7 @@ fn execute_rhai_script_ignores_non_code_and_foreign_module_secret_mentions() {
     execute_rhai_script(&script_context(&root), &commented, &[], &callbacks()).expect("execute");
     assert_eq!(fs::read_to_string(&marker).expect("marker"), "ran");
 
-    fs::write(
-        root.join("mysecrets.rhai"),
-        "fn status() { () }\n",
-    )
-    .expect("write mysecrets module");
+    fs::write(root.join("mysecrets.rhai"), "fn status() { () }\n").expect("write mysecrets module");
     let foreign = format!(
         r#"
             import "mysecrets.rhai" as mysecrets;
