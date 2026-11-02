@@ -2014,3 +2014,11 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 "check:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-containers -p effigy-kernel --all-targets", timeout_ms = 1800000 }] }
 "lint:workspace:reserved-input" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-containers -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 1800000 }] }
+
+# Acow ordinary-Compose consumer qualification packet (task effigy#540): the
+# committed fake-backend refusal battery for
+# docs/qualification/acow-ordinary-compose-5f466914/ — no runtime call,
+# consumer stack, vault read, warm-up, build/install or native probe. The
+# packet's proof routes are the separately GO-armed launchers documented in
+# its packet-r1.md, never this selector.
+"test:qualification:acow" = { durable = true, visibility = "internal", group = "Maintenance", description = "Run the Acow ordinary-Compose qualification packet's fake-backend refusal boundaries; no native effects.", run = [{ run = "python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/boundaries.py", timeout_ms = 300000 }] }
