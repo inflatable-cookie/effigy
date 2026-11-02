@@ -43,28 +43,35 @@ fn enter_toggle_follow_keeps_overlay_open_and_updates_offset() {
     assert!(state.show_options);
 }
 
+/// The restart and stop hotkeys each log their own failure (the stub
+/// supervisor refuses the request) and close the overlay.
 #[test]
-fn restart_hotkey_logs_failure_and_closes_overlay() {
-    let supervisor = empty_supervisor();
-    let mut state = state_with_processes(&["api"]);
-    state.show_options = true;
+fn restart_and_stop_hotkeys_log_their_failure_and_close_the_overlay() {
+    for (key, expected_prefix) in [
+        (KeyCode::Char('r'), "[effigy] restart failed:"),
+        (KeyCode::Char('s'), "[effigy] stop failed:"),
+    ] {
+        let supervisor = empty_supervisor();
+        let mut state = state_with_processes(&["api"]);
+        state.show_options = true;
 
-    let control = handle_options_overlay_key(
-        &KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
-        &supervisor,
-        &mut state,
-        0,
-    )
-    .expect("restart result");
+        let control = handle_options_overlay_key(
+            &KeyEvent::new(key, KeyModifiers::NONE),
+            &supervisor,
+            &mut state,
+            0,
+        )
+        .expect("hotkey result");
 
-    let last = state
-        .logs_for("api")
-        .and_then(|entries| entries.back())
-        .expect("restart log entry");
-    assert!(matches!(control, Some(LoopControl::Continue)));
-    assert!(matches!(last.kind, LogEntryKind::Stderr));
-    assert!(last.line.contains("[effigy] restart failed:"));
-    assert!(!state.show_options);
+        let last = state
+            .logs_for("api")
+            .and_then(|entries| entries.back())
+            .expect("hotkey log entry");
+        assert!(matches!(control, Some(LoopControl::Continue)), "{key:?}");
+        assert!(matches!(last.kind, LogEntryKind::Stderr), "{key:?}");
+        assert!(last.line.contains(expected_prefix), "{}", last.line);
+        assert!(!state.show_options, "{key:?}");
+    }
 }
 
 #[test]
@@ -108,30 +115,6 @@ fn export_hotkey_writes_clean_transcript_and_closes_overlay() {
         state.footer_message.as_deref(),
         Some("exported clean transcript to .effigy/exports/managed-tui/api.log")
     );
-}
-
-#[test]
-fn stop_hotkey_logs_failure_and_closes_overlay() {
-    let supervisor = empty_supervisor();
-    let mut state = state_with_processes(&["api"]);
-    state.show_options = true;
-
-    let control = handle_options_overlay_key(
-        &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        &supervisor,
-        &mut state,
-        0,
-    )
-    .expect("stop result");
-
-    let last = state
-        .logs_for("api")
-        .and_then(|entries| entries.back())
-        .expect("stop log entry");
-    assert!(matches!(control, Some(LoopControl::Continue)));
-    assert!(matches!(last.kind, LogEntryKind::Stderr));
-    assert!(last.line.contains("[effigy] stop failed:"));
-    assert!(!state.show_options);
 }
 
 #[test]

@@ -21,17 +21,19 @@ fn select_process_tabs_prefers_explicit_tab_order() {
     );
 }
 
+/// The VT emulator flag accepts the documented enabled spellings, and the
+/// known disabled spellings — in any case — turn it off.
 #[test]
-fn parse_vt_emulator_flag_defaults_to_enabled() {
-    assert!(parse_vt_emulator_flag(None));
-    assert!(parse_vt_emulator_flag(Some("true")));
-    assert!(parse_vt_emulator_flag(Some("1")));
-    assert!(parse_vt_emulator_flag(Some("yes")));
-}
-
-#[test]
-fn parse_vt_emulator_flag_handles_disabled_values() {
-    assert!(!parse_vt_emulator_flag(Some("0")));
-    assert!(!parse_vt_emulator_flag(Some("false")));
-    assert!(!parse_vt_emulator_flag(Some("FALSE")));
+fn parse_vt_emulator_flag_maps_enabled_and_disabled_values() {
+    for (value, expected) in [
+        (None, true),
+        (Some("true"), true),
+        (Some("1"), true),
+        (Some("yes"), true),
+        (Some("0"), false),
+        (Some("false"), false),
+        (Some("FALSE"), false),
+    ] {
+        assert_eq!(parse_vt_emulator_flag(value), expected, "flag {value:?}");
+    }
 }
