@@ -1430,6 +1430,24 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- The Colima nerdctl mounts-budget preflight no longer refuses before commands
+  that never apply Compose. The admission guard is apply-time: activation and
+  `up`, pull-production, workspace artifact builds, runtime activation prep and
+  workspace sessions still refuse before their apply, while `container status`,
+  `container logs`, data list, cache list, cache prune, data export and import
+  and attach-only exec and shell sessions read or attach to an
+  already-running stack whose mounts were admitted when it was created, so a
+  query or session can no longer fail on a budget its operation would never
+  consume (effigy#546).
+- The mounts-budget estimate now models an option-less primary-service `tmpfs`
+  list as writable tmpfs rows with an empty source beside the merged volume
+  mounts, counting their bytes against the same guarded budget. Effigy's own
+  php-fpm catalog renders a `/run/effigy/secrets` tmpfs on the primary service,
+  and the previous refusal of the whole `tmpfs` field made every such stack
+  inadmissible on the Colima nerdctl fallback before seed, data, status or any
+  up could run. A `tmpfs` mapping form or an option-carrying entry
+  (`/path:size=…`) still refuses as an unmodelled serialization, with paths
+  omitted (effigy#546).
 - A plain `effigy container up` is the ordinary Compose invocation again for a
   container a legacy bundle declares as its default system/workspace, so a
   consumer whose export writes `[systems.<s>] container`,
