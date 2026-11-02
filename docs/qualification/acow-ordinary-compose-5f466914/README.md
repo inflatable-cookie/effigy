@@ -5,10 +5,15 @@ Underlay bundle cohort: acowtancy and siblings), prepared as Queue task
 effigy#540 and amended by effigy#543 (2026-11-02, Acow owner `cb0e6df4`
 message `0fcb8b20`): the routes qualify the CURRENT clean consumer checkout
 when the relevant inputs are unchanged, and model `bundle sync` as the
-approved source-identity transition. This directory is the source-immutable
-proof head: Queue's proof route executes exactly the packet, manifest and
-helpers committed here against the separately frozen candidate — not the
-newest main and not a rebuild.
+approved source-identity transition; further amended by effigy#545
+(2026-11-02): the warm-up prerequisite is the ACTUAL effigy#544 r18
+ordinary-Compose proof receipt (exact commit/selector/input hashes, a
+settled passed exit-0 execution, and the retained reviewer's acceptance of
+that same execution), replacing the superseded green-#539 requirement
+(zero execution; #539 history retained as historical only). This directory
+is the source-immutable proof head: Queue's proof route executes exactly the
+packet, manifest and helpers committed here against the separately frozen
+candidate — not the newest main and not a rebuild.
 
 Status: **prepared, not executed.** No warm-up window has run, no
 primary-data observation has run, nothing is installed, and no consumer data
@@ -20,9 +25,9 @@ execution, installation and consumer data access remain separately GO-bound.
 
 | Route | Exact selector | Armed by | Qualifies |
 | --- | --- | --- | --- |
-| Worktree warm-up | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py` | `acow-warmup-go.txt` + green #539 receipt + Supervisor/Acow/Tom GO chain | The rebuilt candidate on a disposable linked worktree at the exact Queue-QA path length (137 chars), the attach + plain `container up --detach` sequence, the nerdctl/mounts label budget, scoped health, and exact teardown that preserves ALL volumes |
+| Worktree warm-up | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/warmup.py` | `acow-warmup-go.txt` + accepted #544 r18 proof receipt + Supervisor/Acow/Tom GO chain | The rebuilt candidate on a disposable linked worktree at the exact Queue-QA path length (137 chars), the attach + plain `container up --detach` sequence, the nerdctl/mounts label budget, scoped health, and exact teardown that preserves ALL volumes |
 | Primary-data counts | `python3 -I -B docs/qualification/acow-ordinary-compose-5f466914/primary.py` | `acow-primary-go.txt` (its own GO; warm-up GO never arms it) | Primary-data survival: counts-only observation of eight qualified tables through the existing postgres container against the owner baseline |
-| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (85 committed checks) |
+| Boundary battery | installed-Effigy selector `test:qualification:acow` → `boundaries.py` | Always runnable; fake backends only | The packet's own fail-closed refusals (132 committed checks) |
 
 Full route contracts, acceptance criteria, the GO token contracts, the
 refusal inventory and the evidence contract are in `packet-r1.md`; the
@@ -59,8 +64,9 @@ engine, expected counts with tracked-source citations) are in
 
 ## Prepared-but-blocked facts
 
-The routes refuse today, as designed: no GO receipts exist, no green #539
-receipt exists, and the installed Effigy is not the candidate. Nothing here
+The routes refuse today, as designed: no GO receipts exist, the effigy#544
+r18 ordinary-Compose qualification has not executed (so no #544 proof
+receipt exists), and the installed Effigy is not the candidate. Nothing here
 is a failure; it is the fail-closed preparation state. The primary-data
 route additionally refuses while the primary dev stack is down.
 
@@ -80,8 +86,9 @@ Teardown preserves ALL volumes; no volume deletion and no global cleanup.
 - Not an execution, an installation, or consumer qualification: passing the
   boundary battery is not consumer proof, and synthetic success alone is
   never task completion.
-- Not independent of the GO chain: #539 green, exact installed identity,
-  Queue unpaused, QA fence null, Acow reservation, and Tom's consumer GO are
-  each machine-checked preconditions; missing inputs refuse before effects.
+- Not independent of the GO chain: the accepted #544 r18 proof receipt,
+  exact installed identity, Queue unpaused, QA fence null, Acow reservation,
+  and Tom's consumer GO are each machine-checked preconditions; missing
+  inputs refuse before effects.
 - Not a grant of `project.qa.run`: milestone QA stays a separate planner-run
   step on `main`.

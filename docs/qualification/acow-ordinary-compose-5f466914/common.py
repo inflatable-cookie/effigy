@@ -17,6 +17,14 @@ demanding the historical lock both before and after sync. Every verifier here
 is written so the committed boundary tests (`boundaries.py`, the
 installed-Effigy selector `test:qualification:acow`) can drive it against
 disposable fixture metadata and fake backends without any native call.
+
+The #545 amendment binds the warm-up prerequisite to the ACTUAL r18
+ordinary-Compose qualification: Queue task effigy#544's settled proof-only
+receipt (the exact commit, selector and input hashes; a settled passed
+execution with exit 0; and the retained reviewer's acceptance of that same
+execution), replacing the impossible green-#539 requirement — #539 is
+superseded with zero execution and can never supply legitimate
+qualification.
 """
 import hashlib
 import json
@@ -154,6 +162,28 @@ HEX40 = re.compile(r'[0-9a-f]{40}')
 HEXDIGITS = set('0123456789abcdef')
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
+# The ACTUAL consumer-execution prerequisite (effigy#545): Queue task
+# effigy#544's proof-only qualification of this candidate on the r18
+# ordinary-Compose packet. Pinned from the genuine queue.detail surface
+# (task.proofOnly / task.proofExecution, read 2026-11-02); the third input
+# hash IS the frozen candidate binary. The superseded #539 prerequisite
+# (all three authenticated refusedBeforeSelector receipts preserved, zero
+# execution) is retained as history only and can never arm a route.
+PROOF_TASK_REFERENCE = 'effigy#544'
+PROOF_TASK_ID = 'a648d634-82cf-4b3c-8903-a009eb427c12'
+PROOF_COMMIT = '0ed7e8394866187f24490e2ca0a473882f1b75d4'
+PROOF_SELECTOR = ('python3 -I -B '
+                  'docs/qualification/ordinary-compose-colima-5f466914/launch.py')
+PROOF_INPUTS = (
+    'sha256:545566ddd6f48bc14f2f16f1df0db68a4c16476293b0c54cbe58e46331d8e286',
+    'sha256:944419d4517f2b1935e6870989408990cf84412264e999a9771644627f2c1291',
+    'sha256:' + CANDIDATE_BINARY_SHA256,
+)
+PREREQUISITE_SCHEMA = 'effigy.qualification.acow-ordinary-compose.prerequisite-544.v1'
+PREREQUISITE_MAX_BYTES = 65536
+if not (HEX40.fullmatch(PROOF_COMMIT) and UUID_RE.fullmatch(PROOF_TASK_ID) and HEX64.fullmatch(PROOF_INPUTS[2][7:])):
+    raise RuntimeError('pinned #544 prerequisite identity is malformed')
+
 # Exact, case-sensitive token contracts for the operator-copied GO receipts.
 # These are machine checks, not a substitute for the authorizations named in
 # packet-r1.md; a differently worded receipt fails closed.
@@ -163,7 +193,8 @@ GO_WARMUP_TOKENS = GO_COMMON_TOKENS + (
 )
 GO_PRIMARY_TOKENS = GO_COMMON_TOKENS + ('Tom', 'primary-data')
 RESERVATION_RE = re.compile(r'reservation ([A-Za-z0-9._:-]{4,128})')
-RECEIPT539_RE = re.compile(r'539 receipt ([0-9a-f]{64})')
+RECEIPT544_RE = re.compile(r'544 receipt ([0-9a-f]{64})')
+RECEIPT539_STALE_RE = re.compile(r'\b539 receipt\b')
 VERSION_LINE_RE = re.compile(r'^version (.+)$', re.MULTILINE)
 BINARY_LINE_RE = re.compile(r'^binary ([^\s]+)$', re.MULTILINE)
 
@@ -213,8 +244,10 @@ def read_exclusive_file(path, max_bytes=8192):
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_nlink != 1 \
-                or st.st_mode & 0o077 or st.st_size > max_bytes:
+                or st.st_mode & 0o077:
             raise Refused('receipt file mode/owner/type invalid: %s' % p)
+        if st.st_size > max_bytes:
+            raise Refused('receipt file exceeds %d bytes: %s' % (max_bytes, p))
         data = os.read(fd, max_bytes + 1)
         if len(data) > max_bytes:
             raise Refused('receipt file exceeds %d bytes: %s' % (max_bytes, p))
@@ -252,7 +285,7 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
 
     Exact checks: hygiene (read_exclusive_file), `packet <sha>` equality, the
     route token set, an Acow `reservation <id>`, and per-route structured
-    lines (`version `, `binary `, `539 receipt `). Returns a record for the
+    lines (`version `, `binary `, `544 receipt `). Returns a record for the
     invocation receipt. `scratch_dir` pins the exact parent directory; tests
     pass a disposable fixture root, routes use the evidence root.
     """
@@ -278,10 +311,13 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
         'reservation_id': reservation.group(1),
     }
     if route == 'warmup':
-        r539 = RECEIPT539_RE.search(text)
-        if not r539:
-            raise Refused('GO receipt lacks the 539 receipt line: %s' % path)
-        record['receipt539_sha256'] = r539.group(1)
+        if RECEIPT539_STALE_RE.search(text):
+            raise Refused('GO receipt still carries the stale superseded #539 '
+                          'prerequisite token: %s' % path)
+        r544 = RECEIPT544_RE.search(text)
+        if not r544:
+            raise Refused('GO receipt lacks the 544 receipt line: %s' % path)
+        record['receipt544_sha256'] = r544.group(1)
         version = VERSION_LINE_RE.search(text)
         if not version:
             raise Refused('GO receipt lacks the installed version line: %s' % path)
@@ -293,35 +329,184 @@ def verify_go_receipt(path, packet_sha, required_tokens, route, scratch_dir=SCRA
     return record
 
 
-def verify_539_receipt(path, quoted_sha):
-    """Verify the green task-effigy#539 prerequisite receipt, or refuse.
+def _receipt_object(value, what):
+    if not isinstance(value, dict):
+        raise Refused('%s is not a JSON object' % what)
+    return value
 
-    Machine contract recorded in packet-r1.md: JSON object with task
-    "effigy#539", status "green", a 40-hex head and a non-empty selectors
-    list. Its file SHA-256 must equal the SHA the GO receipt quotes.
+
+def _receipt_text(value, what):
+    if not isinstance(value, str) or not value:
+        raise Refused('%s missing or not a nonempty string' % what)
+    return value
+
+
+def verify_544_proof_receipt(path, quoted_sha):
+    """Verify the accepted effigy#544 r18 prerequisite receipt, or refuse.
+
+    The receipt is a faithfully serialized extraction of the exact Queue
+    records the planner copies after qualification (contract in packet-r1.md;
+    transport only — a file alone grants no authority):
+
+    - queue.detail(taskId=a648d634-…) → task.proofOnly, task.proofExecution,
+      the task.proofExecutions entry named by
+      task.proofOnlyResult.executionRunId, task.proofOnlyResult, and the
+      task.resolution.reviews entry named by
+      task.proofOnlyResult.reviewerRunId;
+    - queue.outcome(taskId=a648d634-…) → {taskId, reference, outcome, reason,
+      pr, review} (the durable terminal record).
+
+    Machine contract: the exact task (reference AND id), the pinned r18
+    proof binding (commit, selector, all three input hashes — the binary
+    input IS the frozen candidate), a genuine settled `passed` execution with
+    exit 0 that is neither historical nor refused-before-selector, the
+    proof-only result binding that SAME execution run and a distinct
+    retained reviewer run, the retained review `ready_to_merge` at the same
+    commit, and the durable `done` outcome with its `ready_to_merge` review.
+    Its file SHA-256 must equal the SHA the GO receipt quotes; any missing,
+    malformed, ambiguous or mismatching provenance refuses.
     """
-    data = read_exclusive_file(path, max_bytes=65536)
+    data = read_exclusive_file(path, max_bytes=PREREQUISITE_MAX_BYTES)
     if hashlib.sha256(data).hexdigest() != quoted_sha:
-        raise Refused('539 receipt hash differs from the GO-quoted SHA')
+        raise Refused('544 proof receipt hash differs from the GO-quoted SHA')
     try:
         obj = json.loads(data.decode('utf-8'))
     except (ValueError, UnicodeDecodeError):
-        raise Refused('539 receipt is not valid JSON') from None
-    if not isinstance(obj, dict):
-        raise Refused('539 receipt is not a JSON object')
-    if obj.get('task') != 'effigy#539':
-        raise Refused('539 receipt does not name task effigy#539')
-    if obj.get('status') != 'green':
-        raise Refused('539 receipt is not green')
-    head = obj.get('head')
-    if not isinstance(head, str) or not HEX40.fullmatch(head):
-        raise Refused('539 receipt head is not a 40-hex commit')
-    selectors = obj.get('selectors')
-    if not isinstance(selectors, list) or not selectors or \
-            not all(isinstance(s, str) and s for s in selectors):
-        raise Refused('539 receipt selectors missing or malformed')
-    return {'path': str(path), 'task': obj['task'], 'status': obj['status'],
-            'head': head, 'selectors': selectors, 'sha256': quoted_sha}
+        raise Refused('544 proof receipt is not valid JSON') from None
+    _receipt_object(obj, '544 proof receipt')
+    if set(obj) != {'schema', 'task', 'proofOnly', 'proofExecution',
+                    'execution', 'result', 'review', 'outcome'}:
+        raise Refused('544 proof receipt top-level shape is not the reviewed '
+                      'prerequisite contract')
+    if obj['schema'] != PREREQUISITE_SCHEMA:
+        raise Refused('544 proof receipt schema mismatch: ' + str(obj['schema']))
+
+    task = _receipt_object(obj['task'], 'receipt task block')
+    if set(task) != {'reference', 'id'}:
+        raise Refused('receipt task block is not the reviewed extraction')
+    if task['reference'] != PROOF_TASK_REFERENCE:
+        raise Refused('receipt does not name the actual prerequisite task %s'
+                      % PROOF_TASK_REFERENCE)
+    if task['id'] != PROOF_TASK_ID:
+        raise Refused('receipt task id is not %s' % PROOF_TASK_ID)
+
+    proof_only = _receipt_object(obj['proofOnly'], 'receipt proofOnly block')
+    if set(proof_only) != {'commit'} or not isinstance(proof_only['commit'], str) \
+            or proof_only['commit'] != PROOF_COMMIT:
+        raise Refused('receipt proofOnly commit is not the pinned r18 merge %s'
+                      % PROOF_COMMIT)
+
+    proof_execution = _receipt_object(obj['proofExecution'],
+                                      'receipt proofExecution block')
+    if set(proof_execution) != {'selector', 'inputs', 'role'}:
+        raise Refused('receipt proofExecution block is not the reviewed extraction')
+    if proof_execution['selector'] != PROOF_SELECTOR:
+        raise Refused('receipt proof selector is not the pinned r18 selector')
+    if proof_execution['inputs'] != list(PROOF_INPUTS):
+        raise Refused('receipt proof inputs differ from the pinned r18 input hashes')
+    if proof_execution['role'] != 'author':
+        raise Refused('receipt proof execution is not the author-side proof')
+
+    execution = _receipt_object(obj['execution'], 'receipt execution record')
+    if set(execution) - {'runId', 'agentId', 'workspaceId', 'profile',
+                         'operationId', 'selector', 'inputs', 'repository',
+                         'prNumber', 'branch', 'head', 'briefVersion',
+                         'briefDigest', 'authorizedBy', 'activatedAt',
+                         'settledAt', 'status', 'refusedBeforeSelector',
+                         'historical', 'exitCode', 'evidence'}:
+        raise Refused('execution record is not a faithful Queue proofExecutions record')
+    run_id = _receipt_text(execution.get('runId'), 'execution runId')
+    if not UUID_RE.fullmatch(run_id):
+        raise Refused('execution runId is not a canonical Queue run id')
+    if execution.get('historical') is True:
+        raise Refused('proof execution is historical evidence, never a pass')
+    if execution.get('refusedBeforeSelector') is True:
+        raise Refused('proof execution was refused before its selector')
+    if execution.get('status') != 'passed':
+        raise Refused('proof execution is not a settled pass (status %r)'
+                      % (execution.get('status'),))
+    if not isinstance(execution.get('exitCode'), int) \
+            or isinstance(execution.get('exitCode'), bool) \
+            or execution['exitCode'] != 0:
+        raise Refused('proof execution exit code is not 0')
+    _receipt_text(execution.get('activatedAt'), 'execution activatedAt')
+    settled_at = _receipt_text(execution.get('settledAt'), 'execution settledAt')
+    if execution.get('head') != PROOF_COMMIT:
+        raise Refused('proof execution ran at a different head than the pinned r18 commit')
+    if execution.get('selector') != PROOF_SELECTOR:
+        raise Refused('proof execution selector differs from the pinned r18 selector')
+    if execution.get('inputs') != list(PROOF_INPUTS):
+        raise Refused('proof execution inputs differ from the pinned r18 input hashes')
+    if not isinstance(execution.get('evidence'), str):
+        raise Refused('execution evidence missing or not a string')
+
+    result = _receipt_object(obj['result'], 'receipt proofOnlyResult block')
+    if set(result) != {'status', 'commit', 'selector', 'executionRunId',
+                       'reviewerRunId', 'evidence'}:
+        raise Refused('result block is not a faithful Queue proofOnlyResult')
+    if result['status'] != 'passed':
+        raise Refused('proof-only result is not passed')
+    if result['commit'] != PROOF_COMMIT:
+        raise Refused('proof-only result commit differs from the pinned r18 commit')
+    if result['selector'] != PROOF_SELECTOR:
+        raise Refused('proof-only result selector differs from the pinned r18 selector')
+    if result['executionRunId'] != run_id:
+        raise Refused('proof-only result binds a different execution run '
+                      'than the receipt record')
+    reviewer_run = result['reviewerRunId']
+    if not isinstance(reviewer_run, str) or not UUID_RE.fullmatch(reviewer_run):
+        raise Refused('proof-only result reviewer run id is not a canonical Queue run id')
+    if reviewer_run == run_id:
+        raise Refused('proof-only result names the execution run as its own reviewer')
+    if not isinstance(result['evidence'], str) or not result['evidence']:
+        raise Refused('proof-only result evidence missing or empty')
+
+    review = _receipt_object(obj['review'], 'receipt review record')
+    if set(review) - {'runId', 'agentId', 'head', 'status', 'reviewId',
+                      'reviewCommentId', 'at', 'verdicts'} \
+            or review.get('verdicts') not in (None, []):
+        raise Refused('review record is not a faithful retained Queue review')
+    if review.get('runId') != reviewer_run:
+        raise Refused('review record is not the retained reviewer run named by the result')
+    if review.get('head') != PROOF_COMMIT:
+        raise Refused('retained review judged a different head than the pinned r18 commit')
+    if review.get('status') != 'ready_to_merge':
+        raise Refused('retained review has not accepted the execution (status %r)'
+                      % (review.get('status'),))
+    _receipt_text(review.get('at'), 'review at')
+
+    outcome = _receipt_object(obj['outcome'], 'receipt outcome block')
+    if set(outcome) != {'taskId', 'reference', 'outcome', 'reason', 'pr', 'review'}:
+        raise Refused('outcome block is not the reviewed queue.outcome extraction')
+    if outcome['taskId'] != PROOF_TASK_ID:
+        raise Refused('outcome block names a different task')
+    if outcome['reference'] != PROOF_TASK_REFERENCE:
+        raise Refused('outcome block names a different task reference')
+    if outcome['outcome'] != 'done':
+        raise Refused('prerequisite task has no durable done outcome (outcome %r)'
+                      % (outcome['outcome'],))
+    if outcome['pr'] is not None:
+        raise Refused('outcome block carries a PR; the r18 proof-only task has none')
+    _receipt_text(outcome['reason'], 'outcome reason')
+    outcome_review = _receipt_object(outcome['review'], 'outcome review block')
+    if set(outcome_review) != {'status', 'summary', 'commentId', 'reviewId'}:
+        raise Refused('outcome review block is not the durable outcome projection')
+    if outcome_review['status'] != 'ready_to_merge':
+        raise Refused('durable outcome review is not ready_to_merge')
+    if outcome_review['reviewId'] is None and outcome_review['commentId'] is None:
+        raise Refused('durable outcome review has no identifier linking retained review')
+    for outcome_key, review_key in (('reviewId', 'reviewId'),
+                                    ('commentId', 'reviewCommentId')):
+        if review_key not in review or outcome_review[outcome_key] != review[review_key]:
+            raise Refused('durable outcome review %s differs from retained review' % outcome_key)
+
+    return {'path': str(path), 'schema': obj['schema'],
+            'task': task['reference'], 'task_id': task['id'],
+            'commit': PROOF_COMMIT, 'selector': PROOF_SELECTOR,
+            'inputs': list(PROOF_INPUTS),
+            'execution_run_id': run_id, 'reviewer_run_id': reviewer_run,
+            'review_status': review['status'], 'outcome': outcome['outcome'],
+            'settled_at': settled_at, 'sha256': quoted_sha}
 
 
 def verify_installed_identity(which_fn, version_fn, binary_path, hash_fn,
