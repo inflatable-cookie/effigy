@@ -314,15 +314,18 @@ def eval_cfg(expr, features, reason):
 # Static scan of declared test functions
 # --------------------------------------------------------------------------
 
-def parse_attrs(masked, strings, pos, stop=None):
+def parse_attrs(masked, strings, pos, stop=None, max_count=None):
     """Parse a contiguous attribute run starting at `pos` (at `#`).
 
     Returns (attrs, newpos); positions are absolute into `masked`. Stops at
-    the first non-attribute token or at `stop` (the region end).
+    the first non-attribute token, at `stop` (the region end), or after
+    `max_count` attributes.
     """
     n = len(masked) if stop is None else stop
     attrs = []
     while True:
+        if max_count is not None and len(attrs) >= max_count:
+            return attrs, pos
         i = skip_ws(masked, pos)
         if i >= n or masked[i] != "#":
             return attrs, i
@@ -410,7 +413,7 @@ def scan_file_for_tests(path, package, binary, target_kind, module_prefix,
     if visited is None:
         visited = set()
     path = os.path.abspath(path)
-    key = (path, module_prefix)
+    key = (path, module_prefix, tuple(sorted(inherited_gates)))
     if key in visited:
         return
     visited.add(key)
@@ -465,7 +468,7 @@ def scan_region(text, masked, strings, start, end, region_path, file_dir,
         p = skip_ws(masked, pos)
         if p + 2 < n and masked[p] == "#" and masked[p + 1] == "!" \
                 and masked[p + 2] == "[":
-            attrs, pos2 = parse_attrs(masked, strings, p, stop=n)
+            attrs, pos2 = parse_attrs(masked, strings, p, stop=n, max_count=1)
             if pos2 <= p:
                 break
             for a in attrs:
@@ -483,7 +486,20 @@ def scan_region(text, masked, strings, start, end, region_path, file_dir,
             attrs, pos = parse_attrs(masked, strings, pos, stop=n)
             pending.extend(attrs)
             continue
-        if c in "{}":
+        if c == "{":
+            if pending:
+                # `#[cfg(...)] { ... }`: a block expression consumes the
+                # attribute run; without this, statement-level cfg blocks
+                # inside fn bodies leak gates onto later items
+                pending = []
+            pos += 1
+            continue
+        if c == "}":
+            pos += 1
+            continue
+        if c == ";":
+            # statement terminator: any pending attribute run is consumed
+            pending = []
             pos += 1
             continue
         m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", masked[pos:n])
@@ -569,8 +585,6 @@ def scan_region(text, masked, strings, start, end, region_path, file_dir,
                     "super"):
             # a qualifier: pending attributes belong to the item that follows
             continue
-        if word == ";":
-            pending = []
     return
 
 
@@ -979,6 +993,7 @@ def reconcile(decls, targets_meta, list_data, macros=None):
         seen.add(key)
 
     matched = 0
+    matched_ids = set()
     no_declaration = []   # collected but not found by the static scan
     not_collected = []    # declared but not in the collected list
     rows = []
@@ -1014,7 +1029,7 @@ def reconcile(decls, targets_meta, list_data, macros=None):
                 why = "no collected suite entry matched this declaration"
         if hit:
             tc = suites[hit]["testcases"][d["id"]]
-            matched += 1
+            matched_ids.add((d["package"], d["binary"], d["id"]))
             if bool(tc.get("ignored")) != d["ignore"]:
                 why = (f"ignored flag mismatch: collected={tc.get('ignored')} "
                        f"declared={d['ignore']}")
@@ -1060,7 +1075,7 @@ def reconcile(decls, targets_meta, list_data, macros=None):
             r["platform_pair"] = True
     return {
         "rows": rows,
-        "matched": matched,
+        "matched": len(matched_ids),
         "no_declaration": no_declaration,
         "not_collected": not_collected,
         "duplicate_ids": dup_ids,
@@ -1309,8 +1324,9 @@ def render_summary(report, doctests, routes, provenance):
     pairs = sum(1 for r in rows if r.get("platform_pair"))
     ap(f"  declared ignored:  {ignored} collected in the default build, "
        f"{ignored_gated} behind non-default gates   should_panic: {sp}")
-    ap(f"  platform-paired variants (complementary cfgs, one per host): "
-       f"{pairs}")
+    if pairs:
+        ap(f"  platform-paired variants (complementary cfgs, one per host): "
+           f"{pairs}")
     ap("")
     ap("Doctest fence census (static estimate; rustdoc collects public docs):")
     dt_total = 0
@@ -1344,6 +1360,10 @@ def self_test():
         os.makedirs(tests_dir)
         lib = r'''
 //! demo crate
+#![deny(missing_debug_implementations)]
+
+#[cfg(feature = "nope")]
+mod gated_mod;
 #[cfg(test)]
 mod m1 {
     #[test]
@@ -1372,12 +1392,47 @@ impl Demo {
 pub struct Demo;
 #[path = "demo_tests.rs"]
 mod demo_tests;
+
+fn host_fn() {
+    #[cfg(target_os = "vms")]
+    {
+        unreachable!();
+    }
+}
+
+#[cfg(test)]
+mod m2 {
+    #[test]
+    fn no_leaked_gate() {}
+}
+
+mod plain_mod {
+    #[test]
+    fn inner_case() {}
+}
+
+fn statement_cfg_fn() {
+    #[cfg(not(unix))]
+    let owner_uid = 0;
+    let other = owner_uid_placeholder();
+}
+fn owner_uid_placeholder() -> u32 { 0 }
+
+#[cfg(test)]
+mod m3 {
+    #[test]
+    fn after_statement_cfg() {}
+}
 '''
         with open(os.path.join(src, "lib.rs"), "w") as f:
             f.write(lib)
         with open(os.path.join(src, "demo_tests.rs"), "w") as f:
             f.write('''#[test]
 fn path_module_case() {}
+''')
+        with open(os.path.join(src, "gated_mod.rs"), "w") as f:
+            f.write('''#[test]
+fn gated_mod_case() {}
 ''')
         with open(os.path.join(tests_dir, "integration.rs"), "w") as f:
             f.write('''#[test]
@@ -1406,7 +1461,9 @@ fn integration_feature_case() {}
         ids = sorted(d["id"] for d in decls
                      if d["binary"] == "demo" and d["compiled_default"])
         expect = ["demo_tests::path_module_case", "m1::ignored_baseline",
-                  "m1::panics", "m1::plain_collected", "test_inside_impl"]
+                  "m1::panics", "m1::plain_collected", "m2::no_leaked_gate",
+                  "m3::after_statement_cfg", "plain_mod::inner_case",
+                  "test_inside_impl"]
         if ids != expect:
             failures.append(f"default-compiled lib decls {ids} != {expect}")
         feat = [d for d in decls if d["id"] == "m1::feature_only"]
@@ -1424,6 +1481,19 @@ fn integration_feature_case() {}
         sp = [d for d in decls if d["id"] == "m1::panics"]
         if len(sp) != 1 or not sp[0]["should_panic"]:
             failures.append(f"should_panic not recorded: {sp}")
+        leak = [d for d in decls if d["id"] == "m2::no_leaked_gate"]
+        if len(leak) != 1 or [g["cfg"] for g in leak[0]["gates"]] != ["test"]:
+            failures.append(f"cfg-block leak control failed: {leak}")
+        inner = [d for d in decls if d["id"] == "plain_mod::inner_case"]
+        if len(inner) != 1 or inner[0]["gates"] != []:
+            failures.append(f"inner-attr adjacency control failed: {inner}")
+        gm = [d for d in decls if d["id"] == "gated_mod::gated_mod_case"]
+        if len(gm) != 1 or gm[0]["compiled_default"] or \
+                "nope" not in gm[0]["gated_out"]["reason"]:
+            failures.append(f"adjacent outer cfg gate control failed: {gm}")
+        stmt = [d for d in decls if d["id"] == "m3::after_statement_cfg"]
+        if len(stmt) != 1 or [g["cfg"] for g in stmt[0]["gates"]] != ["test"]:
+            failures.append(f"statement-cfg leak control failed: {stmt}")
         integ_feat = [d for d in decls
                       if d["id"] == "integration_feature_case"]
         if len(integ_feat) != 1 or integ_feat[0]["compiled_default"]:

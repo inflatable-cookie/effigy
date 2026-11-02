@@ -12,16 +12,18 @@ and wave status live in Queue artifacts, not here.
 The default workspace suite is `oxide nextest run --workspace` (built-in
 `effigy test`, `effigy test --plan`) plus doc tests through
 `sh scripts/oxide-selector.sh test --workspace --doc` in the CI mirrors. On a
-collected snapshot at `f317d443` it collects 6317 cases across 86 test
-binaries (6286 runnable, 31 ignored helpers and proofs). Collection is exact:
+collected snapshot at `ccf9c9f42` (the pruning tranches of effigy#556/#557
+integrated) it collects 6283 cases across 86 test binaries (6252 runnable, 31
+ignored helpers and proofs). Collection is exact:
 `scripts/test-inventory.py` reconciles every collected ID against the source
-scan — 6227 direct declarations, 90 attributed to their generating macro
+scan — 6193 direct declarations, 90 attributed to their generating macro
 invocations, 0 unattributed — and every non-collected declaration is explained
 by a named gate (fault-injection, workspace-serving-fixture,
 endpoint-store-faults, required-features targets, platform gates). The suite
-runs on one host per invocation: platform-paired declarations compile one
-variant per target OS, so a Linux runner collects the Linux sides of the 442
-paired families instead of the macOS sides.
+runs on one host per invocation: platform-gated declarations are single-sided
+(a `target_os = "linux"` module contributes nothing on macOS and is collected
+when a Linux runner builds the same tree), so per-host collection counts are
+not comparable case-for-case.
 
 Passing a test does not establish its value. The census counts; only the
 per-family audit decides what survives.
@@ -56,7 +58,7 @@ tier, not the count.
 
 ## Conditional families and their routes
 
-- `fault-injection` (245 declarations plus the `custody`/`probe` required-
+- `fault-injection` (244 declarations plus the `custody`/`probe` required-
   features targets) runs through `effigy test:fault-injection` and the kernel
   selectors, never in the default suite.
 - `endpoint-store-faults` gateway tests run through the `test:gateway:*`
@@ -65,8 +67,10 @@ tier, not the count.
   declarations, several named `deferred to #531` uncovered flows).
 - Ignored cases are helpers spawned by their parents or named proofs with
   `--run-ignored only` selectors; the reason is the route that runs them.
-- Platform gates (`target_os`) pair declarations across macOS and Linux; both
-  sides are kept unless the product dropped the platform behavior.
+- Platform gates (`target_os`, negated forms included) leave single-sided
+  declarations off this host's collection; the same tree collects them on the
+  named platform, and they are kept unless the product dropped that platform
+  behavior.
 - Doc tests (a static census counts 25 doc-comment fences across six lib
   targets) run in `qa:ci:fast`'s `test --workspace --doc`; that run is the
   real collection, the fence count is triage.
@@ -86,10 +90,9 @@ python3 scripts/test-inventory.py census --out <scratch-dir> \
 scans every workspace target's module tree for declared tests with their cfg
 gates, and reconciles the two. Classes: `collected`, `macro-generated`
 (attributed to the invocation site), `gated-out`, `target-gated`,
-`platform-pair`, `unattributed` (must be zero), `duplicate_ids` (must be
-zero). It never runs a test body. The census is measurement, not semantic
-certification; the private audit ledger (Queue artifact) holds per-family
-dispositions with exact heads.
+`unattributed` (must be zero), `duplicate_ids` (must be zero). It never runs a
+test body. The census is measurement, not semantic certification; the private
+audit ledger (Queue artifact) holds per-family dispositions with exact heads.
 
 ## Rules a pruning wave must follow
 
