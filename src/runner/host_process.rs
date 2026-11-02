@@ -600,8 +600,8 @@ fn wait_for_listener_activation(
 
 /// Bytes of a child's log this wait reads before bounding the tail it names.
 const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
-/// Maximum UTF-8 bytes retained from capture-redacted child output before the
-/// secret-shaped value pass. Readers select a contiguous suffix of one child
+/// Maximum UTF-8 bytes retained after redacting secret-shaped values. Readers
+/// select a contiguous suffix of one child
 /// block and never interpret ANSI or join text across supervisor messages.
 const LISTENER_OUTPUT_TAIL_BYTES: usize = 320;
 /// Characters of a listener's failure detail a report keeps.
@@ -3872,10 +3872,20 @@ print(json.dumps(out.getvalue()))
             .unwrap();
         let directory = host_process_dir_for_policy(&fixture.checkout, &policy);
         let log = directory.join("app.log");
-        wait_until("capture passes a pipe-sized output burst", || {
-            effigy_kernel::custody::MergedLog::identity(&log)
-                .is_ok_and(|log| log.length > 256 * 1024)
-        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut last_length = 0;
+        let mut identity_errors = 0;
+        loop {
+            match effigy_kernel::custody::MergedLog::identity(&log) {
+                Ok(snapshot) => last_length = snapshot.length,
+                Err(_) => identity_errors += 1,
+            }
+            if last_length > 256 * 1024 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "capture burst timed out: last committed length {last_length}, identity errors {identity_errors}");
+            thread::sleep(Duration::from_millis(25));
+        }
         let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let pid = status[0].pid.expect("chatty child stays in custody");
         // This reader holds an old style snapshot open without consuming it.
@@ -4737,7 +4747,7 @@ while True:
 
     #[test]
     fn listener_tail_redacts_before_truncating_long_values() {
-        for length in [315, 4000] {
+        for length in [315, 400, 4000] {
             let value = "secretcanary".repeat(length / 12 + 1);
             let value = &value[..length];
             let text = format!("vite error\nEFFIGY_TOKEN={value}\nclean line\n");
