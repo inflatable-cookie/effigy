@@ -103,6 +103,43 @@ discarded output before their production path is accepted. A fake-backend proof
 is not a native gateway or release qualification; keep the existing review and
 native gates in force.
 
+## v0.15 Level 1 qualification order — 2026-11-02
+
+Tom's v2 decision `d01912ac-faa1-4cb7-93d2-0e531706dbc3` (relayed by Queue
+planner `d070792d`) selects this order: first review the test-only enablement,
+candidate and packet while production refusal remains intact; then perform the
+actual full-session native proofs with separate required GOs; only after those
+proofs and review pass may Tom give a distinct release-kind GO for production
+enablement. The decision does not authorize a native window, installation,
+consumer activation, production switch or publication. This supersedes the
+former proof-before-enablement cycle; it does not change the earlier
+no-interim-release direction or grant release authority.
+
+Q-017 (Tom, 2026-11-01) sets v0.15 workspace-client qualification to
+noninteractive Level 1. Level 2—including guest attach, detach, reconnect,
+terminal input and resize, shared-lock tasks, pause and the remainder of the
+former full command matrix—is deferred until after v0.15. Named refusal and
+host-CLI guidance remain required for unsupported operations. This scope
+narrowing does not waive positive Level 1 behavior or its security and native
+gates.
+
+Qualification must cover all named bundle cohorts on exact frozen inputs,
+including DecodeLabs sites (CBS critical) and libraries, Underlay (Acowtancy
+and siblings), other roots, a fresh HOME and Tom's machine. Positive full-session
+publication, exact owner/custody, real outcomes and streaming, pinned TLS and
+credential secrecy, and Colima, Docker Desktop and Linux Docker Engine proofs
+remain required; hybrid provisions no guest. Existing refusal, identity and
+baseline packets cannot establish these positive claims and need a
+qualification-capable candidate and packet. Ordinary-Compose synthetic proof
+is not actual Acow consumer proof, and worktree health is not data continuity.
+Preserve actual data and prove volume/row continuity in the owner-approved
+consumer journey. A dependency or packet-source PR is not qualification.
+
+The order leaves full main milestone QA, live installed consumer success and
+failure journeys, gateway reboot/crash/soak, security disposition,
+exact-candidate release certification, and Tom's final publication decision
+in force. None is satisfied by a landed PR or by the test-only stage.
+
 ## Governing v0.15 direction — 2026-10-18
 
 Tom's answered Queue decision `5bcf44e4-7e9d-49ee-99d1-c6a46b47a93b`
