@@ -14,6 +14,7 @@ covers upgrade and deleted-worktree cleanup.
 - [Architecture and ownership](knowledge/README.md)
 - [Contracts and JSON schemas](knowledge/contracts/README.md)
 - [Release procedure](knowledge/contracts/release.md)
+- [Qualification evidence: ordinary-Compose on Colima](qualification/ordinary-compose-colima-5f466914/README.md) (frozen candidate 5f466914, task effigy#537; prepared, native GO and consumer gates pending)
 - [User and consumer guides](guides/README.md), including [managed task sessions](guides/012-dev-process-manager-tui.md)
 - [Bounded QA groups workflow](guides/081-bounded-qa-groups-workflow.md) (implemented through `tasks qa-group`; `stop`/`hard_timeout_ms` wait on owned-run supervision, contract 052)
 - [v0.15.0 consumer migration](guides/085-v0.15.0-consumer-migration.md) (catalog sources and pack retirement, behavior changes and DecodeLabs checklist)

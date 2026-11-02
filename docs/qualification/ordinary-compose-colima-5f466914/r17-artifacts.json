@@ -1,0 +1,10 @@
+{
+  "candidate-src-5f466914/target/debug/effigy": "cb564fa64f15d080eb2b047454b55103e3e5857de2252de8be05a31a95eb00b1",
+  "r3-baseline-container-ids.txt": "d89c846cdb44c0d9669f4db50eb57347d2b322aee26b4b03c7fbd2e000663f10",
+  "launch.py": "cedcd5f2c2da52d2fe7313cd08f10017cca3623166e212256e62f3c90779e12e",
+  "common.py": "098570fce46c59735bdc953812d589da5fb1c447546c8cd49e62a0ee19b1dda2",
+  "prepare.py": "b122bb8f58e7954bc8a2f0c204d888c4ea5fbe9e6433163aa96326ad143514cd",
+  "preflight.py": "ee427a1edb62cff07dd4b645e55d1fba27484fe0cc87196b1a0f6064e7b2e957",
+  "runtime.py": "5723eceab4210e7fa02ba803e363561869f4abc6d3128f04648c4a5772ccc642",
+  "source_estimate.py": "0d2e57308104ed76b1932092760626da89c8e6441fa055784a971e86e0801b52"
+}
