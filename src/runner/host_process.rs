@@ -153,6 +153,36 @@ struct HostProcessDependency {
     state_file: PathBuf,
 }
 
+/// A host-process supervisor's event for its owning client, on the kernel's
+/// engine-event channel (`supervise::Event::Engine`). Delivery is best
+/// effort: the same fact is also in the run journal and the process log, so
+/// a lost frame costs the bring-up its latency, never the record. Both ends
+/// are the same verified binary, so the shapes carry no version history
+/// (the managed run's wire precedent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HostProcessEvent {
+    /// The kernel refused a generation before its first exec, with the
+    /// redacted key-only refusal as `detail`. A plain workload declares no
+    /// readiness of its own and keeps no listener state, so this event is
+    /// the only channel that carries the refusal to the activation before
+    /// the run settles (effigy#574).
+    LaunchRefused { process: String, detail: String },
+}
+
+/// Reports a plain workload's pre-exec refusal to the owning client before
+/// the run settles (effigy#574). The activation reads this event as its
+/// launch barrier; without it a refused workload could only settle failed
+/// behind a bring-up that reported success.
+fn report_launch_refused(session: &EngineSession, process: &str, detail: &str) {
+    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchRefused {
+        process: process.to_owned(),
+        detail: detail.to_owned(),
+    }) {
+        session.event(bytes);
+    }
+}
+
 /// One supervisor's latest listener observation. Unknown fields stay readable
 /// so a record written by an earlier build is read once and rewritten without
 /// its retired identity proofs.
@@ -1586,6 +1616,14 @@ fn supervise_plain_host_process(
     let mut child = match spawn_generation(run, cx, spec, &dependency_env, None) {
         Ok(child) => child,
         Err(error) => {
+            // A kernel refusal is decided before any exec ran: report it on
+            // the owning client's event pipe before the settle, so the
+            // activation carries it instead of reporting a workload that
+            // never started (effigy#574). Every other spawn failure keeps
+            // the plain exit record the restart policy reads.
+            if let effigy_kernel::custody::SpawnError::Refused(_) = &error {
+                report_launch_refused(session, &spec.process_name, &error.to_string());
+            }
             append_log_line(
                 spec.output.as_ref(),
                 &format!(
@@ -5770,25 +5808,33 @@ while True:
     /// its own group, while a live grandchild still is (effigy#336).
     #[test]
     fn host_process_leader_exit_observation_excludes_the_exited_leader() {
-        use std::os::unix::process::CommandExt;
+        use effigy_test_support::process::FixtureCommandExt;
 
         let dir = tempfile::tempdir().expect("fixture dir");
         let grandchild_file = dir.path().join("grandchild.pid");
+        // The leader owns its group and stays live (`wait`), so the
+        // observation sees both a running leader and a real grandchild before
+        // it exits. The pid is published by rename, so the observer reads a
+        // complete file or none: `printf > file` leaves an empty file between
+        // create and write, and the flake that read that window failed on an
+        // empty pid (effigy#574). The owned guard stops this exact fixture
+        // group on any exit path, assert panics included, so the sleeper pair
+        // cannot leak.
         let mut leader = std::process::Command::new("/bin/sh")
-            // The leader stays live (`wait`) so the observation sees both a
-            // running leader and a real grandchild before it exits.
             .args([
                 "-c",
-                "sleep 300 & printf '%s\\n' \"$!\" > \"$1\"; wait",
+                "sleep 300 & printf '%s\\n' \"$!\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"; wait",
                 "sh",
             ])
             .arg(&grandchild_file)
-            .process_group(0)
-            .spawn()
+            .spawn_owned()
             .expect("leader in its own group");
         let pid = leader.id();
         wait_until("the grandchild to record its pid", || {
-            grandchild_file.exists()
+            fs::read_to_string(&grandchild_file)
+                .ok()
+                .and_then(|record| record.trim().parse::<u32>().ok())
+                .is_some()
         });
         let grandchild = fs::read_to_string(&grandchild_file)
             .expect("grandchild pid file")
