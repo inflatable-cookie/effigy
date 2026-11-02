@@ -42,6 +42,40 @@ def go(cell):
 
 
 class Boundaries(unittest.TestCase):
+    def test_setup_socket_preflight_refuses_observed_long_path_before_effects(self):
+        from setup_preflight import socket_preflight, PROFILE
+        with patch('subprocess.run', side_effect=AssertionError('setup preflight ran a command')), \
+             patch.object(Path, 'mkdir', side_effect=AssertionError('setup preflight created a root')):
+            with self.assertRaisesRegex(RuntimeError, '120 bytes'):
+                socket_preflight(str(SCRATCH / '531-colima-control/colima'), PROFILE)
+            result = socket_preflight(str(SCRATCH / '531c/c'), PROFILE)
+            self.assertEqual(result['socket_bytes'], 101)
+            self.assertEqual(result['instance'], 'colima-' + PROFILE)
+            self.assertFalse(result['setup_authorized'])
+            # The bound is exclusive and counts encoded bytes, not characters.
+            prefix = str(SCRATCH / '') + '/'
+            suffix = '/_lima/colima-' + PROFILE + '/ssh.sock.1234567890123456'
+            width = 104 - len((prefix + suffix).encode())
+            self.assertEqual(socket_preflight(prefix + 'x' * (width - 1), PROFILE)['socket_bytes'], 103)
+            for leaf in ('x' * width, 'é' * width):
+                with self.assertRaisesRegex(RuntimeError, 'must be less than 104'):
+                    socket_preflight(prefix + leaf, PROFILE)
+            for home, profile in (('relative', PROFILE), (str(SCRATCH), PROFILE),
+                                  (str(SCRATCH / 'x/../c'), PROFILE),
+                                  (str(SCRATCH / '531c/c') + '/', PROFILE),
+                                  (str(SCRATCH / '531c/c'), 'q531')):
+                with self.assertRaises(RuntimeError):
+                    socket_preflight(home, profile)
+
+    def test_setup_socket_preflight_refuses_symlink_ancestor(self):
+        from setup_preflight import socket_preflight, PROFILE
+        with tempfile.TemporaryDirectory(prefix='531-setup-', dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            (root / 'real').mkdir()
+            (root / 'alias').symlink_to(root / 'real', target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, 'aliases another path'):
+                socket_preflight(str(root / 'alias/c'), PROFILE)
+
     def test_packet_modules_parse_without_bytecode_or_effects(self):
         for path in PACKET.glob('*.py'):
             ast.parse(path.read_bytes(), filename=str(path))

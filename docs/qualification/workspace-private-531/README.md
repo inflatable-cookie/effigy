@@ -82,8 +82,13 @@ or changes tracked source. Source archive / build preparation, any native
 builder use and Linux placement require their own scoped authorization.
 
 The [dedicated Colima setup request](colima-setup.md) shares only the pinned
-qualification root and keeps control files outside it. Its runtime recipe is
-unbuilt and unarmed; it does not claim the producer image supplies Python.
+qualification root and keeps control files outside it. The first setup failed on a measured 120-byte Lima socket path before any image
+build. The revised proposal computes the full future path before setup effects
+and requests a separate GO for its canonical 101-byte layout, within the remaining
+1516-second cap. Old partial resources remain retained. Its runtime recipe is
+unbuilt; it does not claim the producer image supplies Python. The separate
+[Linux SSH/placement proposal](linux-setup.md) preserves the reviewed SSH route
+and distinguishes unknown account/share capabilities from executable authority.
 
 Preparation uses the existing Effigy build surfaces:
 `build:workspace:private-qualification` builds the uninstalled candidate/utility;
@@ -221,7 +226,9 @@ as absent just because an output directory is missing.
 ## Source/fixture evidence and remaining release gates
 
 `test:qualification:workspace-private` checks input/GO/source-hash/subset/symlink
-and exclusive-receipt refusal boundaries without native actions. Its fixtures
+and exclusive-receipt refusal boundaries without native actions. It also checks
+the host-only setup socket admission: observed long path, exclusive byte limit,
+canonical path/profile and symlink refusal, without creating setup resources. Its fixtures
 are freshly created and removed under removable scratch. The nine named
 deferred publication controls have a maintained selector,
 `test:workspace:private-qualification:publication`, using the actual qualified
