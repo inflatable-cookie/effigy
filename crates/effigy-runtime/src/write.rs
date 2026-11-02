@@ -47,6 +47,15 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // TEMP-DEBUG(547): which down path does the settle-time release take?
+    if std::env::var_os("EFFIGY_TEST_DOWN_DEBUG").is_some() {
+        let probe = effigy_containers::environment::nothing_to_stop(repo_root, &policy);
+        eprintln!(
+            "[down-debug] host_processes={} nothing_to_stop={:?}",
+            policy.host_processes.len(),
+            probe
+        );
+    }
     // A never-prepared environment with no project resources has nothing to
     // stop, and its unassigned ports must not reach Compose (effigy#286).
     // An empty Compose project is not proof that host integrations are down.
@@ -62,6 +71,9 @@ where
     }
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    if std::env::var_os("EFFIGY_TEST_DOWN_DEBUG").is_some() {
+        eprintln!("[down-debug] runtime_running={runtime_running}");
+    }
     let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
     // One step per service, created and moved by the runtime's own stopping and
     // removing lines while it works, so a slow stop names the service holding

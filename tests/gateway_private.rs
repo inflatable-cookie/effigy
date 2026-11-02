@@ -3586,10 +3586,15 @@ fn write_fake_docker(path: &Path) {
         path,
         r#"#!/bin/sh
 set -eu
+TEMP_547_TRACE="/Volumes/Builds/scratch/effigy/547-fake-trace.log"
+printf 'trace pid=%s ppid=%s cwd=%s state=%s log=%s args=%s\n' "$$" "$PPID" "$(pwd)" "${FAKE_OWNED_STATE-UNSET}" "${FAKE_DOCKER_LOG-UNSET}" "$*" >> "$TEMP_547_TRACE" 2>/dev/null || true
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [ -n "${FAKE_DYNAMIC_PROOF-}" ] && [ -f "$FAKE_DYNAMIC_PROOF" ]; then
   FAKE_OWNED_CONTAINER=$(cat "$FAKE_DYNAMIC_PROOF")
 fi
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -7202,6 +7207,20 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         profile = toml_quote(profile),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write the nested effigy config");
+    // TEMP-DEBUG(547): did the policy parse the host process?
+    {
+        let policy = effigy_containers::load_container_policy(&checkout, Some("web"))
+            .expect("nested policy loads");
+        eprintln!(
+            "TEMP-DEBUG nested policy host_processes={} names={:?}",
+            policy.host_processes.len(),
+            policy
+                .host_processes
+                .iter()
+                .map(|process| process.name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
 
     let cleanup = ManagedContainerCleanup {
         checkouts: vec![checkout.clone()],
@@ -7219,7 +7238,12 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         .join(profile)
         .join("api.log");
 
-    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    // TEMP-DEBUG(547): run detached up with --json to read the host-process report.
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    eprintln!(
+        "TEMP-DEBUG up-report: {}",
+        String::from_utf8_lossy(&up.stdout)
+    );
     let up_text = format!(
         "{}{}",
         String::from_utf8_lossy(&up.stdout),
@@ -7358,7 +7382,12 @@ fn hung_restart_does_not_block_down_from_another_shell() {
     );
 
     // The environment comes up first, so the restart has a record to hold.
-    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    // TEMP-DEBUG(547): run detached up with --json to read the host-process report.
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    eprintln!(
+        "TEMP-DEBUG up-report: {}",
+        String::from_utf8_lossy(&up.stdout)
+    );
     assert!(
         up.status.success(),
         "`container web up --detach` failed: {}{}",
@@ -7538,7 +7567,12 @@ fn write_slow_health_fake_docker(path: &Path) {
         path,
         r#"#!/bin/sh
 set -eu
+TEMP_547_TRACE="/Volumes/Builds/scratch/effigy/547-fake-trace.log"
+printf 'trace pid=%s ppid=%s cwd=%s state=%s log=%s args=%s\n' "$$" "$PPID" "$(pwd)" "${FAKE_OWNED_STATE-UNSET}" "${FAKE_DOCKER_LOG-UNSET}" "$*" >> "$TEMP_547_TRACE" 2>/dev/null || true
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -7748,7 +7782,12 @@ fn write_switch_fake_docker(path: &Path) {
         path,
         r#"#!/bin/sh
 set -eu
+TEMP_547_TRACE="/Volumes/Builds/scratch/effigy/547-fake-trace.log"
+printf 'trace pid=%s ppid=%s cwd=%s state=%s log=%s args=%s\n' "$$" "$PPID" "$(pwd)" "${FAKE_OWNED_STATE-UNSET}" "${FAKE_DOCKER_LOG-UNSET}" "$*" >> "$TEMP_547_TRACE" 2>/dev/null || true
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 state="$FAKE_OWNED_STATE"
 project_from_filters() {
   requested=""
