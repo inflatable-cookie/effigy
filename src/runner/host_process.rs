@@ -5847,6 +5847,16 @@ while True:
             .trim()
             .parse::<u32>()
             .expect("grandchild pid");
+        // The owned leader guard stops the group only until the leader is
+        // reaped. This pid is the fixture's other owned process: stop it on
+        // every exit path, including a panic after `wait` (effigy#574).
+        struct StopPid(i32);
+        impl Drop for StopPid {
+            fn drop(&mut self) {
+                let _ = kill(Pid::from_raw(self.0), Signal::SIGKILL);
+            }
+        }
+        let _stop_grandchild = StopPid(grandchild as i32);
         assert!(
             group_members(pid).contains(&pid),
             "the running leader is a member of its own group"

@@ -15,6 +15,13 @@ During v0.x, MINOR bumps may include breaking changes.
   workload never started: the refusal names the process and its cause
   (effigy#559).
 
+- Fail a detached `container up` when a plain host workload is refused before
+  its first exec. The supervisor reports that launch on the owning client's
+  event pipe, and the activation carries the kernel's key-only diagnostic
+  instead of reporting success while the run settles failed (effigy#574). An
+  ordinary later application exit still happens after the workload started.
+  Secret classification and the argv guard are unchanged.
+
 - Redact a managed listener's quoted child output on every surface again:
   progress lines, detached text refusals and JSON withheld-route envelopes
   replace the values of secret-shaped `key=value` words with `<redacted>`
