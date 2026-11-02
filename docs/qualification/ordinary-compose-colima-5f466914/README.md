@@ -54,7 +54,7 @@ SHA-256 `34c0c9288b1d174e346460b78839524c00882646abba21ed8da5dac0f074046d`,
 `r17-artifacts.json` SHA-256
 `e710d83ef655e3e67a4f0b42167aa941f6ded05e498de1558096051c8b37b612`). Those
 scratch bytes are provenance for the starting artifact and are not executed;
-the committed files above are the executed packet.
+the committed files above are the packet intended for the authorized execution.
 
 ## Guard change (queue planner a6994b17)
 
@@ -76,6 +76,13 @@ whose exact text names this packet's SHA copied verbatim to
 current exclusive quiet window with a start courtesy, and Tom's explicit
 live-environment exact-packet GO. Planner approval is not a GO; no automatic
 action happens on a missing authorization.
+
+The copied receipt must also satisfy the helpers' exact, case-sensitive text
+checks: `launch.py` requires `packet ` followed immediately by the lowercase
+64-hex packet SHA-256; `verify_go` requires the packet SHA and the literal
+strings `GO` and `Supervisor` in the receipt. These tokens are machine
+checks, not a substitute for the required authorizations and provenance above.
+A differently worded receipt can fail the one permitted proof execution.
 
 ## Evidence, cleanup and protected state
 
