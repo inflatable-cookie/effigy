@@ -122,6 +122,39 @@ impl Run<'_> {
         Ok(image)
     }
 
+    pub(crate) fn hold_prelaunch_interpolation(
+        &mut self,
+        slot: &std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>,
+    ) -> Result<(), RunError> {
+        let mut slot = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sequence = slot
+            .sequence
+            .ok_or_else(|| RunError::unavailable("prelaunch sequence unavailable"))?;
+        slot.hold_attempted = true;
+        let backup = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::unavailable("prelaunch checkout custodian unavailable"))?;
+        backup.retain_prelaunch(
+            sequence,
+            slot.file
+                .as_ref()
+                .ok_or_else(|| RunError::unavailable("prelaunch file unavailable"))?,
+        )
+    }
+    pub(super) fn release_prelaunch_interpolation(
+        &mut self,
+        sequence: i64,
+    ) -> Result<(), RunError> {
+        self.checkout_custody
+            .as_mut()
+            .and_then(|custody| custody.backup.as_mut())
+            .ok_or_else(|| RunError::unavailable("prelaunch custodian unavailable"))?
+            .release_prelaunch(sequence)
+    }
     pub(crate) fn retain_checkout_interpolation(
         &mut self,
         ticket: &EffectTicket,

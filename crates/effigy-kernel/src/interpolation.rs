@@ -49,6 +49,7 @@ pub struct RetainedInterpolation {
     uncertain: bool,
     published: bool,
     helper_completed: bool,
+    unlaunched_unlinked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +83,17 @@ fn private_file(stat: &FileStat) -> bool {
         && stat.st_mode & 0o777 == 0o600
         && stat.st_nlink == 1
 }
+/// The Run owns this slot before any helper check or fork. Only successful
+/// installation in a ProcessCore consumes it. A fork attempt without that
+/// installation is deliberately not recoverable as a no-fork cleanup.
+#[derive(Debug)]
+pub(crate) struct PrelaunchInterpolation {
+    pub(crate) file: Option<RetainedInterpolation>,
+    pub(crate) fork_attempted: bool,
+    pub(crate) sequence: Option<i64>,
+    pub(crate) hold_attempted: bool,
+}
+
 impl RetainedInterpolation {
     /// Adopt prepared file and parent descriptions; never open the file by path.
     pub fn new(
@@ -110,6 +122,7 @@ impl RetainedInterpolation {
             uncertain: false,
             published: false,
             helper_completed: false,
+            unlaunched_unlinked: false,
         };
         let _lock = owner.directory_lock()?;
         owner.verify()?;
@@ -120,6 +133,89 @@ impl RetainedInterpolation {
             return Err(io::Error::last_os_error());
         }
         Ok(owner)
+    }
+    /// Only the Run's never-forked slot may call this. No path is reopened and
+    /// owner death grants no recovery authority. The live phase survives a
+    /// failed rename/sync/unlink; missing entries are never inferred complete.
+    pub(crate) fn cleanup_before_fork(&mut self) -> io::Result<()> {
+        if self.binding.is_some() || self.published {
+            return Err(refused(
+                "bound interpolation needs verified process closure",
+            ));
+        }
+        let _lock = self.directory_lock()?;
+        if self.unlaunched_unlinked {
+            return self.sync_directory();
+        }
+        self.verify()?;
+        if matches!(self.location, Location::Original) {
+            let mut nonce = [0u8; 16];
+            File::open("/dev/urandom")?.read_exact(&mut nonce)?;
+            let nonce = nonce
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let quarantine = format!(".rm-unlaunched-{nonce}");
+            rename(&self.directory, &self.original, &quarantine)?;
+            self.location = Location::Quarantine(quarantine);
+            self.sync_directory()?;
+        }
+        self.verify()?;
+        let Location::Quarantine(name) = &self.location else {
+            return Err(refused("unlaunched quarantine phase unavailable"));
+        };
+        unlinkat(&self.directory, name.as_str(), UnlinkatFlags::NoRemoveDir)?;
+        // Retain our positively performed unlink across a failed directory
+        // sync. Retry syncs that same description; it never infers an unlink
+        // from an absent path or after owner death.
+        self.unlaunched_unlinked = true;
+        self.sync_directory()
+    }
+    pub(crate) fn prelaunch_descriptors(&self) -> io::Result<[RawFd; 3]> {
+        let _lock = self.directory_lock()?;
+        self.verify()?;
+        // The channel always transfers three descriptors. The third is an
+        // independently installed duplicate of this exact file, not a journal
+        // or a process binding. The receiver verifies it before adoption.
+        Ok([
+            self.file.as_raw_fd(),
+            self.directory.as_raw_fd(),
+            self.file.as_raw_fd(),
+        ])
+    }
+    pub(crate) fn prelaunch_name(&self) -> (&str, &Location) {
+        (&self.original, &self.location)
+    }
+    pub(crate) fn same_object(&self, other: &Self) -> bool {
+        self.file_stamp == other.file_stamp
+            && self.directory_stamp == other.directory_stamp
+            && self.original == other.original
+    }
+    pub(crate) fn receive_prelaunch(
+        original: String,
+        location: Location,
+        descriptors: Vec<OwnedFd>,
+    ) -> io::Result<Self> {
+        let mut descriptors = descriptors.into_iter();
+        let file = descriptors
+            .next()
+            .ok_or_else(|| refused("missing prelaunch file"))?;
+        let directory = descriptors
+            .next()
+            .ok_or_else(|| refused("missing prelaunch directory"))?;
+        let duplicate = descriptors
+            .next()
+            .ok_or_else(|| refused("missing prelaunch duplicate"))?;
+        if descriptors.next().is_some()
+            || Stamp::of(&fstat(&file)?) != Stamp::of(&fstat(&duplicate)?)
+        {
+            return Err(refused("prelaunch descriptor identity differs"));
+        }
+        Self::new(file, directory, original, location)
+    }
+    pub(crate) fn prelaunch_unlinked(&self) -> io::Result<bool> {
+        let stat = fstat(&self.file)?;
+        Ok(Stamp::of(&stat) == self.file_stamp && stat.st_nlink == 0)
     }
     fn directory_lock(&self) -> io::Result<Flock<File>> {
         let fd = openat(

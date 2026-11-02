@@ -312,6 +312,26 @@ pub fn runtime_backend_is_running(
     }
 }
 
+/// Qualification never starts a profile or repairs shared runtime units. These
+/// are the same real read-only status/containerd/BuildKit predicates used by
+/// ordinary ensure, with uncertainty returned to the owning preparation Run.
+#[cfg(feature = "workspace-private-qualification")]
+pub fn require_qualification_backend_running(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<bool, ContainerExecError> {
+    if !runtime_backend_is_running(policy, repo_root)? {
+        return Err(runtime_readiness_error(
+            "qualification requires an already running backend",
+        ));
+    }
+    if resolve_compose_backend_for_repo(repo_root, policy) == ComposeBackend::ColimaNerdctl {
+        probe_colima_runtime(policy, repo_root, COLIMA_RUNTIME_PROBE_TIMEOUT)
+            .map_err(|error| runtime_readiness_error(&error))?;
+    }
+    Ok(false)
+}
+
 pub fn ensure_runtime_backend_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,

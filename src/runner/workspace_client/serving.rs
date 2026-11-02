@@ -489,6 +489,17 @@ where
         &self.session
     }
 
+    /// Down targets the adopted session, rather than the outer supervisor.
+    /// Read its fenced journal requests through the actual retained owner.
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn session_stop_requested(&self) -> Result<bool, RunError> {
+        Ok(self
+            .supervisor
+            .requests()?
+            .iter()
+            .any(|request| matches!(request.action, effigy_kernel::run::RequestAction::Stop)))
+    }
+
     /// The session's terminal custody: one terminal owner and one retained
     /// reader per admitted run (effigy#485).
     ///

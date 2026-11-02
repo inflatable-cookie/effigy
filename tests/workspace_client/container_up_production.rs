@@ -1,10 +1,10 @@
 //! Actual CLI -> detached production orchestration, with only external engine
 //! and guest I/O doubled. This never qualifies a native backend.
 //!
-//! Two routing proofs share this fixture: an ordinary Compose invocation of the
-//! shape a legacy bundle export declares applies once through the inert
-//! backend, and the explicit system/workspace selection that asks for the
-//! guarded workspace activation still refuses before any effect.
+//! Ordinary production retains its pre-apply refusal. The uninstalled
+//! qualification feature exercises the real ownership and commit path, failure
+//! recovery and secret delivery. Only external engine/guest I/O is doubled;
+//! these controls never qualify a native backend or consumer.
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -660,9 +660,14 @@ fn cut_refuses_before_binding_staging_and_liveness_faults() {
 }
 
 #[test]
-#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
+#[cfg_attr(
+    not(feature = "workspace-private-qualification"),
+    ignore = "production private apply remains refused; qualified route owns this proof"
+)]
 fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() {
     let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
     let mut config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&fixture.config).expect("config"))
             .expect("config JSON");
@@ -754,6 +759,8 @@ fn actual_selected_handoff_failure_retains_owner_until_fresh_cleanup_recovery() 
 
 fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
     let mut config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&fixture.config).expect("configuration"))
             .expect("JSON");
@@ -842,7 +849,7 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
     );
     let (state, environment, session): (String, String, String) = connection
         .query_row(
-            "SELECT state,environment_run,session_run FROM workspace_activation_reservations",
+            "SELECT state,environment_run,session_run FROM workspace_activation_reservations WHERE session_run IS NOT NULL",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -907,22 +914,33 @@ fn guarded_effect_failure_retains_exact_gate_free_custody(case: &str) {
 }
 
 #[test]
-#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
+#[cfg_attr(
+    not(feature = "workspace-private-qualification"),
+    ignore = "production private apply remains refused; qualified route owns this proof"
+)]
 fn actual_late_revalidation_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("delay_final_revalidation");
 }
 
 #[test]
-#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
+#[cfg_attr(
+    not(feature = "workspace-private-qualification"),
+    ignore = "production private apply remains refused; qualified route owns this proof"
+)]
 fn actual_phase_b_publication_failure_unwinds_outside_env_and_retains_unknown() {
     guarded_effect_failure_retains_exact_gate_free_custody("fail_publication");
 }
 
 #[test]
-#[ignore = "deferred to #531: a same-Env apply needs resident Env custody, which Run::begin_claimed_recoverable refuses (effigy#533 S1)"]
+#[cfg_attr(
+    not(feature = "workspace-private-qualification"),
+    ignore = "production private apply remains refused; qualified route owns this proof"
+)]
 fn actual_binding_staging_and_liveness_errors_are_private_at_all_diagnostic_sinks() {
     for case in ["fail_binding", "fail_binary_staging", "fail_liveness"] {
         let fixture = BackendFixture::new();
+        effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+            .expect("prepared identity");
         let mut config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&fixture.config).expect("config")).expect("JSON");
         config[case] = true.into();
@@ -1300,4 +1318,373 @@ fn qualification_preparation_receipt_cannot_authorize_a_different_intent() {
         .path()
         .join("forced-fixture-cleanup")
         .exists());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn actual_cli_down_then_fresh_up_retires_selected_session_and_commits_a_new_one() {
+    let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
+    let up = || {
+        let output = fixture
+            .workspace_command()
+            .args(["--detach", "--json"])
+            .output()
+            .expect("real up");
+        assert!(
+            output.status.success(),
+            "{}{} stages={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            std::fs::read_to_string(fixture.config.with_extension("failure")).unwrap_or_default()
+        );
+        let db = rusqlite::Connection::open_with_flags(
+            fixture.project.join(".effigy/state/kernel.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("journal");
+        db.query_row("SELECT session_run,environment_generation FROM workspace_selection_obligations WHERE state='switched' ORDER BY environment_generation DESC LIMIT 1", [], |row| Ok((row.get::<_,String>(0)?, row.get::<_,i64>(1)?))).expect("selected owner")
+    };
+    let first = up();
+    let down = fixture
+        .command()
+        .args(["container", "web", "down", "--json"])
+        .output()
+        .expect("real down");
+    assert!(
+        down.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let closed: bool = db
+        .query_row(
+            "SELECT phase='closed' AND cleanup_outcome='complete' FROM runs WHERE run_id=?1",
+            [&first.0],
+            |row| row.get(0),
+        )
+        .expect("original session retirement");
+    assert!(
+        closed,
+        "down must retire the actual selected session before it acknowledges"
+    );
+    drop(db);
+    assert!(
+        !fixture.fixture.path().join("applied").exists(),
+        "real backend down ran"
+    );
+    let second = up();
+    assert_ne!(second.0, first.0, "fresh actual session owner");
+    assert!(second.1 > first.1, "fresh Env generation");
+    assert_eq!(
+        fixture
+            .calls()
+            .lines()
+            .filter(|line| line.contains("\"up\""))
+            .count(),
+        2
+    );
+    fixture.assert_settled();
+    assert_no_durable_error_bytes(&fixture.project);
+    assert_no_durable_error_bytes(&fixture.home);
+    assert!(!fixture
+        .fixture
+        .path()
+        .join("forced-fixture-cleanup")
+        .exists());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn actual_cli_crash_recovery_refuses_reuse_then_down_and_fresh_up() {
+    let fixture = BackendFixture::new();
+    effigy_core::worktree_scope::prepare_checkout_token(&fixture.project)
+        .expect("prepared identity");
+    let first = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("first up");
+    assert!(first.status.success(), "first up");
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let original: String = db
+        .query_row(
+            "SELECT session_run FROM workspace_selection_obligations WHERE state='switched'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("original session");
+    let supervisor: String = db
+        .query_row(
+            "SELECT supervisor FROM workspace_session_custody WHERE run_id=?1",
+            [&original],
+            |row| row.get(0),
+        )
+        .expect("actual supervisor");
+    let raw: String = db
+        .query_row(
+            "SELECT owner_identity FROM runs WHERE run_id=?1",
+            [&supervisor],
+            |row| row.get(0),
+        )
+        .expect("supervisor birth");
+    let identity: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_str(&raw).expect("full identity");
+    assert!(
+        matches!(effigy_kernel::ident::process_identity(identity.pid), Observed::Verified(ref current,_) if *current == identity)
+    );
+    let fault = Command::new(env!("CARGO_BIN_EXE_workspace-qualification-fixture"))
+        .arg("crash")
+        .arg(&fixture.project)
+        .arg(&supervisor)
+        .env("HOME", &fixture.home)
+        .output()
+        .expect("exact kernel-verified fixture fault");
+    assert!(
+        fault.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fault.stderr)
+    );
+    drop(db);
+    let refused = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("uncertain reuse");
+    assert!(
+        !refused.status.success(),
+        "unproved existing-target artifact selection must refuse"
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let selected: String = db.query_row("SELECT session_run FROM workspace_selection_obligations WHERE state='switched' ORDER BY environment_generation DESC LIMIT 1", [], |row| row.get(0)).expect("selection unchanged by refusal");
+    assert_eq!(selected, original, "no premature selector switch");
+    drop(db);
+    let down = fixture
+        .command()
+        .args(["container", "web", "down", "--json"])
+        .output()
+        .expect("explicit recovery down");
+    assert!(
+        down.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let next = fixture
+        .workspace_command()
+        .args(["--detach", "--json"])
+        .output()
+        .expect("fresh up after down");
+    assert!(
+        next.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&next.stdout),
+        String::from_utf8_lossy(&next.stderr)
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let successor: String = db.query_row("SELECT session_run FROM workspace_selection_obligations WHERE state='switched' ORDER BY environment_generation DESC LIMIT 1", [], |row| row.get(0)).expect("fresh session");
+    assert_ne!(successor, original);
+    let closed: bool = db
+        .query_row(
+            "SELECT phase='closed' AND cleanup_outcome='complete' FROM runs WHERE run_id=?1",
+            [&original],
+            |row| row.get(0),
+        )
+        .expect("original closure");
+    assert!(
+        closed,
+        "actual recovery closes the original session before success"
+    );
+    drop(db);
+    fixture.assert_settled();
+    assert_no_durable_error_bytes(&fixture.project);
+    assert!(!fixture
+        .fixture
+        .path()
+        .join("forced-fixture-cleanup")
+        .exists());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn actual_cli_secret_interpolation_is_owned_through_commit_and_never_reaches_diagnostics() {
+    secret_interpolation_cli(false);
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn actual_cli_secret_interpolation_vm_file_is_transferred_to_the_same_env_owner() {
+    secret_interpolation_cli(true);
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+fn secret_interpolation_cli(vm: bool) {
+    let manifest = format!("{WORKSPACE_DECLARATION}\n[secrets]\nbackend = \"effigy-vault\"\n[secrets.vault]\npath = \".effigy/secrets/local.vault\"\n[secrets.keys.probe_token]\nrequired = true\ntargets = [\"containers\"]\n");
+    let fixture = BackendFixture::with_manifest("qualified-interpolation", &manifest);
+    let prepared = fixture
+        .command()
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+        .collect::<Vec<_>>();
+    let setup = Command::new(env!("CARGO_BIN_EXE_workspace-qualification-fixture"))
+        .args(["prepare"])
+        .arg(&fixture.project)
+        .envs(prepared)
+        .output()
+        .expect("real isolated vault producer");
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    std::fs::write(
+        fixture.config.with_extension("expect-interpolation"),
+        b"required",
+    )
+    .unwrap();
+    let mut command = fixture.workspace_command();
+    if vm {
+        let temp = fixture.fixture.path().join("tmp");
+        std::fs::create_dir(&temp).unwrap();
+        command
+            .env("EFFIGY_COMPOSE_BACKEND", "containerd")
+            .env("TMPDIR", temp);
+    }
+    let output = command
+        .args(["--detach", "--json"])
+        .output()
+        .expect("actual secret-bearing up");
+    assert!(
+        output.status.success(),
+        "{}{} stages={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::read_to_string(fixture.config.with_extension("failure")).unwrap_or_default()
+    );
+    let canary = b"531-private-compose-canary";
+    assert!(!output
+        .stdout
+        .windows(canary.len())
+        .any(|bytes| bytes == canary));
+    assert!(!output
+        .stderr
+        .windows(canary.len())
+        .any(|bytes| bytes == canary));
+    let original = std::fs::read_to_string(fixture.config.with_extension("interpolation-observed"))
+        .expect("backend read exact interpolation file");
+    assert_eq!(
+        original == "host-environment",
+        !vm,
+        "actual backend delivery kind"
+    );
+    assert!(
+        !std::path::Path::new(&original).exists(),
+        "verified closure cleans the exact file before commit finishes"
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.project.join(".effigy/state/kernel.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("journal");
+    let combined: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE receipt IS NOT NULL AND json_type(receipt,'$.interpolation_v1.discard_v1') IS NOT NULL)", [], |row| row.get(0)).expect("durable combined receipt");
+    assert_eq!(combined, vm, "VM apply must own the exact interpolation file; host Docker delivers through its environment");
+    drop(db);
+    fixture.assert_settled();
+    fn scan(path: &std::path::Path, canary: &[u8]) {
+        if path.is_symlink() {
+            return;
+        }
+        if path.is_dir() {
+            for child in std::fs::read_dir(path).unwrap() {
+                scan(&child.unwrap().path(), canary);
+            }
+        } else if path.is_file() {
+            assert!(
+                !std::fs::read(path)
+                    .unwrap()
+                    .windows(canary.len())
+                    .any(|bytes| bytes == canary),
+                "secret leaked into durable fixture state"
+            );
+        }
+    }
+    scan(&fixture.project, canary);
+    scan(&fixture.home, canary);
+    assert!(!fixture
+        .fixture
+        .path()
+        .join("forced-fixture-cleanup")
+        .exists());
+}
+
+#[cfg(feature = "workspace-private-qualification")]
+#[test]
+fn qualification_preparation_never_starts_or_repairs_a_stopped_or_unknown_vm() {
+    for fault in ["runtime-stopped", "runtime-status-unknown"] {
+        let fixture = BackendFixture::new();
+        effigy_core::worktree_scope::prepare_checkout_token(&fixture.project).unwrap();
+        let temp = fixture.fixture.path().join("tmp");
+        std::fs::create_dir(&temp).unwrap();
+        std::fs::write(fixture.config.with_extension(fault), b"required refusal").unwrap();
+        let output = fixture
+            .workspace_command()
+            .args(["--detach", "--json"])
+            .env("EFFIGY_COMPOSE_BACKEND", "containerd")
+            .env("TMPDIR", temp)
+            .output()
+            .expect("qualified entry");
+        assert!(
+            !output.status.success(),
+            "stopped/unknown backend must refuse"
+        );
+        let calls = fixture
+            .calls()
+            .lines()
+            .map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            calls
+                .iter()
+                .any(|args| args.iter().any(|arg| arg == "status")),
+            "real readiness boundary crossed"
+        );
+        assert!(
+            !calls.iter().flatten().any(|arg| [
+                "start",
+                "stop",
+                "restart",
+                "delete",
+                "rm",
+                "up",
+                "down",
+                "systemctl"
+            ]
+            .contains(&arg.as_str())),
+            "qualification may not mutate the VM/backend on unavailable readiness"
+        );
+        fixture.assert_settled();
+        assert!(!fixture
+            .fixture
+            .path()
+            .join("forced-fixture-cleanup")
+            .exists());
+    }
 }

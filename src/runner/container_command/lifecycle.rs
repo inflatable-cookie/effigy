@@ -672,6 +672,13 @@ fn prepare_container_up_with_loader(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");
+    #[cfg(feature = "workspace-private-qualification")]
+    let colima_started = if operation.workspace_mode {
+        effigy_containers::exec::require_qualification_backend_running(&policy, repo_root)?
+    } else {
+        ensure_runtime_backend_running(&policy, repo_root)?
+    };
+    #[cfg(not(feature = "workspace-private-qualification"))]
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");

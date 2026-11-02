@@ -17,14 +17,20 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
         Wait::FailFast,
     )
     .unwrap();
-    let executable = if mode == "private-qualification-foreign" {
+    let executable = if mode == "private-qualification-old" {
+        Executable::capture(Path::new(
+            &std::env::var_os("EFFIGY_OLD_CUSTODY_BINARY")
+                .expect("genuine old helper supplied by the native packet"),
+        ))
+        .unwrap()
+    } else if mode == "private-qualification-foreign" {
         let copy = home.join("foreign-helper");
         std::fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
         Executable::capture(&copy).unwrap()
     } else {
         Executable::current().unwrap()
     };
-    let mut run = Run::begin_claimed_recoverable(
+    let admitted = Run::begin_claimed_recoverable(
         &cx,
         &root,
         &invocation,
@@ -41,8 +47,31 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
         || Ok(cx.operation().cleanup(Duration::from_secs(15)).unwrap()),
         &mut Strict,
         reservation.claim().unwrap(),
-    )
-    .unwrap_or_else(|(error, _)| panic!("reserved admission: {error}"));
+    );
+    let mut run = match admitted {
+        Ok(run) => run,
+        Err((error, retained)) => {
+            if let Some(retained) = retained {
+                let outcome = retained
+                    .settle(
+                        &cx.operation().cleanup(Duration::from_secs(15)).unwrap(),
+                        &mut Strict,
+                    )
+                    .unwrap_or_else(|(error, _)| {
+                        panic!("helper startup cleanup remains unverified: {error}")
+                    });
+                assert_eq!(
+                    outcome.cleanup(),
+                    effigy_kernel::outcome::CleanupOutcome::Complete
+                );
+                assert!(outcome.unresolved().is_empty());
+            }
+            reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
+            // An unrelated admission/setup error is never old-binary credit.
+            // The old cell must first start its actual helpers successfully.
+            panic!("reserved admission did not qualify: {error}");
+        }
+    };
     let mut process_spec = spec(home);
     process_spec.argv = vec![
         "/bin/sh".into(),
@@ -168,6 +197,10 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
             .is_ok()
     };
     assert!(cleanup_ok, "qualification cleanup remains unsettled");
+    assert!(
+        !directory.join("compose.env").exists(),
+        "even a pre-fork refusal must settle the exact file owner"
+    );
     reservation.cancel(&cx, &root, Wait::FailFast).unwrap();
     assert!(
         ordinary_refused && before == 0,
@@ -178,8 +211,8 @@ pub(super) fn run(home: &Path, cancel: CancelToken, mode: &str) {
         "private-qualification" | "private-qualification-descendant"
     ) {
         assert!(
-            refused && effects == before,
-            "unqualified helper/deadline must refuse before an intent"
+            refused && effects == before + 1,
+            "unqualified helper/deadline must refuse before a workload intent"
         );
         assert!(!home.join("executed").exists());
         return;

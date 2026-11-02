@@ -4,9 +4,9 @@ Status: implemented in `crates/effigy-containers/src/environment/` (engine)
 and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim and retire as a transition are later work (§9). The
 workspace session run and its host authority channel are implemented at the
-kernel and runner seam (052 §8.3, §8.7, §8.11); their production activation
-caller remains under development on the unmerged #512 branch; native backend
-qualification remains outstanding.
+kernel and runner seam (052 §8.3, §8.7, §8.11); ordinary production activation
+remains refused. The uninstalled #531 qualification path is described below;
+native backend qualification remains outstanding.
 
 For v0.15, workspace Level 1 forwards non-interactive commands only;
 guest PTY, attach, reconnect and detach acknowledgement are deferred to
@@ -63,7 +63,7 @@ the exact live detached Env sentinel, checkout backup and anchor, and the
 original activation deadline. The image observations retain the documented
 macOS accidental-skew limit: path/vnode observations cannot prove a mapped
 image against an adversarial ABA replacement. Missing entry capture, foreign
-images, expired budgets and ordinary Discard calls refuse before a process
+images, expired budgets and ordinary Discard calls refuse before a workload process
 intent. Helpers and anchors are re-observed before GO. Leader exit does not
 qualify apply success without a separate fresh group-closure observation. The
 exact interpolation descriptors remain on the Env owner until its verified
@@ -83,6 +83,16 @@ final settlement, preserving the existing publication predicate and real exit
 obligation.
 
 
+An already created interpolation file first enters an exact Run-owned prelaunch
+slot with a durable, non-executable pending custody obligation. After helper-image
+checks and before any fork, the private SCM_RIGHTS channel gives the checkout
+backup hold-only descriptions; caller drop retains that exact file and Env gate.
+A real registered process receipt, synced binding and verified exact-object
+handoff replace the hold. Never-forked refusals may clean the same live file
+through no-clobber quarantine/unlink/sync before releasing its hold. Partial
+fork, missing owner and unknown acknowledgement remain unresolved. The pending
+envelope is not a process receipt, preparation capability or cleanup authority.
+
 An interpolation-bound Discard receipt has an explicit combined envelope. The
 new decoder accepts it; legacy readers cannot interpret it as an ordinary
 process, and recovery without the live descriptor owner preserves residue.
@@ -93,6 +103,41 @@ external backend/guest I/O; it is not native evidence. Native backend,
 genuine old-binary and consumer qualification, retained-review acceptance and the final production GO remain
 separate requirements. Ordinary private backend invocation and Discard remain
 refused.
+
+Qualification preparation uses read-only running/status/containerd/BuildKit
+checks. It refuses a stopped or unknown backend and never starts a profile,
+repairs shared runtime units or rewrites managed VM settings. The ordinary
+backend ensure remains unchanged. The real CLI fixture now delivers a synthetic
+vault canary through both host environment delivery and the Colima-shaped
+interpolation-file route; the latter asserts the combined custody receipt,
+backend file read, verified file cleanup and absent diagnostic/durable plaintext.
+Neither external-I/O double is native qualification evidence.
+
+The qualification down uses the kernel's `DownCoordination`: foreign live or
+unresolved holders refuse before stop requests; only this session's children
+are stopped, their completed cleanup is checked, and the selected session must
+close with complete cleanup before the ordinary Env stop rechecks R4. The
+serving loop observes the adopted session's own fenced stop request as well as
+the outer supervisor's controls. Explicit interrupted-session recovery takes
+its recorded private slot through `settle_interrupted` before Env admission;
+a dead creator alone does not prove group closure or release that slot.
+
+The nine deferred `workspace_reserved_*` publication controls now have a
+qualification-feature selector that uses `private_apply::qualification_only`
+with real helpers and the same activation owner/deadline. Guest/backend I/O is
+doubled. The actual CLI fixture covers committed publication, guarded failures,
+down/fresh-up, and a killed selected supervisor. Existing-target artifact reuse
+still refuses at `observe_decision_artifact`'s descriptor-pinned probe gate;
+the crash control requires unchanged selection on that refusal, followed by
+explicit down and fresh up. It does not weaken that gate or claim successful
+reuse. Shared-service and stale-source preparation remain refused.
+
+The [531 full-session packet](../../qualification/workspace-private-531/README.md)
+provides one aggregate source-immutable selector for separately GO-armed Colima,
+Desktop and native Linux cells. Its runtime inputs and GO index are separately
+hash bound to avoid a circular hash dependency. Actual native artifacts, scoped
+GOs, receipts, consumer evidence, retained review acceptance and final production
+GO are still required. Packet boundary tests are source evidence only.
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment

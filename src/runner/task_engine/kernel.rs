@@ -719,6 +719,10 @@ pub(super) fn relative(root: &Path, path: &Path) -> Option<String> {
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 static TEST_BINARY_KERNEL_ENTRY: extern "C" fn() = {
     extern "C" fn dispatch() {
+        #[cfg(feature = "workspace-private-qualification")]
+        if effigy_kernel::supervise::initialize_private_qualification_image().is_err() {
+            std::process::exit(70);
+        }
         // Linux std may populate `env::args` after this constructor runs.
         #[cfg(target_os = "linux")]
         let entry = std::fs::read("/proc/self/cmdline").ok().and_then(|raw| {

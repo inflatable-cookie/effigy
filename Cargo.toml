@@ -178,3 +178,8 @@ nix = { version = "0.31", default-features = false, features = ["term"] }
 # A run-control proof writes the fixture journal in a loop to show a read
 # beside a continuous writer answers at once (effigy#339).
 rusqlite = { version = "0.40", features = ["bundled"] }
+
+[[bin]]
+name = "workspace-qualification-fixture"
+path = "tests/support/workspace-qualification.rs"
+required-features = ["workspace-private-qualification"]

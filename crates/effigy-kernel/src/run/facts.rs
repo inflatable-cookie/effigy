@@ -78,6 +78,7 @@ impl MachineFacts {
                 machine_startup: None,
                 checkout_custody: None,
                 ancestor_closure: None,
+                prelaunch_interpolations: Default::default(),
                 processes: Default::default(),
                 session_launch: Default::default(),
             };

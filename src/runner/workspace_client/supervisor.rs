@@ -657,6 +657,11 @@ where
         &self.session
     }
 
+    #[cfg(feature = "workspace-private-qualification")]
+    pub(crate) fn session_stop_requested(&self) -> Result<bool, RunError> {
+        self.owner.session_stop_requested()
+    }
+
     /// The session's terminal custody: one terminal owner and one retained
     /// reader per admitted run (effigy#485).
     ///

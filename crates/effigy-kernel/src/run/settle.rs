@@ -187,6 +187,7 @@ impl Run<'_> {
         successor: Option<(RunId, Generation)>,
         retain_incomplete: bool,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.cleanup_prelaunch_interpolations()?;
         if self.partial_sentinel.is_some() {
             return Err(RunError::unavailable(
                 "workspace sentinel startup remains unsettled",
@@ -299,6 +300,35 @@ impl Run<'_> {
                     self.settle_socket(effect, &cx)?;
                 }
             } else if effect.spec.kind == crate::custody::KIND {
+                if effect.spec.payload.get("interpolation_prelaunch_v1") == Some(&Value::Bool(true))
+                {
+                    let complete = self.prelaunch_interpolations.iter().any(|slot| {
+                        let slot = slot
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        slot.sequence == Some(effect.sequence) && slot.file.is_none()
+                    });
+                    if !complete {
+                        return Err(RunError::unavailable(
+                            "prelaunch interpolation requires its exact live owner",
+                        ));
+                    }
+                    self.store.transaction_within(
+                        &cx,
+                        BusyWait::AtLeast(SETTLE_BUSY_WAIT),
+                        |txn| {
+                            journal::write_effect(
+                                txn,
+                                self.id,
+                                effect.sequence,
+                                EffectState::Released,
+                                None,
+                                None,
+                            )
+                        },
+                    )?;
+                    continue;
+                }
                 // The same core must survive an Unknown or a lost settlement
                 // response while a recoverable Run is returned to its caller.
                 // The Run owns it until the Run itself is released.
@@ -733,6 +763,7 @@ pub(crate) fn settle_interrupted_wait(
         machine_startup: None,
         checkout_custody: None,
         ancestor_closure: None,
+        prelaunch_interpolations: Default::default(),
         processes: Default::default(),
         session_launch: Default::default(),
     }

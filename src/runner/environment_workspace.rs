@@ -625,3 +625,11 @@ pub(in crate::runner) fn recover_selection(
     )
     .map_err(EnvError::Kernel)
 }
+
+#[cfg(feature = "workspace-private-qualification")]
+#[path = "environment_workspace/down.rs"]
+pub(super) mod down;
+
+#[cfg(feature = "workspace-private-qualification")]
+#[path = "environment_workspace/recovery.rs"]
+pub(in crate::runner) mod recovery;

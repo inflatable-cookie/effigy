@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Feature-fixture engine only. No native container program is executed."""
+import hashlib
 import json
 import os
 import pathlib
@@ -10,6 +11,8 @@ cfg = json.loads(cfg_path.read_text())
 args = sys.argv[1:]
 with cfg_path.with_suffix(".calls").open("a") as calls:
     calls.write(json.dumps(args) + "\n")
+if args[:1] == ["nerdctl"] and "--" in args:
+    args = args[args.index("--") + 1:]
 if args[:1] == ["--context"]:
     args = args[2:]
 if args == ["ps"] and cfg_path.with_suffix(".prepare-failure").exists():
@@ -48,7 +51,24 @@ inspect = [{"Id": id_, "Name": "/" + project + "-app-1", "Image": image_id,
 if "image" in args and "inspect" in args:
     print(json.dumps([{"Id": image_id, "Os": "linux", "Architecture": cfg["architecture"], "Variant": ""}]))
 elif "compose" in args and "up" in args:
+    if cfg_path.with_suffix(".expect-interpolation").exists():
+        if "--env-file" in args:
+            file = pathlib.Path(args[args.index("--env-file") + 1])
+            assert b"531-private-compose-canary" in file.read_bytes()
+            cfg_path.with_suffix(".interpolation-observed").write_text(str(file))
+        else:
+            assert os.environ["PROBE_TOKEN"] == "531-private-compose-canary"
+            cfg_path.with_suffix(".interpolation-observed").write_text("host-environment")
+        print("531-private-compose-canary")
+        print("531-private-compose-canary", file=sys.stderr)
     applied.write_text("one sealed apply\n")
+elif "compose" in args and "down" in args:
+    applied.unlink(missing_ok=True)
+    # A removed container has no guest-private context or selector. Host
+    # journal state is deliberately retained for the subsequent real up.
+    pathlib.Path(cfg["export"]).unlink(missing_ok=True)
+    cfg["container_id"] = hashlib.sha256(cfg["container_id"].encode()).hexdigest()
+    cfg_path.write_text(json.dumps(cfg))
 elif "compose" in args and "config" in args:
     if "--hash" in args:
         print("app " + "d" * 64)
@@ -93,6 +113,12 @@ elif "exec" in args:
         print(cfg["machine"])
     elif "boot_id" in command:
         print(cfg["boot_id"])
+elif "status" in args:
+    if cfg_path.with_suffix(".runtime-status-unknown").exists():
+        sys.exit(88)
+    print("STOPPED" if cfg_path.with_suffix(".runtime-stopped").exists() else "RUNNING")
+elif "ssh" in args and "buildctl" in args:
+    print("fixture-worker")
 elif "version" in args:
     print("2.27.0")
 elif "context" in args:

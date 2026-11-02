@@ -14,6 +14,7 @@ covers upgrade and deleted-worktree cleanup.
 - [Architecture and ownership](knowledge/README.md)
 - [Contracts and JSON schemas](knowledge/contracts/README.md)
 - [Release procedure](knowledge/contracts/release.md)
+- [Qualification packet: private workspace full sessions](qualification/workspace-private-531/README.md) (task effigy#531; source candidate for retained review, native/consumer/final production gates pending)
 - [Qualification evidence: merged workspace sessions on Colima, Docker Desktop and Linux](qualification/workspace-sessions-a00394012/README.md) (frozen candidate a00394012, task effigy#530; prepared, Colima entry sweep complete, positive gates blocked by the production cut)
 - [Qualification evidence: ordinary-Compose on Colima](qualification/ordinary-compose-colima-5f466914/README.md) (frozen candidate 5f466914, task effigy#537; prepared, native GO and consumer gates pending)
 - [Qualification evidence: Acow ordinary-Compose consumer packets](qualification/acow-ordinary-compose-5f466914/README.md) (frozen candidate 5f466914, task effigy#540; prepared, not executed — worktree warm-up and primary-data counts routes armed and awaiting their GO chains)

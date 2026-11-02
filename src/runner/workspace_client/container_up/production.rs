@@ -58,6 +58,11 @@ pub(super) fn activate_with(
         .post_prep
         .as_ref()
         .ok_or_else(|| RunError::refused("workspace post-prep declaration is absent"))?;
+    #[cfg(feature = "workspace-private-qualification")]
+    crate::runner::environment::workspace::recovery::selected_session(
+        &validation.policy,
+        validation.until,
+    )?;
     let planned = plan::build(validation, declaration)?;
     planned.validation.recheck_directory()?;
     let invocation = activation_invocation(host, planned.environment.checkout)?;

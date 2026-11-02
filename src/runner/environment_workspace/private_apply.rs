@@ -6,11 +6,10 @@
 //! qualified private invocation, and a proof substitutes a fake backend there
 //! so the publication sequence itself is exercised against a real owner.
 //!
-//! The qualified invocation is not available yet. Recoverable workspace Env
-//! admission can retain kernel custody, but this production caller does not yet
-//! supply a custody plan or a qualified Discard capability. Until that
-//! integration is qualified, `qualified` performs no process work and reports
-//! the outcome unsettled, so no caller can mistake it for an executed apply.
+//! Ordinary production still refuses without process work. The separate
+//! compile-time qualification strategy below uses the actual Env owner and
+//! transfers the exact interpolation file into its retained custody; native
+//! qualification and a separate production-enable GO are still required.
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;

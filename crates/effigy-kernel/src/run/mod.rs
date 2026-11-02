@@ -396,6 +396,8 @@ pub struct Run<'a> {
     checkout_custody: Option<checkout_custody::CheckoutCustody>,
     ancestor_closure: Option<crate::closure::ClosurePin>,
     closed_effects: Option<Vec<Effect>>,
+    prelaunch_interpolations:
+        Vec<std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>>,
     processes: std::collections::BTreeMap<
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
@@ -1277,6 +1279,7 @@ impl<'a> Run<'a> {
         };
         let checked = (|| {
             self.can_effect()?;
+            self.cleanup_prelaunch_interpolations()?;
             if std::time::Instant::now() >= deadline {
                 return Err(RunError::unavailable(
                     "workspace activation deadline expired",
@@ -1754,6 +1757,7 @@ impl<'a> Run<'a> {
                 machine_startup: None,
                 checkout_custody: None,
                 ancestor_closure: None,
+                prelaunch_interpolations: Default::default(),
                 processes: Default::default(),
                 session_launch: Default::default(),
             };
@@ -1818,6 +1822,7 @@ impl<'a> Run<'a> {
             machine_startup: planned.map(|_| machine::Startup::default()),
             checkout_custody: None,
             ancestor_closure: None,
+            prelaunch_interpolations: Default::default(),
             processes: Default::default(),
             session_launch: Default::default(),
         };
@@ -2052,6 +2057,75 @@ impl<'a> Run<'a> {
     }
     pub(crate) fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.intend_inner(spec)
+    }
+    pub(crate) fn retain_prelaunch_interpolation(
+        &mut self,
+        file: crate::interpolation::RetainedInterpolation,
+    ) -> Result<
+        std::sync::Arc<std::sync::Mutex<crate::interpolation::PrelaunchInterpolation>>,
+        RunError,
+    > {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::interpolation::PrelaunchInterpolation {
+                file: Some(file),
+                fork_attempted: false,
+                sequence: None,
+                hold_attempted: false,
+            },
+        ));
+        // Even an ambiguous intent write must not drop the exact descriptions.
+        self.prelaunch_interpolations.push(slot.clone());
+        let ticket = self.intend_inner(EffectSpec {
+            target: self.owner.clone(),
+            kind: crate::custody::KIND.into(),
+            payload: serde_json::json!({"interpolation_prelaunch_v1": true}),
+            settlement: Settlement::Release(Value::Null),
+            required: false,
+        })?;
+        slot.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sequence = Some(ticket.sequence());
+        // Deliberately not a process receipt. Old readers refuse this envelope;
+        // recovery without the exact live slot must preserve its obligation.
+        self.applied(
+            &ticket,
+            serde_json::json!({"interpolation_pending_v1": true}),
+        )?;
+        Ok(slot)
+    }
+    pub(crate) fn complete_prelaunch_interpolation(
+        &mut self,
+        sequence: i64,
+    ) -> Result<(), RunError> {
+        self.store.transaction(&self.cx, |txn| {
+            journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
+            journal::write_effect(txn, self.id, sequence, EffectState::Released, None, None)
+        })
+    }
+    fn cleanup_prelaunch_interpolations(&mut self) -> Result<(), RunError> {
+        for slot in self.prelaunch_interpolations.clone() {
+            let mut slot = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.file.is_some() && slot.fork_attempted {
+                return Err(RunError::unavailable(
+                    "interpolation prelaunch fork state remains Unknown",
+                ));
+            }
+            if let Some(file) = slot.file.as_mut() {
+                file.cleanup_before_fork().map_err(|_| {
+                    RunError::unavailable("unlaunched interpolation cleanup remains Unknown")
+                })?;
+                if slot.hold_attempted {
+                    let sequence = slot
+                        .sequence
+                        .ok_or_else(|| RunError::unavailable("prelaunch sequence unavailable"))?;
+                    self.release_prelaunch_interpolation(sequence)?;
+                }
+                slot.file = None;
+            }
+        }
+        Ok(())
     }
     pub(crate) fn retain_process(
         &mut self,

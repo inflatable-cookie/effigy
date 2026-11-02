@@ -654,7 +654,7 @@ fn timed_out(phase: impl std::fmt::Display) -> UnknownReason {
         phase: phase.to_string(),
     }
 }
-fn lock(core: &Mutex<ProcessCore>) -> std::sync::MutexGuard<'_, ProcessCore> {
+fn lock<T>(core: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     core.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -685,6 +685,11 @@ trait ProcessOwner {
             "qualification requires a checkout Env Run",
         ))
     }
+    fn complete_prelaunch_interpolation(&mut self, _sequence: i64) -> Result<(), RunError> {
+        Err(RunError::refused(
+            "prelaunch interpolation requires a checkout Run",
+        ))
+    }
     fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError>;
     fn capture_log(
         &self,
@@ -695,6 +700,10 @@ trait ProcessOwner {
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
 }
 impl ProcessOwner for Run<'_> {
+    fn complete_prelaunch_interpolation(&mut self, sequence: i64) -> Result<(), RunError> {
+        self.complete_prelaunch_interpolation(sequence)
+    }
+
     #[cfg(feature = "workspace-private-qualification")]
     fn verify_qualification_images(&mut self) -> Result<(), RunError> {
         self.qualify_workspace_discard_images().map(|_| ())
@@ -1078,10 +1087,16 @@ impl Custody {
         handoff: Option<OwnedFd>,
         preparation_intent: Option<crate::id::Digest>,
     ) -> Result<OwnedProcess, SpawnError> {
+        let file = file
+            .map(|file| run.retain_prelaunch_interpolation(file))
+            .transpose()?;
         if !matches!(spec.terminal, Terminal::Discard) {
             return Err(SpawnError::Refused("qualification requires Discard".into()));
         }
         let image = run.qualify_workspace_discard_images()?;
+        if let Some(file) = &file {
+            run.hold_prelaunch_interpolation(file)?;
+        }
         Self::spawn_inner_retained(
             run,
             spec,
@@ -1106,6 +1121,10 @@ impl Custody {
         cx: &EffectContext,
         file: crate::interpolation::RetainedInterpolation,
     ) -> Result<OwnedProcess, SpawnError> {
+        let file = run.retain_prelaunch_interpolation(file)?;
+        if !matches!(spec.terminal, Terminal::Discard) {
+            run.hold_prelaunch_interpolation(&file)?;
+        }
         Self::spawn_inner_retained(
             run,
             spec,
@@ -1163,7 +1182,7 @@ impl Custody {
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
         canonical_output: Option<CanonicalOutput>,
-        interpolation: Option<crate::interpolation::RetainedInterpolation>,
+        interpolation: Option<Arc<Mutex<crate::interpolation::PrelaunchInterpolation>>>,
         qualification: Option<&crate::supervise::image_identity::CreatorImage>,
         preparation_intent: Option<crate::id::Digest>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -1215,6 +1234,9 @@ impl Custody {
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
         let closure = run.closure_pin()?;
+        if let Some(file) = &interpolation {
+            lock(file).fork_attempted = true;
+        }
         let mut pending = spawn::Blocked::fork(
             &spec,
             &nonce,
@@ -1317,7 +1339,9 @@ impl Custody {
             };
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
-                interpolation,
+                interpolation: interpolation
+                    .as_ref()
+                    .and_then(|slot| lock(slot).file.take()),
                 anchor,
                 logs,
                 canonical_output,
@@ -1351,6 +1375,12 @@ impl Custody {
                 if let Some(file) = retained.interpolation.as_mut() {
                     run.retain_interpolation(&ticket, file)?;
                 }
+            }
+            if let Some(slot) = &interpolation {
+                let sequence = lock(slot)
+                    .sequence
+                    .ok_or_else(|| SpawnError::Refused("prelaunch binding unavailable".into()))?;
+                run.complete_prelaunch_interpolation(sequence)?;
             }
             // Install live custody before the caller's handoff. A refusal leaves
             // this exact core in the Run; Blocked still owns the closed barrier
