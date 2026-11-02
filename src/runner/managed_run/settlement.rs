@@ -159,6 +159,15 @@ fn release_environment(env: &EnvironmentEffect) -> Result<(), UnknownReason> {
     })
 }
 
+/// [`release_environment`] for a caller that cannot wait for the settle: a
+/// run that owes its environment's stop but whose journal refused the
+/// obligation (effects close once the run is settling) stops the environment
+/// itself before it ends. The same stop the settle would have walked, with
+/// the same own-hold exemption.
+pub(in crate::runner) fn discharge_environment(effect: &EnvironmentEffect) -> Result<(), String> {
+    release_environment(effect).map_err(|reason| reason.to_string())
+}
+
 fn end_exec_group(group: &ExecGroupEffect) -> Result<(), UnknownReason> {
     let pgid = match marker_pgid(group) {
         Observed::Verified(pgid, _) => pgid,

@@ -170,6 +170,42 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
     }
 }
 
+/// The ambient coding-agent and queue-harness environment a developer shell
+/// carries (`AI_AGENT=pi`, branch names, session paths and tokens) has no
+/// provenance, so Effigy's child classifier marks it secret: a short value
+/// then refuses host-process spawns whose argv mentions it (`pi` is inside
+/// `api`, a digit is inside any hashed binary path) and output redaction
+/// rewrites asserted content. In-process runner fixtures share the test
+/// process's environment, so an ambient-sensitive fixture strips the
+/// families for its own duration instead of passing them to Effigy.
+pub(super) fn strip_ambient_agent_environment() -> EnvGuard {
+    const FAMILIES: [&str; 5] = ["CARGO_", "NEXTEST_", "CLAUDE_CODE_", "PI_", "PASEO_"];
+    const EXACT: [&str; 8] = [
+        "AI_AGENT",
+        "CLAUDECODE",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "FORCE_COLOR",
+        "LS_COLORS",
+        "LSCOLORS",
+    ];
+    let mut entries: Vec<(String, Option<String>)> = Vec::new();
+    for (key, _) in std::env::vars_os() {
+        let Some(name) = key.to_str() else { continue };
+        let hits = FAMILIES.iter().any(|family| name.starts_with(family))
+            || EXACT.iter().any(|exact| name == *exact);
+        if hits {
+            entries.push((name.to_owned(), None));
+        }
+    }
+    let borrowed: Vec<(&str, Option<String>)> = entries
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.clone()))
+        .collect();
+    EnvGuard::set_many(&borrowed)
+}
+
 pub(super) struct EnvGuard {
     original: Vec<(String, Option<std::ffi::OsString>)>,
     // Holds the global test lock so concurrent tests that mutate process env

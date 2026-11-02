@@ -1446,6 +1446,16 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A managed run whose owning client dies while its environment is still being
+  brought up no longer leaks the environment behind a `cleanup complete`
+  report. The run journals its environment-stop obligation once `up` ends, so
+  the settle walks it in reverse order (K4); when the journal refuses the
+  obligation because the run is already settling (the window a client's death
+  opens), an owned environment's stop is discharged before the run ends and a
+  borrowed environment's failure propagates. The `up` transition is also
+  stopped and recorded when the stop is noticed, so no gate-holding child
+  outlives the poll.
+
 - Bind the Acow ordinary-Compose consumer qualification's prerequisite
   receipt to the accepted proof-only reviewer callback Queue actually
   exposes: the accepted retained-reviewer callback

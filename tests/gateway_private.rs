@@ -3590,6 +3590,9 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [ -n "${FAKE_DYNAMIC_PROOF-}" ] && [ -f "$FAKE_DYNAMIC_PROOF" ]; then
   FAKE_OWNED_CONTAINER=$(cat "$FAKE_DYNAMIC_PROOF")
 fi
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -3617,10 +3620,14 @@ elif [ "${1-}" = exec ]; then
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
 elif [ "${1-}" = compose ]; then
   shift
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -p) project=$2; shift 2 ;;
       -f) shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac
@@ -3996,13 +4003,34 @@ fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanu
         .env("FAKE_DOCKER_LOG", &cleanup.docker_log);
     // `oxide` injects its own `CARGO_PROFILE_OXIDE_*` profile settings, and
     // nextest injects `NEXTEST_*` runner settings (such as the thread count),
-    // into the test process. Effigy's argv classifier reads a short inherited
-    // value as a secret when it appears in an argument (the watch-mode respawn
-    // proof refuses its own listener, and the bound-elsewhere proof refuses its
-    // listener on `NEXTEST_TEST_THREADS`), so a fixture never passes them to Effigy.
+    // into the test process. Coding-agent and queue harnesses inject their own
+    // ambient values (`AI_AGENT=pi`, `NORTHSTAR_BASE_BRANCH=main`, session
+    // paths and tokens). Effigy's classifier reads a short inherited value as
+    // a secret when it appears in an argument (the watch-mode respawn proof
+    // refuses its own listener, and the bound-elsewhere proof refuses its
+    // listener on `NEXTEST_TEST_THREADS`), and output redaction replaces the
+    // same values inside a child's captured output, where the proofs read
+    // published domains and recorded pids. A fixture never passes them to
+    // Effigy.
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(|name| {
-            name.starts_with("CARGO_PROFILE_OXIDE_") || name.starts_with("NEXTEST_")
+            name.starts_with("CARGO_")
+                || name.starts_with("NEXTEST_")
+                || name.starts_with("CLAUDE_CODE_")
+                || name.starts_with("PI_")
+                || name.starts_with("PASEO_")
+                || name.starts_with("NORTHSTAR_")
+                || matches!(
+                    name,
+                    "AI_AGENT"
+                        | "CLAUDECODE"
+                        | "CLAUDE_AGENT_SDK_VERSION"
+                        | "CLICOLOR"
+                        | "CLICOLOR_FORCE"
+                        | "FORCE_COLOR"
+                        | "LS_COLORS"
+                        | "LSCOLORS"
+                )
         }) {
             command.env_remove(key);
         }
@@ -7514,6 +7542,9 @@ fn write_slow_health_fake_docker(path: &Path) {
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 if [ "${1-}" = ps ]; then
   [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
   python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
@@ -7545,9 +7576,13 @@ elif [ "${1-}" = exec ]; then
   [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
 elif [ "${1-}" = compose ]; then
   shift
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -f|-p) shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac
@@ -7720,6 +7755,9 @@ fn write_switch_fake_docker(path: &Path) {
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+# The environment view's own reads prefix the backend's global `--context`
+# before the subcommand; a fixture dispatches on what follows it.
+if [ "${1-}" = --context ]; then shift 2; fi
 state="$FAKE_OWNED_STATE"
 project_from_filters() {
   requested=""
@@ -7776,10 +7814,14 @@ elif [ "${1-}" = cp ] && [ -n "${FAKE_GUEST_ADAPTER:-}" ]; then
 elif [ "${1-}" = compose ]; then
   shift
   project=""
+  # The detached bring-up pins the project directory to the rendered Compose
+  # directory, so a value-taking long option is two tokens; a bare `--*` shift
+  # would strand its value here and never reach the `up` case.
   while [ "$#" -gt 1 ]; do
     case "$1" in
       -f) shift 2 ;;
       -p) project="$2"; shift 2 ;;
+      --project-directory|--env-file|--profile) shift 2 ;;
       --*) shift ;;
       *) break ;;
     esac
