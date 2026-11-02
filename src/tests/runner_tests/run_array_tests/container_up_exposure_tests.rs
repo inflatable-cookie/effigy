@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_gateway::routes::RouteTable;
 
-use crate::contract_test_support::EnvGuard;
+use crate::contract_test_support::{strip_ambient_agent_environment, EnvGuard};
 use crate::runner::container_command::run_container_command;
 use crate::runner::host_process::take_listener_progress;
 
@@ -286,6 +286,9 @@ struct ExposureFixture {
     /// no declared dependency.
     depends_on: BTreeMap<String, Vec<String>>,
     health_timeout_secs: u64,
+    // The runner classifies inherited agent metadata as secret; keep it out of
+    // listener argv matching and output redaction for these behavior proofs.
+    _ambient_env: EnvGuard,
     _env: EnvGuard,
 }
 
@@ -361,6 +364,7 @@ impl ExposureFixture {
     fn new(label: &str, listeners: &[FixtureListener], health_timeout_secs: u64) -> Self {
         use std::os::unix::fs::PermissionsExt;
 
+        let ambient_env = strip_ambient_agent_environment();
         let temp = effigy_test_support::Fixture::workspace(&format!("effigy-exposure-{label}-"))
             .expect("fresh private root");
         let root = std::fs::canonicalize(temp.path()).expect("canonical private root");
@@ -481,6 +485,7 @@ impl ExposureFixture {
             declared,
             depends_on,
             health_timeout_secs,
+            _ambient_env: ambient_env,
             _env: env,
         }
     }
