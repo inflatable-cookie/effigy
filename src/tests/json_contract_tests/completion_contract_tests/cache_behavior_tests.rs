@@ -2,7 +2,6 @@ use crate::runner::json_contract_tests::prelude::{
     assert_candidates_cache_policy, fs, lock_test, run_completion_candidates_json, temp_workspace,
     thread, with_completion_cache_default, write_manifest, Duration, EnvGuard,
 };
-
 #[test]
 fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_rerun() {
     let _guard = lock_test();
@@ -50,7 +49,14 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
 #[test]
 fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     let _guard = lock_test();
-    let _env = with_completion_cache_default();
+    // Expiry uses a short env TTL (policy clamps the minimum to 100 ms) so the
+    // serialized test lock is not held through a multi-second sleep; the
+    // miss_ttl mapping is TTL-source-agnostic and the default TTL value itself
+    // is pinned by the hit/invalidation/env tests around it.
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS",
+        Some("100".to_owned()),
+    )]);
     let root = temp_workspace("completion-candidates-cache-ttl-expiry");
     write_manifest(
         &root.join("effigy.toml"),
@@ -58,14 +64,14 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
     );
 
     let first_parsed = run_completion_candidates_json(root.to_path_buf());
-    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 2000, "default");
+    assert_candidates_cache_policy(&first_parsed, false, "miss_initial", 100, "env");
     assert!(first_parsed["cache_age_ms"].is_null());
     assert!(first_parsed["cache_ttl_ms"].is_null());
 
-    thread::sleep(Duration::from_millis(2200));
+    thread::sleep(Duration::from_millis(400));
 
     let second_parsed = run_completion_candidates_json(root);
-    assert_candidates_cache_policy(&second_parsed, false, "miss_ttl", 2000, "default");
+    assert_candidates_cache_policy(&second_parsed, false, "miss_ttl", 100, "env");
     assert!(second_parsed["cache_age_ms"].is_null());
     assert!(second_parsed["cache_ttl_ms"].is_null());
 }

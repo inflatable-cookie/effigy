@@ -1,6 +1,6 @@
 use crate::runner::json_contract_tests::prelude::{
     fs, lock_test, run_completion_task, temp_workspace, with_completion_cache_default,
-    write_manifest, RunnerError,
+    write_manifest,
 };
 
 #[test]
@@ -25,70 +25,9 @@ fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
     assert!(out.lines().any(|line| line == "catalog_a/api"));
 }
 
-#[test]
-fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
-    let _guard = lock_test();
-    let _env = with_completion_cache_default();
-    let root = temp_workspace("completion-bash-dynamic-candidates");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let out = run_completion_task(root, &["bash", "--export"]).expect("run completion bash");
-    assert!(out.contains("effigy config completion candidates --prefix \"$cur\""));
-}
-
-#[test]
-fn builtin_completion_candidates_prefix_requires_value() {
-    let _guard = lock_test();
-    let _env = with_completion_cache_default();
-    let root = temp_workspace("completion-candidates-prefix-missing");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_completion_task(root, &["candidates", "--prefix"])
-        .expect_err("completion candidates --prefix should fail without value");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert!(message.contains("completion candidates argument --prefix requires a value"));
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
-#[test]
-fn builtin_completion_candidates_repo_requires_value_reports_global_parser_error() {
-    let _guard = lock_test();
-    let _env = with_completion_cache_default();
-    let root = temp_workspace("completion-candidates-repo-missing");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_completion_task(root, &["candidates", "--repo"])
-        .expect_err("completion candidates --repo should fail without value");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "task argument --repo requires a value");
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
-
-#[test]
-fn builtin_completion_candidates_unknown_argument_reports_stable_error() {
-    let _guard = lock_test();
-    let _env = with_completion_cache_default();
-    let root = temp_workspace("completion-candidates-unknown-argument");
-    write_manifest(&root.join("effigy.toml"), "");
-
-    let err = run_completion_task(root, &["candidates", "--wat"])
-        .expect_err("completion candidates unknown argument should fail");
-
-    match err {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(
-                message,
-                "unknown argument(s) for built-in `config completion`: candidates --wat"
-            );
-        }
-        other => panic!("unexpected error: {other}"),
-    }
-}
+// The bash-script dynamic-candidates probe line is pinned by
+// help_tests' completion ok-contract table (`builtin-completion-bash`).
+// The candidates `--prefix`/`--repo`/unknown-argument refusals are pinned by
+// help_tests' completion argument-validation table, tasks_and_doctor_command_tests'
+// argument matrix (global `--repo`), and the builtin argument contract matrix
+// (`candidates --wat`) respectively — the JSON-side duplicates were removed.

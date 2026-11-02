@@ -19,16 +19,6 @@ fn builtin_scan_god_files_json_contract_has_versioned_shape() {
     assert_eq!(parsed["scanned_files"], 1);
     assert_eq!(parsed["skipped_generated"], 0);
     assert_eq!(parsed["findings"][0]["language"], "ts");
-}
-
-#[test]
-fn builtin_scan_god_files_json_contract_top_level_keys_are_stable() {
-    let root = temp_workspace("scan-json-god-files-keys");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_manifest(&root.join("effigy.toml"), "");
-    write_large_code_file(&root.join("src/app.ts"), 12);
-
-    let parsed = run_invocation_json(root, "scan", &["god-files", "--threshold", "10", "--json"]);
     let mut keys = parsed
         .as_object()
         .expect("scan json object")
@@ -58,6 +48,9 @@ fn builtin_scan_god_files_json_contract_top_level_keys_are_stable() {
         ]
     );
 }
+
+// The standalone top-level-keys test was absorbed here: it repeated this same
+// invocation only to assert the sorted key set.
 
 #[test]
 fn builtin_scan_god_files_non_zero_json_rendering_remains_valid() {

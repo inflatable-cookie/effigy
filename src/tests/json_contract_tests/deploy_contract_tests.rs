@@ -89,6 +89,23 @@ run = "cargo run -p acme-jobs {args}"
         parsed["services"][2]["release"]["command"],
         "cargo run -p acme-db --bin migrate_dev_db"
     );
+    assert_eq!(
+        sorted_object_keys(&parsed),
+        vec![
+            "app",
+            "backing_services",
+            "domains",
+            "environment",
+            "environment_state",
+            "missing",
+            "provenance",
+            "schema",
+            "schema_version",
+            "secrets",
+            "services",
+            "warnings",
+        ]
+    );
 }
 
 #[test]
@@ -220,65 +237,6 @@ source = { type = "path", dir = "providers/railway" }
     assert_eq!(parsed["files"][0], "services/front/railway.toml");
     assert_eq!(parsed["files"][3], "report.json");
     assert!(parsed["warnings"].is_array());
-}
-
-#[test]
-fn deploy_model_json_contract_uses_expected_top_level_fields() {
-    let root = temp_workspace("deploy-model-json-contract-top-level");
-    setup_workspace_app_path_bundle(&root);
-    write_manifest(
-        &root.join("effigy.toml"),
-        r#"
-[bundle]
-base = { type = "path", dir = "bundles/workspace-app" }
-host = "acme.test"
-project_name = "acme-dev"
-workspace_subdir = "acme"
-databases = ["acme"]
-"#,
-    );
-    std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
-    std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
-    std::fs::create_dir_all(root.join("app-api")).expect("mkdir api");
-    write_manifest(
-        &root.join("app-front/effigy.toml"),
-        "[tasks.build]\nrun = \"bun x vite build\"\n",
-    );
-    write_manifest(
-        &root.join("app-admin/effigy.toml"),
-        "[tasks.build]\nrun = \"bun x vite build\"\n",
-    );
-    write_manifest(
-        &root.join("app-api/effigy.toml"),
-        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
-    );
-
-    let parsed = parse_json(
-        &run_command(Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model { env: None },
-            repo_override: Some(root),
-            output_json: true,
-        }))
-        .expect("run deploy model"),
-    );
-    assert_schema_v1(&parsed, "deploy.model.v1");
-    assert_eq!(
-        sorted_object_keys(&parsed),
-        vec![
-            "app",
-            "backing_services",
-            "domains",
-            "environment",
-            "environment_state",
-            "missing",
-            "provenance",
-            "schema",
-            "schema_version",
-            "secrets",
-            "services",
-            "warnings",
-        ]
-    );
 }
 
 fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {

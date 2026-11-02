@@ -33,6 +33,28 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     .expect("run doctor explain json");
 
     let parsed = parse_json(&out);
+    // Exact top-level key prefix (absorbed snapshot-stability claims) plus the
+    // selection/deferral/reasoning field contracts in one invocation.
+    let keys = parsed
+        .as_object()
+        .expect("object")
+        .keys()
+        .cloned()
+        .collect::<Vec<String>>();
+    assert_eq!(
+        keys,
+        vec![
+            "ambiguity_candidates".to_owned(),
+            "candidates".to_owned(),
+            "deferral".to_owned(),
+            "reasoning".to_owned(),
+            "request".to_owned(),
+            "root_resolution".to_owned(),
+            "schema".to_owned(),
+            "schema_version".to_owned(),
+            "selection".to_owned(),
+        ]
+    );
     assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
     assert_eq!(parsed["request"]["task"], "catalog_a/build");
     assert!(parsed["request"]["args"].is_array());
@@ -43,6 +65,10 @@ fn doctor_explain_json_contract_has_selection_and_deferral_fields() {
     assert!(parsed["deferral"]["selected"].is_boolean());
     assert!(parsed["reasoning"]["selection"].is_string());
     assert!(parsed["reasoning"]["deferral"].is_string());
+    assert_eq!(
+        parsed["reasoning"]["selection"],
+        "selected catalog by explicit task prefix"
+    );
 }
 
 #[test]
@@ -166,66 +192,5 @@ fn doctor_explain_text_and_json_reasoning_fields_and_order_are_consistent() {
     assert_eq!(
         reasoning_keys,
         vec!["deferral".to_owned(), "selection".to_owned()]
-    );
-}
-
-#[test]
-fn doctor_explain_json_snapshot_prefix_is_stable() {
-    let root = temp_workspace("doctor-explain-json-snapshot");
-    let catalog_a = root.join("catalog_a");
-    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.root]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf catalog_a\"\n",
-    );
-
-    let out = with_cwd(&root, || {
-        run_doctor(DoctorArgs {
-            repo_override: None,
-            output_json: true,
-            fix: false,
-            verbose: false,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: Some(TaskInvocation {
-                name: "catalog_a/build".to_owned(),
-                args: vec!["--".to_owned(), "--watch".to_owned()],
-            }),
-        })
-    })
-    .expect("run doctor explain json");
-
-    let parsed = parse_json(&out);
-    let keys = parsed
-        .as_object()
-        .expect("object")
-        .keys()
-        .cloned()
-        .collect::<Vec<String>>();
-    assert_eq!(
-        keys,
-        vec![
-            "ambiguity_candidates".to_owned(),
-            "candidates".to_owned(),
-            "deferral".to_owned(),
-            "reasoning".to_owned(),
-            "request".to_owned(),
-            "root_resolution".to_owned(),
-            "schema".to_owned(),
-            "schema_version".to_owned(),
-            "selection".to_owned(),
-        ]
-    );
-    assert_schema_v1(&parsed, "effigy.doctor.explain.v1");
-    assert_eq!(parsed["request"]["task"], "catalog_a/build");
-    assert_eq!(
-        parsed["reasoning"]["selection"],
-        "selected catalog by explicit task prefix"
     );
 }

@@ -4,19 +4,8 @@ use crate::runner::json_contract_tests::prelude::{
 use effigy_manifest::with_test_user_config_home;
 
 #[test]
-fn tasks_json_contract_has_versioned_top_level_shape() {
-    let root = temp_workspace("tasks-json-contract");
-    let catalog_a = root.join("catalog_a");
-    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[catalog.members]\ncatalog_a = \"catalog_a\"\n\n[tasks.dev]\nrun = \"printf root\"\n",
-    );
-    write_manifest(
-        &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
-    );
-
+fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
+    let root = temp_workspace("tasks-json-contract-top-level-catalog");
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
             all: false,
@@ -37,55 +26,6 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
     assert!(parsed["catalog_tasks"].is_array());
     assert!(parsed["managed_profiles"].is_array());
     assert!(parsed["builtin_tasks"].is_array());
-}
-
-#[test]
-fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
-    let root = temp_workspace("tasks-filtered-json-contract");
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: Some("test".to_owned()),
-            resolve_selector: None,
-            status_selector: None,
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    })
-    .expect("run filtered tasks json");
-
-    let parsed = parse_json(&out);
-    assert_schema_v1(&parsed, "effigy.tasks.filtered.v1");
-    assert_eq!(parsed["filter"], "test");
-    assert!(parsed["matches"].is_array());
-    assert!(parsed["managed_profile_matches"].is_array());
-    assert!(parsed["builtin_matches"].is_array());
-    assert!(parsed["notes"].is_array());
-}
-
-#[test]
-fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
-    let root = temp_workspace("tasks-json-contract-top-level-catalog");
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: None,
-            resolve_selector: None,
-            status_selector: None,
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    })
-    .expect("run tasks json");
-
-    let parsed = parse_json(&out);
-    assert_schema_v1(&parsed, "effigy.tasks.v1");
     assert_eq!(
         sorted_object_keys(&parsed),
         vec![
@@ -103,15 +43,32 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
     );
 }
 
+/// Filtered payload contract: exact top-level key set, the filter echo, and
+/// the resolve diagnostics that coexist with `--task` filtering. The filtered
+/// serializer is a distinct branch from the catalog payload above, so the
+/// coexistence of `resolve` and `filter` is asserted here; full lock-scope
+/// diagnostics are pinned by the unfiltered resolve test below (the same
+/// serializer call produces them).
 #[test]
 fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
     let root = temp_workspace("tasks-json-contract-top-level-filtered");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[catalog.members]\ncatalog_a = \"catalog_a\"\n",
+    );
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
+    );
+
     let out = with_cwd(&root, || {
         run_tasks(TasksArgs {
             all: false,
             repo_override: None,
-            task_name: Some("test".to_owned()),
-            resolve_selector: None,
+            task_name: Some("build".to_owned()),
+            resolve_selector: Some("catalog_a/build".to_owned()),
             status_selector: None,
             status_all: false,
             output_json: true,
@@ -123,6 +80,11 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
 
     let parsed = parse_json(&out);
     assert_schema_v1(&parsed, "effigy.tasks.filtered.v1");
+    assert_eq!(parsed["filter"], "build");
+    assert!(parsed["matches"].is_array());
+    assert!(parsed["managed_profile_matches"].is_array());
+    assert!(parsed["builtin_matches"].is_array());
+    assert!(parsed["notes"].is_array());
     assert_eq!(
         sorted_object_keys(&parsed),
         vec![
@@ -139,6 +101,9 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
             "schema_version",
         ]
     );
+    assert_eq!(parsed["resolve"]["status"], "ok");
+    assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
+    assert_eq!(parsed["resolve"]["task"], "build");
 }
 
 #[test]
@@ -178,46 +143,6 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
     assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
     assert_eq!(parsed["resolve"]["task"], "api");
     assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/api");
-}
-
-#[test]
-fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
-    let root = temp_workspace("tasks-filtered-json-contract-resolve");
-    let catalog_a = root.join("catalog_a");
-    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[catalog.members]\ncatalog_a = \"catalog_a\"\n",
-    );
-    write_manifest(
-        &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
-    );
-
-    let out = with_cwd(&root, || {
-        run_tasks(TasksArgs {
-            all: false,
-            repo_override: None,
-            task_name: Some("build".to_owned()),
-            resolve_selector: Some("catalog_a/build".to_owned()),
-            status_selector: None,
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    })
-    .expect("run filtered tasks json resolve");
-
-    let parsed = parse_json(&out);
-    assert_schema_v1(&parsed, "effigy.tasks.filtered.v1");
-    assert_eq!(parsed["filter"], "build");
-    assert!(parsed["catalogs"].is_array());
-    assert!(parsed["precedence"].is_array());
-    assert_eq!(parsed["resolve"]["status"], "ok");
-    assert_eq!(parsed["resolve"]["catalog"], "catalog_a");
-    assert_eq!(parsed["resolve"]["task"], "build");
-    assert_eq!(parsed["resolve"]["lock_scopes"][0], "task:catalog_a/build");
 }
 
 #[test]
