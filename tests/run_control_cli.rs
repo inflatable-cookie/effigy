@@ -1145,6 +1145,160 @@ fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
     );
 }
 
+/// Papercut 727a4d82 (effigy#536): a registered Git worktree whose directory
+/// vanished — and one that exists but cannot be opened — must not turn an
+/// exact run query in the healthy checkout into an outcome unknown. The query
+/// reads this checkout's journal only (effigy#339, Q-011): a recorded run is
+/// answered from it, a live foreground holder is still reported, the vanished
+/// sibling's own run id is `not recorded`, never unknown, and `runs --all` is
+/// the one surface that reports the unavailable candidates as omissions.
+#[test]
+fn a_vanished_registered_worktree_does_not_disturb_exact_run_lookups() {
+    let fixture = Fixture::new();
+    git(&fixture.repo, &["init", "-q"]);
+    git(&fixture.repo, &["add", "effigy.toml"]);
+    git(
+        &fixture.repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let gone = fixture.home.join("gone");
+    let locked = fixture.home.join("locked");
+    git(
+        &fixture.repo,
+        &["worktree", "add", gone.to_str().expect("gone path")],
+    );
+    git(
+        &fixture.repo,
+        &["worktree", "add", locked.to_str().expect("locked path")],
+    );
+
+    // The vanished sibling holds a real run of its own, so the queries below
+    // have custody evidence the healthy checkout cannot answer.
+    let recorded = fixture
+        .effigy(&["--run-id", "gone-key", "light"])
+        .current_dir(&gone)
+        .output_owned()
+        .expect("the sibling's run");
+    assert!(recorded.status.success(), "{}", text(&recorded));
+    let sibling = fixture
+        .effigy(&["--json", "run", "status", "gone-key"])
+        .current_dir(&gone)
+        .output_owned()
+        .expect("the sibling's status");
+    assert!(sibling.status.success(), "{}", text(&sibling));
+    let sibling_id: String = serde_json::from_slice::<serde_json::Value>(&sibling.stdout)
+        .expect("sibling status")["result"]["run"]["run_id"]
+        .as_str()
+        .expect("run id")
+        .to_owned();
+    assert!(fixture
+        .run(&["--run-id", "local-key", "light"])
+        .status
+        .success());
+    let mut owner = fixture
+        .effigy(&["--run-id", "live-key", "hold"])
+        .spawn_owned()
+        .expect("owner");
+    fixture.wait_for("the task's child", || {
+        fixture.read("child.pid").ends_with('\n')
+    });
+    let child: u32 = fixture.read("child.pid").trim().parse().expect("pid");
+
+    // One sibling is positively gone; the other exists but cannot be opened.
+    fs::remove_dir_all(&gone).expect("vanish the registered sibling");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("seal the sibling");
+
+    // Every exact query in the healthy checkout, then the one host-scoped
+    // view, are collected before the sibling is unsealed so a failed assert
+    // never leaves the sealed directory behind for the fixture's cleanup.
+    let local = fixture.status_json("local-key");
+    let live = fixture.status_json("live-key");
+    let logs = fixture.run(&["run", "logs", "local-key"]);
+    let missing = fixture.run(&["run", "status", &sibling_id]);
+    let absent = fixture.run(&["run", "status", "absent-key"]);
+    let scoped = fixture.run(&["--json", "runs"]);
+    let all = fixture.run(&["--json", "runs", "--all"]);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).expect("unseal the sibling");
+
+    assert_eq!(local["state"], "succeeded", "{local}");
+    assert_eq!(local["evidence_source"], "checkout-journal", "{local}");
+    // The live run's own evidence — its journal row or its foreground holder —
+    // still reads `running`; the point is that the healthy checkout answers
+    // with live evidence at all, never unknown because a peer is gone.
+    assert_eq!(live["state"], "running", "{live}");
+    assert!(logs.status.success(), "{}", text(&logs));
+    assert!(!missing.status.success(), "{}", text(&missing));
+    let missing_message = text(&missing);
+    assert!(
+        missing_message.contains("not recorded"),
+        "{missing_message}"
+    );
+    assert!(
+        !missing_message.contains("unknown") && !missing_message.contains("unreadable"),
+        "a vanished sibling must not refuse the healthy checkout's query: {missing_message}"
+    );
+    assert!(!absent.status.success(), "{}", text(&absent));
+    assert!(text(&absent).contains("not recorded"), "{}", text(&absent));
+
+    // The checkout-scoped listing is complete: peer state never enters it.
+    let scoped_json = json_of(&String::from_utf8_lossy(&scoped.stdout));
+    assert_eq!(
+        scoped_json["result"]["coverage"]["complete"], true,
+        "{scoped_json}"
+    );
+    let scoped_runs = scoped_json["result"]["runs"]
+        .as_array()
+        .expect("scoped runs");
+    assert_eq!(scoped_runs.len(), 2, "{scoped_json}");
+
+    // The host-scoped view still answers and names every unavailable
+    // candidate as an omission; it does not refuse repository-wide.
+    assert!(all.status.success(), "{}", text(&all));
+    let all_json = json_of(&String::from_utf8_lossy(&all.stdout));
+    let omitted = all_json["result"]["coverage"]["omitted"]
+        .as_array()
+        .expect("omissions");
+    for vanished in ["gone", "locked"] {
+        assert!(
+            omitted
+                .iter()
+                .any(|row| row.as_str().is_some_and(|row| row.contains(vanished))),
+            "the {vanished} sibling is missing from the omissions: {omitted:?}"
+        );
+    }
+    let listed = all_json["result"]["runs"].as_array().expect("runs");
+    let listed_ids: Vec<&str> = listed
+        .iter()
+        .filter_map(|row| row["run_id"].as_str())
+        .collect();
+    assert!(
+        listed_ids.contains(&local["run_id"].as_str().expect("local id")),
+        "{listed_ids:?}"
+    );
+    assert!(
+        listed_ids.contains(&live["run_id"].as_str().expect("live id")),
+        "{listed_ids:?}"
+    );
+
+    // Settle the foreground run so the fixture keeps no live process.
+    let stop = fixture.run(&["run", "stop", "live-key"]);
+    assert!(stop.status.success(), "{}", text(&stop));
+    assert_eq!(
+        wait_child(&mut owner).code(),
+        Some(1),
+        "a requested stop records `cancelled`, exit 1"
+    );
+    assert!(!alive(child), "the task's child was stopped with its group");
+}
+
 /// Admission protocol v2 (effigy#325): a hook that implements it receives the
 /// acknowledged custody reports. `before_ack` runs in the hook after an event
 /// is received and before it is acknowledged, so a test can act on exactly the
