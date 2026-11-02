@@ -800,46 +800,11 @@ fn a_failed_retirement_keeps_the_claim_for_unlink() {
     assert!(registration_consumers(&fixture).is_empty());
 }
 
-#[test]
-fn retirement_of_one_bun_root_keeps_a_sibling_roots_claim() {
-    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
-    fs::create_dir_all(fixture.repo.join(".git")).unwrap();
-    let process = FixtureProcess::new(&fixture.home);
-    link(&fixture, &process);
-    // A second Bun package root in the same checkout: its own consumer, its own
-    // claim, sharing one checkout with the root this link named.
-    let harness = fixture.repo.join("harness");
-    fs::create_dir_all(&harness).unwrap();
-    let harness = fs::canonicalize(&harness).unwrap();
-    BunRegistrationIndexStore::for_home(&fixture.home)
-        .update(|index| {
-            index.add_reference(
-                "underlay",
-                fixture.packages[0].package_path.clone(),
-                true,
-                BunConsumerReference::claim(harness.clone(), fixture.library.clone()),
-            )
-        })
-        .unwrap();
-
-    let retirement = retire_bun_registration_claims(
-        &fixture.home,
-        &fixture.repo,
-        &fixture.library,
-        &process,
-        &FsBunPlanObserver,
-    );
-
-    assert_eq!(retirement.released_shared, ["underlay"]);
-    assert!(retirement.unregistered.is_empty());
-    assert_eq!(registration_consumers(&fixture), [harness]);
-    assert!(matches!(
-        FsBunPlanObserver
-            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
-            .unwrap(),
-        BunPathObservation::Symlink { .. }
-    ));
-}
+// A second Bun package root inside the same checkout takes the same
+// `shared` release branch as the foreign sibling below: `claim_owned_by`
+// compares consumer roots by exact canonical path (bun_apply.rs), so the
+// claim's position relative to the retiring checkout changes no branch.
+// `retirement_releases_only_the_owning_consumers_claim` pins the branch.
 
 #[test]
 fn an_interrupted_owner_keeps_a_registration_another_consumer_claims() {
