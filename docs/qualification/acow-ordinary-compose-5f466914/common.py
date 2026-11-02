@@ -493,6 +493,8 @@ def verify_544_proof_receipt(path, quoted_sha):
         raise Refused('outcome review block is not the durable outcome projection')
     if outcome_review['status'] != 'ready_to_merge':
         raise Refused('durable outcome review is not ready_to_merge')
+    if outcome_review['reviewId'] is None and outcome_review['commentId'] is None:
+        raise Refused('durable outcome review has no identifier linking retained review')
     for outcome_key, review_key in (('reviewId', 'reviewId'),
                                     ('commentId', 'reviewCommentId')):
         if review_key not in review or outcome_review[outcome_key] != review[review_key]:

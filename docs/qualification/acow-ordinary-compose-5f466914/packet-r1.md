@@ -28,7 +28,7 @@ candidate identity, and separate operator/consumer GOs.
 
 The primary lock is a preflight authority check. The disposable worktree must have no lock before sync; its receipt records that absence, and the exact approved target is required after sync before attach.
 
-## Artifacts manifest SHA-256: `ab18c67f21c94e50e31429070e531786f1cb6322de0cd0b3f85b5eb507072be8`
+## Artifacts manifest SHA-256: `ebbca8c236172e58f7b8889a253e41b30e27dce0279b278d18c91826b39d8734`
 
 The manifest pins the four committed helpers, the frozen candidate identity,
 the relevant-input closure with its selection policy, the reviewed anchor
@@ -134,7 +134,8 @@ fixture metadata only. Passing those controls is not consumer qualification.
    refused-before-selector; the `proofOnlyResult` binding that same
    execution run and a distinct retained reviewer run; the retained review
    `ready_to_merge` at the same commit; and the durable `done` outcome with
-   its `ready_to_merge` review. Records copied: `queue.detail(taskId)` →
+   its `ready_to_merge` review, with matching review and comment IDs and at
+   least one non-null ID. Records copied: `queue.detail(taskId)` →
    `task.proofOnly`, `task.proofExecution`, the `task.proofExecutions` entry
    named by `proofOnlyResult.executionRunId`, `proofOnlyResult` itself, and
    the `task.resolution.reviews` entry named by

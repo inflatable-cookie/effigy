@@ -825,7 +825,7 @@ During v0.x, MINOR bumps may include breaking changes.
   (zero execution; three authenticated `refusedBeforeSelector` receipts
   retained as history) is no longer a prerequisite: the old bare contract is
   proven insufficient by a committed failing-first control, a fresh GO
-  carrying a `539 receipt` line refuses, and the boundary battery (now 129
+  carrying a `539 receipt` line refuses, and the boundary battery (now 132
   checks) covers old-#539, source-only, no-execution, refused, historical,
   failed, pending, missing-reviewer, run/head/selector/input/candidate
   mismatch, tampered, truncated and oversize receipts. GO token contracts,

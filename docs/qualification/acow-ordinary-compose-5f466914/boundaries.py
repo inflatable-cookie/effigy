@@ -341,7 +341,7 @@ def r544_fixture(**over):
             'agentId': PROOF_AGENT_ID,
             'head': PROOF_COMMIT,
             'status': 'ready_to_merge',
-            'reviewId': None,
+            'reviewId': 123,
             'reviewCommentId': None,
             'at': '2026-11-02T13:00:00.000Z',
             'verdicts': [],
@@ -356,7 +356,7 @@ def r544_fixture(**over):
             'pr': None,
             'review': {'status': 'ready_to_merge',
                        'summary': 'accepted the r18 receipt',
-                       'commentId': None, 'reviewId': None},
+                       'commentId': None, 'reviewId': 123},
         },
     }
     obj.update(over)
@@ -776,6 +776,20 @@ def t_544_outcome_review_ids_mismatch(tmp):
         p = tmpfile(tmp, key + '-missing.json', text)
         expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
                        'differs from retained review')
+
+
+def t_544_outcome_review_requires_link(tmp):
+    fixture = r544_fixture()
+    fixture['review']['reviewId'] = None
+    fixture['outcome']['review']['reviewId'] = None
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, 'all-null.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)), 'no identifier')
+    fixture['outcome']['review']['reviewId'] = 123
+    text = json.dumps(fixture, indent=2, sort_keys=True) + '\n'
+    p = tmpfile(tmp, 'retained-null.json', text)
+    expect_refused(lambda: verify_544_proof_receipt(p, sha(text)),
+                   'differs from retained review')
 
 
 def t_544_outcome_wrong_shape(tmp):
