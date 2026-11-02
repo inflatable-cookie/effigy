@@ -4243,6 +4243,76 @@ fn bounded_tail(path: &Path, max: usize) -> String {
 /// control directory's state and the bring-up adapter log. All of it is
 /// fixture-owned and bounded, so the failure names what the nested run
 /// actually did instead of reporting an assumed cause from the timeout.
+/// task567: every host-process log the fixture actually holds, wherever its
+/// checkout materialized the runtime directory, with a bounded tail of each.
+/// The plain (non-listener) supervisor writes to
+/// `host-processes/<container>/<name>.log`, the managed (listener) one to
+/// `host-processes/<container>/<profile>/<name>.log`; the timeout evidence
+/// must name whichever exists instead of one assumed shape.
+fn nested_host_process_log_evidence(fixture_root: &Path) -> String {
+    let mut logs: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![fixture_root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        visited += 1;
+        if visited > 20_000 || logs.len() > 16 {
+            break;
+        }
+        let already_inside = dir
+            .components()
+            .any(|component| component.as_os_str() == "host-processes");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if already_inside
+                    || name == "host-processes"
+                    || name == ".effigy"
+                    || name == "runtime"
+                    || name == "home"
+                {
+                    stack.push(path);
+                }
+            } else if already_inside
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".log"))
+            {
+                logs.push(path);
+            }
+        }
+    }
+    if logs.is_empty() {
+        return "<no host-process log exists anywhere under the fixture>".to_owned();
+    }
+    logs.sort();
+    logs.iter()
+        .map(|log| format!("{}={:?}", log.display(), bounded_tail(log, 4_000)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// task567 diagnostic: process-table rows whose command names the fixture, so
+/// a supervisor or workload that is alive, zombie or gone says so itself.
+fn nested_fixture_process_evidence(fixture_root: &Path) -> String {
+    let Ok(output) = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid=,stat=,command="])
+        .output()
+    else {
+        return "<process table unreadable>".to_owned();
+    };
+    let root = fixture_root.display().to_string();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains(&root))
+        .map(|line| line.trim().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn wait_for_nested_app_pid(
     pid_file: &Path,
     fixture_root: &Path,
@@ -4273,11 +4343,13 @@ fn wait_for_nested_app_pid(
                 "<absent>".to_owned()
             };
             panic!(
-                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}",
+                "timed out waiting for the nested task's app ({}); host-process log={}\nsweep ledger={}\ncontrol directory: {control_inventory}\nbring-up adapter log={}\nhost-process logs found under the fixture:\n{}\nfixture-owned process rows:\n{}",
                 pid_file.display(),
                 bounded_tail(host_process_log, 8_000),
                 bounded_tail(&fixture_root.join("sweep-ledger.json"), 4_000),
                 bounded_tail(docker_log, 2_000),
+                nested_host_process_log_evidence(fixture_root),
+                nested_fixture_process_evidence(fixture_root),
             );
         }
         thread::sleep(Duration::from_millis(25));
@@ -7293,12 +7365,17 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
         mkcert_calls: effects.mkcert_calls.clone(),
         docker_log: docker_log.clone(),
     };
+    // This environment's only host process declares no listener, so the
+    // runtime directory is the plain `host-processes/<container>` shape the
+    // supervisor writes for it (effigy#567: the timeout evidence used to read
+    // the managed `<container>/<profile>` shape and reported a log that could
+    // never exist).
     let log_path = checkout
         .join(".effigy/runtime/host-processes/web")
-        .join(profile)
         .join("api.log");
 
     let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let fixture_root = fixture.path().to_path_buf();
     let up_text = format!(
         "{}{}",
         String::from_utf8_lossy(&up.stdout),
@@ -7311,7 +7388,7 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     );
     wait_for_nested_app_pid(
         &pid_file,
-        fixture.path(),
+        &fixture_root,
         &control,
         &log_path,
         &docker_log,
