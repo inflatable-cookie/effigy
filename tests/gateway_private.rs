@@ -7778,9 +7778,8 @@ fn plain_host_workload_refused_before_exec_fails_up_then_a_clean_up_starts() {
         "the refusal names the host process: {refused_text}"
     );
     assert!(
-        refused_text.contains(
-            "secret in argv from classified environment key `FIXTURE_AMBIENT_TOKEN`"
-        ),
+        refused_text
+            .contains("secret in argv from classified environment key `FIXTURE_AMBIENT_TOKEN`"),
         "the refusal carries the kernel's key-only diagnostic: {refused_text}"
     );
     assert!(

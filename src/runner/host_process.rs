@@ -162,20 +162,25 @@ struct HostProcessDependency {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HostProcessEvent {
-    /// The kernel refused a generation before its first exec, with the
-    /// redacted key-only refusal as `detail`. A plain workload declares no
-    /// readiness of its own and keeps no listener state, so this event is
-    /// the only channel that carries the refusal to the activation before
-    /// the run settles (effigy#574).
-    LaunchRefused { process: String, detail: String },
+    /// A generation was refused or failed before any process ran, with the
+    /// spawn's own explanation as `detail`. A kernel pre-exec refusal — an
+    /// ambient value classified secret whose bytes occur in the run string,
+    /// for example — arrives here with its redacted key-only message. A
+    /// plain workload declares no readiness of its own and keeps no listener
+    /// state, so this event is the only channel that carries the failed
+    /// launch to the activation before the run settles (effigy#574).
+    LaunchFailed { process: String, detail: String },
 }
 
-/// Reports a plain workload's pre-exec refusal to the owning client before
-/// the run settles (effigy#574). The activation reads this event as its
-/// launch barrier; without it a refused workload could only settle failed
-/// behind a bring-up that reported success.
-fn report_launch_refused(session: &EngineSession, process: &str, detail: &str) {
-    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchRefused {
+/// Reports a plain workload's failed launch to the owning client before the
+/// run settles (effigy#574). Every `spawn_generation` error is decided
+/// before any process ran — the kernel reaps a blocked pre-exec child — so
+/// the detail never describes a workload that existed. The activation reads
+/// this event as its launch barrier; without it a workload that never
+/// started could only settle failed behind a bring-up that reported
+/// success.
+fn report_launch_failed(session: &EngineSession, process: &str, detail: &str) {
+    if let Ok(bytes) = serde_json::to_vec(&HostProcessEvent::LaunchFailed {
         process: process.to_owned(),
         detail: detail.to_owned(),
     }) {
@@ -1616,14 +1621,15 @@ fn supervise_plain_host_process(
     let mut child = match spawn_generation(run, cx, spec, &dependency_env, None) {
         Ok(child) => child,
         Err(error) => {
-            // A kernel refusal is decided before any exec ran: report it on
-            // the owning client's event pipe before the settle, so the
-            // activation carries it instead of reporting a workload that
-            // never started (effigy#574). Every other spawn failure keeps
-            // the plain exit record the restart policy reads.
-            if let effigy_kernel::custody::SpawnError::Refused(_) = &error {
-                report_launch_refused(session, &spec.process_name, &error.to_string());
-            }
+            // The generation never ran: every spawn error is decided before
+            // any process exists, and a kernel pre-exec refusal (a classified
+            // ambient value whose bytes occur in the run string, for example)
+            // is among them. Report the failed launch on the owning client's
+            // event pipe before the settle, so the activation carries it
+            // instead of reporting a workload that never started
+            // (effigy#574). The plain exit record the restart policy reads
+            // is unchanged.
+            report_launch_failed(session, &spec.process_name, &error.to_string());
             append_log_line(
                 spec.output.as_ref(),
                 &format!(

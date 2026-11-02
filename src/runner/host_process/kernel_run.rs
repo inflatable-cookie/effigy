@@ -722,13 +722,12 @@ impl KernelActivation<'_> {
 /// string, for example — never reaches `Active`. It settled failed behind
 /// the bring-up's back, the pipe closed, and the closed-run swallow reported
 /// the workload as success (effigy#574). The supervisor now reports such a
-/// refusal on this same pipe before it settles, and this barrier reads the
-/// pipe until the launch is decided: `Active` proves the workload launched,
-/// a refusal fails the activation with the kernel's key-only diagnostic, and
-/// a settle or a lost supervisor before any launch fails it the same way.
-/// An ordinary later exit or readiness failure happens after `Active` and
-/// never reaches this barrier; a listener's refusal keeps #455's per-route
-/// withheld record.
+/// launch on this same pipe before it settles, and this barrier reads the
+/// pipe until the launch is decided: `Active` proves the workload launched
+/// and an ordinary later exit never reaches this barrier, a launch failure
+/// or refusal fails the activation with the supervisor's own diagnostic, and
+/// a settle or a lost supervisor before any launch fails it the same way. A
+/// listener's refusal keeps #455's per-route withheld record.
 fn await_plain_launch(
     client: &mut effigy_kernel::supervise::SupervisorClient,
     process: &str,
@@ -738,11 +737,11 @@ fn await_plain_launch(
         match client.event(cx.operation()) {
             Ok(effigy_kernel::supervise::Event::Active) => return Ok(()),
             Ok(effigy_kernel::supervise::Event::Engine(bytes)) => {
-                if let Ok(super::HostProcessEvent::LaunchRefused { detail, .. }) =
+                if let Ok(super::HostProcessEvent::LaunchFailed { detail, .. }) =
                     serde_json::from_slice(&bytes)
                 {
                     return Err(RunnerError::task_invocation(format!(
-                        "host process `{process}` was refused before its workload started: {detail}"
+                        "host process `{process}` did not start its workload: {detail}"
                     )));
                 }
             }
