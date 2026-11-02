@@ -4217,13 +4217,16 @@ fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     }
 }
 
-/// The last `max` characters of a fixture log. Evidence stays bounded so a
-/// failed proof names what happened without flooding the runner's capture.
+/// At most the last `max` bytes of a fixture log, rounded to a UTF-8
+/// boundary. Evidence stays bounded without flooding the runner's capture.
 fn bounded_tail(path: &Path, max: usize) -> String {
     match fs::read(path) {
         Ok(bytes) => {
             let text = String::from_utf8_lossy(&bytes);
-            let start = text.len().saturating_sub(max);
+            let mut start = text.len().saturating_sub(max);
+            while !text.is_char_boundary(start) {
+                start += 1;
+            }
             let mut tail = text[start..].to_owned();
             if start > 0 {
                 tail.insert_str(0, "…");
@@ -7358,12 +7361,12 @@ fn nested_app_pid_timeout_carries_child_owner_and_error_evidence() {
     fs::write(&app, "import os, signal\n").expect("fixture app");
     let pid_file = control.join("app-pid");
     let log = fixture.path().join("api.log");
-    fs::write(
-        &log,
-        "[effigy host-process] started `api` (pid 50645)\n\
-         [effigy host-process] `api` exited (code 1)\n",
-    )
-    .expect("fixture host-process log");
+    let suffix = "[effigy host-process] started `api` (pid 50645)\n\
+         [effigy host-process] `api` exited (code 1)\n";
+    let padding = if suffix.len() % 2 == 0 { "x" } else { "" };
+    let long_log = format!("{}{padding}{suffix}", "é".repeat(4_001));
+    assert!(!long_log.is_char_boundary(long_log.len() - 8_000));
+    fs::write(&log, long_log).expect("fixture host-process log");
     let ledger = fixture.path().join("sweep-ledger.json");
     fs::write(
         &ledger,
